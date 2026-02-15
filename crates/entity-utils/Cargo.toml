@@ -1,0 +1,8 @@
+[package]
+name = "entity-utils"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+cranelift-bitset.workspace = true
+cranelift-entity.workspace = true

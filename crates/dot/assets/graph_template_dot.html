@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DOT Viewer</title>
+  <style>
+    :root {
+      --bg: #1e1e1e;
+      --panel: #252526;
+      --panel2: #2d2d2d;
+      --text: #e6e6e6;
+      --muted: #a0a0a0;
+      --accent: #4fc3f7;
+      --accent2: #a78bfa;
+      --danger: #ff6b6b;
+      --ok: #5bd68c;
+      --stroke: #3a3a3a;
+
+      --sel-node: #ffd166;
+      --sel-edge: #7dd3fc;
+
+      --hl-width: 3.5px;
+      --hl-glow: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      overflow: hidden;
+    }
+
+    .app {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 0;
+    }
+
+    .sidebar {
+      background: linear-gradient(180deg, var(--panel), var(--panel2));
+      border-right: 1px solid var(--stroke);
+      padding: 14px 14px 10px;
+      display: grid;
+      grid-template-rows: auto auto auto auto auto 1fr auto;
+      gap: 12px;
+      min-width: 320px;
+      overflow: hidden;
+    }
+
+    .title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .title h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: 0.2px;
+    }
+    .badge {
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      padding: 4px 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input[type="text"]{
+      width: 100%;
+      padding: 10px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--stroke);
+      background: #111;
+      color: var(--text);
+      outline: none;
+    }
+    input[type="text"]::placeholder { color: #777; }
+
+    .btns {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btns3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid var(--stroke);
+      background: #111;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 10px;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+    }
+    button:hover { border-color: #555; }
+    button:active { transform: translateY(1px); }
+    button.primary { border-color: rgba(79,195,247,.35); }
+    button.primary:hover { border-color: rgba(79,195,247,.7); }
+    button.danger { border-color: rgba(255,107,107,.35); }
+    button.danger:hover { border-color: rgba(255,107,107,.7); }
+    button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+    .section {
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(0,0,0,.25);
+    }
+    .section h2 {
+      margin: 0 0 8px 0;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 6px 10px;
+      font-size: 12px;
+      align-items: start;
+    }
+    .k { color: var(--muted); }
+    .v { word-break: break-word; }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .hint code {
+      background: rgba(255,255,255,.06);
+      border: 1px solid var(--stroke);
+      padding: 2px 6px;
+      border-radius: 8px;
+      color: var(--text);
+    }
+
+    .canvas {
+      position: relative;
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    #graphWrap {
+      position: absolute;
+      inset: 0;
+      background: var(--bg);
+    }
+
+    /* Graph container */
+    #graphWrap svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* --- Selection + highlight styling for Graphviz SVG --- */
+    .gv-selected-node ellipse,
+    .gv-selected-node polygon,
+    .gv-selected-node path,
+    .gv-selected-node rect {
+      stroke: var(--sel-node) !important;
+      stroke-width: var(--hl-width) !important;
+      filter: drop-shadow(0 0 var(--hl-glow) rgba(255,209,102,.35));
+    }
+
+    .gv-selected-edge path {
+      stroke: var(--sel-edge) !important;
+      stroke-width: var(--hl-width) !important;
+      filter: drop-shadow(0 0 var(--hl-glow) rgba(125,211,252,.35));
+    }
+    .gv-selected-edge polygon {
+      stroke: var(--sel-edge) !important;
+      fill: var(--sel-edge) !important;
+      filter: drop-shadow(0 0 var(--hl-glow) rgba(125,211,252,.35));
+    }
+
+    .gv-search-hit ellipse,
+    .gv-search-hit polygon,
+    .gv-search-hit path,
+    .gv-search-hit rect {
+      stroke: var(--accent2) !important;
+      stroke-width: var(--hl-width) !important;
+      filter: drop-shadow(0 0 var(--hl-glow) rgba(167,139,250,.35));
+    }
+
+    .statusbar {
+      border-top: 1px solid var(--stroke);
+      padding-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: rgba(0,0,0,.25);
+    }
+
+    /* --- Minimap --- */
+    .minimap-wrap {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    #minimap {
+      width: 100%;
+      height: 160px;
+      border: 1px solid var(--stroke);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(0,0,0,.25);
+      position: relative;
+    }
+    #minimap svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .mini-viewport {
+      fill: rgba(79,195,247,.10);
+      stroke: rgba(79,195,247,.85);
+      stroke-width: 2;
+      pointer-events: none;
+    }
+
+    @media (max-width: 980px) {
+      .app { grid-template-columns: 1fr; grid-template-rows: 520px 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--stroke); }
+      #minimap { height: 140px; }
+    }
+  </style>
+
+  <!-- Viz.js (Graphviz compiled to JS). No WASM fetch, works from file:// too. -->
+  <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>
+
+  <!-- Pan/zoom for SVG -->
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+</head>
+
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="title">
+        <h1>DOT Viewer</h1>
+        <span class="badge" id="statsBadge">—</span>
+      </div>
+
+      <div class="section">
+        <h2>Search</h2>
+        <div class="row">
+          <input id="searchInput" type="text" placeholder="Node id or label substring (e.g. Add42)" />
+          <button class="primary" id="searchBtn">Find</button>
+        </div>
+        <div class="btns" style="margin-top:8px;">
+          <button id="clearSearchBtn">Clear hits</button>
+          <button id="centerBtn">Center view</button>
+        </div>
+        <div class="hint" style="margin-top:8px;">
+          Tip: click a <code>node</code> or <code>edge</code> to select it. Use navigation below to jump along the selected edge.
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Mode</h2>
+        <div class="btns">
+          <button id="modeToggleBtn" class="primary">Drag mode: Off</button>
+          <button id="fitBtn">Fit</button>
+        </div>
+        <div class="btns" style="margin-top:8px;">
+          <button id="zoomInBtn">＋ Zoom in</button>
+          <button id="zoomOutBtn">－ Zoom out</button>
+        </div>
+        <div class="btns" style="margin-top:8px;">
+          <button id="resetBtn">Reset</button>
+          <button id="centerSelBtn">Center selection</button>
+        </div>
+        <div class="hint" style="margin-top:8px;">
+          Drag mode disables clicking nodes/edges so you can pan freely.
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Selection</h2>
+        <div class="kv">
+          <div class="k">Type</div><div class="v" id="selType">—</div>
+          <div class="k">Node</div><div class="v" id="selNode">—</div>
+          <div class="k">Edge</div><div class="v" id="selEdge">—</div>
+        </div>
+        <div class="btns" style="margin-top:10px;">
+          <button id="clearSelBtn" class="danger">Clear selection</button>
+          <button id="zoomSelBtn" class="primary">Zoom to selection</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Edge navigation</h2>
+        <div class="hint">
+          When an edge is selected, you can jump to its <code>tail</code> or <code>head</code> node (back/forward) and center the view.
+        </div>
+        <div class="btns" style="margin-top:10px;">
+          <button id="goTailBtn" disabled>◀ Back (tail)</button>
+          <button id="goHeadBtn" disabled>Forward (head) ▶</button>
+        </div>
+      </div>
+
+      <div class="section minimap-wrap">
+        <h2>Minimap</h2>
+        <div id="minimap" title="Click to pan. Shift+Click to zoom in a bit."></div>
+        <div class="btns">
+          <button id="histBackBtn" disabled>◀ History</button>
+          <button id="histFwdBtn" disabled>History ▶</button>
+        </div>
+        <div class="hint">
+          History tracks node/edge focus. Click minimap to pan; Shift+Click zooms.
+        </div>
+      </div>
+
+      <div class="hint">
+        Keyboard: <code>Esc</code> clears selection, <code>Enter</code> runs search,
+        <code>[</code>/<code>]</code> goes tail/head on selected edge,
+        <code>Alt+←</code>/<code>Alt+→</code> history,
+        <code>Space</code> toggles drag mode.
+      </div>
+
+      <div class="statusbar">
+        <span class="pill">Render: <span id="renderStatus">ok</span></span>
+        <span class="pill">Mode: <span id="modeStatus">select</span></span>
+      </div>
+    </aside>
+
+    <main class="canvas">
+      <div id="graphWrap"></div>
+    </main>
+  </div>
+
+  <script>
+    /**********************************************************************
+     * Replace __DOT__ with your DOT source string from Rust.
+     *
+     * Example in Rust:
+     *   let html = include_str!("dot_viewer.html").replace("__DOT__", &dot_src);
+     **********************************************************************/
+
+    function withDotDefaults(dot) {
+      // Controls "font too big / overflows node" at Graphviz layout time.
+      // If you already set fontsize on graph/node, we won't touch it.
+      if (/\b(graph|node)\s*\[.*fontsize\s*=/.test(dot)) return dot;
+
+      const defaults = `
+graph [fontname="monospace", fontsize=10];
+node  [fontname="monospace", fontsize=10, margin="0.15,0.08"];
+edge  [fontname="monospace", fontsize=9];
+`;
+      // Insert just after first '{' to stay valid DOT.
+      // Works for: digraph X { ... } / graph { ... }
+      return dot.replace(/(\{\s*)/, `$1\n${defaults}\n`);
+    }
+
+    const DOT_SRC = withDotDefaults(`__DOT__`);
+
+    // --- App state ---
+    let viz = null;
+    let panZoom = null;
+
+    // minimap
+    let miniSvg = null;
+    let miniViewportRect = null;
+
+    // selection/history mode
+    let dragMode = false;
+
+    // History stack: entries are { kind: 'node'|'edge', nodeName?, edgeKey?, tail?, head? }
+    const history = [];
+    let histIndex = -1;
+    let applyingHistory = false;
+
+    // name -> element <g class="node">
+    const nodeIndex = new Map();
+    // "tail->head" => element <g class="edge">
+    const edgeIndex = new Map();
+    // edgeGroupEl => { tail, head, key }
+    const edgeEndpoints = new Map();
+
+    let selected = { type: null, nodeName: null, edgeKey: null, tail: null, head: null, el: null };
+
+    // --- UI refs ---
+    const graphWrap = document.getElementById("graphWrap");
+    const minimapWrap = document.getElementById("minimap");
+
+    const statsBadge = document.getElementById("statsBadge");
+    const renderStatus = document.getElementById("renderStatus");
+    const modeStatus = document.getElementById("modeStatus");
+
+    const selType = document.getElementById("selType");
+    const selNode = document.getElementById("selNode");
+    const selEdge = document.getElementById("selEdge");
+
+    const searchInput = document.getElementById("searchInput");
+    const searchBtn = document.getElementById("searchBtn");
+    const clearSearchBtn = document.getElementById("clearSearchBtn");
+    const centerBtn = document.getElementById("centerBtn");
+
+    const clearSelBtn = document.getElementById("clearSelBtn");
+    const zoomSelBtn = document.getElementById("zoomSelBtn");
+
+    const goTailBtn = document.getElementById("goTailBtn");
+    const goHeadBtn = document.getElementById("goHeadBtn");
+
+    const modeToggleBtn = document.getElementById("modeToggleBtn");
+    const fitBtn = document.getElementById("fitBtn");
+    const zoomInBtn = document.getElementById("zoomInBtn");
+    const zoomOutBtn = document.getElementById("zoomOutBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const centerSelBtn = document.getElementById("centerSelBtn");
+
+    const histBackBtn = document.getElementById("histBackBtn");
+    const histFwdBtn = document.getElementById("histFwdBtn");
+
+    function setStatus(ok, msg) {
+      renderStatus.textContent = ok ? "ok" : "error";
+      renderStatus.style.color = ok ? "var(--ok)" : "var(--danger)";
+      if (!ok && msg) console.error(msg);
+    }
+
+    function updateModeUI() {
+      modeStatus.textContent = dragMode ? "drag" : "select";
+      modeToggleBtn.textContent = `Drag mode: ${dragMode ? "On" : "Off"}`;
+      modeToggleBtn.classList.toggle("primary", !dragMode);
+      // Optional cursor affordance
+      const svg = graphWrap.querySelector("svg");
+      if (svg) svg.style.cursor = dragMode ? "grab" : "default";
+    }
+
+    function setDragMode(on) {
+      dragMode = !!on;
+      updateModeUI();
+    }
+
+    function clearGraph() {
+      graphWrap.innerHTML = "";
+      minimapWrap.innerHTML = "";
+      miniSvg = null;
+      miniViewportRect = null;
+
+      nodeIndex.clear();
+      edgeIndex.clear();
+      edgeEndpoints.clear();
+
+      selected = { type: null, nodeName: null, edgeKey: null, tail: null, head: null, el: null };
+      updateSelectionUI();
+
+      goTailBtn.disabled = true;
+      goHeadBtn.disabled = true;
+
+      if (panZoom) {
+        try { panZoom.destroy(); } catch {}
+        panZoom = null;
+      }
+    }
+
+    function normalizeEdgeTitleToKey(titleText) {
+      return titleText.trim();
+    }
+
+    function nodeTitleText(g) {
+      const t = g.querySelector("title");
+      return t ? t.textContent.trim() : "";
+    }
+
+    function nodeLabelText(g) {
+      const texts = [...g.querySelectorAll("text")].map(x => x.textContent.trim()).filter(Boolean);
+      return texts.join("\n");
+    }
+
+    function indexSvg(svg) {
+      const nodes = svg.querySelectorAll("g.node");
+      const edges = svg.querySelectorAll("g.edge");
+
+      for (const g of nodes) {
+        const name = nodeTitleText(g);
+        if (!name) continue;
+        nodeIndex.set(name, g);
+      }
+
+      for (const g of edges) {
+        const t = g.querySelector("title");
+        if (!t) continue;
+        const title = t.textContent || "";
+        const key = normalizeEdgeTitleToKey(title);
+
+        edgeIndex.set(key, g);
+
+        const parts = key.split("->");
+        if (parts.length >= 2) {
+          const tail = parts[0].trim();
+          const head = parts.slice(1).join("->").trim();
+          edgeEndpoints.set(g, { tail, head, key });
+        }
+      }
+
+      statsBadge.textContent = `${nodeIndex.size} nodes • ${edgeIndex.size} edges`;
+    }
+
+    function updateSelectionUI() {
+      selType.textContent = selected.type ?? "—";
+      selNode.textContent = selected.nodeName ?? "—";
+      selEdge.textContent = selected.edgeKey ?? "—";
+    }
+
+    function clearSelection() {
+      if (selected.el) {
+        selected.el.classList.remove("gv-selected-node");
+        selected.el.classList.remove("gv-selected-edge");
+      }
+      selected = { type: null, nodeName: null, edgeKey: null, tail: null, head: null, el: null };
+      updateSelectionUI();
+      goTailBtn.disabled = true;
+      goHeadBtn.disabled = true;
+
+      // history: clearing is a meaningful focus change
+      pushHistory({ kind: "none" }, /*force*/false);
+    }
+
+    function clearSearchHits() {
+      const svg = graphWrap.querySelector("svg");
+      if (!svg) return;
+      svg.querySelectorAll(".gv-search-hit").forEach(el => el.classList.remove("gv-search-hit"));
+    }
+
+    function pushHistory(entry, force = false) {
+      if (applyingHistory) return;
+
+      // Normalize to a stable signature to avoid duplicates
+      const sig = JSON.stringify(entry);
+
+      const current = history[histIndex];
+      const currentSig = current ? JSON.stringify(current) : null;
+
+      if (!force && sig === currentSig) return;
+
+      // If we went back then make a new branch
+      if (histIndex < history.length - 1) {
+        history.splice(histIndex + 1);
+      }
+
+      history.push(entry);
+
+      // Cap history length
+      const MAX = 200;
+      if (history.length > MAX) {
+        const drop = history.length - MAX;
+        history.splice(0, drop);
+        histIndex -= drop;
+      }
+
+      histIndex = history.length - 1;
+      updateHistoryButtons();
+    }
+
+    function updateHistoryButtons() {
+      histBackBtn.disabled = !(histIndex > 0);
+      histFwdBtn.disabled = !(histIndex >= 0 && histIndex < history.length - 1);
+    }
+
+    function applyHistoryAt(index) {
+      if (index < 0 || index >= history.length) return;
+
+      applyingHistory = true;
+      try {
+        const e = history[index];
+        histIndex = index;
+        updateHistoryButtons();
+
+        if (!e || e.kind === "none") {
+          // only clear highlight, don't push again
+          if (selected.el) {
+            selected.el.classList.remove("gv-selected-node");
+            selected.el.classList.remove("gv-selected-edge");
+          }
+          selected = { type: null, nodeName: null, edgeKey: null, tail: null, head: null, el: null };
+          updateSelectionUI();
+          goTailBtn.disabled = true;
+          goHeadBtn.disabled = true;
+          return;
+        }
+
+        if (e.kind === "node") {
+          const g = nodeIndex.get(e.nodeName);
+          if (g) {
+            // manual select without pushing history
+            if (selected.el) {
+              selected.el.classList.remove("gv-selected-node");
+              selected.el.classList.remove("gv-selected-edge");
+            }
+            selected = { type: "node", nodeName: e.nodeName, edgeKey: null, tail: null, head: null, el: g };
+            g.classList.add("gv-selected-node");
+            updateSelectionUI();
+            goTailBtn.disabled = true;
+            goHeadBtn.disabled = true;
+            centerOnElement(g, 1.6);
+          }
+          return;
+        }
+
+        if (e.kind === "edge") {
+          const g = edgeIndex.get(e.edgeKey);
+          if (g) {
+            if (selected.el) {
+              selected.el.classList.remove("gv-selected-node");
+              selected.el.classList.remove("gv-selected-edge");
+            }
+            const endpoints = edgeEndpoints.get(g);
+            selected = {
+              type: "edge",
+              nodeName: null,
+              edgeKey: e.edgeKey,
+              tail: endpoints?.tail ?? e.tail ?? null,
+              head: endpoints?.head ?? e.head ?? null,
+              el: g,
+            };
+            g.classList.add("gv-selected-edge");
+            updateSelectionUI();
+            goTailBtn.disabled = !selected.tail;
+            goHeadBtn.disabled = !selected.head;
+            centerOnElement(g, 1.6);
+          }
+          return;
+        }
+      } finally {
+        applyingHistory = false;
+      }
+    }
+
+    function selectNode(nodeName, gEl, doCenter = false, zoom = null) {
+      if (selected.el) {
+        selected.el.classList.remove("gv-selected-node");
+        selected.el.classList.remove("gv-selected-edge");
+      }
+      selected = { type: "node", nodeName, edgeKey: null, tail: null, head: null, el: gEl };
+      gEl.classList.add("gv-selected-node");
+      updateSelectionUI();
+      goTailBtn.disabled = true;
+      goHeadBtn.disabled = true;
+
+      pushHistory({ kind: "node", nodeName }, false);
+
+      if (doCenter) centerOnElement(gEl, zoom);
+    }
+
+    function selectEdge(edgeKey, gEl, endpoints, doCenter = false, zoom = null) {
+      if (selected.el) {
+        selected.el.classList.remove("gv-selected-node");
+        selected.el.classList.remove("gv-selected-edge");
+      }
+      selected = {
+        type: "edge",
+        nodeName: null,
+        edgeKey,
+        tail: endpoints?.tail ?? null,
+        head: endpoints?.head ?? null,
+        el: gEl
+      };
+      gEl.classList.add("gv-selected-edge");
+      updateSelectionUI();
+
+      goTailBtn.disabled = !selected.tail;
+      goHeadBtn.disabled = !selected.head;
+
+      pushHistory({ kind: "edge", edgeKey, tail: selected.tail, head: selected.head }, false);
+
+      if (doCenter) centerOnElement(gEl, zoom);
+    }
+
+    function getBBoxInSvgCoords(el) {
+      try { return el.getBBox(); } catch { return null; }
+    }
+
+    function centerOnElement(el, zoom = null) {
+      if (!panZoom || !el) return;
+      const box = getBBoxInSvgCoords(el);
+      if (!box) return;
+
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+
+      if (zoom != null) panZoom.zoom(zoom);
+      panZoom.center();
+
+      try {
+        const svg = graphWrap.querySelector("svg");
+        const pt = svg.createSVGPoint();
+        pt.x = cx; pt.y = cy;
+        const ctm = el.getCTM();
+        const global = ctm ? pt.matrixTransform(ctm) : pt;
+
+        const screenCTM = svg.getScreenCTM();
+        if (screenCTM) {
+          const screen = global.matrixTransform(screenCTM);
+          const wrapRect = graphWrap.getBoundingClientRect();
+          const dx = (wrapRect.left + wrapRect.width / 2) - screen.x;
+          const dy = (wrapRect.top + wrapRect.height / 2) - screen.y;
+          panZoom.panBy({ x: dx, y: dy });
+        }
+      } catch {
+        panZoom.center();
+      }
+    }
+
+    function zoomToSelection() {
+      if (!selected.el) return;
+      const z = panZoom ? panZoom.getZoom() : 1;
+      const targetZoom = Math.max(1.0, Math.min(3.0, z < 1.2 ? 1.6 : z));
+      centerOnElement(selected.el, targetZoom);
+    }
+
+    function runSearch() {
+      const qRaw = searchInput.value || "";
+      const q = qRaw.trim().toLowerCase();
+      clearSearchHits();
+
+      if (!q) return;
+
+      const hits = [];
+      for (const [name, g] of nodeIndex.entries()) {
+        const label = nodeLabelText(g);
+        const nameL = name.toLowerCase();
+        const labelL = label.toLowerCase();
+        if (nameL.includes(q) || labelL.includes(q)) hits.push({ name, g });
+      }
+
+      for (const h of hits) h.g.classList.add("gv-search-hit");
+
+      if (hits.length >= 1) {
+        selectNode(hits[0].name, hits[0].g, true, 1.6);
+      }
+    }
+
+    function goToTail() {
+      if (selected.type !== "edge" || !selected.tail) return;
+      const g = nodeIndex.get(selected.tail);
+      if (!g) return;
+      selectNode(selected.tail, g, true, 1.6);
+    }
+
+    function goToHead() {
+      if (selected.type !== "edge" || !selected.head) return;
+      const g = nodeIndex.get(selected.head);
+      if (!g) return;
+      selectNode(selected.head, g, true, 1.6);
+    }
+
+    function initPanZoom(svg) {
+      panZoom = window.svgPanZoom(svg, {
+        zoomEnabled: true,
+        controlIconsEnabled: false,
+        fit: true,
+        center: true,
+        minZoom: 0.05,
+        maxZoom: 30,
+        zoomScaleSensitivity: 0.25,
+        dblClickZoomEnabled: true,
+        mouseWheelZoomEnabled: true,
+        preventMouseEventsDefault: true,
+      });
+    }
+
+    function installInteractivity(svg) {
+      // cursor affordance
+      svg.querySelectorAll("g.node, g.edge").forEach(g => {
+        g.style.cursor = "pointer";
+      });
+
+      // Click handling
+      svg.addEventListener("click", (ev) => {
+        if (dragMode) return; // <- mode switch: no select in drag mode
+
+        const g = ev.target.closest("g.node, g.edge");
+        if (!g) return;
+
+        if (g.classList.contains("node")) {
+          const name = nodeTitleText(g);
+          if (name) selectNode(name, g, false, null);
+        } else if (g.classList.contains("edge")) {
+          const t = g.querySelector("title");
+          const key = t ? normalizeEdgeTitleToKey(t.textContent || "") : "";
+          const endpoints = edgeEndpoints.get(g);
+          selectEdge(key || "—", g, endpoints, false, null);
+        }
+      });
+
+      // Cursor in drag mode
+      svg.addEventListener("mousedown", (ev) => {
+        if (!dragMode) return;
+        svg.style.cursor = "grabbing";
+      });
+      svg.addEventListener("mouseup", () => {
+        updateModeUI();
+      });
+
+      // Keyboard shortcuts
+      window.addEventListener("keydown", (e) => {
+        // Space toggles drag mode (avoid when typing in input)
+        if (e.key === " " && document.activeElement !== searchInput) {
+          e.preventDefault();
+          setDragMode(!dragMode);
+          return;
+        }
+
+        if (e.key === "Escape") {
+          clearSelection();
+        } else if (e.key === "Enter") {
+          if (document.activeElement === searchInput || document.activeElement.tagName === "BODY") {
+            runSearch();
+          }
+        } else if (e.key === "[" && selected.type === "edge") {
+          goToTail();
+        } else if (e.key === "]" && selected.type === "edge") {
+          goToHead();
+        } else if (e.altKey && e.key === "ArrowLeft") {
+          historyBack();
+        } else if (e.altKey && e.key === "ArrowRight") {
+          historyForward();
+        }
+      });
+    }
+
+    // --- Minimap ---
+    function parseViewBoxAttr(vb) {
+      if (!vb) return null;
+      const p = vb.split(/[,\s]+/).map(Number).filter(n => Number.isFinite(n));
+      if (p.length !== 4) return null;
+      return { x: p[0], y: p[1], width: p[2], height: p[3] };
+    }
+
+    function svgPointFromEvent(svg, ev) {
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return null;
+      return pt.matrixTransform(ctm.inverse());
+    }
+
+    function buildMinimap(mainSvg) {
+      minimapWrap.innerHTML = "";
+      // clone the SVG
+      const clone = mainSvg.cloneNode(true);
+      clone.removeAttribute("width");
+      clone.removeAttribute("height");
+      clone.style.background = "transparent";
+
+      // Ensure clone has a viewBox; viz usually sets it
+      const vb = parseViewBoxAttr(mainSvg.getAttribute("viewBox")) || parseViewBoxAttr(clone.getAttribute("viewBox"));
+      if (!vb) {
+        // if no viewBox, minimap is hard; still show clone without viewport rect
+        minimapWrap.appendChild(clone);
+        miniSvg = clone;
+        return;
+      }
+
+      // Make minimap show the full viewBox
+      clone.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.width} ${vb.height}`);
+      clone.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+      // Disable pointer events on all content; we handle clicks at svg level
+      clone.querySelectorAll("*").forEach(el => { el.style.pointerEvents = "none"; });
+
+      // Add viewport rect
+      const ns = "http://www.w3.org/2000/svg";
+      const rect = document.createElementNS(ns, "rect");
+      rect.setAttribute("class", "mini-viewport");
+      rect.setAttribute("x", vb.x);
+      rect.setAttribute("y", vb.y);
+      rect.setAttribute("width", vb.width);
+      rect.setAttribute("height", vb.height);
+      clone.appendChild(rect);
+
+      minimapWrap.appendChild(clone);
+      miniSvg = clone;
+      miniViewportRect = rect;
+
+      // Click to pan (Shift+Click zooms in a bit)
+      clone.addEventListener("click", (ev) => {
+        if (!panZoom) return;
+        const p = svgPointFromEvent(clone, ev);
+        if (!p) return;
+
+        const cur = (typeof panZoom.getViewBox === "function") ? panZoom.getViewBox() : null;
+        if (!cur) return;
+
+        const next = {
+          x: p.x - cur.width / 2,
+          y: p.y - cur.height / 2,
+          width: cur.width,
+          height: cur.height,
+        };
+
+        if (ev.shiftKey) {
+          // zoom in a bit around the clicked point
+          const z = panZoom.getZoom();
+          const nz = Math.min(30, z * 1.35);
+          panZoom.zoom(nz);
+          const cur2 = panZoom.getViewBox();
+          next.width = cur2.width;
+          next.height = cur2.height;
+          next.x = p.x - cur2.width / 2;
+          next.y = p.y - cur2.height / 2;
+        }
+
+        if (typeof panZoom.setViewBox === "function") {
+          panZoom.setViewBox(next.x, next.y, next.width, next.height);
+        } else {
+          // fallback: center() + panBy is less precise
+          panZoom.center();
+        }
+      });
+
+      // Keep viewport rect updated
+      const tick = () => {
+        if (panZoom && miniViewportRect && typeof panZoom.getViewBox === "function") {
+          const vbNow = panZoom.getViewBox();
+          miniViewportRect.setAttribute("x", vbNow.x);
+          miniViewportRect.setAttribute("y", vbNow.y);
+          miniViewportRect.setAttribute("width", vbNow.width);
+          miniViewportRect.setAttribute("height", vbNow.height);
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+
+    // --- History navigation ---
+    function historyBack() {
+      if (histIndex <= 0) return;
+      applyHistoryAt(histIndex - 1);
+    }
+    function historyForward() {
+      if (histIndex < 0 || histIndex >= history.length - 1) return;
+      applyHistoryAt(histIndex + 1);
+    }
+
+    async function renderDot(dot) {
+      clearGraph();
+
+      try {
+        viz = viz || new Viz({ workerURL: undefined });
+        const svgEl = await viz.renderSVGElement(dot);
+
+        svgEl.setAttribute("width", "100%");
+        svgEl.setAttribute("height", "100%");
+        svgEl.style.background = "transparent";
+
+        graphWrap.appendChild(svgEl);
+        indexSvg(svgEl);
+        installInteractivity(svgEl);
+        initPanZoom(svgEl);
+        buildMinimap(svgEl);
+
+        setStatus(true);
+        setDragMode(false);
+
+        // seed history with "none" so back works nicely after first selection
+        history.length = 0;
+        histIndex = -1;
+        pushHistory({ kind: "none" }, true);
+        updateHistoryButtons();
+      } catch (err) {
+        setStatus(false, err);
+        graphWrap.innerHTML = `
+          <div style="padding:16px;color:var(--danger);font-family:monospace;white-space:pre-wrap;">
+Render failed.\n\n${String(err)}
+          </div>`;
+      }
+    }
+
+    // --- Wire UI ---
+    searchBtn.addEventListener("click", runSearch);
+    clearSearchBtn.addEventListener("click", () => { clearSearchHits(); });
+    centerBtn.addEventListener("click", () => { if (panZoom) { panZoom.fit(); panZoom.center(); } });
+
+    clearSelBtn.addEventListener("click", clearSelection);
+    zoomSelBtn.addEventListener("click", zoomToSelection);
+
+    goTailBtn.addEventListener("click", goToTail);
+    goHeadBtn.addEventListener("click", goToHead);
+
+    modeToggleBtn.addEventListener("click", () => setDragMode(!dragMode));
+
+    fitBtn.addEventListener("click", () => { if (panZoom) { panZoom.fit(); panZoom.center(); } });
+    zoomInBtn.addEventListener("click", () => { if (panZoom) panZoom.zoomBy(1.2); });
+    zoomOutBtn.addEventListener("click", () => { if (panZoom) panZoom.zoomBy(0.8); });
+    resetBtn.addEventListener("click", () => {
+      if (!panZoom) return;
+      panZoom.resetZoom();
+      panZoom.center();
+    });
+    centerSelBtn.addEventListener("click", () => { if (selected.el) centerOnElement(selected.el, null); });
+
+    histBackBtn.addEventListener("click", historyBack);
+    histFwdBtn.addEventListener("click", historyForward);
+
+    // --- Start ---
+    renderDot(DOT_SRC);
+  </script>
+</body>
+</html>

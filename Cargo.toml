@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = ["crates/*"]
+
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+analyzer = { path = "crates/analyzer" }
+graphmock = { path = "crates/graphmock" }
+dot = { path = "crates/dot" }
+cfg = { path = "crates/cfg" }
+reader = { path = "crates/reader" }
+ir = { path = "crates/ir" }
+opt = { path = "crates/opt" }
+entity-utils = { path = "crates/entity-utils" }
+graphwalk = { path = "crates/graphwalk" }
+rsleigh = { path="../rsleigh" }
+
+cranelift-bitset = "0.112.2"
+cranelift-entity = "0.112.2"
+smallvec = { version = "1.13.2", default-features = false, features = [
+    "const_new",
+] }
+object = "0.38.1"
+
+petgraph = "0.8.3"
+thiserror = "2.0.18"
+itertools = { version = "0.13.0", default-features = false }
+expect-test = "1.5.0"
+

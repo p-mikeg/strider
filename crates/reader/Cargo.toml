@@ -1,0 +1,8 @@
+[package]
+name = "reader"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+object.workspace = true
+rsleigh.workspace = true

@@ -1,0 +1,297 @@
+#![no_std]
+
+extern crate alloc;
+
+use alloc::vec::Vec;
+use core::ops::ControlFlow;
+
+use cranelift_entity::EntityRef;
+use entity_utils::set::DenseEntitySet;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkPhase {
+    Pre,
+    Post,
+}
+
+pub trait GraphRef {
+    type NodeId: Copy;
+
+    fn try_successors(
+        &self,
+        node: Self::NodeId,
+        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()>;
+
+    fn successors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
+        let _ = self.try_successors(node, |succ| {
+            f(succ);
+            ControlFlow::Continue(())
+        });
+    }
+}
+
+impl<G: GraphRef> GraphRef for &'_ G {
+    type NodeId = G::NodeId;
+
+    fn try_successors(
+        &self,
+        node: Self::NodeId,
+        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        (*self).try_successors(node, f)
+    }
+}
+pub trait PredGraphRef: GraphRef {
+    fn try_predecessors(
+        &self,
+        node: Self::NodeId,
+        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()>;
+
+    fn predecessors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
+        let _ = self.try_predecessors(node, |pred| {
+            f(pred);
+            ControlFlow::Continue(())
+        });
+    }
+}
+
+impl<G: PredGraphRef> PredGraphRef for &'_ G {
+    fn try_predecessors(
+        &self,
+        node: Self::NodeId,
+        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        (*self).try_predecessors(node, f)
+    }
+}
+
+pub trait VisitTracker<N>: Default {
+    fn is_visited(&self, node: N) -> bool;
+    fn mark_visited(&mut self, node: N);
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct NopTracker;
+impl<N> VisitTracker<N> for NopTracker {
+    fn is_visited(&self, _node: N) -> bool {
+        false
+    }
+
+    fn mark_visited(&mut self, _node: N) {}
+}
+
+impl<N: EntityRef> VisitTracker<N> for DenseEntitySet<N> {
+    fn is_visited(&self, node: N) -> bool {
+        self.contains(node)
+    }
+
+    fn mark_visited(&mut self, node: N) {
+        self.insert(node);
+    }
+}
+
+#[derive(Debug)]
+pub struct PreOrderContext<N> {
+    stack: Vec<N>,
+}
+
+impl<N: Copy> PreOrderContext<N> {
+    pub fn new() -> Self {
+        Self { stack: Vec::new() }
+    }
+
+    pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
+        self.stack.clear();
+        self.stack.extend(roots);
+    }
+
+    pub fn next(
+        &mut self,
+        graph: impl GraphRef<NodeId = N>,
+        visited: &mut impl VisitTracker<N>,
+    ) -> Option<N> {
+        let node = loop {
+            let node = self.stack.pop()?;
+            if !visited.is_visited(node) {
+                break node;
+            }
+        };
+
+        visited.mark_visited(node);
+
+        graph.successors(node, |succ| {
+            // This extra check here is an optimization to avoid needlessly placing
+            // an obviously-visited node on to the stack. Even if the node is not
+            // visited now, it may be by the time it is popped off the stack later.
+            if !visited.is_visited(succ) {
+                self.stack.push(succ);
+            }
+        });
+
+        Some(node)
+    }
+}
+
+impl<N: Copy> Default for PreOrderContext<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct PreOrder<G: GraphRef, V> {
+    pub graph: G,
+    pub visited: V,
+    ctx: PreOrderContext<G::NodeId>,
+}
+
+impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
+    pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
+        let mut ctx = PreOrderContext::new();
+        ctx.reset(roots);
+        Self {
+            graph,
+            visited: V::default(),
+            ctx,
+        }
+    }
+}
+
+impl<G: GraphRef, V: VisitTracker<G::NodeId>> Iterator for PreOrder<G, V> {
+    type Item = G::NodeId;
+
+    fn next(&mut self) -> Option<G::NodeId> {
+        self.ctx.next(&self.graph, &mut self.visited)
+    }
+}
+
+pub fn entity_preorder<G: GraphRef>(
+    graph: G,
+    roots: impl IntoIterator<Item = G::NodeId>,
+) -> PreOrder<G, DenseEntitySet<G::NodeId>>
+where
+    G::NodeId: EntityRef,
+{
+    PreOrder::new(graph, roots)
+}
+
+pub type TreePreOrder<G> = PreOrder<G, NopTracker>;
+
+pub struct PostOrderContext<N> {
+    stack: Vec<(WalkPhase, N)>,
+}
+
+impl<N: Copy> PostOrderContext<N> {
+    pub fn new() -> Self {
+        Self { stack: Vec::new() }
+    }
+
+    pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
+        self.stack.clear();
+
+        // Note: push the roots onto the stack in source order so that this order is preserved in
+        // any RPO. Specifically, we want to guarantee that if `u` precedes `v` in `roots` and there
+        // isn't a path from `v` to `u` in the graph, then `u` will still precede `v` in any RPO
+        // obtained from this graph walk. Pushing the nodes onto the stack in order guarantees this,
+        // as it ensures that `v` is always visited before `u`.
+        //
+        // Some clients depend on this behavior: for example, the live-node RPO of a function graph
+        // should always start with its entry node, and the topological sort performed during
+        // scheduling is supposed to preserve block headers and terminators.
+        self.stack
+            .extend(roots.into_iter().map(|node| (WalkPhase::Pre, node)));
+    }
+
+    pub fn next(
+        &mut self,
+        graph: impl GraphRef<NodeId = N>,
+        visited: &mut impl VisitTracker<N>,
+    ) -> Option<N> {
+        loop {
+            let (phase, node) = self.next_event(&graph, visited)?;
+            if phase == WalkPhase::Post {
+                return Some(node);
+            }
+        }
+    }
+
+    pub fn next_event(
+        &mut self,
+        graph: impl GraphRef<NodeId = N>,
+        visited: &mut impl VisitTracker<N>,
+    ) -> Option<(WalkPhase, N)> {
+        loop {
+            let (phase, node) = self.stack.pop()?;
+            match phase {
+                WalkPhase::Pre => {
+                    if !visited.is_visited(node) {
+                        visited.mark_visited(node);
+                        self.stack.push((WalkPhase::Post, node));
+                        graph.successors(node, |succ| {
+                            // This extra check here is an optimization to avoid needlessly placing
+                            // an obviously-visited node on to the stack. Even if the node is not
+                            // visited now, it may be by the time it is popped off the stack later.
+                            if !visited.is_visited(succ) {
+                                self.stack.push((WalkPhase::Pre, succ));
+                            }
+                        });
+
+                        return Some((WalkPhase::Pre, node));
+                    }
+                }
+                WalkPhase::Post => {
+                    return Some((WalkPhase::Post, node));
+                }
+            }
+        }
+    }
+}
+
+impl<N: Copy> Default for PostOrderContext<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct PostOrder<G: GraphRef, V> {
+    pub graph: G,
+    pub visited: V,
+    ctx: PostOrderContext<G::NodeId>,
+}
+
+impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
+    pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
+        let mut ctx = PostOrderContext::new();
+        ctx.reset(roots);
+        Self {
+            graph,
+            visited: V::default(),
+            ctx,
+        }
+    }
+
+    pub fn next_event(&mut self) -> Option<(WalkPhase, G::NodeId)> {
+        self.ctx.next_event(&self.graph, &mut self.visited)
+    }
+}
+
+impl<G: GraphRef, V: VisitTracker<G::NodeId>> Iterator for PostOrder<G, V> {
+    type Item = G::NodeId;
+
+    fn next(&mut self) -> Option<G::NodeId> {
+        self.ctx.next(&self.graph, &mut self.visited)
+    }
+}
+
+pub fn entity_postorder<G: GraphRef>(
+    graph: G,
+    roots: impl IntoIterator<Item = G::NodeId>,
+) -> PostOrder<G, DenseEntitySet<G::NodeId>>
+where
+    G::NodeId: EntityRef,
+{
+    PostOrder::new(graph, roots)
+}
+
+pub type TreePostOrder<G> = PostOrder<G, NopTracker>;
