@@ -157,7 +157,11 @@ impl Graph {
 
 
      pub fn add_node_input(&mut self, node_id: NodeId, output_id: NodeOutputId) {
-        assert!(!self.node_kind(node_id).is_cacheable());
+        if self.node_kind(node_id).is_cacheable() {
+            println!("{:?}", self.nodes[node_id]);
+            assert!(false);
+
+        }
 
         // Get the last input index to know the index for the new input
         let input_index = self.nodes[node_id].inputs.len(&self.input_pool) as u32;

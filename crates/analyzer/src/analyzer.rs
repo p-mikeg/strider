@@ -1,6 +1,6 @@
 use std::{collections::HashMap};
 
-use ir::{BoolBuilderExt, IntBuilderExt, Builder};
+use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use rsleigh::Opcode;
 
 use crate::error::{Error, Result};
@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 pub struct IrAnalyzer<'a, R: rsleigh::MemReader> {
     pub(crate) analyzer: &'a Analyzer,
     pub(crate) builder: ir::FunctionBuilder,
-    pub(crate) region_to_block: HashMap<cfg::RegionId, ir::BlockId>,
+    pub(crate) region_to_block: HashMap<cfg::RegionId, ir::RegionId>,
     pub(crate) cfg: &'a cfg::Cfg<R>
 }
 
@@ -76,14 +76,14 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
 
     fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> ir::Value {
         let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
-        let curr_reg_val = self.builder.get_node_from_vn(&container_reg);
+        let curr_reg_val = self.builder.read_variable(&container_reg);
         let mut read_reg_val = curr_reg_val;
         if container_reg != *reg {
             // We need to shift the value if it is in the middle of a register
             let shift_value =  self.calculate_reg_shift_from_container(reg, &container_reg);
             if shift_value != 0 {
                 let shift_const = self.builder.build_int_const(shift_value, container_reg.size.into());
-                read_reg_val = self.builder.build_int_shift_right(curr_reg_val, shift_const, reg.size.into())
+                read_reg_val = self.builder.build_int_binary_operation(curr_reg_val, shift_const, IntBinaryOp::ShiftRight,reg.size.into())
             }
         }
 
@@ -93,10 +93,10 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) {
         let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
         if container_reg == *reg {
-            self.builder.update_var(reg, val);
+            self.builder.write_variable(reg, val);
             return;
         }
-        let container_reg_val = self.builder.get_node_from_vn(&container_reg);
+        let container_reg_val = self.builder.read_variable(&container_reg);
 
 
         // The register is in the part of a bigger container
@@ -104,24 +104,30 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
 
         // Calculate the shifted value that should be in the reg inside the container
         let shifted_value = if shift_bits == 0 {
-            self.builder.build_int_zextend(val, container_reg.size.into())
+            self.builder.extend_if_needed(val, container_reg.size.into(), ExtendOp::ZeroExtend)
         } else {
             let shift_const = self.builder.build_int_const(shift_bits, container_reg.size.into());
-            self.builder.build_int_shift_left(val, shift_const, reg.size.into())
+            self.builder.build_int_binary_operation(
+                val, shift_const, IntBinaryOp::ShiftLeft, reg.size.into())
+
         };
 
         // Calculate the masked value of the reg in the container
         let reg_mask = crate::utils::vn_mask(reg);
         let reg_mask_val = self.builder.build_int_const(reg_mask, container_reg.size.into());
-        let reg_val = self.builder.build_int_and(reg_mask_val, shifted_value, container_reg.size.into());
+        let reg_val = self.builder.build_int_binary_operation(
+            reg_mask_val, shifted_value, IntBinaryOp::And, container_reg.size.into());
+
 
         // Calculate the rest of the container
         let container_mask = crate::utils::vn_mask(&container_reg) & (!reg_mask);
         let container_mask_val = self.builder.build_int_const(container_mask, container_reg.size.into());
-        let container_val = self.builder.build_int_and(container_mask_val, container_reg_val, container_reg.size.into());
+        let container_val = self.builder.build_int_binary_operation(
+            container_mask_val, container_reg_val, IntBinaryOp::And,container_reg.size.into());
         
         // Merge the containers
-        let final_container_value = self.builder.build_int_or(container_val, reg_val, container_reg.size.into());
+        let final_container_value = self.builder.build_int_binary_operation(
+            container_val, reg_val, IntBinaryOp::Or, container_reg.size.into());
         self.write_reg_vn(&container_reg, final_container_value);
     }
 
@@ -130,7 +136,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         let space = vn.addr.space;
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr.off, vn.size.into()),
-            rsleigh::VnSpace::UNIQUE => self.builder.get_node_from_vn(vn),
+            rsleigh::VnSpace::UNIQUE => self.builder.read_variable(vn),
             space if space == default_code_space => {
                 let space_info = self.cfg.sleigh.space_info(space);
                 let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().into());
@@ -146,7 +152,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         let space = vn.addr.space;
         match space {
             rsleigh::VnSpace::CONST => unreachable!(),
-            rsleigh::VnSpace::UNIQUE => self.builder.update_var(&vn, val),
+            rsleigh::VnSpace::UNIQUE => self.builder.write_variable(&vn, val),
             space if space == default_code_space => {
                 let space_info = self.cfg.sleigh.space_info(space);
                 let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().into());
@@ -161,148 +167,117 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.builder.build_entry()
     }
 
-    fn create_ir_blocks(&mut self) {
+    fn create_ir_regions(&mut self) {
         // Clear state if there was something previously
         self.region_to_block.clear();
         for region_id in self.cfg.region_ids() {
-            self.region_to_block.insert(region_id, self.builder.create_block());
+            self.region_to_block.insert(region_id, self.builder.create_region());
         }
     }
 
-    fn set_ir_entry_block(&mut self) -> Result<()>{
+    fn set_ir_entry_region(&mut self) -> Result<()>{
         let entry_block = self.region_to_block.get(&self.cfg.entry).ok_or(Error::CfgNoRegion(self.cfg.entry))?;
-        self.builder.set_entry_block(*entry_block);
+        self.builder.set_entry_region(*entry_block);
         Ok(())
     }
 
-    fn iterate_region_block(&self) -> impl Iterator<Item = (cfg::RegionId, ir::BlockId)> {
+    fn iterate_region_block(&self) -> impl Iterator<Item = (cfg::RegionId, ir::RegionId)> {
         self.region_to_block.iter().map(|(k, v)| (*k, *v))
     }
 
-    fn set_curr_ir_block(&mut self, block: ir::BlockId) {
-        self.builder.set_block(block);
+    fn set_curr_ir_region(&mut self, region: ir::RegionId) {
+        self.builder.set_region(region);
     }
 
     fn region_insn(&mut self, region_id: cfg::RegionId) -> Result<Vec<rsleigh::Insn>> {
         self.cfg.region_insn(region_id).map_err(|e| Error::CfgError(e))
     }
 
-    fn process_unary_op(&mut self, insn: &rsleigh::Insn, 
-        mut f: impl FnMut(&mut ir::FunctionBuilder, ir::Value, ir::ValueType) -> ir::Value,
-    ) {
+    fn process_int_unary_op(&mut self, insn: &rsleigh::Insn, op: IntUnaryOp) {
         let input = self.read_vn(&insn.inputs[0]);
-        let out_vn = insn.output.as_ref().expect("binary op must have an output");
-        let out = f(&mut self.builder, input, out_vn.size.into());
+        let out_vn = insn.output.as_ref().expect("int unary op must have an output");
+        let out = self.builder.build_int_unary_operation(input, op, out_vn.size.into());
         self.write_vn(out_vn, out);
     }
 
-    fn process_binary_op(&mut self, insn: &rsleigh::Insn, 
-        mut f: impl FnMut(&mut ir::FunctionBuilder, ir::Value, ir::Value, ir::ValueType) -> ir::Value,
-    ) {
+    fn process_int_binary_op(&mut self, insn: &rsleigh::Insn, op: IntBinaryOp) {
         let lhs = self.read_vn(&insn.inputs[0]);
         let rhs = self.read_vn(&insn.inputs[1]);
         let out_vn = insn.output.as_ref().expect("binary op must have an output");
-        let out = f(&mut self.builder, lhs, rhs, out_vn.size.into());
+        let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_vn.size.into());
+        self.write_vn(out_vn, out);
+    }
+
+    fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) {
+        let lhs = self.read_vn(&insn.inputs[0]);
+        let rhs = self.read_vn(&insn.inputs[1]);
+        let out_vn = insn.output.as_ref().expect("binary op must have an output");
+        let out = self.builder.build_int_cmp_operation(lhs, rhs, op, out_vn.size.into());
+        self.write_vn(out_vn, out);
+    }
+
+    fn process_bool_binary_op(&mut self, insn: &rsleigh::Insn, op: BoolBinaryOp) {
+        let lhs = self.read_vn(&insn.inputs[0]);
+        let rhs = self.read_vn(&insn.inputs[1]);
+        let out_vn = insn.output.as_ref().expect("binary op must have an output");
+        let out = self.builder.build_boolean_operation(lhs, rhs, op);
+        self.write_vn(out_vn, out);
+    }
+
+    fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn, op: BoolUnaryOp) {
+        let input = self.read_vn(&insn.inputs[0]);
+        let out_vn = insn.output.as_ref().expect("unary op must have an output");
+        let out = self.builder.build_boolean_unary_operation(input, op);
+        self.write_vn(out_vn, out);
+    }
+
+    fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) {
+        let input = self.read_vn(&insn.inputs[0]);
+        let out_vn = insn.output.as_ref().expect("extend op must have an output");
+        let out = self.builder.extend_if_needed(input, out_vn.size.into(), op);
         self.write_vn(out_vn, out);
     }
 
     fn process_insn(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn) {
         match insn.opcode {
             Opcode::Nop => (),
-            Opcode::BoolNeg => self.process_unary_op(insn, 
-                |builder, a, _size| builder.build_boolean_neg(a) 
-            ),
-            Opcode::BoolAnd => self.process_binary_op(insn, 
-                |builder, a, b, _size| builder.build_boolean_and(a, b) 
-            ),
-            Opcode::BoolOr => self.process_binary_op(insn, 
-                |builder, a, b, _size| builder.build_boolean_or(a, b) 
-            ),
-            Opcode::BoolXor => self.process_binary_op(insn, 
-                |builder, a, b, _size| builder.build_boolean_xor(a, b) 
-            ),
-            Opcode::Int2Comp => self.process_unary_op(insn, 
-                |builder, a, size| builder.build_int_not(a, size) 
-            ),
-            Opcode::IntNeg => self.process_unary_op(insn, 
-                |builder, a, size| builder.build_int_neg(a, size) 
-            ),
-            Opcode::IntAdd => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_add(a, b, size) 
-            ),
-            Opcode::IntAnd => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_and(a, b, size) 
-            ),
-            Opcode::IntXor => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_xor(a, b, size) 
-            ),
-            Opcode::IntOr => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_or(a, b, size) 
-            ),
-            Opcode::IntDiv => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_div(a, b, size) 
-            ),
-            Opcode::IntSdiv => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sdiv(a, b, size) 
-            ),
-            Opcode::IntMul => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_mul(a, b, size) 
-            ),
-            Opcode::IntRight => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_shift_right(a, b, size) 
-            ),
-            Opcode::IntSright => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sshift_right(a, b, size) 
-            ),
-            Opcode::IntLeft => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_shift_left(a, b, size) 
-            ),
-            Opcode::IntCarry => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_carry(a, b, size) 
-            ),
-            Opcode::IntEqual => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_equal(a, b, size) 
-            ),
-            Opcode::IntLess => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_less(a, b, size) 
-            ),
-            Opcode::IntSless => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sless(a, b, size) 
-            ),
-            Opcode::IntLessEqual => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_less_equal(a, b, size) 
-            ),
-            Opcode::IntRem => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_rem(a, b, size) 
-            ),
-            Opcode::IntSrem => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_srem(a, b, size) 
-            ),
-            Opcode::IntScarry => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_scarry(a, b, size) 
-            ),
-            Opcode::IntSborrow => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sborrow(a, b, size) 
-            ),
-            Opcode::IntSlessEqual => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sless_equal(a, b, size) 
-            ),
-            Opcode::IntSub => self.process_binary_op(insn, 
-                |builder, a, b, size| builder.build_int_sub(a, b, size) 
-            ),
-            Opcode::IntSext => self.process_unary_op(insn, 
-                |builder, a, size| builder.build_int_sextend(a, size) 
-            ),
-            Opcode::IntZext => self.process_unary_op(insn, 
-                |builder, a, size| builder.build_int_zextend(a, size) 
-            ),
+            Opcode::BoolNeg => self.process_bool_unary_op(insn, BoolUnaryOp::Neg),
+            Opcode::BoolAnd => self.process_bool_binary_op(insn, BoolBinaryOp::And),
+            Opcode::BoolOr => self.process_bool_binary_op(insn, BoolBinaryOp::Or),
+            Opcode::BoolXor => self.process_bool_binary_op(insn, BoolBinaryOp::Xor),
+            Opcode::Int2Comp => self.process_int_unary_op(insn, IntUnaryOp::Not),
+            Opcode::IntNeg => self.process_int_unary_op(insn, IntUnaryOp::Neg),
+            Opcode::IntAdd => self.process_int_binary_op(insn, IntBinaryOp::Add),
+            Opcode::IntAnd => self.process_int_binary_op(insn, IntBinaryOp::And),
+            Opcode::IntXor => self.process_int_binary_op(insn, IntBinaryOp::Xor),
+            Opcode::IntOr => self.process_int_binary_op(insn, IntBinaryOp::Or),
+            Opcode::IntDiv => self.process_int_binary_op(insn, IntBinaryOp::Div),
+            Opcode::IntSdiv => self.process_int_binary_op(insn, IntBinaryOp::Sdiv),
+            Opcode::IntMul => self.process_int_binary_op(insn, IntBinaryOp::Mul),
+            Opcode::IntRight => self.process_int_binary_op(insn, IntBinaryOp::ShiftRight),
+            Opcode::IntSright => self.process_int_binary_op(insn, IntBinaryOp::SShiftRight),
+            Opcode::IntLeft => self.process_int_binary_op(insn, IntBinaryOp::ShiftLeft),
+            Opcode::IntCarry => self.process_int_cmp_op(insn, IntCmpOp::Carry),
+            Opcode::IntEqual => self.process_int_cmp_op(insn, IntCmpOp::Equal),
+            Opcode::IntLess => self.process_int_cmp_op(insn, IntCmpOp::Less),
+            Opcode::IntSless => self.process_int_cmp_op(insn, IntCmpOp::Sless),
+            Opcode::IntLessEqual => self.process_int_cmp_op(insn, IntCmpOp::LessEqual),
+            Opcode::IntRem => self.process_int_binary_op(insn, IntBinaryOp::Rem),
+            Opcode::IntSrem => self.process_int_binary_op(insn, IntBinaryOp::Srem),
+            Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry),
+            Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow),
+            Opcode::IntSlessEqual =>self.process_int_cmp_op(insn, IntCmpOp::SlessEqual),
+            Opcode::IntSub => self.process_int_binary_op(insn, IntBinaryOp::Sub),
+            Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend),
+            Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend),
             Opcode::IntNotEqual => {
                 // We treat not equal as neg(equal) for determenstic results
                 let lhs = self.read_vn(&insn.inputs[0]);
                 let rhs = self.read_vn(&insn.inputs[1]);
                 let out_vn = insn.output.as_ref().expect("binary op must have an output");
-                let and_out = self.builder.build_int_and(lhs, rhs, out_vn.size.into());
-                let out = self.builder.build_boolean_neg(and_out);
+                // TODO: is this the correct type here? or in general for cmps
+                let and_out = self.builder.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, out_vn.size.into());
+                let out = self.builder.build_boolean_unary_operation(and_out, BoolUnaryOp::Neg);
                 self.write_vn(out_vn, out);
             },
             Opcode::Branch => {
@@ -349,10 +324,11 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                 }
             },
             Opcode::Popcount => {
-                let input = self.read_vn(&insn.inputs[0]);
-                let out = self.builder.build_int_popcount(input, insn.inputs[0].size.into());
-                let out_vn = insn.output.as_ref().expect("popcount op must have an output");
-                self.write_vn(out_vn, out);
+                println!("implement popcount");
+                // let input = self.read_vn(&insn.inputs[0]);
+                // let out = self.builder.build_int_unary_operation(input, insn.inputs[0].size.into());
+                // let out_vn = insn.output.as_ref().expect("popcount op must have an output");
+                // self.write_vn(out_vn, out);
             }
             Opcode::Call | Opcode::CallIndirect => {
                 let call_address = self.read_vn(&insn.inputs[0]);
@@ -394,24 +370,24 @@ impl Analyzer {
         all_vns.iter().copied().collect()
     }
 
-    pub fn analyze_cfg<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Result<ir::FunctionBody>{
+    pub fn analyze_cfg<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Result<ir::BuiltFunctionGraph>{
         let mut ir_analyzer = IrAnalyzer::new(self, cfg);
 
         // Build the entry for the graph
         ir_analyzer.build_entry();
 
         // Create all ir blocks
-        ir_analyzer.create_ir_blocks();
+        ir_analyzer.create_ir_regions();
 
         // Set entry block
-        ir_analyzer.set_ir_entry_block()?;
+        ir_analyzer.set_ir_entry_region()?;
 
         let region_blocks: Vec<_> = ir_analyzer.iterate_region_block().collect();
         let fallthroughs: Vec<_> = cfg.iterate_fallthroughs().collect();
 
         // process instructions
         for (region_id, block_id) in region_blocks {
-            ir_analyzer.set_curr_ir_block(block_id);
+            ir_analyzer.set_curr_ir_region(block_id);
             let insns = ir_analyzer.region_insn(region_id)?;
 
             for insn in insns {
@@ -423,8 +399,8 @@ impl Analyzer {
         for (region_parent_id, region_child_id) in fallthroughs {
             let block_parent_id = ir_analyzer.region_to_block.get(&region_parent_id).unwrap();
             let block_child_id = ir_analyzer.region_to_block.get(&region_child_id).unwrap();
-            ir_analyzer.builder.link_blocks(*block_parent_id, *block_child_id);
+            ir_analyzer.builder.link_regions(*block_parent_id, *block_child_id);
         }
-        Ok(ir_analyzer.builder.body().to_owned())
+        Ok(ir_analyzer.builder.build())
     }
 }

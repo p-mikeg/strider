@@ -4,8 +4,6 @@ use cranelift_entity::{
     EntityList, entity_impl, packed_option::PackedOption,
 };
 
-use crate::builder_ext::{bool::{BoolBinaryOpKind, BoolUnaryOpKind}, int::{ExtendOpKind, IntBinaryOpKind, IntCmpKind, IntUnaryOpKind}};
-
 // This basic structure represents a unique Node struct
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
@@ -230,7 +228,6 @@ impl NodeInput {
     }
 }
 
-pub type Var = rsleigh::Vn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -260,18 +257,18 @@ pub enum NodeKind {
 
     // int operations
     IntConst(u64),
-    IntUnaryOp(IntUnaryOpKind),
-    IntBinaryOp(IntBinaryOpKind),
-    IntCmpOp(IntCmpKind),
+    IntUnaryOp(crate::ops::IntUnaryOp),
+    IntBinaryOp(crate::ops::IntBinaryOp),
+    IntCmpOp(crate::ops::IntCmpOp),
     CastToInt,
     Truncate,
     Popcount,
-    Extend(ExtendOpKind),
+    Extend(crate::ops::ExtendOp),
 
     // Bool operations
     BoolConst(bool),
-    BoolUnaryOp(BoolUnaryOpKind),
-    BoolBinaryOp(BoolBinaryOpKind),
+    BoolUnaryOp(crate::ops::BoolUnaryOp),
+    BoolBinaryOp(crate::ops::BoolBinaryOp),
     CastToBool,
 
     // Float operations
@@ -329,7 +326,6 @@ impl NodeKind {
                 | Self::Return
 
                 | Self::ControlState
-                | Self::PostCallMemState
 
                 | Self::MemSelector
                 | Self::ControlSelector(..)

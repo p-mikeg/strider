@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
-    let mut function = analyzer.analyze_cfg(&cfg)?;
+    let function = analyzer.analyze_cfg(&cfg)?;
 
 
     let dot = dot::GraphDot::new(
@@ -42,17 +42,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_html("graph.html")?;
     dot.dump_as_dot("graph.dot")?;
 
-    let mut optimizer = opt::OptimizerPipeline::new();
-    optimizer.add(opt::RedundantSelectors);
-    optimizer.run(&mut function);
+    // let mut optimizer = opt::OptimizerPipeline::new();
+    // optimizer.add(opt::RedundantSelectors);
+    // optimizer.run(&mut function);
 
-        let dot = dot::GraphDot::new(
-        function.dot_dumper(&cfg.sleigh),
-        dot::DotStyle::dark(),
-    );
-    println!("dumping\n");
+    //     let dot = dot::GraphDot::new(
+    //     function.dot_dumper(&cfg.sleigh),
+    //     dot::DotStyle::dark(),
+    // );
+    // println!("dumping\n");
 
-    dot.dump_as_html("graph_after.html")?;
-    dot.dump_as_dot("graph_after.dot")?;
+    // dot.dump_as_html("graph_after.html")?;
+    // dot.dump_as_dot("graph_after.dot")?;
     Ok(())
 }
