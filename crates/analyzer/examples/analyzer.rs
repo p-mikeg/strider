@@ -35,12 +35,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
-    let function = analyzer.analyze_cfg(&cfg)?;
+    let mut function = analyzer.analyze_cfg(&cfg)?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
     println!("dumping IR graph...");
     std::fs::write("graph.html", dot.as_html_from_svg()?)?;
     dot.dump_as_dot("graph.dot")?;
+
+    opt::default_pipeline().run(&mut function);
+
+    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
+    println!("dumping opt IR graph...");
+    std::fs::write("graph-opt.html", dot.as_html_from_svg()?)?;
+    dot.dump_as_dot("graph-opt.dot")?;
 
     Ok(())
 }
