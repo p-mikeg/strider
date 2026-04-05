@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::opt::{OptimizationResult, Optimizer};
 
-fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) -> OptimizationResult {
+fn remove_selectors(function: &mut ir::BuiltFunctionGraph, node_id: ir::node::NodeId) -> OptimizationResult {
     match function.graph.node_kind(node_id) {
         ir::node::NodeKind::ControlSelector(..) => {
             let inputs: HashSet<_> = function.graph.node_inputs(node_id).into_iter().collect();
@@ -11,7 +11,7 @@ fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) 
                 return OptimizationResult::NoChange;
             }
             let input = function.graph.node_inputs(node_id)[1];
-            let [output] = function.graph.node_outputs_exact(node_id);
+            let [output] = function.graph.node_outputs_exact::<1>(node_id);
             
             let mut cursor = function.graph.output_use_cursor(output);
             while let Some((_, _)) = cursor.current() {
@@ -27,7 +27,7 @@ fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) 
                 return OptimizationResult::NoChange;
             }
             let input = function.graph.node_inputs(node_id)[0];
-            let [output] = function.graph.node_outputs_exact(node_id);
+            let [output] = function.graph.node_outputs_exact::<1>(node_id);
             
             let mut cursor = function.graph.output_use_cursor(output);
             while let Some((_, _)) = cursor.current() {
@@ -41,7 +41,7 @@ fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) 
             if node_inputs.len() != 1 {
                 return OptimizationResult::NoChange;
             }
-            let [output, selector] = function.graph.node_outputs_exact(node_id);
+            let [output, selector] = function.graph.node_outputs_exact::<2>(node_id);
             let inputs: Vec<_> = function.graph.output_uses(selector).into_iter().collect();
             // More than 1 input for this selector
             if inputs.len() > 0 {
@@ -51,7 +51,7 @@ fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) 
             if node_inputs.len() != 1 {
                 return OptimizationResult::NoChange;
             }
-            let [input] = function.graph.node_inputs_exact(node_id);
+            let [input] = function.graph.node_inputs_exact::<1>(node_id);
             
             let mut cursor = function.graph.output_use_cursor(output);
             while let Some((_, _)) = cursor.current() {
@@ -67,7 +67,7 @@ fn remove_selectors(function: &mut ir::FunctionBody, node_id: ir::node::NodeId) 
 pub struct RedundantSelectors;
 
 impl Optimizer for RedundantSelectors {
-    fn optimize(&self, function: &mut ir::FunctionBody) -> OptimizationResult {
+    fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> OptimizationResult {
         let mut res = OptimizationResult::NoChange;
         let graph_nodes: Vec<_> = function.preorder().collect();
         for node_id in graph_nodes {

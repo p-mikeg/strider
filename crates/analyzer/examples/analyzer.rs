@@ -1,58 +1,46 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let buf = include_bytes!("../../../binary_tests/binary").to_vec();
-    let reader = rsleigh::mem_readers::BufMemReader::new(buf, 0x0);
+    let binary_path = "binary_tests/a.out";
 
-    // let obj = reader::load_elf("binary_tests/vmlinux");
+    let obj = reader::load_elf(binary_path);
 
-    // let reader: reader::ElfFileMemReader<'_, '_> = reader::ElfFileMemReader::from_elf_segments(&obj).expect("");
+    // Build a short-lived ELF reader for the Sleigh context.
+    let data: Vec<u8> = std::fs::read(binary_path)?;
+    let data = Box::leak(data.into_boxed_slice());
+    let parsed = object::File::parse(&*data)?;
+    let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)
+        .expect("failed to build ELF section reader");
 
     let arch = analyzer::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)?;
-    let analyzer = analyzer::Analyzer::new(arch, sleigh.regs()?, analyzer::CallingConvention::x86_64_systemv_abi())?;
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
+    let analyzer = analyzer::Analyzer::new(
+        arch,
+        sleigh.regs()?,
+        analyzer::CallingConvention::x86_64_systemv_abi(),
+    )?;
 
-    let regs = sleigh.regs()?;
-    for reg in regs.iter() {
-        if reg.vn.size > 16 {
-            println!("{} {}", reg.name, reg.vn.size);
-        }
-    }
+    let cfg_options = cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .build();
 
-    let cfg_options = cfg::OptionsBuilder::new().allow_code_before_start_addr().build();
-    let addr = 0; // obj.symbol_by_name("update_srbds_msr").expect("msg").address();
+    let addr = obj
+        .symbol_by_name("fib")
+        .expect("'main' symbol not found in binary")
+        .address();
+
     let cfg = cfg::Builder::new(sleigh, addr, cfg_options).build()?;
-    let dot = dot::GraphDot::new(
-        cfg.dot_dumper(),
-        dot::DotStyle::dark(),
-    );
 
+    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark());
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
     let function = analyzer.analyze_cfg(&cfg)?;
 
-
-    let dot = dot::GraphDot::new(
-        function.dot_dumper(&cfg.sleigh),
-        dot::DotStyle::dark(),
-    );
-    println!("dumping\n");
-
-    dot.dump_as_html("graph.html")?;
+    let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
+    println!("dumping IR graph...");
+    std::fs::write("graph.html", dot.as_html_from_svg()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    // let mut optimizer = opt::OptimizerPipeline::new();
-    // optimizer.add(opt::RedundantSelectors);
-    // optimizer.run(&mut function);
-
-    //     let dot = dot::GraphDot::new(
-    //     function.dot_dumper(&cfg.sleigh),
-    //     dot::DotStyle::dark(),
-    // );
-    // println!("dumping\n");
-
-    // dot.dump_as_html("graph_after.html")?;
-    // dot.dump_as_dot("graph_after.dot")?;
     Ok(())
 }

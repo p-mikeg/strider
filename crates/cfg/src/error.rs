@@ -38,7 +38,13 @@ pub enum Error {
     FormatError(#[from] core::fmt::Error),
 
     #[error("invalid region index {0:?}")]
-    InvalidRegion(NodeIndex)
+    InvalidRegion(NodeIndex),
+
+    #[error("region {0:?} has more than one outgoing edge of kind {1:?}")]
+    DuplicateEdgeKind(NodeIndex, crate::cfg::RegionEdgeKind),
+
+    #[error("non-entry work-queue item has no parent edge")]
+    MissingParentEdge
 }
 
 /// the result type using our error.

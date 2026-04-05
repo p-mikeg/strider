@@ -1,12 +1,11 @@
 [package]
-name = "reader"
+name = "pattern"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-object.workspace = true
+ir.workspace = true
 rsleigh.workspace = true
-thiserror.workspace = true
 
 [dev-dependencies]
-object.workspace = true
+rsleigh.workspace = true

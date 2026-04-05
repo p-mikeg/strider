@@ -18,6 +18,7 @@ pub type Result<T,E> = std::result::Result<T, Error<E>>;
 
 
 const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
+const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
 pub trait GraphDotDumper {
     type Node;
@@ -215,6 +216,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     pub fn as_html_from_svg(&self) -> Result<String, G::Error> {
         Ok(HTML_SVG_TEMPLATE.replace("__SVG__", &self.as_svg()?))
+    }
+
+    pub fn as_html_from_dot(&self) -> Result<String, G::Error> {
+        Ok(HTML_DOT_TEMPLATE.replace("__DOT__", &self.as_dot()?))
     }
 
     pub fn dump_as_html(&self, out_path: &str) -> Result<(), G::Error> {

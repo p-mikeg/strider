@@ -12,3 +12,5 @@ cfg.workspace = true
 # opt.workspace = true
 reader.workspace = true
 object.workspace = true
+
+[dev-dependencies]

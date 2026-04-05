@@ -8,3 +8,8 @@ thiserror.workspace = true
 petgraph.workspace = true
 rsleigh.workspace = true
 dot.workspace = true
+
+[dev-dependencies]
+reader.workspace = true
+object.workspace = true
+petgraph.workspace = true

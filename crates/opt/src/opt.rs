@@ -30,7 +30,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 }
 
 pub trait Optimizer {
-    fn optimize(&self, function: &mut ir::FunctionBody) -> OptimizationResult;
+    fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> OptimizationResult;
 }
 
 pub struct OptimizerPipeline {
@@ -48,7 +48,7 @@ impl OptimizerPipeline {
         self.optimizers.push(Box::new(opt));
     }
 
-    pub fn run(&self, graph: &mut ir::FunctionBody) {
+    pub fn run(&self, graph: &mut ir::BuiltFunctionGraph) {
         loop {
             let mut changed = false;
 

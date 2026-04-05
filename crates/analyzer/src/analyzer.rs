@@ -6,6 +6,12 @@ use rsleigh::Opcode;
 use crate::error::{Error, Result};
 
 
+/// Per-function translation context that converts a [`cfg::Cfg`] into an IR
+/// graph region by region.
+///
+/// Holds a reference to the shared [`Analyzer`] (register / calling-convention
+/// information), a fresh [`ir::FunctionBuilder`], and a mapping from CFG
+/// region ids to IR region ids.
 pub struct IrAnalyzer<'a, R: rsleigh::MemReader> {
     pub(crate) analyzer: &'a Analyzer,
     pub(crate) builder: ir::FunctionBuilder,
@@ -15,12 +21,20 @@ pub struct IrAnalyzer<'a, R: rsleigh::MemReader> {
 
 impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
 
+    /// Creates a new `IrAnalyzer` for the given CFG.
+    ///
+    /// Collects all unique varnodes referenced by any instruction in `cfg`,
+    /// constructs the IR [`FunctionBuilder`] with calling-convention
+    /// information from `analyzer`, and initialises an empty region map.
     fn new(analyzer: &'a Analyzer, cfg: &'a cfg::Cfg<R>) -> Self {
         // Find all variables
         let all_vns = analyzer.find_all_unique_vns(cfg);
-    
+
         // Create the builder to create the ir graph
-        let builder = ir::FunctionBuilder::new(all_vns);
+        let builder = ir::FunctionBuilder::new(all_vns,
+                    &analyzer.calling_convention.arg_passing_regs,
+                    &analyzer.calling_convention.callee_saved_regs,
+                &analyzer.calling_convention.ret_val_regs);
 
         Self {
             analyzer,
@@ -30,8 +44,15 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         }
     }
 
-    // The problem with choosing a register to load / store is that some of them are contained in other
-    // for example al,ah in rax - we want to always return rax and then trunc it to the correct mask
+    /// Finds the largest architectural register that fully contains `reg`.
+    ///
+    /// For example, given `al` (offset 0, size 1) this returns `rax`
+    /// (offset 0, size 8) because x86 reads/writes to `al` always go through
+    /// `rax`.  The returned register is the widest one in the variable set
+    /// that completely covers `reg`'s byte range.
+    ///
+    /// Returns `None` only if no variable in the builder covers the range,
+    /// which should never happen because a register must cover itself.
     fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
         assert_eq!(reg.addr.space, rsleigh::VnSpace::REGISTER);
         let reg_start = reg.addr.off;
@@ -53,7 +74,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
             // We know now that the reg is contained by sleigh reg
             if let Some(reg_container) = largest_reg_container {
                 // If the current container is larger - choose it
-                if reg_container.size < sleigh_reg.size { 
+                if reg_container.size < sleigh_reg.size {
                     largest_reg_container = Some(*sleigh_reg);
                 }
             } else {
@@ -63,6 +84,13 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         largest_reg_container
     }
 
+    /// Computes the bit-shift needed to move `reg`'s bits to/from their
+    /// position inside `container_reg`.
+    ///
+    /// For little-endian architectures the shift is simply
+    /// `8 * (reg.off − container.off)`.  For big-endian the shift accounts
+    /// for the container's total size so that the most-significant byte comes
+    /// first.
     fn calculate_reg_shift_from_container(&self, reg: &rsleigh::Vn, container_reg: &rsleigh::Vn) -> u64 {
         match self.analyzer.arch.endianess {
             crate::arch::Endianess::Little => {
@@ -74,6 +102,12 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         }
     }
 
+    /// Emits IR nodes to read the value of a register varnode.
+    ///
+    /// If `reg` is a sub-register (e.g. `al` inside `rax`) the method reads
+    /// the container register and inserts a right-shift to extract the
+    /// relevant bits.  If `reg` is already the container (or is its own
+    /// largest container) the value is returned directly.
     fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> ir::Value {
         let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
         let curr_reg_val = self.builder.read_variable(&container_reg);
@@ -90,6 +124,15 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         read_reg_val
     }
 
+    /// Emits IR nodes to write `val` into a register varnode.
+    ///
+    /// If `reg` is a sub-register the method:
+    /// 1. Reads the current container value.
+    /// 2. Shifts and masks `val` into the correct bit range.
+    /// 3. Masks out the old bits of `reg` inside the container.
+    /// 4. ORs the two together and writes back to the container.
+    ///
+    /// If `reg` is equal to its own container the write is direct.
     fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) {
         let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
         if container_reg == *reg {
@@ -124,13 +167,20 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         let container_mask_val = self.builder.build_int_const(container_mask, container_reg.size.into());
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val, container_reg_val, IntBinaryOp::And,container_reg.size.into());
-        
+
         // Merge the containers
         let final_container_value = self.builder.build_int_binary_operation(
             container_val, reg_val, IntBinaryOp::Or, container_reg.size.into());
         self.write_reg_vn(&container_reg, final_container_value);
     }
 
+    /// Reads any varnode into an IR value.
+    ///
+    /// Dispatches based on the varnode's address space:
+    /// - `CONST` → an integer constant node.
+    /// - `UNIQUE` → read the SSA variable directly.
+    /// - default code space → a [`NodeKind::Load`] from the code address space.
+    /// - `REGISTER` → delegates to [`read_reg_vn`] for aliasing handling.
     fn read_vn(&mut self, vn: &rsleigh::Vn) -> ir::Value {
         let default_code_space = self.cfg.sleigh.default_code_space();
         let space = vn.addr.space;
@@ -147,6 +197,13 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         }
     }
 
+    /// Writes an IR value into any writable varnode.
+    ///
+    /// Dispatches based on the varnode's address space:
+    /// - `CONST` → unreachable (constants cannot be written).
+    /// - `UNIQUE` → write the SSA variable directly.
+    /// - default code space → a [`NodeKind::Store`] to the code address space.
+    /// - `REGISTER` → delegates to [`write_reg_vn`] for aliasing handling.
     fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) {
         let default_code_space = self.cfg.sleigh.default_code_space();
         let space = vn.addr.space;
@@ -163,10 +220,13 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         }
     }
 
+    /// Emits the function entry node into the IR graph.
     fn build_entry(&mut self) {
         self.builder.build_entry()
     }
 
+    /// Creates one IR region for every CFG region and stores the mapping in
+    /// `region_to_block`.  Any previous mapping is cleared first.
     fn create_ir_regions(&mut self) {
         // Clear state if there was something previously
         self.region_to_block.clear();
@@ -175,24 +235,38 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         }
     }
 
+    /// Marks the IR region that corresponds to the CFG's entry region as the
+    /// function entry point.
+    ///
+    /// Returns an error if the CFG entry region has no corresponding IR region
+    /// (i.e. [`create_ir_regions`] was not called first).
     fn set_ir_entry_region(&mut self) -> Result<()>{
         let entry_block = self.region_to_block.get(&self.cfg.entry).ok_or(Error::CfgNoRegion(self.cfg.entry))?;
         self.builder.set_entry_region(*entry_block);
         Ok(())
     }
 
+    /// Returns an iterator over all `(cfg_region_id, ir_region_id)` pairs
+    /// currently stored in the region map.
     fn iterate_region_block(&self) -> impl Iterator<Item = (cfg::RegionId, ir::RegionId)> {
         self.region_to_block.iter().map(|(k, v)| (*k, *v))
     }
 
+    /// Sets the IR builder's current region to `region`.
+    ///
+    /// All subsequent IR-building calls operate on this region until it is
+    /// changed or terminated.
     fn set_curr_ir_region(&mut self, region: ir::RegionId) {
         self.builder.set_region(region);
     }
 
+    /// Returns the decoded p-code instructions for the given CFG region.
     fn region_insn(&mut self, region_id: cfg::RegionId) -> Result<Vec<rsleigh::Insn>> {
         self.cfg.region_insn(region_id).map_err(|e| Error::CfgError(e))
     }
 
+    /// Translates a p-code integer unary instruction into an IR unary node and
+    /// writes the result to the output varnode.
     fn process_int_unary_op(&mut self, insn: &rsleigh::Insn, op: IntUnaryOp) {
         let input = self.read_vn(&insn.inputs[0]);
         let out_vn = insn.output.as_ref().expect("int unary op must have an output");
@@ -200,6 +274,8 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
+    /// Translates a p-code integer binary instruction into an IR binary node
+    /// and writes the result to the output varnode.
     fn process_int_binary_op(&mut self, insn: &rsleigh::Insn, op: IntBinaryOp) {
         let lhs = self.read_vn(&insn.inputs[0]);
         let rhs = self.read_vn(&insn.inputs[1]);
@@ -208,6 +284,8 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
+    /// Translates a p-code integer comparison instruction into an IR
+    /// comparison node and writes the boolean result to the output varnode.
     fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) {
         let lhs = self.read_vn(&insn.inputs[0]);
         let rhs = self.read_vn(&insn.inputs[1]);
@@ -216,6 +294,8 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
+    /// Translates a p-code boolean binary instruction into an IR boolean
+    /// operation node and writes the result to the output varnode.
     fn process_bool_binary_op(&mut self, insn: &rsleigh::Insn, op: BoolBinaryOp) {
         let lhs = self.read_vn(&insn.inputs[0]);
         let rhs = self.read_vn(&insn.inputs[1]);
@@ -224,6 +304,8 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
+    /// Translates a p-code boolean unary instruction into an IR boolean
+    /// unary node and writes the result to the output varnode.
     fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn, op: BoolUnaryOp) {
         let input = self.read_vn(&insn.inputs[0]);
         let out_vn = insn.output.as_ref().expect("unary op must have an output");
@@ -231,6 +313,8 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
+    /// Translates a p-code zero-extend or sign-extend instruction into an IR
+    /// extend node and writes the result to the output varnode.
     fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) {
         let input = self.read_vn(&insn.inputs[0]);
         let out_vn = insn.output.as_ref().expect("extend op must have an output");
@@ -238,9 +322,14 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out);
     }
 
-    fn process_insn(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn) {
+    /// Translates a single p-code instruction `insn` from `region_id` into
+    /// one or more IR nodes.
+    ///
+    /// Matches on the opcode and delegates to the appropriate `process_*`
+    /// helper or inline logic.  Unimplemented opcodes panic.
+    fn process_insn(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn) -> Result<()> {
         match insn.opcode {
-            Opcode::Nop => (),
+            Opcode::Nop => {}
             Opcode::BoolNeg => self.process_bool_unary_op(insn, BoolUnaryOp::Neg),
             Opcode::BoolAnd => self.process_bool_binary_op(insn, BoolBinaryOp::And),
             Opcode::BoolOr => self.process_bool_binary_op(insn, BoolBinaryOp::Or),
@@ -266,53 +355,51 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
             Opcode::IntSrem => self.process_int_binary_op(insn, IntBinaryOp::Srem),
             Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry),
             Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow),
-            Opcode::IntSlessEqual =>self.process_int_cmp_op(insn, IntCmpOp::SlessEqual),
+            Opcode::IntSlessEqual => self.process_int_cmp_op(insn, IntCmpOp::SlessEqual),
             Opcode::IntSub => self.process_int_binary_op(insn, IntBinaryOp::Sub),
             Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend),
             Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend),
             Opcode::IntNotEqual => {
-                // We treat not equal as neg(equal) for determenstic results
+                // We treat not equal as neg(equal) for deterministic results
                 let lhs = self.read_vn(&insn.inputs[0]);
                 let rhs = self.read_vn(&insn.inputs[1]);
                 let out_vn = insn.output.as_ref().expect("binary op must have an output");
-                // TODO: is this the correct type here? or in general for cmps
                 let and_out = self.builder.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, out_vn.size.into());
                 let out = self.builder.build_boolean_unary_operation(and_out, BoolUnaryOp::Neg);
                 self.write_vn(out_vn, out);
-            },
+            }
             Opcode::Branch => {
-                let branch_region = self.cfg.region_branch(region_id).expect("branch region id not found");
-                let dest_block = self.region_to_block.get(&branch_region).expect("branch block id not found");
+                let branch_region = self.cfg.region_branch(region_id)?.ok_or(cfg::Error::InvalidRegion(region_id))?;
+                let dest_block = self.region_to_block.get(&branch_region).ok_or(cfg::Error::InvalidRegion(branch_region))?;
                 self.builder.build_branch(*dest_block);
-            },
+            }
             Opcode::CondBranch => {
                 let cond = self.read_vn(&insn.inputs[1]);
-                let res = self.cfg.region_if(region_id);
-                let if_true_region = res.if_true_region.expect("region if true not found");
-                let if_false_region = res.if_false_region.expect("region if true not found");
-                let true_block = self.region_to_block.get(&if_true_region).expect("block if true not found");
-                let false_block = self.region_to_block.get(&if_false_region).expect("block if false not found");
-
+                let res = self.cfg.region_if(region_id)?;
+                let if_true_region = res.if_true_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
+                let if_false_region = res.if_false_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
+                let true_block = self.region_to_block.get(&if_true_region).ok_or(cfg::Error::InvalidRegion(if_true_region))?;
+                let false_block = self.region_to_block.get(&if_false_region).ok_or(cfg::Error::InvalidRegion(if_false_region))?;
                 self.builder.build_if(cond, *true_block, *false_block);
-            },
+            }
             Opcode::Copy => {
                 let input = self.read_vn(&insn.inputs[0]);
                 let out_vn = insn.output.as_ref().expect("copy op must have an output");
                 self.write_vn(out_vn, input);
-            },
+            }
             Opcode::Load => {
                 let space = insn.inputs[0].addr.space;
                 let addr = self.read_vn(&insn.inputs[1]);
                 let out_vn = insn.output.as_ref().expect("load op must have an output");
                 let out = self.builder.build_load(addr, space, out_vn.size.into());
                 self.write_vn(out_vn, out);
-            },
+            }
             Opcode::Store => {
                 let space = insn.inputs[0].addr.space;
                 let addr = self.read_vn(&insn.inputs[1]);
                 let data = self.read_vn(&insn.inputs[2]);
                 self.builder.build_store(addr, data, space);
-            },
+            }
             Opcode::Return => {
                 let regs: Vec<_> = self.builder.variables().copied()
                     .filter(|vn| vn.addr.space == rsleigh::VnSpace::REGISTER).collect();
@@ -322,34 +409,58 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                 } else {
                     self.builder.build_return(None, &regs);
                 }
-            },
+            }
             Opcode::Popcount => {
                 println!("implement popcount");
-                // let input = self.read_vn(&insn.inputs[0]);
-                // let out = self.builder.build_int_unary_operation(input, insn.inputs[0].size.into());
-                // let out_vn = insn.output.as_ref().expect("popcount op must have an output");
-                // self.write_vn(out_vn, out);
             }
             Opcode::Call | Opcode::CallIndirect => {
                 let call_address = self.read_vn(&insn.inputs[0]);
-                self.builder.build_call(call_address, 
-                    &self.analyzer.calling_convention.arg_passing_regs, 
-                    &self.analyzer.calling_convention.callee_saved_regs);
-            },
-            Opcode::CallOther => {},
-            _ =>  unimplemented!("{:?}", insn.opcode)
+                self.builder.build_call(call_address);
+            }
+            Opcode::CallOther => {}
+            Opcode::Subpiece => {
+                // `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
+                // starting at byte `byte_offset` from `value`.
+                // Implemented as: right-shift by (byte_offset * 8) bits, then truncate.
+                let input = self.read_vn(&insn.inputs[0]);
+                let byte_offset = insn.inputs[1].addr.off;
+                let out_vn = insn.output.as_ref().expect("Subpiece must have an output");
+                let shifted = if byte_offset == 0 {
+                    input
+                } else {
+                    let bit_shift = byte_offset * 8;
+                    let shift_const = self.builder.build_int_const(bit_shift, insn.inputs[0].size.into());
+                    self.builder.build_int_binary_operation(
+                        input, shift_const, IntBinaryOp::ShiftRight, insn.inputs[0].size.into())
+                };
+                let out = self.builder.truncate_if_needed(shifted, out_vn.size.into());
+                self.write_vn(out_vn, out);
+            }
+            _ => unimplemented!("{:?}", insn.opcode),
         }
+        Ok(())
     }
 
 
 }
 
+/// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
+/// function graph.
+///
+/// Holds the target architecture description and the resolved calling
+/// convention.  Create one `Analyzer` per architecture/ABI combination and
+/// reuse it to analyse multiple functions.
 pub struct Analyzer {
     calling_convention: crate::calling_convention::BuiltCallingConvention,
     arch: crate::SleighArch
 }
 
 impl Analyzer {
+    /// Creates a new `Analyzer` for `arch` with the given Sleigh register list
+    /// and calling convention.
+    ///
+    /// Resolves all register names in `calling_convention` against
+    /// `sleigh_regs`.  Returns an error if any name is unknown.
     pub fn new(arch: crate::SleighArch, sleigh_regs: rsleigh::SleighRegs, calling_convention: crate::CallingConvention) -> Result<Self> {
         let built_calling_convention = calling_convention.build(&sleigh_regs)?;
         Ok(Self {
@@ -358,6 +469,11 @@ impl Analyzer {
         })
     }
 
+    /// Collects the set of all distinct varnodes referenced by any instruction
+    /// across all regions of `cfg`.
+    ///
+    /// The result is used to pre-declare every variable the IR builder must
+    /// track.
     fn find_all_unique_vns<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Vec<rsleigh::Vn>  {
         let mut all_vns: std::collections::HashSet<rsleigh::Vn> = std::collections::HashSet::new();
         for region in cfg.regions() {
@@ -370,6 +486,14 @@ impl Analyzer {
         all_vns.iter().copied().collect()
     }
 
+    /// Translates a complete control-flow graph into an [`ir::BuiltFunctionGraph`].
+    ///
+    /// The pipeline:
+    /// 1. Build the function entry node.
+    /// 2. Create one IR region per CFG region.
+    /// 3. Set the entry region.
+    /// 4. Translate instructions in each region.
+    /// 5. Link fallthrough edges between consecutive regions.
     pub fn analyze_cfg<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Result<ir::BuiltFunctionGraph>{
         let mut ir_analyzer = IrAnalyzer::new(self, cfg);
 
@@ -391,7 +515,7 @@ impl Analyzer {
             let insns = ir_analyzer.region_insn(region_id)?;
 
             for insn in insns {
-                ir_analyzer.process_insn(region_id, &insn)
+                ir_analyzer.process_insn(region_id, &insn)?
             }
         }
 

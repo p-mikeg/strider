@@ -4,31 +4,34 @@ use cranelift_entity::{
     EntityList, entity_impl, packed_option::PackedOption,
 };
 
-// This basic structure represents a unique Node struct
+/// A unique identifier for a node in the IR graph.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
 entity_impl!(NodeId, "node");
 
 
-// This basic structure represents a unique NodeOutput struct
+/// A unique identifier for one output slot of a node.
 #[derive(Default)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeOutputId(u32);
 entity_impl!(NodeOutputId, "%");
 
-// This basic structure represents a unique NodeInput struct
+/// A unique identifier for one input slot of a node.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeInputId(u32);
 entity_impl!(NodeInputId, "input");
 
-// This represents a list of node inputs
+/// A list of input slot ids stored in an entity pool.
 pub(crate) type NodeInputIdList = EntityList<NodeInputId>;
 
-// This represents a list of node inputs
+/// A list of output slot ids stored in an entity pool.
 pub(crate) type NodeOutputIdList = EntityList<NodeOutputId>;
 
 
-// This stores the type of output that the node returns
+/// The value type carried by a node output.
+///
+/// Integer variants correspond directly to their C-style unsigned integer
+/// widths.  `Bool` is a 1-bit logical value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeOutputType {
     Bool,
@@ -40,16 +43,20 @@ pub enum NodeOutputType {
 
 
 impl NodeOutputType {
+    /// Returns `true` if this type is one of the unsigned integer variants
+    /// (U8, U16, U32, U64).
     #[inline]
     pub fn is_integer(self) -> bool {
         matches!(self, NodeOutputType::U8 | NodeOutputType::U16 | NodeOutputType::U32 | NodeOutputType::U64)
     }
 
+    /// Returns `true` if this type is `Bool`.
     #[inline]
     pub fn is_bool(self) -> bool {
         matches!(self, NodeOutputType::Bool)
     }
 
+    /// Returns the canonical name of this type as a static string.
     #[inline]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -61,6 +68,9 @@ impl NodeOutputType {
         }
     }
 
+    /// Returns the size of this type **in bytes**.
+    ///
+    /// Both `Bool` and `U8` return 1.
     #[inline]
     pub fn byte_size(self) -> usize {
         match self {
@@ -72,11 +82,17 @@ impl NodeOutputType {
         }
     }
 
+    /// Returns the width of this type **in bits** (`byte_size * 8`).
     #[inline]
     pub fn bit_width(self) -> usize {
         self.byte_size() * 8
     }
 
+    /// Interprets `val` as an unsigned integer of this width and returns the
+    /// truncated value, or `None` if this type is `Bool`.
+    ///
+    /// The truncation ensures that bits beyond the type's width are cleared,
+    /// matching the hardware behaviour of narrower registers.
     #[inline]
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
@@ -88,6 +104,11 @@ impl NodeOutputType {
         }
     }
 
+    /// Interprets `val` as a signed integer of this width with sign-extension
+    /// and returns the result, or `None` if this type is `Bool`.
+    ///
+    /// Casting through the signed type of the same width sign-extends the
+    /// value to 64 bits.
     #[inline]
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
@@ -119,33 +140,30 @@ impl std::fmt::Display for NodeOutputType {
     }
 }
 
+/// The kind of data carried by a node output edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeOutputKind {
-    // In case this is a generic block - just store what is the output type
+    /// A concrete value output with an associated [`NodeOutputType`].
     OutputType(NodeOutputType),
-    /// Indicates a control flow dependency between nodes. Every region takes in a number of control
-    /// values indicating the predecessors of the region, while every branch produces a number of
-    /// control values that are then consumed by the regions to which they branch.
+    /// Control-flow token.  Every region consumes one control edge per
+    /// predecessor and every branch node produces one per successor.
     Control,
-    /// Special value produced only by control instructions to attach their phi nodes.
+    /// Selector token produced by `ControlState` nodes and consumed by
+    /// `ControlSelector` phi nodes.
     ControlSelector,
+    /// Memory token tracking the current state of memory through the graph.
     Memory
 }
 
 impl NodeOutputKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            NodeOutputKind::OutputType(v) => v.as_str(),
-            NodeOutputKind::ControlSelector => "control selector",
-            NodeOutputKind::Control => "control",
-            NodeOutputKind::Memory => "memory",
-        }
-    }
+    /// Returns `true` if this is a value output (`OutputType` variant).
     #[inline]
     pub fn is_value(self) -> bool {
         matches!(self, Self::OutputType(..))
     }
 
+    /// Returns the inner [`NodeOutputType`] if this is a value output,
+    /// otherwise `None`.
     #[inline]
     pub fn as_value(self) -> Option<NodeOutputType> {
         match self {
@@ -154,21 +172,25 @@ impl NodeOutputKind {
         }
     }
 
+    /// Returns `true` if this is a control-flow edge.
     #[inline]
     pub fn is_control(self) -> bool {
         self == Self::Control
     }
 
+    /// Returns `true` if this is a control-selector edge.
     #[inline]
     pub fn is_control_selector(self) -> bool {
         self == Self::ControlSelector
     }
 
+    /// Returns `true` if this is a memory edge.
     #[inline]
     pub fn is_memory(self) -> bool {
         self == Self::Memory
     }
 
+    /// Returns `true` if this is a value output carrying a `Bool` type.
     #[inline]
     pub fn is_bool(self) -> bool {
         if let Some(output_type) = self.as_value() {
@@ -178,6 +200,7 @@ impl NodeOutputKind {
         }
     }
 
+    /// Returns `true` if this is a value output carrying an integer type.
     #[inline]
     pub fn is_integer(self) -> bool {
         if let Some(output_type) = self.as_value() {
@@ -188,47 +211,54 @@ impl NodeOutputKind {
     }
 }
 
-// This structure stores the output of a given node and tracks all its uses
+/// Stores the output of a given node and tracks all of its uses via a
+/// linked list of [`NodeInput`] ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeOutput {
-    // What kind of value is this node 
+    /// What kind of value this output carries.
     pub(crate) kind: NodeOutputKind,
-    // What is the node that created this output
+    /// The node that produces this output.
     pub(crate) source_id: NodeId,
-    // What is the index in the outputs of the source node
+    /// The index of this output in the source node's output list.
     pub(crate) output_index: u32,
-    // A linked list all uses of this specific output value (to change if we update this value for some reason)
+    /// Head of the linked list of all inputs that consume this output.
     pub(crate) first_use: PackedOption<NodeInputId>,
 }
 
 impl NodeOutput {
+    /// Creates a new `NodeOutput` with no uses yet.
     pub fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self{
         NodeOutput { kind, source_id, output_index, first_use: None.into() }
     }
 }
 
-// This structure stores a usage of NodeOutput and what node uses this output
+/// Records a single use of a [`NodeOutput`] as the input of some node.
+///
+/// Forms part of a doubly-linked list of all uses of a particular output,
+/// enabling efficient update of all consumers when an output changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeInput {
-    // The node output to be used as input
+    /// The output being consumed.
     pub(crate) output_id: NodeOutputId,
-    // This stores the previous use of the this node value
+    /// Previous use in the linked list of uses for `output_id`.
     pub(crate) prev: PackedOption<NodeInputId>,
-    // This stores the next use of the this node value
+    /// Next use in the linked list of uses for `output_id`.
     pub(crate) next: PackedOption<NodeInputId>,
-    // The node that uses the input
+    /// The node that consumes this input.
     pub(crate) node_id: NodeId,
-    // What is the index in the inputs of the node
+    /// The position of this input in the consuming node's input list.
     pub(crate) input_index: u32,
 }
 
 impl NodeInput {
+    /// Creates a new `NodeInput` not yet linked into any use list.
     pub fn new(output_id: NodeOutputId, node_id: NodeId, input_index: u32) -> Self {
         NodeInput { output_id, prev: None.into(), next: None.into(), node_id, input_index}
     }
 }
 
 
+/// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
     // Initial state
@@ -279,40 +309,20 @@ pub enum NodeKind {
     // CastToFloat,
 }
 
-fn pretty_print_vnspace(space: &rsleigh::VnSpace) -> &'static str {
-    match *space {
-        rsleigh::VnSpace::RAM => "ram",
-        rsleigh::VnSpace::CONST => "const",
-        rsleigh::VnSpace::REGISTER => "register",
-        rsleigh::VnSpace::UNIQUE => "unique",
-        _ => unreachable!()
-    }
-}
-
 impl NodeKind {
+    /// Returns `true` if this node represents a compile-time constant
+    /// (`BoolConst` or `IntConst`).
     #[inline]
     pub fn is_const(self) -> bool {
         matches!(self, Self::BoolConst(..) | Self::IntConst(..))
     }
 
-    pub fn as_str(&self) -> String {
-        match self {
-            NodeKind::CastToBool | NodeKind::CastToInt => "Cast".to_owned(),
-            NodeKind::Truncate => "Truncate".to_owned(),
-            NodeKind::Extend(op) => format!("{:?}", op),
-            NodeKind::BoolConst(v) => format!("const {v}"),
-            NodeKind::IntConst(v) => format!("const {v:#x}"),
-            NodeKind::BoolBinaryOp(op) => format!("{:?}", op),
-            NodeKind::IntBinaryOp(op) => format!("{:?}", op),
-            NodeKind::BoolUnaryOp(op) => format!("{:?}", op),
-            NodeKind::IntUnaryOp(op) => format!("{:?}", op),
-            NodeKind::IntCmpOp(op) => format!("{:?}", op),
-            NodeKind::Load(op) => format!("Load {}", pretty_print_vnspace(&op)), 
-            NodeKind::Store(op) => format!("Store {}", pretty_print_vnspace(&op)), 
-            _ => format!("{:?}", self)
-        }
-    }
-
+    /// Returns `true` if nodes of this kind may be deduplicated in the graph
+    /// cache.
+    ///
+    /// Nodes whose inputs are added incrementally after construction (e.g.
+    /// `ControlState`, `ControlSelector`) or that must always produce a fresh
+    /// node (e.g. `Return`) are not cacheable.
     #[inline]
     pub fn is_cacheable(&self) -> bool {
         // TODO: is it all that should be cached?
@@ -334,7 +344,10 @@ impl NodeKind {
 
 }
 
-// This represents a general node in the graph
+/// A node in the IR graph.
+///
+/// Holds the node's kind along with its input and output slot lists (stored
+/// externally in entity pools).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Node {
     pub(crate) kind: NodeKind,
@@ -343,7 +356,139 @@ pub struct Node {
 }
 
 impl Node {
+    /// Creates a new node with the given kind and empty input/output lists.
     pub fn new(kind: NodeKind) -> Self {
         Self { kind, inputs: NodeInputIdList::new(), outputs: NodeOutputIdList::new() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── NodeOutputType ───────────────────────────────────────────────────────
+
+    /// `get_unsigned_int` must mask the value to the declared width.
+    /// Bits above the type's width must be cleared even if they are set in
+    /// the raw u64.
+    #[test]
+    fn unsigned_int_masks_to_declared_width() {
+        let wide: u64 = u64::MAX;
+        assert_eq!(NodeOutputType::U8.get_unsigned_int(wide),  Some(u8::MAX  as u64));
+        assert_eq!(NodeOutputType::U16.get_unsigned_int(wide), Some(u16::MAX as u64));
+        assert_eq!(NodeOutputType::U32.get_unsigned_int(wide), Some(u32::MAX as u64));
+        assert_eq!(NodeOutputType::U64.get_unsigned_int(wide), Some(u64::MAX));
+    }
+
+    /// `get_unsigned_int` must return `None` for `Bool` because a boolean is
+    /// not an integer representation.
+    #[test]
+    fn unsigned_int_is_none_for_bool() {
+        assert_eq!(NodeOutputType::Bool.get_unsigned_int(1), None);
+    }
+
+    /// `get_signed_int` must sign-extend values.  The MSB of the declared
+    /// width acts as the sign bit, so a value with the MSB set must come out
+    /// negative.
+    #[test]
+    fn signed_int_sign_extends_from_declared_width() {
+        // u8::MAX as i8 is -1
+        assert_eq!(NodeOutputType::U8.get_signed_int(u8::MAX as u64),     Some(-1));
+        // i8::MIN (0x80) sign-extends to -128
+        assert_eq!(NodeOutputType::U8.get_signed_int(i8::MIN as u8 as u64), Some(i8::MIN as i64));
+        // i8::MAX (0x7F) stays positive
+        assert_eq!(NodeOutputType::U8.get_signed_int(i8::MAX as u64),     Some(i8::MAX as i64));
+        // i16::MIN (0x8000) sign-extends to -32768
+        assert_eq!(NodeOutputType::U16.get_signed_int(i16::MIN as u16 as u64), Some(i16::MIN as i64));
+        // u32::MAX as u64 sign-extends as i32 to -1
+        assert_eq!(NodeOutputType::U32.get_signed_int(u32::MAX as u64), Some(-1));
+    }
+
+    /// `get_signed_int` must return `None` for `Bool`.
+    #[test]
+    fn signed_int_is_none_for_bool() {
+        assert_eq!(NodeOutputType::Bool.get_signed_int(1), None);
+    }
+
+    /// `bit_width` must equal `byte_size * 8` for every variant.
+    #[test]
+    fn bit_width_is_eight_times_byte_size() {
+        for ty in [NodeOutputType::Bool, NodeOutputType::U8, NodeOutputType::U16,
+                   NodeOutputType::U32, NodeOutputType::U64] {
+            assert_eq!(ty.bit_width(), ty.byte_size() * 8,
+                "bit_width mismatch for {ty:?}");
+        }
+    }
+
+    // ── NodeOutputKind ───────────────────────────────────────────────────────
+
+    /// `is_value` must be `true` only for `OutputType` variants.
+    #[test]
+    fn is_value_only_for_output_type() {
+        assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
+        assert!(!NodeOutputKind::Control.is_value());
+        assert!(!NodeOutputKind::ControlSelector.is_value());
+        assert!(!NodeOutputKind::Memory.is_value());
+    }
+
+    /// `is_bool` must be `true` only when the wrapped type is `Bool`.
+    #[test]
+    fn is_bool_only_for_bool_output_type() {
+        assert!(NodeOutputKind::OutputType(NodeOutputType::Bool).is_bool());
+        assert!(!NodeOutputKind::OutputType(NodeOutputType::U8).is_bool());
+        assert!(!NodeOutputKind::Control.is_bool());
+    }
+
+    /// `is_integer` must be `true` for all integer `OutputType` variants and
+    /// `false` for `Bool`, `Control`, `ControlSelector`, and `Memory`.
+    #[test]
+    fn is_integer_for_all_integer_output_types() {
+        for ty in [NodeOutputType::U8, NodeOutputType::U16,
+                   NodeOutputType::U32, NodeOutputType::U64] {
+            assert!(NodeOutputKind::OutputType(ty).is_integer(),
+                "{ty:?} should be integer");
+        }
+        assert!(!NodeOutputKind::OutputType(NodeOutputType::Bool).is_integer());
+        assert!(!NodeOutputKind::Control.is_integer());
+        assert!(!NodeOutputKind::Memory.is_integer());
+    }
+
+    // ── NodeKind ─────────────────────────────────────────────────────────────
+
+    /// Only `BoolConst` and `IntConst` should be considered constants; all
+    /// other variants must not.
+    #[test]
+    fn is_const_only_for_constant_kinds() {
+        assert!(NodeKind::BoolConst(true).is_const());
+        assert!(NodeKind::IntConst(42).is_const());
+        assert!(!NodeKind::Entry.is_const());
+        assert!(!NodeKind::Return.is_const());
+    }
+
+    /// Non-cacheable node kinds must cover all nodes that receive inputs
+    /// dynamically after creation.
+    #[test]
+    fn non_cacheable_kinds_are_not_cacheable() {
+        let non_cacheable = [
+            NodeKind::Entry,
+            NodeKind::InitialMemory,
+            NodeKind::Return,
+            NodeKind::ControlState,
+            NodeKind::MemSelector,
+        ];
+        for kind in non_cacheable {
+            assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
+        }
+    }
+
+    /// Arithmetic and logical operations are always cacheable — equal nodes
+    /// with equal inputs produce the same result and can be deduplicated.
+    #[test]
+    fn arithmetic_kinds_are_cacheable() {
+        assert!(NodeKind::IntConst(0).is_cacheable());
+        assert!(NodeKind::BoolConst(false).is_cacheable());
+        assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
+        assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
+        assert!(NodeKind::If.is_cacheable());
     }
 }
