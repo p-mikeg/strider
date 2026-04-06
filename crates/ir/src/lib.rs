@@ -2,7 +2,7 @@ mod dot;
 mod graph;
 mod builder;
 pub mod node;
-mod walk;
+pub mod walk;
 mod error;
 mod function;
 mod region;

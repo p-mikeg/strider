@@ -63,11 +63,27 @@ impl FunctionBuilder {
         callee_saved_vars: &[rsleigh::Vn],
         _ret_vars: &[rsleigh::Vn]
     ) -> Self {
-        let call_cloberred_variables: Vec<_> = all_used_variables.iter()
+        // For register varnodes, keep only the largest enclosing register.
+        // e.g. if both `rdi` and `edi` are clobbered, drop `edi` because
+        // clobbering `rdi` already implies `edi`.
+        let all_variables: Vec<_> = all_used_variables.iter()
+            .filter(|v| {
+                if v.addr.space != rsleigh::VnSpace::REGISTER {
+                    return true;
+                }
+                !all_used_variables.iter().any(|other| {
+                    other != *v
+                        && other.addr.space == rsleigh::VnSpace::REGISTER
+                        && other.addr.off <= v.addr.off
+                        && other.addr.off + other.size as u64 >= v.addr.off + v.size as u64
+                        && other.size > v.size
+                })
+            }).copied().collect();
+        let call_cloberred_variables: Vec<_> = all_variables.iter()
             .filter(|v| !callee_saved_vars.contains(v)).copied().collect();
         let mut variables = PrimaryMap::new();
         let mut variable_to_id = HashMap::new();
-        for variable in all_used_variables {
+        for variable in all_variables {
             let var_id = variables.push(variable);
             variable_to_id.insert(variable, var_id);
         }
@@ -564,7 +580,6 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory].into_iter().chain(cloberred_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
-        self.function.call_clobbered.insert(call, clobbered.to_vec().into_boxed_slice());
         let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
 
         self.advance_cur_region_ctrl(call_outputs[0]);
@@ -608,7 +623,7 @@ impl FunctionBuilder {
             graph: self.function.graph,
             entry: self.function.entry,
             variables: self.variables,
-            call_clobbered: self.function.call_clobbered,
+            call_clobbered: self.call_cloberred_variables.into_boxed_slice(),
         }
     }
 }

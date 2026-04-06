@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use crate::dot::GraphDotDumper;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeOutputId};
@@ -13,10 +12,6 @@ pub struct FunctionGraph {
     pub entry: NodeId,
     pub entry_control: NodeOutputId,
     pub entry_memory: NodeOutputId,
-    /// Maps each `Call` node to the ordered list of clobbered varnodes whose
-    /// values appear as the Call's outputs at indices 2, 3, 4, … (after the
-    /// Control and Memory outputs).
-    pub call_clobbered: HashMap<NodeId, Box<[rsleigh::Vn]>>,
 }
 
 impl FunctionGraph {
@@ -26,7 +21,6 @@ impl FunctionGraph {
             entry: NodeId::reserved_value(),
             entry_control: NodeOutputId::reserved_value(),
             entry_memory: NodeOutputId::reserved_value(),
-            call_clobbered: HashMap::new(),
         }
     }
 }
@@ -35,7 +29,10 @@ pub struct BuiltFunctionGraph {
     pub graph: Graph,
     pub entry: NodeId,
     pub variables: PrimaryMap<VarId, rsleigh::Vn>,
-    pub call_clobbered: HashMap<NodeId, Box<[rsleigh::Vn]>>,
+    /// Ordered list of varnodes clobbered by every `Call` node.
+    /// The i-th clobbered output of any Call (output index `i + 2`) corresponds
+    /// to `call_clobbered[i]`.  The list is the same for all calls.
+    pub call_clobbered: Box<[rsleigh::Vn]>,
 }
 
 impl BuiltFunctionGraph {

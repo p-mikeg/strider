@@ -400,7 +400,7 @@ impl Optimizer for ConstantFold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder, ValueType, IntBinaryOp, BoolBinaryOp, IntCmpOp, BoolUnaryOp, IntUnaryOp, ExtendOp};
+    use ir::{FunctionBuilder, IntBinaryOp, BoolBinaryOp, IntCmpOp, BoolUnaryOp};
     use ir::node::{NodeKind, NodeOutputType};
 
     /// Builds a minimal single-region function whose return value is produced

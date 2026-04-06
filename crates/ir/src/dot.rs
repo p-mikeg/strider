@@ -161,7 +161,7 @@ pub struct GraphDotDumper<'a, R: MemReader> {
     pub(crate) entry: NodeId,
     pub(crate) graph: &'a Graph,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    pub(crate) call_clobbered: &'a HashMap<crate::node::NodeId, Box<[rsleigh::Vn]>>,
+    pub(crate) call_clobbered: &'a [rsleigh::Vn],
 }
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
@@ -263,9 +263,9 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// `call_clobbered` map: the i-th clobbered output (output_index - 2)
     /// corresponds to the i-th vn in the map entry for that call node.
     fn call_clobbered_name(&self, output_id: NodeOutputId) -> String {
-        let (call_id, output_index) = self.graph.output_definition(output_id);
+        let (_call_id, output_index) = self.graph.output_definition(output_id);
         let i = (output_index - 2) as usize;
-        let vn = &self.call_clobbered[&call_id][i];
+        let vn = &self.call_clobbered[i];
         self.vn_to_name(vn)
     }
 
