@@ -23,9 +23,9 @@ cargo clippy --workspace
 
 ## Architecture Overview
 
-This is a Rust workspace binary analysis tool that lifts native binaries to an IR suitable for analysis/optimization. The pipeline is:
+This is a Rust workspace binary analysis tool that lifts native binaries to an IR and exposes it for arbitrary pattern queries via Python. The pipeline is:
 
-**Binary → CFG → IR → (Optimizations)**
+**Binary → CFG → IR → Optimizations → Pattern Queries (Python)**
 
 ### Crate Dependency Flow
 
@@ -46,8 +46,13 @@ rsleigh (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
   - `NodeOutputKind` — `Control`, `Memory`, `ControlSelector`, or `OutputType(NodeOutputType)`.
   - `NodeOutputType` — `Bool`, `U8`, `U16`, `U32`, `U64`.
 - **`analyzer`** — Translates a `Cfg` to a `BuiltFunctionGraph`. `IrAnalyzer` handles register aliasing (sub-registers like `al`/`ah` in `rax` are accessed by shifting/masking the container register). `Analyzer::new` takes an arch, sleigh register list, and calling convention.
-- **`opt`** — IR optimization passes (WIP). `RedundantSelectors` pass exists but optimizer is currently commented out in the example.
-- **`pattern`** — IR graph pattern matching over a `BuiltFunctionGraph`. Core types:
+- **`opt`** — IR optimization passes. All passes run in a shared fixed-point loop via `OptimizerPipeline` / `default_pipeline()`. Passes:
+  - `ConstantFold` — constant evaluation for all arithmetic, comparisons, booleans, truncation, extension; algebraic identities (`x+0→x`, `x^x→0`, nested AND-mask merging `(a&C1)&C2 → a&(C1&C2)`).
+  - `KnownBits` — bit-level propagation of statically known zeros/ones to fold partially-known expressions.
+  - `RedundantSelectors` — eliminates `ControlSelector` phi nodes and `ControlState` nodes with a single reachable predecessor; detaches inputs of CFG-unreachable nodes.
+  - `DeadBranchElimination` — removes `If` nodes whose condition is a `BoolConst`; strips the dead control edge from successor `ControlState` and `ControlSelector` nodes. Works together with `RedundantSelectors`.
+  - `LoadReadOnly` — resolves `Load` nodes whose address is a compile-time constant into constants by reading from a caller-supplied `ReadOnlyMemory` (e.g. `.rodata`/`.text` section).
+- **`pattern`** — IR graph pattern matching over a `BuiltFunctionGraph`. Supports arbitrary queries: memory accesses, call arguments, return values, branch conditions, data-flow chains, etc. Core types:
   - `Pat` / `PatKind` — Arc-wrapped pattern value. Variants: `Any`, `Capture(Var)`, `IntConst`, `BoolConst`, all integer binary ops (`Add`, `Sub`, `Mul`, `Shl`, …), comparison ops (`IntEq`, `IntLt`, `IntSlt`, …), boolean ops, cast ops (`CastToBool`, `Truncate`, `Extend`, `Popcount`), `Load(space)`, `Store(space)`, `Selector(Vn)`, `InitialVar(Vn)`, `Call`, `Return`, `If`, and `Contains(p)` (forward ctrl-chain search).
   - `Var` / `NodeVar` — capture variables for data outputs (`NodeOutputId`) and control nodes (`NodeId`); globally unique via atomic counter. Multiple occurrences in a pattern must bind to the same value.
   - `Matcher<'g>` — wraps `&BuiltFunctionGraph`, pre-indexes `Call`/`Return`/`If` nodes. `find_all(&pat) -> Vec<Match>` searches all candidate root nodes.
@@ -59,6 +64,7 @@ rsleigh (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
 - **`graphwalk`** — Generic graph traversal utilities.
 - **`entity-utils`** — Entity set and worklist data structures.
 - **`graphmock`** — Mock graph for tests.
+- **`strider-py`** *(planned)* — Python bindings (PyO3) that are the primary user-facing interface. Users write IR patterns with named captures in Python and get back matched values. The Rust `pattern` crate is the engine; this crate is the API.
 
 ### IR Node Model
 
