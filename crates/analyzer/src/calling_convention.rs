@@ -60,6 +60,21 @@ impl CallingConvention {
          }
     }
 
+    /// Returns the AArch64 AAPCS64 calling convention.
+    ///
+    /// Argument registers: x0–x7
+    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register)
+    /// Return value: x0, x1
+    pub fn aarch64_aapcs64() -> CallingConvention {
+        CallingConvention {
+            arch: crate::arch::SleighArch::aarch64(),
+            arg_passing_regs:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            callee_saved_regs: &["x19", "x20", "x21", "x22", "x23",
+                                  "x24", "x25", "x26", "x27", "x28", "x29", "x30"],
+            ret_val_regs: &["x0", "x1"],
+        }
+    }
+
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.

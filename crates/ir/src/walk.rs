@@ -1,4 +1,5 @@
 use core::{iter, ops::ControlFlow};
+use std::collections::HashSet;
 
 use entity_utils::set::DenseEntitySet;
 
@@ -7,32 +8,76 @@ use crate::{
     graph::{Graph},
 };
 
+/// Returns the set of all nodes reachable from `entry` following only
+/// `Control`-kind edges — the CFG skeleton.
+///
+/// Data edges (value, memory, ControlPhi dispatch) are not followed, so only
+/// control-flow nodes (`Entry`, `ControlState`, `If`, `IfCase`, `Return`,
+/// `Call`, …) appear in the result.
+///
+/// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
+/// which basic-block headers are live and which predecessor slots on `ControlState`,
+/// `ControlPhi`, and `MemPhi` nodes are dead.
+pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> HashSet<NodeId> {
+    let mut visited = HashSet::new();
+    let mut worklist = vec![entry];
+    while let Some(node) = worklist.pop() {
+        if !visited.insert(node) {
+            continue;
+        }
+        for succ in cfg_succs(graph, node) {
+            worklist.push(succ);
+        }
+    }
+    visited
+}
+
+/// A pre-order walk over the IR graph using a [`DenseEntitySet`] as the
+/// visited tracker.
 pub type PreOrder<G> = graphwalk::PreOrder<G, DenseEntitySet<NodeId>>;
+
+/// A [`graphwalk::GraphRef`] implementation that drives successor enumeration
+/// for IR graph walks.
+///
+/// Successors are derived by following both data inputs (so every producer is
+/// visited before a consumer in a reverse-topological traversal) and outgoing
+/// control edges.
 #[derive(Clone, Copy)]
 pub struct GraphWalkSuccs<'a>(&'a Graph);
 
 impl<'a> GraphWalkSuccs<'a> {
+    /// Wraps `graph` in a `GraphWalkSuccs` adaptor.
     #[inline]
     pub fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
 }
 
+/// Returns the combined "successor" set used by the general graph walk.
+///
+/// Yields two disjoint sets of nodes:
+/// 1. Every **data predecessor** (producer of each of `node`'s inputs) — walks
+///    backward through value, memory, and dispatch edges so that every def is
+///    visited before any use in the resulting traversal.
+/// 2. Every **CFG successor** (consumer of each of `node`'s `Control` outputs)
+///    — walks forward so the whole reachable control graph is covered.
+///
+/// The mix of backward-data and forward-control is intentional: it ensures
+/// that neither producers nor consumers are missed in a single pass starting
+/// from the function entry node.  Dead CFG inputs (nodes whose control
+/// predecessor was eliminated) are still visited if they remain attached as
+/// data inputs to live nodes; callers that need to distinguish live from dead
+/// nodes should consult [`cfg_reachable`].
 pub fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-    // Visit all inputs so we don't cause cases where uses are traversed without their corresponding
-    // defs. Users that want to treat regions with no control inputs as dead should do so
-    // themselves.
     graph
         .node_inputs(node)
         .into_iter()
         .map(move |input| graph.output_definition(input).0)
-        .chain(
-            // Walk forward only along control outputs.
-            cfg_succs(graph, node),
-        )
+        .chain(cfg_succs(graph, node))
 }
 
 
+/// Returns an iterator over all `Control`-kind outputs of `node`.
 pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutputId> + '_ {
     graph
         .node_outputs(node)
@@ -40,6 +85,7 @@ pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutp
         .filter(|&output| graph.output_kind(output).is_control())
 }
 
+/// Returns an iterator over all nodes that consume a `Control` output of `node`.
 pub fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     cfg_outputs(graph, node)
         .flat_map(|output| graph.output_uses(output))
@@ -58,6 +104,7 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     }
 }
 
+/// The concrete pre-order walk type used by [`walk_graph`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
@@ -81,7 +128,7 @@ mod tests {
     /// id and the control output id.
     fn make_entry(graph: &mut Graph) -> (NodeId, NodeOutputId) {
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let [ctrl] = graph.node_outputs_exact::<1>(entry);
+        let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
         (entry, ctrl)
     }
 
@@ -90,8 +137,8 @@ mod tests {
     /// of `ctrl_in` has this node as a CFG successor.
     fn make_ctrl_node(graph: &mut Graph, ctrl_in: NodeOutputId) -> (NodeId, NodeOutputId) {
         let node = graph.create_node(NodeKind::ControlState, [], [NodeOutputKind::Control]);
-        graph.add_node_input(node, ctrl_in);
-        let [out] = graph.node_outputs_exact::<1>(node);
+        graph.add_node_input(node, ctrl_in).unwrap();
+        let [out] = graph.node_outputs_exact::<1>(node).unwrap();
         (node, out)
     }
 
@@ -99,7 +146,7 @@ mod tests {
     /// as its only input, making the producer of `ctrl_in` a CFG predecessor.
     fn make_return(graph: &mut Graph, ctrl_in: NodeOutputId) -> NodeId {
         let node = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(node, ctrl_in);
+        graph.add_node_input(node, ctrl_in).unwrap();
         node
     }
 
@@ -159,15 +206,15 @@ mod tests {
             [],
             [NodeOutputKind::Control, NodeOutputKind::Control],
         );
-        let [ctrl_l, ctrl_r] = graph.node_outputs_exact::<2>(entry);
+        let [ctrl_l, ctrl_r] = graph.node_outputs_exact::<2>(entry).unwrap();
 
         let (_left, left_ctrl)  = make_ctrl_node(&mut graph, ctrl_l);
         let (_right, right_ctrl) = make_ctrl_node(&mut graph, ctrl_r);
 
         // Merge consumes both branch ctrl outputs.
         let merge = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(merge, left_ctrl);
-        graph.add_node_input(merge, right_ctrl);
+        graph.add_node_input(merge, left_ctrl).unwrap();
+        graph.add_node_input(merge, right_ctrl).unwrap();
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
         assert_eq!(visited.len(), 4, "diamond must produce exactly 4 nodes");
@@ -204,20 +251,20 @@ mod tests {
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let [data_out] = graph.node_outputs_exact::<1>(src);
+        let [data_out] = graph.node_outputs_exact::<1>(src).unwrap();
 
         // Entry → sink1 and sink2, both also consuming the data value.
         let (entry, entry_ctrl) = make_entry(&mut graph);
         let sink1 = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(sink1, entry_ctrl);
-        graph.add_node_input(sink1, data_out);
+        graph.add_node_input(sink1, entry_ctrl).unwrap();
+        graph.add_node_input(sink1, data_out).unwrap();
 
         let sink2 = graph.create_node(NodeKind::Return, [], []);
         // sink2 is only reachable via data input from sink1's producer (entry_ctrl consumed by sink1, not sink2)
         // Actually attach sink2 to data_out only - it won't be reachable from entry via control
         // but via data: walk from entry visits sink1 (cfg succ), sink1's inputs point to entry and src,
         // src has no inputs, so src is visited. sink2 is not reachable at all.
-        graph.add_node_input(sink2, data_out);
+        graph.add_node_input(sink2, data_out).unwrap();
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
         // entry → sink1 (cfg succ), sink1's inputs → entry (visited), src (not visited yet)
@@ -271,7 +318,7 @@ mod tests {
             [],
             [NodeOutputKind::Control, NodeOutputKind::Control],
         );
-        let [ctrl0, ctrl1] = graph.node_outputs_exact::<2>(entry);
+        let [ctrl0, ctrl1] = graph.node_outputs_exact::<2>(entry).unwrap();
 
         let left  = make_return(&mut graph, ctrl0);
         let right = make_return(&mut graph, ctrl1);

@@ -1,13 +1,81 @@
 use thiserror::Error;
-use crate::node::{NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind};
+
+/// Errors that can be produced by the IR builder and graph operations.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// A node was constructed with the wrong number of parameter outputs.
     #[error("expected {1:?} params and got {0:?}")]
     InvalidNumberOfParams(Vec<NodeOutputId>, u64),
 
+    /// An output was expected to carry a concrete value type but doesn't.
     #[error("output id {0:?} should be a value kind but got kind {1:?}")]
     InvalidOutputType(NodeOutputId, NodeOutputKind),
+
+    /// A builder operation was attempted with no active region.
+    #[error("no current region is set")]
+    NoCurrentRegion,
+
+    /// A builder operation was attempted on a region that has already been terminated.
+    #[error("attempted to insert into terminated region {0}")]
+    RegionTerminated(u32),
+
+    /// An output was expected to be a `Control` edge.
+    #[error("output {0:?} is not a control edge (got {1:?})")]
+    ExpectedControl(NodeOutputId, NodeOutputKind),
+
+    /// An output was expected to be a `Memory` edge.
+    #[error("output {0:?} is not a memory edge (got {1:?})")]
+    ExpectedMemory(NodeOutputId, NodeOutputKind),
+
+    /// An output was expected to carry a concrete value.
+    #[error("output {0:?} is not a value edge (got {1:?})")]
+    ExpectedValue(NodeOutputId, NodeOutputKind),
+
+    /// An output was expected to carry a `Bool` value.
+    #[error("output {0:?} is not a bool value")]
+    ExpectedBool(NodeOutputId),
+
+    /// An output was expected to carry an integer value.
+    #[error("output {0:?} is not an integer value")]
+    ExpectedInteger(NodeOutputId),
+
+    /// An output was expected to be a `ControlPhi` dispatch edge.
+    #[error("output {0:?} is not a control-phi edge")]
+    ExpectedControlPhi(NodeOutputId),
+
+    /// An input index was out of range for the node's input list.
+    #[error("input index {0} out of bounds (len {1})")]
+    InputIndexOutOfBounds(usize, usize),
+
+    /// A cursor operation was attempted on a null (empty) use.
+    #[error("attempted to replace a null cursor use")]
+    NullCursorUse,
+
+    /// `add_node_input` was called on a cacheable (deduplicated) node.
+    #[error("attempted to add input to cacheable node {0:?}")]
+    AddInputToCacheableNode(NodeId),
+
+    /// A varnode was referenced that is not tracked by the builder.
+    #[error("variable {0:?} not found in builder")]
+    VariableNotFound(rsleigh::Vn),
+
+    /// A varnode had a byte size with no corresponding [`NodeOutputType`].
+    #[error("unsupported node output size: {0} bytes")]
+    UnsupportedOutputSize(u32),
+
+    /// An input slot was already part of a use-list when it should be fresh.
+    #[error("input {0:?} is already linked")]
+    InputAlreadyLinked(NodeInputId),
+
+    /// A node was queried for exactly `N` outputs but had a different count.
+    #[error("node {0:?} does not have exactly {1} outputs (has {2})")]
+    WrongOutputCount(NodeId, usize, usize),
+
+    /// A node was queried for exactly `N` inputs but had a different count.
+    #[error("node {0:?} does not have exactly {1} inputs (has {2})")]
+    WrongInputCount(NodeId, usize, usize),
 }
 
-/// the result type using our error.
+/// Convenience `Result` alias that uses [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;

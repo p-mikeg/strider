@@ -26,7 +26,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// Collects all unique varnodes referenced by any instruction in `cfg`,
     /// constructs the IR [`FunctionBuilder`] with calling-convention
     /// information from `analyzer`, and initialises an empty region map.
-    fn new(analyzer: &'a Analyzer, cfg: &'a cfg::Cfg<R>) -> Self {
+    fn new(analyzer: &'a Analyzer, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
         // Find all variables
         let all_vns = analyzer.find_all_unique_vns(cfg);
 
@@ -34,14 +34,14 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         let builder = ir::FunctionBuilder::new(all_vns,
                     &analyzer.calling_convention.arg_passing_regs,
                     &analyzer.calling_convention.callee_saved_regs,
-                &analyzer.calling_convention.ret_val_regs);
+                &analyzer.calling_convention.ret_val_regs)?;
 
-        Self {
+        Ok(Self {
             analyzer,
             builder,
             region_to_block: HashMap::new(),
             cfg
-        }
+        })
     }
 
     /// Finds the largest architectural register that fully contains `reg`.
@@ -53,8 +53,10 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     ///
     /// Returns `None` only if no variable in the builder covers the range,
     /// which should never happen because a register must cover itself.
-    fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
-        assert_eq!(reg.addr.space, rsleigh::VnSpace::REGISTER);
+    fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Result<Option<rsleigh::Vn>> {
+        if reg.addr.space != rsleigh::VnSpace::REGISTER {
+            return Err(Error::UnsupportedVnSpace(reg.addr.space));
+        }
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
         let mut largest_reg_container: Option<rsleigh::Vn> = None;
@@ -81,7 +83,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                 largest_reg_container = Some(*sleigh_reg);
             }
         }
-        largest_reg_container
+        Ok(largest_reg_container)
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their
@@ -108,20 +110,22 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// the container register and inserts a right-shift to extract the
     /// relevant bits.  If `reg` is already the container (or is its own
     /// largest container) the value is returned directly.
-    fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> ir::Value {
-        let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
-        let curr_reg_val = self.builder.read_variable(&container_reg);
+    fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ir::Value> {
+        let container_reg = self.find_largest_fitting_register(reg)?
+            .ok_or(Error::NoRegisterContainer(*reg))?;
+        let curr_reg_val = self.builder.read_variable(&container_reg)?;
         let mut read_reg_val = curr_reg_val;
         if container_reg != *reg {
             // We need to shift the value if it is in the middle of a register
-            let shift_value =  self.calculate_reg_shift_from_container(reg, &container_reg);
+            let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
             if shift_value != 0 {
-                let shift_const = self.builder.build_int_const(shift_value, container_reg.size.into());
-                read_reg_val = self.builder.build_int_binary_operation(curr_reg_val, shift_const, IntBinaryOp::ShiftRight,reg.size.into())
+                let shift_const = self.builder.build_int_const(shift_value, container_reg.size.try_into()?);
+                read_reg_val = self.builder.build_int_binary_operation(
+                    curr_reg_val, shift_const, IntBinaryOp::ShiftRight, reg.size.try_into()?)?;
             }
         }
 
-        read_reg_val
+        Ok(read_reg_val)
     }
 
     /// Emits IR nodes to write `val` into a register varnode.
@@ -133,45 +137,43 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// 4. ORs the two together and writes back to the container.
     ///
     /// If `reg` is equal to its own container the write is direct.
-    fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) {
-        let container_reg = self.find_largest_fitting_register(reg).expect("Must have a container for a reg (itself at least)");
+    fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
+        let container_reg = self.find_largest_fitting_register(reg)?
+            .ok_or(Error::NoRegisterContainer(*reg))?;
         if container_reg == *reg {
-            self.builder.write_variable(reg, val);
-            return;
+            return Ok(self.builder.write_variable(reg, val)?);
         }
-        let container_reg_val = self.builder.read_variable(&container_reg);
-
+        let container_reg_val = self.builder.read_variable(&container_reg)?;
 
         // The register is in the part of a bigger container
-        let shift_bits =  self.calculate_reg_shift_from_container(reg, &container_reg);
+        let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
 
         // Calculate the shifted value that should be in the reg inside the container
         let shifted_value = if shift_bits == 0 {
-            self.builder.extend_if_needed(val, container_reg.size.into(), ExtendOp::ZeroExtend)
+            self.builder.extend_if_needed(val, container_reg.size.try_into()?, ExtendOp::ZeroExtend)?
         } else {
-            let shift_const = self.builder.build_int_const(shift_bits, container_reg.size.into());
+            let shift_const = self.builder.build_int_const(shift_bits, container_reg.size.try_into()?);
             self.builder.build_int_binary_operation(
-                val, shift_const, IntBinaryOp::ShiftLeft, reg.size.into())
-
+                val, shift_const, IntBinaryOp::ShiftLeft, reg.size.try_into()?)?
         };
 
         // Calculate the masked value of the reg in the container
-        let reg_mask = crate::utils::vn_mask(reg);
-        let reg_mask_val = self.builder.build_int_const(reg_mask, container_reg.size.into());
+        let reg_mask = crate::utils::vn_mask(reg)?;
+        let reg_mask_val = self.builder.build_int_const(reg_mask, container_reg.size.try_into()?);
         let reg_val = self.builder.build_int_binary_operation(
-            reg_mask_val, shifted_value, IntBinaryOp::And, container_reg.size.into());
-
+            reg_mask_val, shifted_value, IntBinaryOp::And, container_reg.size.try_into()?)?;
 
         // Calculate the rest of the container
-        let container_mask = crate::utils::vn_mask(&container_reg) & (!reg_mask);
-        let container_mask_val = self.builder.build_int_const(container_mask, container_reg.size.into());
+        let container_mask = crate::utils::vn_mask(&container_reg)? & (!reg_mask);
+        let container_mask_val = self.builder.build_int_const(container_mask, container_reg.size.try_into()?);
         let container_val = self.builder.build_int_binary_operation(
-            container_mask_val, container_reg_val, IntBinaryOp::And,container_reg.size.into());
+            container_mask_val, container_reg_val, IntBinaryOp::And, container_reg.size.try_into()?)?;
 
         // Merge the containers
         let final_container_value = self.builder.build_int_binary_operation(
-            container_val, reg_val, IntBinaryOp::Or, container_reg.size.into());
-        self.write_reg_vn(&container_reg, final_container_value);
+            container_val, reg_val, IntBinaryOp::Or, container_reg.size.try_into()?)?;
+        self.write_reg_vn(&container_reg, final_container_value)?;
+        Ok(())
     }
 
     /// Reads any varnode into an IR value.
@@ -181,58 +183,59 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// - `UNIQUE` → read the SSA variable directly.
     /// - default code space → a [`NodeKind::Load`] from the code address space.
     /// - `REGISTER` → delegates to [`read_reg_vn`] for aliasing handling.
-    fn read_vn(&mut self, vn: &rsleigh::Vn) -> ir::Value {
+    fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ir::Value> {
         let default_code_space = self.cfg.sleigh.default_code_space();
         let space = vn.addr.space;
         match space {
-            rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr.off, vn.size.into()),
-            rsleigh::VnSpace::UNIQUE => self.builder.read_variable(vn),
+            rsleigh::VnSpace::CONST => Ok(self.builder.build_int_const(vn.addr.off, vn.size.try_into()?)),
+            rsleigh::VnSpace::UNIQUE => Ok(self.builder.read_variable(vn)?),
             space if space == default_code_space => {
                 let space_info = self.cfg.sleigh.space_info(space);
-                let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().into());
-                self.builder.build_load(addr, space, vn.size.into())
+                let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
+                Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
             }
             rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
-            _ => unreachable!()
+            _ => Err(Error::UnsupportedVnSpace(space)),
         }
     }
 
     /// Writes an IR value into any writable varnode.
     ///
     /// Dispatches based on the varnode's address space:
-    /// - `CONST` → unreachable (constants cannot be written).
+    /// - `CONST` → error (constants cannot be written).
     /// - `UNIQUE` → write the SSA variable directly.
     /// - default code space → a [`NodeKind::Store`] to the code address space.
     /// - `REGISTER` → delegates to [`write_reg_vn`] for aliasing handling.
-    fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) {
+    fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) -> Result<()> {
         let default_code_space = self.cfg.sleigh.default_code_space();
         let space = vn.addr.space;
         match space {
-            rsleigh::VnSpace::CONST => unreachable!(),
-            rsleigh::VnSpace::UNIQUE => self.builder.write_variable(&vn, val),
+            rsleigh::VnSpace::CONST => Err(Error::WriteToConstSpace(space)),
+            rsleigh::VnSpace::UNIQUE => Ok(self.builder.write_variable(vn, val)?),
             space if space == default_code_space => {
                 let space_info = self.cfg.sleigh.space_info(space);
-                let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().into());
-                self.builder.build_store(addr, val, space)
+                let addr = self.builder.build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
+                Ok(self.builder.build_store(addr, val, space)?)
             }
             rsleigh::VnSpace::REGISTER => self.write_reg_vn(vn, val),
-            _ => unreachable!()
+            _ => Err(Error::UnsupportedVnSpace(space)),
         }
     }
 
     /// Emits the function entry node into the IR graph.
-    fn build_entry(&mut self) {
-        self.builder.build_entry()
+    fn build_entry(&mut self) -> Result<()> {
+        Ok(self.builder.build_entry()?)
     }
 
     /// Creates one IR region for every CFG region and stores the mapping in
     /// `region_to_block`.  Any previous mapping is cleared first.
-    fn create_ir_regions(&mut self) {
+    fn create_ir_regions(&mut self) -> Result<()> {
         // Clear state if there was something previously
         self.region_to_block.clear();
         for region_id in self.cfg.region_ids() {
-            self.region_to_block.insert(region_id, self.builder.create_region());
+            self.region_to_block.insert(region_id, self.builder.create_region()?);
         }
+        Ok(())
     }
 
     /// Marks the IR region that corresponds to the CFG's entry region as the
@@ -242,7 +245,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// (i.e. [`create_ir_regions`] was not called first).
     fn set_ir_entry_region(&mut self) -> Result<()>{
         let entry_block = self.region_to_block.get(&self.cfg.entry).ok_or(Error::CfgNoRegion(self.cfg.entry))?;
-        self.builder.set_entry_region(*entry_block);
+        self.builder.set_entry_region(*entry_block)?;
         Ok(())
     }
 
@@ -267,176 +270,175 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
 
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
-    fn process_int_unary_op(&mut self, insn: &rsleigh::Insn, op: IntUnaryOp) {
-        let input = self.read_vn(&insn.inputs[0]);
-        let out_vn = insn.output.as_ref().expect("int unary op must have an output");
-        let out = self.builder.build_int_unary_operation(input, op, out_vn.size.into());
-        self.write_vn(out_vn, out);
+    fn process_int_unary_op(&mut self, insn: &rsleigh::Insn, op: IntUnaryOp) -> Result<()> {
+        let input = self.read_vn(&insn.inputs[0])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node
     /// and writes the result to the output varnode.
-    fn process_int_binary_op(&mut self, insn: &rsleigh::Insn, op: IntBinaryOp) {
-        let lhs = self.read_vn(&insn.inputs[0]);
-        let rhs = self.read_vn(&insn.inputs[1]);
-        let out_vn = insn.output.as_ref().expect("binary op must have an output");
-        let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_vn.size.into());
-        self.write_vn(out_vn, out);
+    fn process_int_binary_op(&mut self, insn: &rsleigh::Insn, op: IntBinaryOp) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_vn.size.try_into()?)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a p-code integer comparison instruction into an IR
     /// comparison node and writes the boolean result to the output varnode.
-    fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) {
-        let lhs = self.read_vn(&insn.inputs[0]);
-        let rhs = self.read_vn(&insn.inputs[1]);
-        let out_vn = insn.output.as_ref().expect("binary op must have an output");
-        let out = self.builder.build_int_cmp_operation(lhs, rhs, op, out_vn.size.into());
-        self.write_vn(out_vn, out);
+    fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.build_int_cmp_operation(lhs, rhs, op, insn.inputs[0].size.try_into()?)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a p-code boolean binary instruction into an IR boolean
     /// operation node and writes the result to the output varnode.
-    fn process_bool_binary_op(&mut self, insn: &rsleigh::Insn, op: BoolBinaryOp) {
-        let lhs = self.read_vn(&insn.inputs[0]);
-        let rhs = self.read_vn(&insn.inputs[1]);
-        let out_vn = insn.output.as_ref().expect("binary op must have an output");
-        let out = self.builder.build_boolean_operation(lhs, rhs, op);
-        self.write_vn(out_vn, out);
+    fn process_bool_binary_op(&mut self, insn: &rsleigh::Insn, op: BoolBinaryOp) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.build_boolean_operation(lhs, rhs, op)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a p-code boolean unary instruction into an IR boolean
     /// unary node and writes the result to the output varnode.
-    fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn, op: BoolUnaryOp) {
-        let input = self.read_vn(&insn.inputs[0]);
-        let out_vn = insn.output.as_ref().expect("unary op must have an output");
-        let out = self.builder.build_boolean_unary_operation(input, op);
-        self.write_vn(out_vn, out);
+    fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn, op: BoolUnaryOp) -> Result<()> {
+        let input = self.read_vn(&insn.inputs[0])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.build_boolean_unary_operation(input, op)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a p-code zero-extend or sign-extend instruction into an IR
     /// extend node and writes the result to the output varnode.
-    fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) {
-        let input = self.read_vn(&insn.inputs[0]);
-        let out_vn = insn.output.as_ref().expect("extend op must have an output");
-        let out = self.builder.extend_if_needed(input, out_vn.size.into(), op);
-        self.write_vn(out_vn, out);
+    fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
+        let input = self.read_vn(&insn.inputs[0])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let out = self.builder.extend_if_needed(input, out_vn.size.try_into()?, op)?;
+        self.write_vn(out_vn, out)
     }
 
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
     ///
     /// Matches on the opcode and delegates to the appropriate `process_*`
-    /// helper or inline logic.  Unimplemented opcodes panic.
+    /// helper or inline logic.  Unimplemented opcodes return an error.
     fn process_insn(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn) -> Result<()> {
         match insn.opcode {
             Opcode::Nop => {}
-            Opcode::BoolNeg => self.process_bool_unary_op(insn, BoolUnaryOp::Neg),
-            Opcode::BoolAnd => self.process_bool_binary_op(insn, BoolBinaryOp::And),
-            Opcode::BoolOr => self.process_bool_binary_op(insn, BoolBinaryOp::Or),
-            Opcode::BoolXor => self.process_bool_binary_op(insn, BoolBinaryOp::Xor),
-            Opcode::Int2Comp => self.process_int_unary_op(insn, IntUnaryOp::Not),
-            Opcode::IntNeg => self.process_int_unary_op(insn, IntUnaryOp::Neg),
-            Opcode::IntAdd => self.process_int_binary_op(insn, IntBinaryOp::Add),
-            Opcode::IntAnd => self.process_int_binary_op(insn, IntBinaryOp::And),
-            Opcode::IntXor => self.process_int_binary_op(insn, IntBinaryOp::Xor),
-            Opcode::IntOr => self.process_int_binary_op(insn, IntBinaryOp::Or),
-            Opcode::IntDiv => self.process_int_binary_op(insn, IntBinaryOp::Div),
-            Opcode::IntSdiv => self.process_int_binary_op(insn, IntBinaryOp::Sdiv),
-            Opcode::IntMul => self.process_int_binary_op(insn, IntBinaryOp::Mul),
-            Opcode::IntRight => self.process_int_binary_op(insn, IntBinaryOp::ShiftRight),
-            Opcode::IntSright => self.process_int_binary_op(insn, IntBinaryOp::SShiftRight),
-            Opcode::IntLeft => self.process_int_binary_op(insn, IntBinaryOp::ShiftLeft),
-            Opcode::IntCarry => self.process_int_cmp_op(insn, IntCmpOp::Carry),
-            Opcode::IntEqual => self.process_int_cmp_op(insn, IntCmpOp::Equal),
-            Opcode::IntLess => self.process_int_cmp_op(insn, IntCmpOp::Less),
-            Opcode::IntSless => self.process_int_cmp_op(insn, IntCmpOp::Sless),
-            Opcode::IntLessEqual => self.process_int_cmp_op(insn, IntCmpOp::LessEqual),
-            Opcode::IntRem => self.process_int_binary_op(insn, IntBinaryOp::Rem),
-            Opcode::IntSrem => self.process_int_binary_op(insn, IntBinaryOp::Srem),
-            Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry),
-            Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow),
-            Opcode::IntSlessEqual => self.process_int_cmp_op(insn, IntCmpOp::SlessEqual),
-            Opcode::IntSub => self.process_int_binary_op(insn, IntBinaryOp::Sub),
-            Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend),
-            Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend),
+            Opcode::BoolNeg => self.process_bool_unary_op(insn, BoolUnaryOp::Neg)?,
+            Opcode::BoolAnd => self.process_bool_binary_op(insn, BoolBinaryOp::And)?,
+            Opcode::BoolOr => self.process_bool_binary_op(insn, BoolBinaryOp::Or)?,
+            Opcode::BoolXor => self.process_bool_binary_op(insn, BoolBinaryOp::Xor)?,
+            Opcode::Int2Comp => self.process_int_unary_op(insn, IntUnaryOp::Not)?,
+            Opcode::IntNeg => self.process_int_unary_op(insn, IntUnaryOp::Neg)?,
+            Opcode::IntAdd => self.process_int_binary_op(insn, IntBinaryOp::Add)?,
+            Opcode::IntAnd => self.process_int_binary_op(insn, IntBinaryOp::And)?,
+            Opcode::IntXor => self.process_int_binary_op(insn, IntBinaryOp::Xor)?,
+            Opcode::IntOr => self.process_int_binary_op(insn, IntBinaryOp::Or)?,
+            Opcode::IntDiv => self.process_int_binary_op(insn, IntBinaryOp::Div)?,
+            Opcode::IntSdiv => self.process_int_binary_op(insn, IntBinaryOp::Sdiv)?,
+            Opcode::IntMul => self.process_int_binary_op(insn, IntBinaryOp::Mul)?,
+            Opcode::IntRight => self.process_int_binary_op(insn, IntBinaryOp::ShiftRight)?,
+            Opcode::IntSright => self.process_int_binary_op(insn, IntBinaryOp::SShiftRight)?,
+            Opcode::IntLeft => self.process_int_binary_op(insn, IntBinaryOp::ShiftLeft)?,
+            Opcode::IntCarry => self.process_int_cmp_op(insn, IntCmpOp::Carry)?,
+            Opcode::IntEqual => self.process_int_cmp_op(insn, IntCmpOp::Equal)?,
+            Opcode::IntLess => self.process_int_cmp_op(insn, IntCmpOp::Less)?,
+            Opcode::IntSless => self.process_int_cmp_op(insn, IntCmpOp::Sless)?,
+            Opcode::IntLessEqual => self.process_int_cmp_op(insn, IntCmpOp::LessEqual)?,
+            Opcode::IntRem => self.process_int_binary_op(insn, IntBinaryOp::Rem)?,
+            Opcode::IntSrem => self.process_int_binary_op(insn, IntBinaryOp::Srem)?,
+            Opcode::IntScarry => self.process_int_cmp_op(insn, IntCmpOp::Scarry)?,
+            Opcode::IntSborrow => self.process_int_cmp_op(insn, IntCmpOp::Sborrow)?,
+            Opcode::IntSlessEqual => self.process_int_cmp_op(insn, IntCmpOp::SlessEqual)?,
+            Opcode::IntSub => self.process_int_binary_op(insn, IntBinaryOp::Sub)?,
+            Opcode::IntSext => self.process_extend(insn, ExtendOp::SignExtend)?,
+            Opcode::IntZext => self.process_extend(insn, ExtendOp::ZeroExtend)?,
             Opcode::IntNotEqual => {
                 // We treat not equal as neg(equal) for deterministic results
-                let lhs = self.read_vn(&insn.inputs[0]);
-                let rhs = self.read_vn(&insn.inputs[1]);
-                let out_vn = insn.output.as_ref().expect("binary op must have an output");
-                let and_out = self.builder.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, out_vn.size.into());
-                let out = self.builder.build_boolean_unary_operation(and_out, BoolUnaryOp::Neg);
-                self.write_vn(out_vn, out);
+                let lhs = self.read_vn(&insn.inputs[0])?;
+                let rhs = self.read_vn(&insn.inputs[1])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let and_out = self.builder.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, out_vn.size.try_into()?)?;
+                let out = self.builder.build_boolean_unary_operation(and_out, BoolUnaryOp::Neg)?;
+                self.write_vn(out_vn, out)?;
             }
             Opcode::Branch => {
                 let branch_region = self.cfg.region_branch(region_id)?.ok_or(cfg::Error::InvalidRegion(region_id))?;
                 let dest_block = self.region_to_block.get(&branch_region).ok_or(cfg::Error::InvalidRegion(branch_region))?;
-                self.builder.build_branch(*dest_block);
+                self.builder.build_branch(*dest_block)?;
             }
             Opcode::CondBranch => {
-                let cond = self.read_vn(&insn.inputs[1]);
+                let cond = self.read_vn(&insn.inputs[1])?;
                 let res = self.cfg.region_if(region_id)?;
                 let if_true_region = res.if_true_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
                 let if_false_region = res.if_false_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
                 let true_block = self.region_to_block.get(&if_true_region).ok_or(cfg::Error::InvalidRegion(if_true_region))?;
                 let false_block = self.region_to_block.get(&if_false_region).ok_or(cfg::Error::InvalidRegion(if_false_region))?;
-                self.builder.build_if(cond, *true_block, *false_block);
+                self.builder.build_if(cond, *true_block, *false_block)?;
             }
             Opcode::Copy => {
-                let input = self.read_vn(&insn.inputs[0]);
-                let out_vn = insn.output.as_ref().expect("copy op must have an output");
-                self.write_vn(out_vn, input);
+                let input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                self.write_vn(out_vn, input)?;
             }
             Opcode::Load => {
                 let space = insn.inputs[0].addr.space;
-                let addr = self.read_vn(&insn.inputs[1]);
-                let out_vn = insn.output.as_ref().expect("load op must have an output");
-                let out = self.builder.build_load(addr, space, out_vn.size.into());
-                self.write_vn(out_vn, out);
+                let addr = self.read_vn(&insn.inputs[1])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_load(addr, space, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
             }
             Opcode::Store => {
                 let space = insn.inputs[0].addr.space;
-                let addr = self.read_vn(&insn.inputs[1]);
-                let data = self.read_vn(&insn.inputs[2]);
-                self.builder.build_store(addr, data, space);
+                let addr = self.read_vn(&insn.inputs[1])?;
+                let data = self.read_vn(&insn.inputs[2])?;
+                self.builder.build_store(addr, data, space)?;
             }
             Opcode::Return => {
                 let regs: Vec<_> = self.builder.variables().copied()
                     .filter(|vn| vn.addr.space == rsleigh::VnSpace::REGISTER).collect();
                 if insn.inputs.len() > 0 {
-                    let ret_val = self.read_vn(&insn.inputs[0]);
-                    self.builder.build_return(Some(ret_val), &regs);
+                    let ret_val = self.read_vn(&insn.inputs[0])?;
+                    self.builder.build_return(Some(ret_val), &regs)?;
                 } else {
-                    self.builder.build_return(None, &regs);
+                    self.builder.build_return(None, &regs)?;
                 }
             }
             Opcode::Popcount => {
                 println!("implement popcount");
             }
             Opcode::Call | Opcode::CallIndirect => {
-                let call_address = self.read_vn(&insn.inputs[0]);
-                self.builder.build_call(call_address);
+                let call_address = self.read_vn(&insn.inputs[0])?;
+                self.builder.build_call(call_address)?;
             }
-            Opcode::CallOther => {}
             Opcode::Subpiece => {
                 // `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
                 // starting at byte `byte_offset` from `value`.
                 // Implemented as: right-shift by (byte_offset * 8) bits, then truncate.
-                let input = self.read_vn(&insn.inputs[0]);
+                let input = self.read_vn(&insn.inputs[0])?;
                 let byte_offset = insn.inputs[1].addr.off;
-                let out_vn = insn.output.as_ref().expect("Subpiece must have an output");
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
                 let shifted = if byte_offset == 0 {
                     input
                 } else {
                     let bit_shift = byte_offset * 8;
-                    let shift_const = self.builder.build_int_const(bit_shift, insn.inputs[0].size.into());
+                    let shift_const = self.builder.build_int_const(bit_shift, insn.inputs[0].size.try_into()?);
                     self.builder.build_int_binary_operation(
-                        input, shift_const, IntBinaryOp::ShiftRight, insn.inputs[0].size.into())
+                        input, shift_const, IntBinaryOp::ShiftRight, insn.inputs[0].size.try_into()?)?
                 };
-                let out = self.builder.truncate_if_needed(shifted, out_vn.size.into());
-                self.write_vn(out_vn, out);
+                let out = self.builder.truncate_if_needed(shifted, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
             }
-            _ => unimplemented!("{:?}", insn.opcode),
+            _ => return Err(Error::UnimplementedOpcode(insn.opcode)),
         }
         Ok(())
     }
@@ -495,13 +497,13 @@ impl Analyzer {
     /// 4. Translate instructions in each region.
     /// 5. Link fallthrough edges between consecutive regions.
     pub fn analyze_cfg<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Result<ir::BuiltFunctionGraph>{
-        let mut ir_analyzer = IrAnalyzer::new(self, cfg);
+        let mut ir_analyzer = IrAnalyzer::new(self, cfg)?;
 
         // Build the entry for the graph
-        ir_analyzer.build_entry();
+        ir_analyzer.build_entry()?;
 
         // Create all ir blocks
-        ir_analyzer.create_ir_regions();
+        ir_analyzer.create_ir_regions()?;
 
         // Set entry block
         ir_analyzer.set_ir_entry_region()?;
@@ -521,9 +523,11 @@ impl Analyzer {
 
         // All blocks except fallthrough are linked
         for (region_parent_id, region_child_id) in fallthroughs {
-            let block_parent_id = ir_analyzer.region_to_block.get(&region_parent_id).unwrap();
-            let block_child_id = ir_analyzer.region_to_block.get(&region_child_id).unwrap();
-            ir_analyzer.builder.link_regions(*block_parent_id, *block_child_id);
+            let block_parent_id = ir_analyzer.region_to_block.get(&region_parent_id)
+                .ok_or(Error::IrRegionNotFound(region_parent_id))?;
+            let block_child_id = ir_analyzer.region_to_block.get(&region_child_id)
+                .ok_or(Error::IrRegionNotFound(region_child_id))?;
+            ir_analyzer.builder.link_regions(*block_parent_id, *block_child_id)?;
         }
         Ok(ir_analyzer.builder.build())
     }

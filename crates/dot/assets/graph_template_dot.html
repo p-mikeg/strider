@@ -117,8 +117,11 @@
     @media(max-width:900px){.app{grid-template-columns:1fr;grid-template-rows:260px 1fr}.sidebar{border-right:none;border-bottom:1px solid var(--border)}}
   </style>
   <!-- @viz-js/viz v3 – Graphviz 7.x via Wasm, handles large graphs well -->
+  <!-- @viz-js/viz v3 – Graphviz 9.x via Wasm, renders in a background worker -->
   <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3/lib/viz-standalone.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <!-- DOT source embedded as JSON so labels with backticks / ${ are safe -->
+  <script type="application/json" id="dot-src">__DOT_JSON__</script>
 </head>
 <body>
 <div class="app">
@@ -177,6 +180,17 @@
             <button class="f" id="bHistFwd"  disabled>Forward ▶</button>
           </div>
           <div class="hint"><code>Space</code> drag · <code>Alt+←/→</code> history</div>
+          <div class="row" style="margin-top:6px">
+            <select id="engSel" style="flex:1;padding:6px 8px;border-radius:var(--r2);border:1px solid var(--border2);background:#111115;color:var(--text);font-size:12px;outline:none;cursor:pointer">
+              <option value="dot">Engine: dot (hierarchical)</option>
+              <option value="fdp">Engine: fdp (force-directed)</option>
+              <option value="sfdp">Engine: sfdp (large graphs)</option>
+              <option value="neato">Engine: neato (spring)</option>
+              <option value="circo">Engine: circo (circular)</option>
+              <option value="twopi">Engine: twopi (radial)</option>
+            </select>
+          </div>
+          <div class="hint">Switch engine for large / complex graphs.</div>
         </div>
       </div>
 
@@ -225,9 +239,9 @@
 // ── DOT source ────────────────────────────────────────────────────────────────
 function withDefaults(dot){
   if(/\b(graph|node)\s*\[.*fontsize\s*=/.test(dot))return dot;
-  return dot.replace(/(\{\s*)/,`$1\ngraph[fontname="monospace",fontsize=10];\nnode[fontname="monospace",fontsize=10,margin="0.15,0.08"];\nedge[fontname="monospace",fontsize=9];\n`);
+  return dot.replace(/(\{\s*)/,'$1\ngraph[fontname="monospace",fontsize=10];\nnode[fontname="monospace",fontsize=10,margin="0.15,0.08"];\nedge[fontname="monospace",fontsize=9];\n');
 }
-const ORIG=`__DOT__`;
+const ORIG=JSON.parse(document.getElementById("dot-src").textContent);
 let curDot=withDefaults(ORIG);
 document.getElementById("dotSrc").value=ORIG;
 
@@ -235,7 +249,7 @@ document.getElementById("dotSrc").value=ORIG;
 const KINDS=[
   [/\bEntry\b/i,               "nk-entry","Entry",       "#3a7ee8"],
   [/\bControlState\b/i,        "nk-ctrl", "ControlState","#7c3aed"],
-  [/\b(ControlSelector|MemSelector)\b/i,"nk-phi","Phi/Selector","#0e7490"],
+  [/\b(ControlPhi|MemPhi)\b/i,"nk-phi","Phi","#0e7490"],
   [/\bconst\b/i,               "nk-const","Const",       "#15803d"],
   [/\b(Add|Sub|Mul|Div|Rem|Xor|And|Or|Shift|Negate|Not|Popcount|Extend|Truncate|Cast)\b/i,"nk-arith","Arith","#b45309"],
   [/\b(Load|Store|InitialMemory)\b/i,"nk-mem","Memory","#be123c"],
@@ -564,17 +578,23 @@ function clrGraph(){
   dimActive=false;miniVR=null;mainSvgRef=null;origVB=null;
 }
 
-async function render(dot){
+async function render(dot,engine){
   clrGraph();
-  showLoading("Rendering graph…");
+  const eng=(engine||document.getElementById("engSel").value)||"dot";
+  // Estimate graph size by counting node statements to give a helpful message.
+  const nodeCount=(dot.match(/\[label=/g)||[]).length;
+  const big=nodeCount>300;
+  showLoading(big
+    ? `Rendering ${nodeCount} nodes with engine "${eng}" — may take a while…`
+    : "Rendering graph…");
   const t0=performance.now();
   try{
     // Initialise Viz once; re-create on any failure to avoid stale state.
     if(!viz){
-      showLoading("Loading renderer…");
-      viz=await Viz.load();
+      showLoading("Loading Graphviz WASM…");
+      viz=await Viz.instance();
     }
-    const svg=await viz.renderSVGElement(dot);
+    const svg=await viz.renderSVGElement(dot,{engine:eng});
 
     // Save the original viewBox before svg-pan-zoom can modify the SVG.
     origVB=svg.getAttribute("viewBox");
@@ -622,6 +642,9 @@ document.getElementById("bCopyDot").addEventListener("click",()=>{
 document.getElementById("bReload").addEventListener("click",()=>{
   curDot=withDefaults(document.getElementById("dotSrc").value.trim());
   if(curDot)render(curDot);
+});
+document.getElementById("engSel").addEventListener("change",()=>{
+  render(curDot);
 });
 
 render(curDot);

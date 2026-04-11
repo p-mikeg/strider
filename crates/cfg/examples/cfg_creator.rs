@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg_options = OptionsBuilder::new().allow_code_before_start_addr().build();
     let cfg = Builder::new(sleigh,0x0, cfg_options).build()?;
     
-    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
 
     dot.dump_as_html("/tmp/graph.html")?;
     dot.dump_as_dot("/tmp/graph.dot")?;

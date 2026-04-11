@@ -1,6 +1,7 @@
 use ir::{BuiltFunctionGraph};
 use ir::node::{NodeOutputId, NodeKind, NodeOutputKind, NodeOutputType};
 use crate::opt::OptimizationResult;
+use crate::error::Result;
 
 /// Returns the integer constant value of `output` (masked to its declared type),
 /// or `None` if the output does not hold an integer constant.
@@ -31,23 +32,23 @@ pub(crate) fn bool_const_val(fg: &BuiltFunctionGraph, output: NodeOutputId) -> O
 
 /// Creates (or retrieves from the deduplication cache) an `IntConst(val)` node
 /// with the given type and returns its output id.
-pub(crate) fn make_int_const(fg: &mut BuiltFunctionGraph, val: u64, ty: NodeOutputType) -> NodeOutputId {
+pub(crate) fn make_int_const(fg: &mut BuiltFunctionGraph, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::IntConst(val),
         [],
         [NodeOutputKind::OutputType(ty)],
     );
-    fg.graph.node_outputs_exact::<1>(node)[0]
+    Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
 }
 
 /// Creates (or retrieves) a `BoolConst(val)` node and returns its output id.
-pub(crate) fn make_bool_const(fg: &mut BuiltFunctionGraph, val: bool) -> NodeOutputId {
+pub(crate) fn make_bool_const(fg: &mut BuiltFunctionGraph, val: bool) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::BoolConst(val),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
     );
-    fg.graph.node_outputs_exact::<1>(node)[0]
+    Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
 }
 
 /// Redirects every consumer of `old` to `new_val` instead.
@@ -58,13 +59,13 @@ pub(crate) fn replace_all_uses(
     fg: &mut BuiltFunctionGraph,
     old: NodeOutputId,
     new_val: NodeOutputId,
-) -> OptimizationResult {
+) -> Result<OptimizationResult> {
     let mut cursor = fg.graph.output_use_cursor(old);
     if cursor.current().is_none() {
-        return OptimizationResult::NoChange;
+        return Ok(OptimizationResult::NoChange);
     }
     while cursor.current().is_some() {
-        cursor.replace_current_with(new_val);
+        cursor.replace_current_with(new_val)?;
     }
-    OptimizationResult::Changed
+    Ok(OptimizationResult::Changed)
 }

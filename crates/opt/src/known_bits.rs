@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, ExtendOp};
 use ir::node::{NodeId, NodeOutputId, NodeKind, NodeOutputType};
 
+use crate::error::{Error, Result};
 use crate::opt::{OptimizationResult, Optimizer};
 use crate::utils::{make_int_const, replace_all_uses};
 
@@ -55,23 +56,28 @@ fn node_known_bits(
     fg: &BuiltFunctionGraph,
     node_id: NodeId,
     known: &HashMap<NodeOutputId, Kb>,
-) -> Option<(NodeOutputId, Kb)> {
+) -> Result<Option<(NodeOutputId, Kb)>> {
     let kind = *fg.graph.node_kind(node_id);
 
     // Find the first integer value output.
-    let out = fg
+    let out = match fg
         .graph
         .node_outputs(node_id)
         .into_iter()
-        .find(|&o| fg.graph.output_kind(o).is_integer())?;
-    let ty = fg.graph.output_kind(out).as_value().unwrap();
-    let type_mask = ty.get_unsigned_int(u64::MAX).unwrap();
+        .find(|&o| fg.graph.output_kind(o).is_integer())
+    {
+        Some(o) => o,
+        None => return Ok(None),
+    };
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let type_mask = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))?;
 
     let kb = match kind {
         NodeKind::IntConst(v) => Kb::from_const(v, ty),
 
         NodeKind::IntBinaryOp(op) => {
-            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id);
+            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
             let l = known.get(&lhs).copied().unwrap_or_default();
             let r = known.get(&rhs).copied().unwrap_or_default();
             match op {
@@ -98,9 +104,9 @@ fn node_known_bits(
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
                         let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
-                        return Some((out, Kb { ones: 0, zeros: lower_mask }));
+                        return Ok(Some((out, Kb { ones: 0, zeros: lower_mask })));
                     }
-                    return None;
+                    return Ok(None);
                 }
                 IntBinaryOp::ShiftRight => {
                     // Logical right-shift: upper bits become 0.
@@ -111,16 +117,16 @@ fn node_known_bits(
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
                         let upper_mask = !((type_mask) >> shift) & type_mask;
-                        return Some((out, Kb { ones: 0, zeros: upper_mask }));
+                        return Ok(Some((out, Kb { ones: 0, zeros: upper_mask })));
                     }
-                    return None;
+                    return Ok(None);
                 }
-                _ => return None,
+                _ => return Ok(None),
             }
         }
 
         NodeKind::IntUnaryOp(IntUnaryOp::Not) => {
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id);
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
             // NOT swaps known ones and zeros.
             Kb {
@@ -131,7 +137,7 @@ fn node_known_bits(
 
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id);
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
                 ones:  kb.ones  & type_mask,
@@ -141,8 +147,9 @@ fn node_known_bits(
 
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id);
-            let input_ty = fg.graph.output_kind(input).as_value().unwrap();
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.graph.output_kind(input);
+            let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
             let input_mask = input_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
@@ -151,10 +158,10 @@ fn node_known_bits(
             }
         }
 
-        _ => return None,
+        _ => return Ok(None),
     };
 
-    Some((out, kb))
+    Ok(Some((out, kb)))
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
@@ -168,7 +175,7 @@ fn node_known_bits(
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> OptimizationResult {
+    fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // Collect once; mutations only add new nodes (never change existing ones).
         let nodes: Vec<_> = function.preorder().collect();
 
@@ -178,7 +185,7 @@ impl Optimizer for KnownBits {
         while any_changed {
             any_changed = false;
             for &node_id in &nodes {
-                if let Some((out, kb)) = node_known_bits(function, node_id, &known) {
+                if let Some((out, kb)) = node_known_bits(function, node_id, &known)? {
                     any_changed |= known.entry(out).or_default().merge(kb);
                 }
             }
@@ -193,7 +200,7 @@ impl Optimizer for KnownBits {
                 if !ty.is_integer() {
                     continue;
                 }
-                let type_mask = ty.get_unsigned_int(u64::MAX).unwrap();
+                let type_mask = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))?;
                 let Some(&kb) = known.get(&out) else { continue };
                 if !kb.all_known(type_mask) {
                     continue;
@@ -202,11 +209,11 @@ impl Optimizer for KnownBits {
                 if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
                     continue;
                 }
-                let new_out = make_int_const(function, kb.ones, ty);
-                result |= replace_all_uses(function, out, new_out);
+                let new_out = make_int_const(function, kb.ones, ty)?;
+                result |= replace_all_uses(function, out, new_out)?;
             }
         }
-        result
+        Ok(result)
     }
 }
 
@@ -218,90 +225,75 @@ mod tests {
     use ir::{FunctionBuilder, IntBinaryOp};
     use ir::node::{NodeKind, NodeOutputType};
 
-    fn make_fn<F>(f: F) -> ir::BuiltFunctionGraph
+    fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
     where
-        F: FnOnce(&mut FunctionBuilder) -> ir::Value,
+        F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
     {
-        let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-        let region = b.create_region();
-        b.set_entry_region(region);
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
         b.set_region(region);
-        let val = f(&mut b);
-        b.build_return(Some(val), &[]);
-        b.build()
+        let val = f(&mut b)?;
+        b.build_return(Some(val), &[])?;
+        Ok(b.build())
     }
 
-    fn return_kind(fg: &ir::BuiltFunctionGraph) -> NodeKind {
+    fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
         let ret = fg
             .all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-            .expect("no Return node");
+            .ok_or(Error::NoReturnNode)?;
         let val = fg.graph.node_inputs(ret)[1];
-        *fg.graph.node_kind(fg.graph.get_node_from_output(val))
+        Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
     }
 
     /// `(x | 7) & 4` — bits 0-2 of `Or` are known 1; after And with 4 every
     /// bit is determined → should fold to `IntConst(4)`.
     #[test]
-    fn known_bits_or_then_and() {
-        let mut fg = make_fn(|b| {
-            // x is non-const (built as add(1,2) so it isn't itself a constant).
-            let one = b.build_int_const(1, NodeOutputType::U64);
-            let two = b.build_int_const(2, NodeOutputType::U64);
-            let x = b.build_int_binary_operation(one, two, IntBinaryOp::Add, NodeOutputType::U64);
-            let c7 = b.build_int_const(7, NodeOutputType::U64);
-            let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let ored = b.build_int_binary_operation(x, c7, IntBinaryOp::Or, NodeOutputType::U64);
-            b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)
-        });
-        // ConstantFold first: folds add(1,2) → 3, which makes Or(3,7)=7.
-        // Then KnownBits sees Or(x,7)&4.  We run just KnownBits here after
-        // manually providing a non-foldable x to test the known-bits path.
+    fn known_bits_or_then_and() -> Result<()> {
         // Re-build without ConstantFold touching x.
         let mut fg2 = make_fn(|b| {
-            // Build a genuinely non-constant placeholder that looks like a
-            // variable input.  Use a U64 IntConst but behind two Or nodes so
-            // ConstantFold won't trivially fold it in the same pass.
             let x_seed = b.build_int_const(0, NodeOutputType::U64); // value 0; bits 0-2 = 0
-            // Or with some unknown: since we only care about bits 0-2 being 1
-            // after or-7, we just use the seed directly.
             let c7 = b.build_int_const(7, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64);
-            b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)
-        });
+            let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)?)
+        })?;
         // Run KnownBits until convergence.
         let mut changed = true;
         while changed {
-            changed = KnownBits.optimize(&mut fg2).changed();
+            changed = KnownBits.optimize(&mut fg2)?.changed();
         }
-        assert_eq!(return_kind(&fg2), NodeKind::IntConst(4));
+        assert_eq!(return_kind(&fg2)?, NodeKind::IntConst(4));
+        Ok(())
     }
 
     /// `(x & 0xF0) & 0x0F` — the two masks have no overlap, so the result is
     /// always 0.
     #[test]
-    fn known_bits_and_mask_then_and() {
+    fn known_bits_and_mask_then_and() -> Result<()> {
         let mut fg = make_fn(|b| {
             let x = b.build_int_const(0xFF, NodeOutputType::U8); // any value
             let f0 = b.build_int_const(0xF0, NodeOutputType::U8);
             let f = b.build_int_const(0x0F, NodeOutputType::U8);
-            let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8);
-            b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)
-        });
+            let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
+            Ok(b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)?)
+        })?;
         let mut changed = true;
         while changed {
-            changed = KnownBits.optimize(&mut fg).changed();
+            changed = KnownBits.optimize(&mut fg)?.changed();
         }
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+        Ok(())
     }
 
     /// A plain `IntConst` already has all bits known — the optimizer must not
     /// loop or report spurious changes.
     #[test]
-    fn known_bits_const_no_change() {
-        let mut fg = make_fn(|b| b.build_int_const(42, NodeOutputType::U64));
+    fn known_bits_const_no_change() -> Result<()> {
+        let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64)))?;
         // KnownBits should see the const node but not replace it with itself.
-        assert!(!KnownBits.optimize(&mut fg).changed());
+        assert!(!KnownBits.optimize(&mut fg)?.changed());
+        Ok(())
     }
 }

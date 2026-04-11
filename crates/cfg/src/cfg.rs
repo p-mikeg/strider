@@ -727,7 +727,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
             },
             rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
             rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-            _ => unreachable!()
+            s => Err(Error::UnsupportedVnSpaceDisplay(s))
         }
     }
 

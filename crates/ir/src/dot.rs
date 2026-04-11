@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::io;
 use rsleigh::MemReader;
 
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 
 // ── node appearance ───────────────────────────────────────────────────────────
@@ -14,8 +15,8 @@ fn node_shape(kind: &NodeKind) -> &'static str {
         | NodeKind::InitialVar(_)       => "Mdiamond",
 
         NodeKind::ControlState          => "invhouse",
-        NodeKind::ControlSelector(_)
-        | NodeKind::MemSelector         => "house",
+        NodeKind::ControlPhi(_)
+        | NodeKind::MemPhi              => "house",
 
         NodeKind::If                    => "diamond",
         NodeKind::IfCase(_)             => "trapezium",
@@ -46,8 +47,8 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::ControlState          => "\"#2a1a4a\"",
 
-        NodeKind::ControlSelector(_)
-        | NodeKind::MemSelector         => "\"#163030\"",
+        NodeKind::ControlPhi(_)
+        | NodeKind::MemPhi              => "\"#163030\"",
 
         NodeKind::If
         | NodeKind::IfCase(_)           => "\"#3a2a10\"",
@@ -83,7 +84,7 @@ fn edge_style<R: MemReader>(
     match out_kind {
         NodeOutputKind::Control        => return ("ctrl",     "\"#00cccc\""),   // aqua
         NodeOutputKind::Memory         => return ("mem",      "\"#cc88aa\""),   // pink
-        NodeOutputKind::ControlSelector => return ("sel",     "\"#dddddd\""),   // white
+        NodeOutputKind::ControlPhi      => return ("phi",     "\"#dddddd\""),   // white
         NodeOutputKind::OutputType(_)  => {}                                     // fall through
     }
 
@@ -140,8 +141,11 @@ fn edge_style<R: MemReader>(
 
         NodeKind::ControlState => ("ctrl", "\"#00cccc\""),
 
-        NodeKind::ControlSelector(_)
-        | NodeKind::MemSelector => ("in", "\"#dddddd\""),
+        // ControlPhi value inputs (inputs[1+]) have NodeOutputKind::OutputType
+        // and fall through here.  MemPhi inputs are all either ControlPhi-dispatch
+        // (kind=ControlPhi, handled above) or Memory (kind=Memory, handled above),
+        // so MemPhi never reaches this arm.
+        NodeKind::ControlPhi(_) => ("in", "\"#dddddd\""),
 
         NodeKind::PostCallMemState
         | NodeKind::PostCallVarState(_) => match input_idx {
@@ -165,19 +169,22 @@ pub struct GraphDotDumper<'a, R: MemReader> {
 }
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
-    fn vn_to_name(&self, vn: &rsleigh::Vn) -> String {
+    fn vn_to_name(&self, vn: &rsleigh::Vn) -> io::Result<String> {
         let offset = vn.addr.off;
         let size = vn.size;
         match vn.addr.space {
-            rsleigh::VnSpace::CONST    => format!("{offset:#x}:{size}"),
+            rsleigh::VnSpace::CONST    => Ok(format!("{offset:#x}:{size}")),
             rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs().unwrap();
-                regs.vn_to_name(*vn).unwrap().to_string()
+                let regs = self.sleigh.regs()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                let name = regs.vn_to_name(*vn)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::Other, format!("register not found: {vn:?}")))?;
+                Ok(name.to_string())
             },
-            rsleigh::VnSpace::RAM      => format!("ram[{offset:#x}]:{size}"),
-            rsleigh::VnSpace::UNIQUE   => format!("unique[{offset:#x}]:{size}"),
-            s if s == self.sleigh.default_code_space() => format!("ram[{offset:#x}]:{size}"),
-            _                          => unreachable!(),
+            rsleigh::VnSpace::RAM      => Ok(format!("ram[{offset:#x}]:{size}")),
+            rsleigh::VnSpace::UNIQUE   => Ok(format!("unique[{offset:#x}]:{size}")),
+            s if s == self.sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
+            s => Err(io::Error::new(io::ErrorKind::Other, format!("unsupported VnSpace: {s:?}"))),
         }
     }
 
@@ -198,71 +205,135 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         }
     }
 
-    /// Human-readable string for a `NodeKind` (dot-only).
-    fn node_kind_str(&self, kind: &NodeKind) -> String {
-        match kind {
-            NodeKind::CastToBool | NodeKind::CastToInt => "Cast".to_owned(),
-            NodeKind::Truncate                         => "Truncate".to_owned(),
-            NodeKind::Extend(op)                       => format!("{:?}", op),
-            NodeKind::BoolConst(v)                     => format!("const {v}"),
-            NodeKind::IntConst(v)                      => format!("const {v:#x}"),
-            NodeKind::BoolBinaryOp(op)                 => format!("{:?}", op),
-            NodeKind::IntBinaryOp(op)                  => format!("{:?}", op),
-            NodeKind::BoolUnaryOp(op)                  => format!("{:?}", op),
-            NodeKind::IntUnaryOp(op)                   => format!("{:?}", op),
-            NodeKind::IntCmpOp(op)                     => format!("{:?}", op),
-            NodeKind::Load(space)                      => format!("Load {}", self.pretty_vnspace(*space)),
-            NodeKind::Store(space)                     => format!("Store {}", self.pretty_vnspace(*space)),
-            _                                          => format!("{:?}", kind),
-        }
+    /// Returns the [`NodeOutputType`] of the first value output of `node`,
+    /// or `None` if it has no value output.
+    fn out_type(&self, node: NodeId) -> Option<NodeOutputType> {
+        self.graph.node_outputs(node).into_iter()
+            .find_map(|o| self.graph.output_kind(o).as_value())
     }
 
-    fn pretty_label(&self, node: NodeId) -> String {
+    /// Returns the [`NodeOutputType`] of the `NodeOutputId` at input index
+    /// `idx` of `node`, or `None` if it is not a value output.
+    fn input_type(&self, node: NodeId, idx: usize) -> Option<NodeOutputType> {
+        self.graph.node_inputs(node).into_iter().nth(idx)
+            .and_then(|o| self.graph.output_kind(o).as_value())
+    }
+
+    fn pretty_label(&self, node: NodeId) -> io::Result<String> {
         let kind = self.graph.node_kind(node);
-        let base = match kind {
-            NodeKind::InitialVar(var)       => format!("init\n{}", self.vn_to_name(var)),
-            NodeKind::ControlSelector(var)  => format!("φ {}", self.vn_to_name(var)),
-            NodeKind::PostCallVarState(var) => format!("post-call\n{}", self.vn_to_name(var)),
-            NodeKind::IfCase(b)             => format!("if.{}", if *b { "true" } else { "false" }),
-            _                               => self.node_kind_str(kind),
+
+        let label = match kind {
+            // ── entry / structural ────────────────────────────────────────────
+            NodeKind::InitialVar(var) =>
+                format!("init\n{}", self.vn_to_name(var)?),
+            NodeKind::MemPhi => "φ Mem".to_string(),
+            NodeKind::ControlPhi(var) =>
+                format!("φ {}", self.vn_to_name(var)?),
+            NodeKind::PostCallVarState(var) =>
+                format!("post-call\n{}", self.vn_to_name(var)?),
+            NodeKind::IfCase(b) =>
+                format!("if.{}", if *b { "true" } else { "false" }),
+
+            // ── constants ─────────────────────────────────────────────────────
+            NodeKind::BoolConst(v) => format!("const {v}"),
+            NodeKind::IntConst(v)  => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("const {v:#x}{ty}")
+            }
+
+            // ── memory operations ─────────────────────────────────────────────
+            NodeKind::Load(space) => {
+                let space = self.pretty_vnspace(*space);
+                let ty = self.out_type(node)
+                    .map(|t| format!(" {}", t.as_str()))
+                    .unwrap_or_default();
+                format!("Load{ty}\n← {space}")
+            }
+            NodeKind::Store(space) => {
+                let space = self.pretty_vnspace(*space);
+                // data is input 2; memory and addr are 0 and 1
+                let ty = self.input_type(node, 2)
+                    .map(|t| format!(" {}", t.as_str()))
+                    .unwrap_or_default();
+                format!("Store{ty}\n→ {space}")
+            }
+
+            // ── casts / width changes ─────────────────────────────────────────
+            NodeKind::Truncate => {
+                let from = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("Truncate\n{from} → {to}")
+            }
+            NodeKind::Extend(op) => {
+                let from = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("{op:?}\n{from} → {to}")
+            }
+            NodeKind::CastToBool => {
+                let from = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("Cast → bool\nfrom {from}")
+            }
+            NodeKind::CastToInt => {
+                let to = self.out_type(node)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("Cast → {to}\nfrom bool")
+            }
+            NodeKind::Popcount => {
+                let from = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("Popcount\n{from} → {to}")
+            }
+
+            // ── arithmetic / logical ──────────────────────────────────────────
+            NodeKind::IntBinaryOp(op) => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("{op:?}{ty}")
+            }
+            NodeKind::IntUnaryOp(op) => {
+                let from = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("{op:?}\n{from} → {to}")
+            }
+            NodeKind::IntCmpOp(op) => {
+                let operand = self.input_type(node, 0)
+                    .map(|t| t.as_str()).unwrap_or("?");
+                format!("{op:?}\n{operand} → bool")
+            }
+            NodeKind::BoolBinaryOp(op) => format!("{op:?}:bool"),
+            NodeKind::BoolUnaryOp(op)  => format!("{op:?}:bool"),
+
+            // ── everything else ───────────────────────────────────────────────
+            _ => format!("{kind:?}"),
         };
 
-        // Append output type for bool-producing and unary/cast operations so
-        // the type transformation is visible in the graph.
-        let show_type = matches!(kind,
-            NodeKind::IntUnaryOp(_)
-            | NodeKind::BoolUnaryOp(_)
-            | NodeKind::CastToBool
-            | NodeKind::CastToInt
-            | NodeKind::Extend(_)
-            | NodeKind::Truncate
-            | NodeKind::Popcount
-            | NodeKind::IntCmpOp(_)
-            | NodeKind::BoolBinaryOp(_)
-        );
-
-        if show_type {
-            if let Some(ty) = self.graph.node_outputs(node).into_iter()
-                .find_map(|o| self.graph.output_kind(o).as_value())
-            {
-                return format!("{}\n:{}", base, ty.as_str());
-            }
-        }
-
-        base
+        Ok(label)
     }
 
     fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut dot::DotEmitter) {
         let kind = self.graph.node_kind(node);
-        assert!(kind.is_const());
         let fc = node_fillcolor(&kind);
-        out.node(dot_id, &self.node_kind_str(kind), "ellipse", &[("fillcolor", fc)]);
+        // Use pretty_label so const nodes get their type annotation too.
+        let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
+        out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
     /// Returns the register name for a clobbered call output using the
     /// `call_clobbered` map: the i-th clobbered output (output_index - 2)
     /// corresponds to the i-th vn in the map entry for that call node.
-    fn call_clobbered_name(&self, output_id: NodeOutputId) -> String {
+    fn call_clobbered_name(&self, output_id: NodeOutputId) -> io::Result<String> {
         let (_call_id, output_index) = self.graph.output_definition(output_id);
         let i = (output_index - 2) as usize;
         let vn = &self.call_clobbered[i];
@@ -340,7 +411,7 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
         let shape  = node_shape(&kind);
         let fc     = node_fillcolor(&kind);
 
-        out.node(&cur_id, &self.pretty_label(node), shape, &[("fillcolor", fc)]);
+        out.node(&cur_id, &self.pretty_label(node)?, shape, &[("fillcolor", fc)]);
 
         // ── Virtual nodes for structured outputs ──────────────────────────────
 
@@ -355,17 +426,26 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                     .zip(branch_labels.iter())
                     .zip(edge_labels.iter())
                 {
-                    let virt_id = state.alloc_virtual_id();
-                    out.node(&virt_id, blabel, "trapezium", &[
-                        ("fillcolor", "\"#3a2a10\""),
-                    ]);
+                    // A consumer rendered before this If may have already created
+                    // the virtual node eagerly.  Reuse it to avoid a duplicate
+                    // declaration; only emit `node` when creating for the first time.
+                    let virt_id = match state.virtual_nodes.get(&out_id).cloned() {
+                        Some(existing) => existing,
+                        None => {
+                            let v = state.alloc_virtual_id();
+                            out.node(&v, blabel, "trapezium", &[
+                                ("fillcolor", "\"#3a2a10\""),
+                            ]);
+                            state.virtual_nodes.insert(out_id, v.clone());
+                            v
+                        }
+                    };
                     out.edge(&cur_id, &virt_id, &[
                         ("color",     "\"#00cccc\""),
                         ("label",     elabel),
                         ("fontcolor", "\"#cccccc\""),
                         ("fontsize",  "9"),
                     ]);
-                    state.virtual_nodes.insert(out_id, virt_id);
                 }
             }
 
@@ -387,7 +467,7 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                 } else if *self.graph.node_kind(parent_id) == NodeKind::Call {
                     let (_, output_index) = self.graph.output_definition(parent_output);
                     if output_index >= 2 {
-                        let name = self.call_clobbered_name(parent_output);
+                        let name = self.call_clobbered_name(parent_output)?;
                         let label = format!("Post Call\n{name}");
                         let virt_id = state.alloc_virtual_id();
                         let call_dot_id = state.get_dot_id(self.graph, parent_id);
@@ -403,6 +483,24 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                         virt_id
                     } else {
                         state.get_dot_id(self.graph, parent_id)
+                    }
+                } else if *self.graph.node_kind(parent_id) == NodeKind::If {
+                    // The If node may not have been rendered yet.  Create the
+                    // virtual branch node eagerly so this consumer's edge lands
+                    // on "if.true"/"if.false" rather than directly on the If
+                    // diamond, which would leave the virtual node dangling.
+                    let (_, output_index) = self.graph.output_definition(parent_output);
+                    let blabel = if output_index == 0 { "if.true" } else { "if.false" };
+                    match state.virtual_nodes.get(&parent_output).cloned() {
+                        Some(existing) => existing,
+                        None => {
+                            let v = state.alloc_virtual_id();
+                            out.node(&v, blabel, "trapezium", &[
+                                ("fillcolor", "\"#3a2a10\""),
+                            ]);
+                            state.virtual_nodes.insert(parent_output, v.clone());
+                            v
+                        }
                     }
                 } else {
                     state.get_dot_id(self.graph, parent_id)
@@ -426,5 +524,358 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
         }
 
         Ok(())
+    }
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        graph::Graph,
+        node::{NodeKind, NodeOutputKind, NodeOutputType},
+    };
+    use dot::GraphDotDumper as _;
+
+    // ── helpers ───────────────────────────────────────────────────────────────
+
+    /// Creates a probe `Sleigh` context backed by an empty buffer.
+    /// Sufficient for all dot tests (no instructions decoded).
+    fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+        let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        rsleigh::Sleigh::new(
+            rsleigh::sla_spec::SLA_SPEC_X86_64,
+            rsleigh::pspec::PSPEC_X86_64,
+            probe,
+        )
+        .expect("create probe Sleigh")
+    }
+
+    /// Renders every node reachable from `entry` and returns the DOT string.
+    fn render(graph: &Graph, entry: NodeId) -> String {
+        let sleigh = probe_sleigh();
+        let dumper = GraphDotDumper {
+            entry,
+            graph,
+            sleigh: &sleigh,
+            call_clobbered: &[],
+        };
+        use dot::GraphDot;
+        GraphDot::new(dumper, dot::DotStyle::empty())
+            .as_dot()
+            .expect("render must succeed")
+    }
+
+    /// Counts lines matching `pred` in `s`.
+    fn count_lines<'a>(s: &'a str, pred: impl Fn(&'a str) -> bool) -> usize {
+        s.lines().filter(|l| pred(l)).count()
+    }
+
+    /// Returns all DOT node-declaration lines (contain `[label=` but not `->`)
+    fn node_decls(dot: &str) -> Vec<&str> {
+        dot.lines()
+            .filter(|l| l.contains("[label=") && !l.contains("->"))
+            .collect()
+    }
+
+    /// Returns all DOT edge lines (contain `->`)
+    fn edge_lines(dot: &str) -> Vec<&str> {
+        dot.lines().filter(|l| l.contains("->")).collect()
+    }
+
+    // ── determinism ───────────────────────────────────────────────────────────
+
+    /// Rendering the same graph twice must produce identical DOT output.
+    #[test]
+    fn dot_output_is_deterministic() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [ctrl],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let [cs_ctrl, _] = graph.node_outputs_exact::<2>(cs).unwrap();
+        graph.create_node(NodeKind::Return, [cs_ctrl], []);
+
+        let first  = render(&graph, entry);
+        let second = render(&graph, entry);
+        assert_eq!(first, second, "same graph must render identically on two calls");
+    }
+
+    /// A graph with a diamond (If → two branches → merge) must render
+    /// deterministically regardless of walk order.
+    #[test]
+    fn dot_output_diamond_is_deterministic() {
+        let mut graph = Graph::new();
+
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cond = graph.create_node(
+            NodeKind::BoolConst(false),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        );
+        let [cond_out] = graph.node_outputs_exact::<1>(cond).unwrap();
+        let if_node = graph.create_node(
+            NodeKind::If,
+            [entry_ctrl, cond_out],
+            [NodeOutputKind::Control, NodeOutputKind::Control],
+        );
+        let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(if_node).unwrap();
+
+        graph.create_node(NodeKind::Return, [true_ctrl],  []);
+        graph.create_node(NodeKind::Return, [false_ctrl], []);
+
+        let first  = render(&graph, entry);
+        let second = render(&graph, entry);
+        assert_eq!(first, second);
+    }
+
+    // ── structural correctness ────────────────────────────────────────────────
+
+    /// The DOT output must begin with `digraph` and end with `}`.
+    #[test]
+    fn dot_output_has_digraph_wrapper() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let dot = render(&graph, entry);
+        assert!(dot.trim_start().starts_with("digraph"), "must start with 'digraph':\n{dot}");
+        assert!(dot.trim_end().ends_with('}'), "must end with '}}':\n{dot}");
+    }
+
+    /// Every declared node id referenced on an edge must also appear as a node
+    /// declaration (no edge references an id that was never declared).
+    #[test]
+    fn all_edge_endpoints_are_declared() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cond = graph.create_node(
+            NodeKind::BoolConst(true),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        );
+        let [cond_out] = graph.node_outputs_exact::<1>(cond).unwrap();
+        let if_node = graph.create_node(
+            NodeKind::If,
+            [ctrl, cond_out],
+            [NodeOutputKind::Control, NodeOutputKind::Control],
+        );
+        let [tc, fc] = graph.node_outputs_exact::<2>(if_node).unwrap();
+        graph.create_node(NodeKind::Return, [tc], []);
+        graph.create_node(NodeKind::Return, [fc], []);
+
+        let dot = render(&graph, entry);
+
+        // Collect every declared dot node id (the part before the first space on
+        // a `"id" [label=…]` line).
+        let declared: std::collections::HashSet<&str> = dot
+            .lines()
+            .filter(|l| l.contains("[label=") && !l.contains("->"))
+            .filter_map(|l| l.trim().split('"').nth(1))
+            .collect();
+
+        // For every edge `"a" -> "b"` check both endpoints are declared.
+        for line in dot.lines().filter(|l| l.contains("->")) {
+            let parts: Vec<&str> = line.trim().split("->").collect();
+            if parts.len() < 2 { continue; }
+            let src = parts[0].trim().trim_matches('"');
+            // rhs may have attributes after the id like `"b" [color=…]`
+            let dst = parts[1].trim().split('"').nth(1).unwrap_or("").trim();
+            assert!(
+                declared.contains(src),
+                "edge source '{src}' has no node declaration:\n{dot}"
+            );
+            assert!(
+                declared.contains(dst),
+                "edge destination '{dst}' has no node declaration:\n{dot}"
+            );
+        }
+    }
+
+    /// A linear chain (Entry → ControlState → Return) must produce exactly
+    /// those three node declarations and two edges.
+    #[test]
+    fn linear_chain_node_and_edge_count() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [ctrl],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let [cs_ctrl, _] = graph.node_outputs_exact::<2>(cs).unwrap();
+        graph.create_node(NodeKind::Return, [cs_ctrl], []);
+
+        let dot = render(&graph, entry);
+        assert_eq!(node_decls(&dot).len(), 3, "exactly 3 node declarations:\n{dot}");
+        assert_eq!(edge_lines(&dot).len(), 2, "exactly 2 edges:\n{dot}");
+    }
+
+    /// An `If` node must produce exactly two virtual-node declarations
+    /// ("if.true" and "if.false") and exactly two edges from the `If` diamond.
+    #[test]
+    fn if_node_produces_exactly_two_branch_virtual_nodes() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cond = graph.create_node(
+            NodeKind::BoolConst(true),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        );
+        let [cond_out] = graph.node_outputs_exact::<1>(cond).unwrap();
+        let if_node = graph.create_node(
+            NodeKind::If,
+            [ctrl, cond_out],
+            [NodeOutputKind::Control, NodeOutputKind::Control],
+        );
+        let [tc, fc] = graph.node_outputs_exact::<2>(if_node).unwrap();
+        graph.create_node(NodeKind::Return, [tc], []);
+        graph.create_node(NodeKind::Return, [fc], []);
+
+        let dot = render(&graph, entry);
+
+        let if_true_count  = count_lines(&dot, |l| l.contains("if.true")  && l.contains("[label="));
+        let if_false_count = count_lines(&dot, |l| l.contains("if.false") && l.contains("[label="));
+        assert_eq!(if_true_count,  1, "exactly one if.true declaration:\n{dot}");
+        assert_eq!(if_false_count, 1, "exactly one if.false declaration:\n{dot}");
+    }
+
+    // ── label content ─────────────────────────────────────────────────────────
+
+    /// `MemPhi` nodes must render with the label "φ Mem".
+    #[test]
+    fn mem_phi_label_is_phi_mem() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem_phi = graph.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
+        // mem_phi is only reachable as a data input of Return (graph walk follows inputs)
+        let [mp_out] = graph.node_outputs_exact::<1>(mem_phi).unwrap();
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        graph.create_node(NodeKind::Return, [entry_ctrl, mp_out], []);
+
+        let dot = render(&graph, entry);
+        assert!(
+            dot.contains("φ Mem"),
+            "MemPhi label must be 'φ Mem':\n{dot}"
+        );
+        assert!(
+            !dot.contains("MemPhi"),
+            "old 'MemPhi' label must not appear:\n{dot}"
+        );
+    }
+
+    /// `IntConst` nodes must include their hex value and type in the label.
+    #[test]
+    fn int_const_label_contains_value_and_type() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let c = graph.create_node(
+            NodeKind::IntConst(0xdeadbeef),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        graph.create_node(NodeKind::Return, [entry_ctrl, c_out], []);
+
+        let dot = render(&graph, entry);
+        assert!(dot.contains("0xdeadbeef"), "hex value must be in label:\n{dot}");
+        assert!(dot.contains("u32"),        "type must be in label:\n{dot}");
+    }
+
+    // ── if virtual-node ordering regression ───────────────────────────────────
+
+    /// Verify that "if.true"/"if.false" virtual nodes are correctly wired even
+    /// when a branch successor (CS_true / CS_false) is rendered *before* the
+    /// `If` node itself.
+    ///
+    /// This is the ordering scenario that used to produce a dangling "if.true"
+    /// trapezium with no outgoing edge and a spurious direct edge from the `If`
+    /// diamond to the true-branch ControlState (3 children on the `If` node).
+    #[test]
+    fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+        let cond_node = graph.create_node(
+            NodeKind::BoolConst(true),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        );
+        let [cond] = graph.node_outputs_exact::<1>(cond_node).unwrap();
+        let if_node = graph.create_node(
+            NodeKind::If,
+            [entry_ctrl, cond],
+            [NodeOutputKind::Control, NodeOutputKind::Control],
+        );
+        let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(if_node).unwrap();
+
+        let cs_true = graph.create_node(
+            NodeKind::ControlState,
+            [],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        graph.add_node_input(cs_true, true_ctrl).unwrap();
+        let [cs_true_ctrl, _] = graph.node_outputs_exact::<2>(cs_true).unwrap();
+
+        let cs_false = graph.create_node(
+            NodeKind::ControlState,
+            [],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        graph.add_node_input(cs_false, false_ctrl).unwrap();
+        let [cs_false_ctrl, _] = graph.node_outputs_exact::<2>(cs_false).unwrap();
+
+        graph.create_node(NodeKind::Return, [cs_true_ctrl], []);
+        graph.create_node(NodeKind::Return, [cs_false_ctrl], []);
+
+        let sleigh = probe_sleigh();
+        let dumper = GraphDotDumper {
+            entry,
+            graph: &graph,
+            sleigh: &sleigh,
+            call_clobbered: &[],
+        };
+
+        let style = dot::DotStyle::empty();
+        let mut emitter = dot::DotEmitter::new("test", &style);
+        let mut state = dumper.create_initial_state();
+
+        // Render cs_true *before* if_node to trigger the historical bug.
+        dumper.dump_as_dot(cs_true, &mut emitter, &mut state).unwrap();
+        dumper.dump_as_dot(if_node, &mut emitter, &mut state).unwrap();
+
+        let dot = emitter.finish();
+
+        let if_true_id = dot
+            .lines()
+            .find_map(|line| {
+                if line.contains("if.true") && line.contains("[label=") {
+                    line.trim().split('"').nth(1).map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+            .expect("if.true node must be declared in the DOT output");
+
+        let q = format!("\"{}\"", if_true_id);
+        let edges_into = edge_lines(&dot)
+            .into_iter()
+            .filter(|l| l.split("->").nth(1).map_or(false, |rhs| rhs.contains(&q)))
+            .count();
+        let edges_from = edge_lines(&dot)
+            .into_iter()
+            .filter(|l| l.split("->").next().map_or(false, |lhs| lhs.contains(&q)))
+            .count();
+
+        assert!(edges_into >= 1, "if.true must have ≥1 incoming edge:\n{dot}");
+        assert!(edges_from >= 1, "if.true must have ≥1 outgoing edge:\n{dot}");
     }
 }

@@ -44,7 +44,10 @@ pub enum Error {
     DuplicateEdgeKind(NodeIndex, crate::cfg::RegionEdgeKind),
 
     #[error("non-entry work-queue item has no parent edge")]
-    MissingParentEdge
+    MissingParentEdge,
+
+    #[error("unsupported varnode space for display: {0:?}")]
+    UnsupportedVnSpaceDisplay(rsleigh::VnSpace),
 }
 
 /// the result type using our error.

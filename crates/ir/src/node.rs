@@ -121,15 +121,16 @@ impl NodeOutputType {
     }
 }
 
-impl From<u32> for NodeOutputType {
+impl TryFrom<u32> for NodeOutputType {
+    type Error = crate::error::Error;
 
-    fn from(value: u32) -> Self {
+    fn try_from(value: u32) -> crate::error::Result<Self> {
         match value {
-            1 => Self::U8,
-            2 => Self::U16,
-            4 => Self::U16,
-            8 => Self::U64,
-            _ => unreachable!()
+            1 => Ok(Self::U8),
+            2 => Ok(Self::U16),
+            4 => Ok(Self::U32),
+            8 => Ok(Self::U64),
+            n => Err(crate::error::Error::UnsupportedOutputSize(n)),
         }
     }
 }
@@ -148,9 +149,10 @@ pub enum NodeOutputKind {
     /// Control-flow token.  Every region consumes one control edge per
     /// predecessor and every branch node produces one per successor.
     Control,
-    /// Selector token produced by `ControlState` nodes and consumed by
-    /// `ControlSelector` phi nodes.
-    ControlSelector,
+    /// Phi-dispatch token produced by `ControlState` nodes and consumed by
+    /// `ControlPhi` nodes.  Carries no data — it is a synchronisation edge
+    /// that links each phi to exactly one `ControlState`.
+    ControlPhi,
     /// Memory token tracking the current state of memory through the graph.
     Memory
 }
@@ -178,10 +180,10 @@ impl NodeOutputKind {
         self == Self::Control
     }
 
-    /// Returns `true` if this is a control-selector edge.
+    /// Returns `true` if this is a control-phi dispatch edge.
     #[inline]
-    pub fn is_control_selector(self) -> bool {
-        self == Self::ControlSelector
+    pub fn is_control_phi(self) -> bool {
+        self == Self::ControlPhi
     }
 
     /// Returns `true` if this is a memory edge.
@@ -261,44 +263,75 @@ impl NodeInput {
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
-    // Initial state
+    // ── Initial state ──────────────────────────────────────────────────────────
+    /// Function entry point.  Produces a single `Control` output.
     Entry,
+    /// Initial memory state.  Produces a single `Memory` output.
     InitialMemory,
+    /// Initial value of varnode `Vn` at the function entry.  Produces a
+    /// value output of the appropriate integer type.
     InitialVar(rsleigh::Vn),
 
-    // General state
+    // ── Region / join nodes ────────────────────────────────────────────────────
+    /// Region header.  Consumes incoming control edges (one per predecessor)
+    /// and produces a fresh `Control` output plus a `ControlPhi` dispatch token.
     ControlState,
-    MemSelector,
-    ControlSelector(rsleigh::Vn),
+    /// Memory phi: selects the live memory token at a join point.
+    MemPhi,
+    /// Control phi: selects the value of varnode `Vn` at a join point,
+    /// corresponding to the SSA φ-function from the literature.
+    ControlPhi(rsleigh::Vn),
 
-    // If
+    // ── Conditional branch ─────────────────────────────────────────────────────
+    /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
+    /// `Control` outputs: index 0 for the true branch, index 1 for the false branch.
     If,
+    /// One arm of an `If` node used for pattern matching; `bool` is `true` for
+    /// the taken branch.
     IfCase(bool),
 
-    // Call
+    // ── Calls and returns ──────────────────────────────────────────────────────
+    /// Function call.  Clobbers caller-saved registers and the memory token.
     Call,
+    /// Post-call memory state produced by a `Call` node.
     PostCallMemState,
+    /// Post-call value of caller-saved varnode `Vn` produced by a `Call` node.
     PostCallVarState(rsleigh::Vn),
+    /// Function return.  Consumes the outgoing control edge and any return-value outputs.
     Return,
 
-    // Memory operations
+    // ── Memory operations ──────────────────────────────────────────────────────
+    /// Load from the given address space.
     Load(rsleigh::VnSpace),
+    /// Store to the given address space.
     Store(rsleigh::VnSpace),
 
-    // int operations
+    // ── Integer constants and operations ──────────────────────────────────────
+    /// A compile-time integer constant of value `u64`.
     IntConst(u64),
+    /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
     IntUnaryOp(crate::ops::IntUnaryOp),
+    /// Integer binary operation (e.g. add, shift, bitwise AND).
     IntBinaryOp(crate::ops::IntBinaryOp),
+    /// Integer comparison operation; produces a `Bool` output.
     IntCmpOp(crate::ops::IntCmpOp),
+    /// Reinterpret an integer value as `Bool` (`0` → `false`, non-zero → `true`).
     CastToInt,
+    /// Narrow an integer value by dropping high bits.
     Truncate,
+    /// Count the number of set bits in an integer value.
     Popcount,
+    /// Widen an integer value by zero- or sign-extending it.
     Extend(crate::ops::ExtendOp),
 
-    // Bool operations
+    // ── Boolean constants and operations ──────────────────────────────────────
+    /// A compile-time boolean constant.
     BoolConst(bool),
+    /// Boolean unary operation (logical NOT).
     BoolUnaryOp(crate::ops::BoolUnaryOp),
+    /// Boolean binary operation (AND, OR, XOR).
     BoolBinaryOp(crate::ops::BoolBinaryOp),
+    /// Convert an integer value to `Bool`.
     CastToBool,
 
     // Float operations
@@ -321,12 +354,10 @@ impl NodeKind {
     /// cache.
     ///
     /// Nodes whose inputs are added incrementally after construction (e.g.
-    /// `ControlState`, `ControlSelector`) or that must always produce a fresh
-    /// node (e.g. `Return`) are not cacheable.
+    /// `ControlState`, `ControlPhi`) or that must always produce a fresh node
+    /// (e.g. `Return`) are not cacheable.
     #[inline]
     pub fn is_cacheable(&self) -> bool {
-        // TODO: is it all that should be cached?
-        // We can't cache anything that we want to add inputs to it later / its constructed without inputs and are added later
         !matches!(
             self,
                   Self::Entry
@@ -337,8 +368,8 @@ impl NodeKind {
 
                 | Self::ControlState
 
-                | Self::MemSelector
-                | Self::ControlSelector(..)
+                | Self::MemPhi
+                | Self::ControlPhi(..)
         )
     }
 
@@ -427,7 +458,7 @@ mod tests {
     fn is_value_only_for_output_type() {
         assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
         assert!(!NodeOutputKind::Control.is_value());
-        assert!(!NodeOutputKind::ControlSelector.is_value());
+        assert!(!NodeOutputKind::ControlPhi.is_value());
         assert!(!NodeOutputKind::Memory.is_value());
     }
 
@@ -440,7 +471,7 @@ mod tests {
     }
 
     /// `is_integer` must be `true` for all integer `OutputType` variants and
-    /// `false` for `Bool`, `Control`, `ControlSelector`, and `Memory`.
+    /// `false` for `Bool`, `Control`, `ControlPhi`, and `Memory`.
     #[test]
     fn is_integer_for_all_integer_output_types() {
         for ty in [NodeOutputType::U8, NodeOutputType::U16,
@@ -474,7 +505,7 @@ mod tests {
             NodeKind::InitialMemory,
             NodeKind::Return,
             NodeKind::ControlState,
-            NodeKind::MemSelector,
+            NodeKind::MemPhi,
         ];
         for kind in non_cacheable {
             assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");

@@ -1,7 +1,7 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binary_path = "binary_tests/a.out";
+    let binary_path = "binary_tests/out/x86/test.elf";
 
     let obj = reader::load_elf(binary_path);
 
@@ -12,12 +12,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)
         .expect("failed to build ELF section reader");
 
-    let arch = analyzer::SleighArch::x86_64();
+    let arch = analyzer::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
     let analyzer = analyzer::Analyzer::new(
         arch,
         sleigh.regs()?,
-        analyzer::CallingConvention::x86_64_systemv_abi(),
+        analyzer::CallingConvention::x86_cdecl(),
     )?;
 
     let cfg_options = cfg::OptionsBuilder::new()
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = cfg::Builder::new(sleigh, addr, cfg_options).build()?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
@@ -39,14 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
     println!("dumping IR graph...");
-    std::fs::write("graph.html", dot.as_html_from_svg()?)?;
+    std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    opt::default_pipeline().run(&mut function);
+    opt::default_pipeline().run(&mut function)?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
     println!("dumping opt IR graph...");
-    std::fs::write("graph-opt.html", dot.as_html_from_svg()?)?;
+    std::fs::write("graph-opt.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph-opt.dot")?;
 
     Ok(())

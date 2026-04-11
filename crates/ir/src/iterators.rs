@@ -102,7 +102,8 @@ impl Index<usize> for Inputs<'_> {
     type Output = NodeOutputId;
 
     fn index(&self, index: usize) -> &Self::Output {
-        self.get(index).expect("input index out of bounds")
+        // Prefer `.get(index)` with proper error handling in production code.
+        &self.graph.inputs[self.use_list[index]].output_id
     }
 }
 
@@ -171,9 +172,10 @@ impl InputCursor<'_> {
         self.current = self.graph.inputs[current].next.expand();
     }
 
-    pub fn replace_current_with(&mut self, new_value: NodeOutputId) {
-        let current = self.current.expect("attempted to replace null use");
+    pub fn replace_current_with(&mut self, new_value: NodeOutputId) -> crate::error::Result<()> {
+        let current = self.current.ok_or(crate::error::Error::NullCursorUse)?;
         self.move_next();
         self.graph.update_input(current, new_value);
+        Ok(())
     }
 }

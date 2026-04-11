@@ -1,50 +1,56 @@
-# ── compiler selection ─────────────────────────────────────────────────────────
-# Prefer an explicitly versioned cross-compiler; fall back to the generic one.
-# Override any compiler on the command line, e.g.:  make CC32=i686-linux-gnu-gcc-12
+# binary_tests/Makefile
+#
+# Builds test binaries into out/<arch>/test.elf.
+#
+# Each architecture is described by arch/<arch>.mk, which sets CC and CFLAGS.
+#
+# Usage:
+#   make               — build all architectures
+#   make ARCH=x64      — build only the x64 binary
+#   make x64           — same via phony shortcut
+#   make clean         — remove the out/ directory
+#
+# Override the compiler on the command line, e.g.:
+#   make ARCH=x86 CC=i686-linux-gnu-gcc-12
 
-# ── x86 (32-bit) ──────────────────────────────────────────────────────────────
-CC32 ?= $(shell command -v i686-linux-gnu-gcc-11 2>/dev/null \
-	       || command -v i686-linux-gnu-gcc 2>/dev/null \
-	       || echo gcc)
-CFLAGS32 := -m32 -O2 -g
+OUTDIR := out
+ARCHES := x86 x64 aarch64 arm
+SRC    := test.c
 
-# ── x86-64 ────────────────────────────────────────────────────────────────────
-CC64    ?= gcc
-CFLAGS64 := -m64 -O2 -g
+.PHONY: all clean $(ARCHES)
 
-# ── AArch64 (64-bit ARM) ──────────────────────────────────────────────────────
-CCAARCH64 ?= $(shell command -v aarch64-linux-gnu-gcc 2>/dev/null || echo false)
-CFLAGS_AARCH64 := -O2 -g
+ifdef ARCH
+# ── single-arch mode: include arch/<ARCH>.mk, build out/<ARCH>/test.elf ───────
 
-# ── ARM (32-bit, hard-float ABI, force ARM encoding — no Thumb) ───────────────
-# -marm forces ARM instruction encoding so the Sleigh ARM spec can decode it.
-# arm-linux-gnueabihf targets ARMv7-A with hardware floating point.
-CCARM ?= $(shell command -v arm-linux-gnueabihf-gcc 2>/dev/null || echo false)
-CFLAGS_ARM := -marm -O2 -g
+include arch/$(ARCH).mk
 
-.PHONY: all clean
+TARGET := $(OUTDIR)/$(ARCH)/test.elf
 
-all: binary_test binary_test_x64 binary_test_aarch64 binary_test_arm
+all: $(TARGET)
 
-binary_test: test.c
-	$(CC32) $(CFLAGS32) $< -o $@
+$(OUTDIR)/$(ARCH):
+	mkdir -p $@
 
-binary_test_x64: test.c
-	$(CC64) $(CFLAGS64) $< -o $@
-
-binary_test_aarch64: test.c
-	@if [ "$(CCAARCH64)" = "false" ]; then \
-		echo "WARNING: aarch64-linux-gnu-gcc not found; skipping $@"; \
+$(TARGET): $(SRC) | $(OUTDIR)/$(ARCH)
+	@if [ "$(CC)" = "false" ]; then \
+		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
 	else \
-		$(CCAARCH64) $(CFLAGS_AARCH64) $< -o $@; \
+		$(CC) $(CFLAGS) $< -o $@ && echo "  Built $@"; \
 	fi
 
-binary_test_arm: test.c
-	@if [ "$(CCARM)" = "false" ]; then \
-		echo "WARNING: arm-linux-gnueabihf-gcc not found; skipping $@"; \
-	else \
-		$(CCARM) $(CFLAGS_ARM) $< -o $@; \
-	fi
+else
+# ── all-arch mode: delegate each arch to a single-arch recursive invocation ───
+
+all: $(ARCHES)
+
+$(ARCHES):
+	@$(MAKE) --no-print-directory ARCH=$@
+
+endif
+
+# Phony shortcuts always available: `make x86`, `make aarch64`, etc.
+# In all-arch mode the rule above handles them; in single-arch mode Make
+# finds no rule for other arch names, which is harmless.
 
 clean:
-	rm -f binary_test binary_test_x64 binary_test_aarch64 binary_test_arm
+	rm -rf $(OUTDIR)

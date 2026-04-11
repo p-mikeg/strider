@@ -33,16 +33,16 @@ fn example_arithmetic() {
     separator("Arithmetic patterns");
 
     // Build: add(and(4, 7), 1), return result
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r = b.create_region();
-    b.set_entry_region(r);
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r = b.create_region().expect("build");
+    b.set_entry_region(r).expect("build");
     b.set_region(r);
     let c4  = b.build_int_const(4, NodeOutputType::U64);
     let c7  = b.build_int_const(7, NodeOutputType::U64);
     let c1  = b.build_int_const(1, NodeOutputType::U64);
-    let band = b.build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64);
-    let sum  = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64);
-    b.build_return(Some(sum), &[]);
+    let band = b.build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64).expect("build");
+    let sum  = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
+    b.build_return(Some(sum), &[]).expect("build");
     let graph = b.build();
 
     let m = Matcher::new(&graph);
@@ -69,14 +69,14 @@ fn example_arithmetic() {
     }
 
     // ── Query 5: extend / truncate ────────────────────────────────────────────
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r2 = b2.create_region();
-    b2.set_entry_region(r2);
+    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r2 = b2.create_region().expect("build");
+    b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
     let small = b2.build_int_const(42, NodeOutputType::U32);
-    let inner = b2.build_int_binary_operation(small, small, IntBinaryOp::Add, NodeOutputType::U32);
-    let ext   = b2.extend_if_needed(inner, NodeOutputType::U64, ExtendOp::ZeroExtend);
-    b2.build_return(Some(ext), &[]);
+    let inner = b2.build_int_binary_operation(small, small, IntBinaryOp::Add, NodeOutputType::U32).expect("build");
+    let ext   = b2.extend_if_needed(inner, NodeOutputType::U64, ExtendOp::ZeroExtend).expect("build");
+    b2.build_return(Some(ext), &[]).expect("build");
     let g2 = b2.build();
     let m2 = Matcher::new(&g2);
 
@@ -84,9 +84,9 @@ fn example_arithmetic() {
     println!("sign_extend(_) matches: {}", m2.find_all(&sign_extend(any()).into()).len()); // 0
 
     // ── Query 6: bool operations ──────────────────────────────────────────────
-    let mut b3 = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r3 = b3.create_region();
-    b3.set_entry_region(r3);
+    let mut b3 = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r3 = b3.create_region().expect("build");
+    b3.set_entry_region(r3).expect("build");
     b3.set_region(r3);
     let t = b3.build_boolean_const(true);
     let f = b3.build_boolean_const(false);
@@ -94,13 +94,13 @@ fn example_arithmetic() {
     // a non-const path to get an actual BoolBinaryOp node.
     let v1 = b3.build_int_const(5, NodeOutputType::U64);
     let v2 = b3.build_int_const(3, NodeOutputType::U64);
-    let cmp = b3.build_int_cmp_operation(v1, v2, IntCmpOp::Less, NodeOutputType::U64);
-    let not_cmp = b3.build_boolean_unary_operation(cmp, ir::BoolUnaryOp::Neg);
-    let bor = b3.build_boolean_operation(t, f, BoolBinaryOp::Or);
-    let not_cmp_int = b3.convert_to_int_if_needed(not_cmp, NodeOutputType::U64);
-    let bor_int     = b3.convert_to_int_if_needed(bor, NodeOutputType::U64);
-    let res = b3.build_int_binary_operation(not_cmp_int, bor_int, IntBinaryOp::Add, NodeOutputType::U64);
-    b3.build_return(Some(res), &[]);
+    let cmp = b3.build_int_cmp_operation(v1, v2, IntCmpOp::Less, NodeOutputType::U64).expect("build");
+    let not_cmp = b3.build_boolean_unary_operation(cmp, ir::BoolUnaryOp::Neg).expect("build");
+    let bor = b3.build_boolean_operation(t, f, BoolBinaryOp::Or).expect("build");
+    let not_cmp_int = b3.convert_to_int_if_needed(not_cmp, NodeOutputType::U64).expect("build");
+    let bor_int     = b3.convert_to_int_if_needed(bor, NodeOutputType::U64).expect("build");
+    let res = b3.build_int_binary_operation(not_cmp_int, bor_int, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
+    b3.build_return(Some(res), &[]).expect("build");
     let g3 = b3.build();
     let m3 = Matcher::new(&g3);
     println!("bool_not(_) matches: {}", m3.find_all(&bool_not(any()).into()).len()); // 1
@@ -113,15 +113,15 @@ fn example_calls_and_returns() {
     separator("Call and return patterns");
 
     // Build: call(0x1000), call(0x2000), return
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r = b.create_region();
-    b.set_entry_region(r);
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r = b.create_region().expect("build");
+    b.set_entry_region(r).expect("build");
     b.set_region(r);
     let t1 = b.build_uint64_const(0x1000);
     let t2 = b.build_uint64_const(0x2000);
-    b.build_call(t1);
-    b.build_call(t2);
-    b.build_return(None, &[]);
+    b.build_call(t1).expect("build");
+    b.build_call(t2).expect("build");
+    b.build_return(None, &[]).expect("build");
     let graph = b.build();
     let m = Matcher::new(&graph);
 
@@ -172,26 +172,26 @@ fn example_if_branches() {
     //   if (5 == 1):
     //     true branch  → call(0xAAAA), return
     //     false branch → return
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let entry  = b.create_region();
-    let true_r  = b.create_region();
-    let false_r = b.create_region();
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let entry  = b.create_region().expect("build");
+    let true_r  = b.create_region().expect("build");
+    let false_r = b.create_region().expect("build");
 
-    b.set_entry_region(entry);
+    b.set_entry_region(entry).expect("build");
 
     b.set_region(true_r);
     let tgt = b.build_uint64_const(0xAAAA);
-    b.build_call(tgt);
-    b.build_return(None, &[]);
+    b.build_call(tgt).expect("build");
+    b.build_return(None, &[]).expect("build");
 
     b.set_region(false_r);
-    b.build_return(None, &[]);
+    b.build_return(None, &[]).expect("build");
 
     b.set_region(entry);
     let c5   = b.build_int_const(5, NodeOutputType::U64);
     let c1   = b.build_int_const(1, NodeOutputType::U64);
-    let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64);
-    b.build_if(cond, true_r, false_r);
+    let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64).expect("build");
+    b.build_if(cond, true_r, false_r).expect("build");
     let graph = b.build();
     let m = Matcher::new(&graph);
 
@@ -230,26 +230,26 @@ fn example_captures() {
     separator("Capture variables");
 
     // Build: if (x == 0): return 10; else: return 20;
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let entry  = b.create_region();
-    let true_r  = b.create_region();
-    let false_r = b.create_region();
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let entry  = b.create_region().expect("build");
+    let true_r  = b.create_region().expect("build");
+    let false_r = b.create_region().expect("build");
 
-    b.set_entry_region(entry);
+    b.set_entry_region(entry).expect("build");
 
     b.set_region(true_r);
     let c10 = b.build_int_const(10, NodeOutputType::U64);
-    b.build_return(Some(c10), &[]);
+    b.build_return(Some(c10), &[]).expect("build");
 
     b.set_region(false_r);
     let c20 = b.build_int_const(20, NodeOutputType::U64);
-    b.build_return(Some(c20), &[]);
+    b.build_return(Some(c20), &[]).expect("build");
 
     b.set_region(entry);
     let cx = b.build_int_const(0, NodeOutputType::U64);
     let cy = b.build_int_const(1, NodeOutputType::U64);
-    let cond = b.build_int_cmp_operation(cx, cy, IntCmpOp::Equal, NodeOutputType::U64);
-    b.build_if(cond, true_r, false_r);
+    let cond = b.build_int_cmp_operation(cx, cy, IntCmpOp::Equal, NodeOutputType::U64).expect("build");
+    b.build_if(cond, true_r, false_r).expect("build");
     let graph = b.build();
     let m = Matcher::new(&graph);
 
@@ -282,13 +282,13 @@ fn example_captures() {
     // ── Enforce equality: same var used twice ─────────────────────────────────
     let x = Var::new();
     // add(x, x) only matches nodes where both inputs are the *same* output.
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r2 = b2.create_region();
-    b2.set_entry_region(r2);
+    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r2 = b2.create_region().expect("build");
+    b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
     let c5   = b2.build_int_const(5, NodeOutputType::U64);
-    let self_add = b2.build_int_binary_operation(c5, c5, IntBinaryOp::Add, NodeOutputType::U64);
-    b2.build_return(Some(self_add), &[]);
+    let self_add = b2.build_int_binary_operation(c5, c5, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
+    b2.build_return(Some(self_add), &[]).expect("build");
     let g2 = b2.build();
     let m2 = Matcher::new(&g2);
     println!("add(x, x) on add(5, 5): {}", m2.find_all(&add(var(x), var(x)).into()).len()); // 1
@@ -302,13 +302,13 @@ fn example_load_store() {
 
     // ── Load ──────────────────────────────────────────────────────────────────
     // Build: load(0x100, RAM), return loaded value
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r = b.create_region();
-    b.set_entry_region(r);
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r = b.create_region().expect("build");
+    b.set_entry_region(r).expect("build");
     b.set_region(r);
     let addr   = b.build_uint64_const(0x100);
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64);
-    b.build_return(Some(loaded), &[]);
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64).expect("build");
+    b.build_return(Some(loaded), &[]).expect("build");
     let g_load = b.build();
     let m = Matcher::new(&g_load);
 
@@ -330,17 +330,17 @@ fn example_load_store() {
     // ── Store ─────────────────────────────────────────────────────────────────
     // Build: store(addr=0x200, data=42, RAM), then load to make store reachable,
     //        return the loaded value.
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]);
-    let r2 = b2.create_region();
-    b2.set_entry_region(r2);
+    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
+    let r2 = b2.create_region().expect("build");
+    b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
     let addr2  = b2.build_uint64_const(0x200);
     let data2  = b2.build_uint64_const(42);
-    b2.build_store(addr2, data2, rsleigh::VnSpace::RAM);
+    b2.build_store(addr2, data2, rsleigh::VnSpace::RAM).expect("build");
     // A load immediately after consumes the store's memory output, making it
     // reachable from Return via the preorder walk.
-    let loaded2 = b2.build_load(addr2, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64);
-    b2.build_return(Some(loaded2), &[]);
+    let loaded2 = b2.build_load(addr2, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64).expect("build");
+    b2.build_return(Some(loaded2), &[]).expect("build");
     let g_store = b2.build();
     let m2 = Matcher::new(&g_store);
 
@@ -367,15 +367,15 @@ fn example_load_store() {
         size: 8,
         addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::REGISTER },
     };
-    let mut b3 = FunctionBuilder::new(vec![arg_vn], &[arg_vn], &[], &[]);
-    let r3 = b3.create_region();
-    b3.set_entry_region(r3);
+    let mut b3 = FunctionBuilder::new(vec![arg_vn], &[arg_vn], &[], &[]).expect("build");
+    let r3 = b3.create_region().expect("build");
+    b3.set_entry_region(r3).expect("build");
     b3.set_region(r3);
     let c_arg = b3.build_uint64_const(42);
-    b3.write_variable(&arg_vn, c_arg);
+    b3.write_variable(&arg_vn, c_arg).expect("build");
     let tgt3 = b3.build_uint64_const(0xABCD);
-    b3.build_call(tgt3);
-    b3.build_return(None, &[]);
+    b3.build_call(tgt3).expect("build");
+    b3.build_return(None, &[]).expect("build");
     let g_call = b3.build();
     let m3 = Matcher::new(&g_call);
 
@@ -409,14 +409,14 @@ fn example_initial_vars() {
     };
 
     // Build: rax + rbx, return result
-    let mut b = FunctionBuilder::new(vec![rax_vn, rbx_vn], &[], &[], &[]);
-    let r = b.create_region();
-    b.set_entry_region(r);
+    let mut b = FunctionBuilder::new(vec![rax_vn, rbx_vn], &[], &[], &[]).expect("build");
+    let r = b.create_region().expect("build");
+    b.set_entry_region(r).expect("build");
     b.set_region(r);
-    let rax_val = b.read_variable(&rax_vn);
-    let rbx_val = b.read_variable(&rbx_vn);
-    let sum = b.build_int_binary_operation(rax_val, rbx_val, IntBinaryOp::Add, NodeOutputType::U64);
-    b.build_return(Some(sum), &[]);
+    let rax_val = b.read_variable(&rax_vn).expect("build");
+    let rbx_val = b.read_variable(&rbx_vn).expect("build");
+    let sum = b.build_int_binary_operation(rax_val, rbx_val, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
+    b.build_return(Some(sum), &[]).expect("build");
     let graph = b.build();
     let m = Matcher::new(&graph);
 
@@ -428,9 +428,9 @@ fn example_initial_vars() {
     println!("initial_var_for(rbx): {}", m.find_all(&initial_var_for(rbx_vn).into()).len()); // 1
 
     // ── Match an add of two values ────────────────────────────────────────────
-    // In a single-region graph, `read_variable` returns a ControlSelector
-    // (phi-like) node rather than the InitialVar directly.  The ControlSelector
-    // holds the InitialVar as one of its inputs.
+    // In a single-region graph, `read_variable` returns a ControlPhi node
+    // rather than the InitialVar directly.  The ControlPhi holds the InitialVar
+    // as one of its inputs.
     let lhs_v = Var::new();
     let rhs_v = Var::new();
     let hits  = m.find_all(&add(var(lhs_v), var(rhs_v)).into());
@@ -438,7 +438,7 @@ fn example_initial_vars() {
     if let Some(hit) = hits.first() {
         let lhs = graph.graph.get_node_from_output(hit.get(lhs_v).unwrap());
         let rhs = graph.graph.get_node_from_output(hit.get(rhs_v).unwrap());
-        // Both inputs are ControlSelector(vn) phi nodes wrapping the InitialVar.
+        // Both inputs are ControlPhi(vn) nodes wrapping the InitialVar.
         println!(
             "  lhs kind: {:?}", graph.graph.node_kind(lhs),
         );
@@ -447,16 +447,16 @@ fn example_initial_vars() {
         );
     }
 
-    // ── Match "add where lhs comes from rax's selector" ──────────────────────
-    // Use selector_for() to match the ControlSelector phi node for rax.
-    let hits = m.find_all(&add(selector_for(rax_vn).into(), any()).into());
-    println!("add(rax_selector, _): {}", hits.len()); // 1
+    // ── Match "add where lhs comes from rax's phi" ───────────────────────────
+    // Use phi_for() to match the ControlPhi node for rax.
+    let hits = m.find_all(&add(phi_for(rax_vn), any()).into());
+    println!("add(rax_phi, _): {}", hits.len()); // 1
 
-    let hits_wrong = m.find_all(&add(selector_for(rbx_vn).into(), any()).into());
-    println!("add(rbx_selector, _): {}", hits_wrong.len()); // 0 — rax is lhs, rbx is rhs
+    let hits_wrong = m.find_all(&add(phi_for(rbx_vn), any()).into());
+    println!("add(rbx_phi, _): {}", hits_wrong.len()); // 0 — rax is lhs, rbx is rhs
 
     // initial_var_for matches the deeper InitialVar node itself, which is an
-    // input *inside* the selector — not the direct input to the add.
+    // input *inside* the phi — not the direct input to the add.
     let hits_iv = m.find_all(&add(initial_var_for(rax_vn), any()).into());
-    println!("add(rax_initial_var_direct, _): {}", hits_iv.len()); // 0 (selector wraps it)
+    println!("add(rax_initial_var_direct, _): {}", hits_iv.len()); // 0 (phi wraps it)
 }

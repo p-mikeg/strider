@@ -56,8 +56,8 @@ The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeli
 |------|-------------|
 | `ConstantFold` | Evaluates constant arithmetic, comparisons, booleans, truncation, and extension. Also applies algebraic identities: `x+0→x`, `x^x→0`, nested AND-mask merging `(a&C1)&C2 → a&(C1&C2)`, etc. |
 | `KnownBits` | Propagates statically known zero/one bits through the graph to fold partially-known expressions. |
-| `RedundantSelectors` | Eliminates `ControlSelector` phi nodes and `ControlState` nodes that have only one reachable predecessor. Detaches inputs of CFG-unreachable nodes. |
-| `DeadBranchElimination` | Removes `If` nodes whose condition is a compile-time boolean. Strips the dead control edge from successor nodes. Works together with `RedundantSelectors`. |
+| `RedundantPhis` | Eliminates `ControlPhi` and `MemPhi` nodes and `ControlState` nodes that have only one reachable predecessor. Detaches inputs of CFG-unreachable nodes. |
+| `DeadBranchElimination` | Removes `If` nodes whose condition is a compile-time boolean. Strips the dead control edge from successor nodes. Works together with `RedundantPhis`. |
 | `LoadReadOnly` | Resolves `Load` nodes with a constant address into constants by reading from a caller-supplied read-only memory region (e.g. `.rodata`, `.text`). |
 
 ---
@@ -123,14 +123,106 @@ for match in func.find(pat):
 
 ## Rust API
 
-The `pattern` crate is the underlying engine. `Var` is a capture variable — create one with `Var::new()`, embed it in a pattern with `var(v)`, and read the bound value from a `Match` after the search.
+The `pattern` crate is the underlying engine.
 
-**Load from a computed address**
+### Capture variables
+
+`Var` binds a data-flow value (`NodeOutputId`). `NodeVar` binds a control-flow node (`NodeId`). Create one with `Var::new()` / `NodeVar::new()` and embed it in a pattern. The same variable may appear multiple times — the matcher enforces that all occurrences bind to the **same** output.
+
+```rust
+use pattern::{Var, var};
+
+let x = Var::new();
+// var(x) matches any output and captures it.
+// If x appears twice, both must resolve to the same node output.
+```
+
+### Pattern constructors
+
+Every free function (`add`, `load`, `call`, …) returns a builder value that converts to `Pat` via `.into()`. Builders compose freely: any function that accepts `impl Into<Pat>` accepts another builder directly.
+
+```rust
+use pattern::{add, load, int_const, any, var, Var};
+
+let offset = Var::new();
+
+// load whose address is (anything + a constant)
+let pat: Pat = load().addr(add(any(), var(offset))).into();
+```
+
+### Commutative matching
+
+Binary operations that are mathematically commutative (`add`, `mul`, `and`, `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both operand orderings. Non-commutative operations (`sub`, `div`, `shl`, …) are always ordered.
+
+```rust
+use pattern::{Matcher, add, int_const};
+
+// Matches add(5, x) AND add(x, 5) — commutative by default.
+let pat = add(int_const(5), any()).into();
+
+// Force operand order with .ordered():
+let pat_ordered = add(int_const(5), any()).ordered().into();
+// Only matches if 5 is literally the left operand in the IR.
+```
+
+### Capturing any output with `.capture(v)`
+
+Any pattern builder or `Pat` can have `.capture(v)` chained to it. After the structural match succeeds, the matched output is bound to `v`. This lets you capture the result of any subexpression — not just leaves.
+
+```rust
+use pattern::{Matcher, Var, var, add, any, load};
+
+let add_out = Var::new();  // the output of the add node itself
+let addr_v  = Var::new();  // the load's address operand
+
+// Capture the entire add node's output:
+let pat = add(any(), any()).capture(add_out).into();
+
+// Capture a nested field (the load's address):
+let pat2 = load().addr(any().capture(addr_v)).into();
+
+// Equivalent shorthand for field capture — var(v) is any().capture(v):
+let pat3 = load().addr(var(addr_v)).into();
+```
+
+### Predicate guards with `.when(f)`
+
+Any pattern builder or `Pat` can have `.when(f)` chained. After the structural match succeeds, `f` is called with `(&BuiltFunctionGraph, NodeOutputId)`. The match fails if `f` returns `false`. This lets you add arbitrary constraints without writing a new `PatKind` variant.
+
+```rust
+use pattern::{Matcher, add, any, predicate};
+use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+
+// Match any add whose result is U64:
+let pat = add(any(), any()).when(|fg, out| {
+    fg.graph.output_kind(out) == NodeOutputKind::OutputType(NodeOutputType::U64)
+}).into();
+
+// Match any IntConst node with value ≥ 0x1000:
+let pat2 = predicate(|fg, out| {
+    let node = fg.graph.get_node_from_output(out);
+    match fg.graph.node_kind(node) {
+        NodeKind::IntConst(v) => *v >= 0x1000,
+        _ => false,
+    }
+}).into();
+
+// Predicate as a sub-pattern — load whose address satisfies a custom check:
+let pat3 = load().addr(predicate(|fg, out| {
+    let node = fg.graph.get_node_from_output(out);
+    matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
+})).into();
+```
+
+`predicate(f)` is shorthand for `any().when(f)` and can appear anywhere a `Pat` is accepted.
+
+---
+
+### Example: load from a computed address
 
 ```rust
 use pattern::{Matcher, Var, var, load, add, any};
 
-// Capture the base pointer and the offset separately
 let ptr    = Var::new();
 let offset = Var::new();
 
@@ -139,16 +231,14 @@ let pat = load().addr(add(var(ptr), var(offset))).into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    // get_int_const returns Some only if the capture resolved to an IntConst node
     if let Some(off) = m.get_int_const(offset, &graph) {
         println!("load at ptr + {off:#x}");
     }
-    // get returns the raw NodeOutputId for further inspection
     println!("  base: {:?}", m.get(ptr));
 }
 ```
 
-**Call argument — what size does this function pass to `malloc`?**
+### Example: call argument — what size does this function pass to `malloc`?
 
 ```rust
 use pattern::{Matcher, Var, var, call};
@@ -156,9 +246,7 @@ use pattern::{Matcher, Var, var, call};
 const MALLOC: u64 = 0x401080;
 
 let size = Var::new();
-
-// call().at(addr) pins the target; .arg(idx, pat) constrains an argument
-let pat = call().at(MALLOC).arg(0, var(size)).into();
+let pat  = call().at(MALLOC).arg(0, var(size)).into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
@@ -168,17 +256,15 @@ for m in matcher.find_all(&pat) {
 }
 ```
 
-**Return value after a specific call**
+### Example: return value after a specific call
 
 ```rust
-use pattern::{Matcher, Var, var, call, ret, any};
+use pattern::{Matcher, Var, var, call, ret};
 
 const PARSE_FN: u64 = 0x402000;
 
 let retval = Var::new();
-
-// ret().preceded_by(call_pat) walks backward through ctrl to find the call
-let pat = ret()
+let pat    = ret()
     .preceded_by(call().at(PARSE_FN))
     .ret_val(0, var(retval))
     .into();
@@ -189,14 +275,12 @@ for m in matcher.find_all(&pat) {
 }
 ```
 
-**Branch condition — find compares against a constant threshold**
+### Example: branch condition — find compares against a constant threshold
 
 ```rust
 use pattern::{Matcher, Var, var, if_node, int_lt, any};
 
 let threshold = Var::new();
-
-// if_node().cond(pat) constrains what the branch tests
 let pat = if_node()
     .cond(int_lt(any(), var(threshold)))
     .into();
@@ -209,47 +293,34 @@ for m in matcher.find_all(&pat) {
 }
 ```
 
-**Complex query — call in the true branch of `(x & 4) == 0`, where argument 2 is a load from `0x1000 + <const offset>`**
+### Example: complex — call in the true branch of `(x & 4) == 0`, arg 2 is a load from a table
 
-This shows how patterns compose: a branch condition, a call inside one of the branches, and a specific memory access inside that call's argument — all in a single query.
+This shows how patterns compose: a branch condition, a call inside one branch, and a specific memory access inside that call's argument — all in a single query.
 
 ```rust
 use pattern::{Matcher, Var, var, if_node, call, load, add, and, int_eq, int_const};
 
-// What we want to capture:
 let x      = Var::new(); // the value tested in the branch condition
 let offset = Var::new(); // the constant offset added to 0x1000
 
-// Step 1: the branch condition — (x & 4) == 0
-let cond = int_eq(
-    and(var(x), int_const(4)),
-    int_const(0),
-);
-
-// Step 2: argument 2 of the call — load from (0x1000 + offset)
+let cond = int_eq(and(var(x), int_const(4)), int_const(0));
 let arg2 = load().addr(add(int_const(0x1000), var(offset)));
 
-// Step 3: compose — if whose condition is (x&4)==0 and whose true branch
-// contains a call with that load as argument 2.
-// true_branch() walks forward through the ctrl chain to find the call.
 let pat = if_node()
     .cond(cond)
-    .true_branch(call().arg(2, arg2.into()))
+    .true_branch(call().arg(2, arg2))
     .into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    // x — the full value whose bit 2 gated this branch
     println!("branch variable:  {:?}", m.get(x));
-
-    // offset — the constant index into the table at 0x1000
     if let Some(off) = m.get_int_const(offset, &graph) {
         println!("load offset:      {off:#x}  →  address {:#x}", 0x1000u64 + off);
     }
 }
 ```
 
-A single `find_all` call returns every site in the function where all three constraints hold simultaneously — no manual CFG walking, no ad-hoc bookkeeping.
+A single `find_all` call returns every site in the function where all constraints hold simultaneously.
 
 ---
 

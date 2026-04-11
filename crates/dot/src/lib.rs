@@ -1,3 +1,33 @@
+//! Graphviz `.dot` and interactive `.html` rendering for Strider graphs.
+//!
+//! Implement [`GraphDotDumper`] for a graph type to obtain `.dot` and `.html`
+//! output via [`GraphDot`].
+//!
+//! # Rendering pipeline
+//!
+//! ```text
+//! GraphDotDumper::dump_as_dot() ──► DotEmitter ──► .dot string
+//!                                                       │
+//!                                          ┌────────────┴────────────┐
+//!                                          ▼                         ▼
+//!                                   dot(1) → SVG              embedded DOT
+//!                                       │                           │
+//!                                       ▼                           ▼
+//!                               as_html_from_svg             as_html_from_dot
+//! ```
+//!
+//! [`GraphDot::as_html_from_dot`] embeds the raw DOT source in an HTML page
+//! that renders it client-side via Graphviz WASM ([`@viz-js/viz`]).  No local
+//! `dot` install is required.  This is what [`GraphDot::dump_as_html`] uses.
+//!
+//! [`GraphDot::as_html_from_svg`] calls the system `dot` binary and inlines
+//! the resulting SVG.  Useful for offline / headless export.
+//!
+//! [`DotStyle`] provides pre-built dark and empty visual themes.
+//! [`DotEmitter`] is a low-level string builder for Graphviz DOT syntax.
+//!
+//! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
+
 use std::{fmt::Debug, io::Write};
 use thiserror::Error;
 
@@ -13,28 +43,31 @@ pub enum Error<E> {
     DotDumpError(E)
 }
 
-/// the result type using our error.
-pub type Result<T,E> = std::result::Result<T, Error<E>>;
+/// The result type using our error.
+pub type Result<T, E> = std::result::Result<T, Error<E>>;
 
 
 const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
 
+/// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
     type Error: Debug;
     type State;
 
+    /// Creates the mutable state threaded through all [`dump_as_dot`] calls.
     fn create_initial_state(&self) -> Self::State;
 
-    /// Iterate all nodes in the graph
+    /// Returns all nodes that should appear in the DOT output.
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node>;
 
-    /// Dump a single node (including edges) into the emitter
+    /// Emits DOT statements (nodes + edges) for a single graph node.
     fn dump_as_dot(&self, node: Self::Node, out: &mut DotEmitter, state: &mut Self::State) -> core::result::Result<(), Self::Error>;
 }
 
 
+/// A pre-built Graphviz visual theme (graph/node/edge default attributes).
 #[derive(Clone)]
 pub struct DotStyle {
     pub graph: Vec<(&'static str, &'static str)>,
@@ -43,6 +76,7 @@ pub struct DotStyle {
 }
 
 impl DotStyle {
+    /// Returns a dark-background theme suitable for modern editors / terminals.
     pub fn dark() -> Self {
         Self {
             graph: vec![
@@ -57,6 +91,7 @@ impl DotStyle {
                 ("color", "\"#888888\""),
                 ("fontcolor", "white"),
                 ("fontname", "monospace"),
+                ("margin", "0.2")
             ],
             edge: vec![
                 ("color", "\"#aaaaaa\""),
@@ -66,6 +101,23 @@ impl DotStyle {
         }
     }
 
+    /// Like [`dark`] but with CFG-appropriate node sizing: `Courier` font
+    /// (known metrics in viz.js) and extra margin so multiline labels fit.
+    pub fn dark_cfg() -> Self {
+        let mut s = Self::dark();
+        // Replace the generic "monospace" entry with "Courier", which has
+        // well-known character-width metrics in the bundled Graphviz/viz.js
+        // layout engine, preventing text from overflowing node boxes.
+        if let Some(e) = s.node.iter_mut().find(|(k, _)| *k == "fontname") {
+            e.1 = "Courier";
+        }
+        if let Some(e) = s.node.iter_mut().find(|(k, _)| *k == "margin") {
+            e.1 = "0.2";
+        }
+        s
+    }
+
+    /// Returns an empty theme (no default attributes).
     pub fn empty() -> Self {
         Self {
             graph: vec![],
@@ -75,11 +127,68 @@ impl DotStyle {
     }
 }
 
+// ── DOT string helpers ────────────────────────────────────────────────────────
+
+/// Escapes a string for use as a DOT double-quoted label.
+///
+/// - `"` → `\"`
+/// - `\` → `\\`
+/// - newline → `\n` (Graphviz left-justified line break)
+/// - carriage-return stripped
+fn escape_dot_label(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"'  => out.push_str("\\\""),
+            '\\' =>{
+                // Pass through recognised DOT label escapes: \n \l \r
+                match chars.peek() {
+                    Some('n') | Some('l') | Some('r') => {
+                        out.push('\\');
+                        out.push(chars.next().unwrap());
+                    }
+                    _ => out.push_str("\\\\"),
+                }
+            }
+            '\n' => out.push_str("\\n"),
+            c    => out.push(c),
+        }
+    }
+    out
+}
+
+/// Wraps `s` in a JSON string literal with full escaping.
+///
+/// Used to safely embed the DOT source inside an HTML file without risk of
+/// breaking JavaScript template literals or HTML structure.
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"'  => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => { let _ = std::fmt::write(&mut out, format_args!("\\u{:04x}", c as u32)); }
+            c    => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+// ── DotEmitter ────────────────────────────────────────────────────────────────
+
+/// Low-level builder that accumulates a Graphviz `digraph { … }` string.
 pub struct DotEmitter {
     out: String,
 }
 
 impl DotEmitter {
+    /// Creates a new emitter for a digraph named `name` with the given style.
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
         s.push_str(&format!("digraph {name} {{\n"));
@@ -91,6 +200,7 @@ impl DotEmitter {
         Self { out: s }
     }
 
+    /// Emits a node statement.  The `label` is automatically escaped for DOT.
     pub fn node(
         &mut self,
         id: &str,
@@ -98,6 +208,7 @@ impl DotEmitter {
         shape: &str,
         extra: &[(&str, &str)],
     ) {
+        let label = escape_dot_label(label);
         self.out.push_str(&format!("  \"{id}\" [label=\"{label}\", shape={shape}"));
 
         for (k, v) in extra {
@@ -107,6 +218,7 @@ impl DotEmitter {
         self.out.push_str("];\n");
     }
 
+    /// Emits a directed edge statement.
     pub fn edge(
         &mut self,
         from: &str,
@@ -129,6 +241,7 @@ impl DotEmitter {
         self.out.push_str(";\n");
     }
 
+    /// Finalises the digraph and returns the complete DOT string.
     pub fn finish(mut self) -> String {
         self.out.push_str("}\n");
         self.out
@@ -147,6 +260,9 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
     out.push_str("  ];\n\n");
 }
 
+// ── GraphDot ──────────────────────────────────────────────────────────────────
+
+/// Wraps a [`GraphDotDumper`] and produces DOT / SVG / HTML output.
 pub struct GraphDot<G: GraphDotDumper + Sized> {
     dumper: G,
     style: DotStyle,
@@ -154,14 +270,16 @@ pub struct GraphDot<G: GraphDotDumper + Sized> {
 }
 
 impl<G: GraphDotDumper> GraphDot<G> {
+    /// Creates a new `GraphDot` with the given dumper and visual style.
     pub fn new(dumper: G, style: DotStyle) -> Self {
         Self {
-            dumper: dumper,
+            dumper,
             style,
             name: "G".to_string(),
         }
     }
 
+    /// Overrides the digraph name (default: `"G"`).
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
@@ -172,17 +290,23 @@ impl<G: GraphDotDumper> GraphDot<G> {
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
             self.dumper.dump_as_dot(node, &mut dot, &mut state)
-                .map_err(|e| Error::DotDumpError(e))?;
+                .map_err(Error::DotDumpError)?;
         }
 
         Ok(dot.finish())
     }
 
+    /// Returns the raw DOT source string.
     pub fn as_dot(&self) -> Result<String, G::Error> {
         self.build_dot()
     }
 
+    /// Calls the system `dot` binary to render SVG from the DOT source.
+    ///
+    /// Returns an error if `dot` is not installed or the conversion fails.
     pub fn as_svg(&self) -> Result<String, G::Error> {
+        let dot_src = self.as_dot()?;
+
         let mut child = std::process::Command::new("dot")
             .arg("-Tsvg")
             .stdin(std::process::Stdio::piped())
@@ -197,7 +321,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
             })?;
 
             stdin
-                .write_all(self.as_dot()?.as_bytes())
+                .write_all(dot_src.as_bytes())
                 .map_err(|e| Error::SvgConversionError(e.to_string()))?;
         }
 
@@ -214,20 +338,41 @@ impl<G: GraphDotDumper> GraphDot<G> {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
+    /// Produces an HTML page that inlines a pre-rendered SVG with pan/zoom.
+    ///
+    /// Requires the system `dot` binary.  For a browser-rendered interactive
+    /// viewer that works without `dot`, use [`as_html_from_dot`] instead.
     pub fn as_html_from_svg(&self) -> Result<String, G::Error> {
-        Ok(HTML_SVG_TEMPLATE.replace("__SVG__", &self.as_svg()?))
+        let mut svg = self.as_svg()?;
+        // Strip the XML declaration and DOCTYPE that `dot` emits — they can
+        // confuse HTML parsers when the SVG is inlined in a <body>.
+        if let Some(pos) = svg.find("<svg") {
+            svg = svg[pos..].to_owned();
+        }
+        Ok(HTML_SVG_TEMPLATE.replace("__SVG__", &svg))
     }
 
+    /// Produces an interactive HTML page that renders the DOT source
+    /// client-side via Graphviz WASM.  No local `dot` install required.
+    ///
+    /// The DOT source is embedded as a JSON string inside a
+    /// `<script type="application/json">` element, so it is safe regardless of
+    /// what characters appear in node labels.
     pub fn as_html_from_dot(&self) -> Result<String, G::Error> {
-        Ok(HTML_DOT_TEMPLATE.replace("__DOT__", &self.as_dot()?))
+        let dot_src = self.as_dot()?;
+        Ok(HTML_DOT_TEMPLATE.replace("__DOT_JSON__", &json_quote(&dot_src)))
     }
 
+    /// Writes an interactive HTML viewer for this graph to `out_path`.
+    ///
+    /// Uses client-side Graphviz WASM rendering — no local `dot` binary needed.
     pub fn dump_as_html(&self, out_path: &str) -> Result<(), G::Error> {
-        std::fs::write(out_path, self.as_html_from_svg()?)
+        std::fs::write(out_path, self.as_html_from_dot()?)
             .map_err(Error::IoError)?;
         Ok(())
     }
 
+    /// Writes the raw DOT source to `out_path`.
     pub fn dump_as_dot(&self, out_path: &str) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_dot()?)
             .map_err(Error::IoError)?;

@@ -25,48 +25,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // FunctionBuilder::new takes (all_vars, arg_regs, callee_saved, ret_regs).
     // build_entry() is called automatically inside new().
-    let mut builder = FunctionBuilder::new(vns.clone(), &[], &[rbx], &[rax]);
+    let mut builder = FunctionBuilder::new(vns.clone(), &[], &[rbx], &[rax])?;
 
     // Create regions (formerly "blocks").
-    let entry_region = builder.create_region();
-    let true_region  = builder.create_region();
-    let false_region = builder.create_region();
-    let merge_region = builder.create_region();
+    let entry_region = builder.create_region()?;
+    let true_region  = builder.create_region()?;
+    let false_region = builder.create_region()?;
+    let merge_region = builder.create_region()?;
 
-    builder.set_entry_region(entry_region);
+    builder.set_entry_region(entry_region)?;
 
     // ── true branch ──────────────────────────────────────────────────────────
     builder.set_region(true_region);
     let const_15 = builder.build_uint64_const(15);
-    let rax_val  = builder.read_variable(&rax);
+    let rax_val  = builder.read_variable(&rax)?;
     let or_result = builder.build_int_binary_operation(
         const_15, rax_val, IntBinaryOp::Or, NodeOutputType::U64,
-    );
-    builder.build_branch(merge_region);
+    )?;
+    builder.build_branch(merge_region)?;
 
     // ── merge (return) region ─────────────────────────────────────────────────
     builder.set_region(merge_region);
-    builder.build_return(Some(or_result), &[]);
+    builder.build_return(Some(or_result), &[])?;
 
     // ── false branch ──────────────────────────────────────────────────────────
     builder.set_region(false_region);
-    let rbx_val  = builder.read_variable(&rbx);
+    let rbx_val  = builder.read_variable(&rbx)?;
     let const_5  = builder.build_uint64_const(5);
     // build_call takes only the call-target address output.
-    builder.build_call(const_5);
-    builder.build_store(rbx_val, const_5, rsleigh::VnSpace::RAM);
-    let load = builder.build_load(rbx_val, rsleigh::VnSpace::RAM, NodeOutputType::U64);
-    builder.build_return(Some(load), &[]);
+    builder.build_call(const_5)?;
+    builder.build_store(rbx_val, const_5, rsleigh::VnSpace::RAM)?;
+    let load = builder.build_load(rbx_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    builder.build_return(Some(load), &[])?;
 
     // ── entry region: compute condition and branch ────────────────────────────
     builder.set_region(entry_region);
     let const_5b = builder.build_uint64_const(5);
-    let rax_val2 = builder.read_variable(&rax);
+    let rax_val2 = builder.read_variable(&rax)?;
     let add = builder.build_int_binary_operation(
         const_5b, rax_val2, IntBinaryOp::Add, NodeOutputType::U64,
-    );
-    let load2 = builder.build_load(add, rsleigh::VnSpace::UNIQUE, NodeOutputType::U64);
-    builder.build_if(load2, true_region, false_region);
+    )?;
+    let load2 = builder.build_load(add, rsleigh::VnSpace::UNIQUE, NodeOutputType::U64)?;
+    builder.build_if(load2, true_region, false_region)?;
 
     // Finalise the graph and dump it.
     let function = builder.build();

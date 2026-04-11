@@ -46,8 +46,8 @@ pub enum NodeView {
  *     // Initial state
     // General state
     ControlState,
-    MemSelector,
-    ControlSelector(Var),
+    MemPhi,
+    ControlPhi(Var),
     Return,
  */
 impl crate::graph::Graph {

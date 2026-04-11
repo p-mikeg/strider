@@ -1,14 +1,31 @@
 use std::collections::{HashMap, HashSet};
 
+use ir::{BoolBinaryOp, IntBinaryOp};
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use ir::BuiltFunctionGraph;
-
 
 use crate::pat::{Pat, PatKind};
 use crate::var::{NodeVar, Var};
 
+// ── Commutativity helpers ─────────────────────────────────────────────────────
+
+fn is_commutative_int_op(op: IntBinaryOp) -> bool {
+    matches!(op, IntBinaryOp::Add | IntBinaryOp::Mul
+               | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+}
+
+fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
+    matches!(op, BoolBinaryOp::And | BoolBinaryOp::Or | BoolBinaryOp::Xor)
+}
+
 // ── Bindings ──────────────────────────────────────────────────────────────────
 
+/// A set of capture-variable bindings accumulated during a single match attempt.
+///
+/// Bindings are append-only: once a variable is bound it cannot be rebound to a
+/// different value.  A mismatch (trying to bind an already-bound variable to a
+/// different value) makes the containing match fail.  The matcher snapshots and
+/// restores `Bindings` to implement backtracking.
 #[derive(Clone, Default)]
 pub struct Bindings {
     vars:      HashMap<Var,     NodeOutputId>,
@@ -34,10 +51,12 @@ impl Bindings {
         }
     }
 
+    /// Returns the `NodeOutputId` bound to `v`, or `None` if unbound.
     pub fn get(&self, v: Var) -> Option<NodeOutputId> {
         self.vars.get(&v).copied()
     }
 
+    /// Returns the `NodeId` bound to `nv`, or `None` if unbound.
     pub fn get_node(&self, nv: NodeVar) -> Option<NodeId> {
         self.node_vars.get(&nv).copied()
     }
@@ -45,16 +64,25 @@ impl Bindings {
 
 // ── Match ─────────────────────────────────────────────────────────────────────
 
+/// The result of a successful pattern match against a single root node.
+///
+/// Provides access to the captured variable bindings and convenience helpers
+/// for reading constant values.
 pub struct Match {
+    /// The root node where the top-level pattern matched.
     pub root: NodeId,
     bindings: Bindings,
 }
 
 impl Match {
+    /// Returns the `NodeOutputId` bound to the data-capture variable `v`,
+    /// or `None` if `v` was not captured in this match.
     pub fn get(&self, v: Var) -> Option<NodeOutputId> {
         self.bindings.get(v)
     }
 
+    /// Returns the `NodeId` bound to the control-capture variable `nv`,
+    /// or `None` if `nv` was not captured in this match.
     pub fn get_node(&self, nv: NodeVar) -> Option<NodeId> {
         self.bindings.get_node(nv)
     }
@@ -86,6 +114,10 @@ impl Match {
 
 // ── Matcher ───────────────────────────────────────────────────────────────────
 
+/// Executes pattern queries against a [`BuiltFunctionGraph`].
+///
+/// `Matcher::new` pre-indexes all `Call`, `Return`, and `If` nodes in the
+/// graph so that control-level queries can skip the full node list.
 pub struct Matcher<'g> {
     fn_graph:     &'g BuiltFunctionGraph,
     call_nodes:   Vec<NodeId>,
@@ -95,6 +127,10 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
+    /// Creates a new `Matcher` and pre-indexes the graph.
+    ///
+    /// This does a single preorder traversal over all nodes; subsequent
+    /// `find_all` calls pay only the cost of the pattern match itself.
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
         let mut call_nodes   = Vec::new();
         let mut return_nodes = Vec::new();
@@ -114,6 +150,12 @@ impl<'g> Matcher<'g> {
         Self { fn_graph, call_nodes, return_nodes, if_nodes, all_nodes }
     }
 
+    /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
+    /// for each.
+    ///
+    /// The search is exhaustive: every node is tried as a potential root.
+    /// Top-level `Call`, `Return`, and `If` patterns use the pre-indexed node
+    /// lists and skip the others.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let candidates: &[NodeId] = match pat.inner() {
             PatKind::Call    { .. } => &self.call_nodes,
@@ -151,23 +193,33 @@ impl<'g> Matcher<'g> {
 
             PatKind::BoolConst(c) => matches!(kind, NodeKind::BoolConst(v) if *v == *c),
 
-            PatKind::IntBinaryOp { op, lhs, rhs } => {
+            PatKind::AnyIntConst(v) => {
+                if !matches!(kind, NodeKind::IntConst(_)) { return false; }
+                bindings.bind_var(*v, output)
+            }
+
+            PatKind::IntBinaryOp { op, lhs, rhs, ordered } => {
                 let NodeKind::IntBinaryOp(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [l, r] = self.fn_graph.graph.node_inputs_exact::<2>(node);
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
-                    true
-                } else {
-                    *bindings = snap;
-                    false
+                    return true;
                 }
+                if !ordered && is_commutative_int_op(*op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings) && self.match_output(l, rhs, bindings) {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
             }
 
             PatKind::IntUnaryOp { op, operand } => {
                 let NodeKind::IntUnaryOp(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
@@ -175,7 +227,7 @@ impl<'g> Matcher<'g> {
             PatKind::IntCmpOp { op, lhs, rhs } => {
                 let NodeKind::IntCmpOp(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [l, r] = self.fn_graph.graph.node_inputs_exact::<2>(node);
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     true
@@ -185,51 +237,56 @@ impl<'g> Matcher<'g> {
                 }
             }
 
-            PatKind::BoolBinaryOp { op, lhs, rhs } => {
+            PatKind::BoolBinaryOp { op, lhs, rhs, ordered } => {
                 let NodeKind::BoolBinaryOp(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [l, r] = self.fn_graph.graph.node_inputs_exact::<2>(node);
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
-                    true
-                } else {
-                    *bindings = snap;
-                    false
+                    return true;
                 }
+                if !ordered && is_commutative_bool_op(*op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings) && self.match_output(l, rhs, bindings) {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
             }
 
             PatKind::BoolUnaryOp { op, operand } => {
                 let NodeKind::BoolUnaryOp(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
             PatKind::CastToBool { operand } => {
                 if !matches!(kind, NodeKind::CastToBool) { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
             PatKind::CastToInt { operand } => {
                 if !matches!(kind, NodeKind::CastToInt) { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
             PatKind::Truncate { operand } => {
                 if !matches!(kind, NodeKind::Truncate) { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
             PatKind::Popcount { operand } => {
                 if !matches!(kind, NodeKind::Popcount) { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
@@ -237,29 +294,35 @@ impl<'g> Matcher<'g> {
             PatKind::Extend { op, operand } => {
                 let NodeKind::Extend(actual) = kind else { return false; };
                 if actual != op { return false; }
-                let [inp] = self.fn_graph.graph.node_inputs_exact::<1>(node);
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
                 let snap = bindings.clone();
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
-            PatKind::Load { space, addr } => {
+            PatKind::Load { space, addr, output_var, node_var } => {
                 let NodeKind::Load(actual_space) = kind else { return false; };
                 if let Some(s) = space {
                     if actual_space != s { return false; }
                 }
+                let snap = bindings.clone();
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 if let Some(addr_pat) = addr {
-                    let Some(&addr_out) = inputs.get(1) else { return false; };
-                    let snap = bindings.clone();
+                    let Some(&addr_out) = inputs.get(1) else { *bindings = snap; return false; };
                     if !self.match_output(addr_out, addr_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
+                if let Some(v) = output_var {
+                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                }
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
                 true
             }
 
-            PatKind::Store { space, addr, data } => {
+            PatKind::Store { space, addr, data, output_var, node_var } => {
                 let NodeKind::Store(actual_space) = kind else { return false; };
                 if let Some(s) = space {
                     if actual_space != s { return false; }
@@ -280,11 +343,17 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
+                if let Some(v) = output_var {
+                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                }
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
                 true
             }
 
-            PatKind::Selector { vn, inputs: slot_pats } => {
-                let NodeKind::ControlSelector(actual_vn) = kind else { return false; };
+            PatKind::Phi { vn, inputs: slot_pats, output_var, node_var } => {
+                let NodeKind::ControlPhi(actual_vn) = kind else { return false; };
                 if let Some(v) = vn {
                     if actual_vn != v { return false; }
                 }
@@ -297,6 +366,12 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
+                if let Some(v) = output_var {
+                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                }
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
                 true
             }
 
@@ -306,6 +381,32 @@ impl<'g> Matcher<'g> {
                     if actual_vn != v { return false; }
                 }
                 true
+            }
+
+            PatKind::WithCapture { inner, var } => {
+                let snap = bindings.clone();
+                if !self.match_output(output, inner, bindings) {
+                    return false;
+                }
+                if bindings.bind_var(*var, output) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
+            }
+
+            PatKind::WithPredicate { inner, func } => {
+                let snap = bindings.clone();
+                if !self.match_output(output, inner, bindings) {
+                    return false;
+                }
+                if func(self.fn_graph, output) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             // Control-level patterns in a data context → no match.
@@ -418,7 +519,7 @@ impl<'g> Matcher<'g> {
             //
             // We must try *all* output kinds, not just value outputs, so that
             // nodes like `Store` (whose only output is a Memory edge) or
-            // `ControlSelector` (whose output is a ControlSelector edge) can
+            // `ControlPhi` (whose output is a ControlPhi edge) can
             // be matched from top-level `find_all` queries.
             //
             // `match_output` does its own kind-check, so trying a wrong output

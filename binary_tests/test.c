@@ -207,6 +207,10 @@ jump_table_loop(int seed, int rounds) {
     return acc;
 }
 
+int test_call(int a, int b) {
+    return bitwise_ops(a, b) + bitwise_ops(b,a);
+}
+
 /* ── entry point ────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {

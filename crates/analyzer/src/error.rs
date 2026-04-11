@@ -16,6 +16,33 @@ pub enum Error {
 
     #[error(transparent)]
     CfgError(#[from] cfg::Error),
+
+    #[error(transparent)]
+    IrError(#[from] ir::Error),
+
+    #[error(transparent)]
+    OptError(#[from] opt::Error),
+
+    #[error("register {0:?} has no enclosing container in variable set")]
+    NoRegisterContainer(rsleigh::Vn),
+
+    #[error("instruction has no output varnode for opcode {0:?}")]
+    MissingOutputVn(rsleigh::Opcode),
+
+    #[error("IR region not found for CFG region {0:?}")]
+    IrRegionNotFound(cfg::RegionId),
+
+    #[error("attempted to write to CONST space: {0:?}")]
+    WriteToConstSpace(rsleigh::VnSpace),
+
+    #[error("unsupported varnode space {0:?}")]
+    UnsupportedVnSpace(rsleigh::VnSpace),
+
+    #[error("unsupported register size {0} bytes")]
+    UnsupportedRegSize(u32),
+
+    #[error("unimplemented p-code opcode {0:?}")]
+    UnimplementedOpcode(rsleigh::Opcode),
 }
 
 /// the result type using our error.

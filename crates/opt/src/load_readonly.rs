@@ -32,7 +32,7 @@ pub trait ReadOnlyMemory: Send + Sync {
 pub struct LoadReadOnly<M>(pub M);
 
 impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> OptimizationResult {
+    fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let nodes: Vec<_> = function.preorder().collect();
         let mut result = OptimizationResult::NoChange;
 
@@ -49,17 +49,17 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
             let Some(addr) = int_const_val(function, addr_input) else { continue };
 
             // Load output: the single value output carries the loaded data type.
-            let [data_out] = function.graph.node_outputs_exact::<1>(node_id);
+            let [data_out] = function.graph.node_outputs_exact::<1>(node_id)?;
             let Some(ty) = function.graph.output_kind(data_out).as_value() else { continue };
             let size = ty.byte_size();
 
             let Some(loaded) = self.0.read(space, addr, size) else { continue };
 
             let Some(masked) = ty.get_unsigned_int(loaded) else { continue };
-            let new_out = make_int_const(function, masked, ty);
-            result |= replace_all_uses(function, data_out, new_out);
+            let new_out = make_int_const(function, masked, ty)?;
+            result |= replace_all_uses(function, data_out, new_out)?;
         }
-        result
+        Ok(result)
     }
 }
 
@@ -68,8 +68,9 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder, ValueType};
+    use ir::FunctionBuilder;
     use ir::node::{NodeKind, NodeOutputType};
+    use crate::error::Result;
 
     // ── tiny ROM fixture ──────────────────────────────────────────────────────
 
@@ -87,17 +88,17 @@ mod tests {
 
     // ── helper ────────────────────────────────────────────────────────────────
 
-    fn make_fn<F>(f: F) -> ir::BuiltFunctionGraph
+    fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
     where
-        F: FnOnce(&mut FunctionBuilder) -> ir::Value,
+        F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
     {
-        let mut b = FunctionBuilder::new(vec![], &[], &[], &[]);
-        let region = b.create_region();
-        b.set_entry_region(region);
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
         b.set_region(region);
-        let val = f(&mut b);
-        b.build_return(Some(val), &[]);
-        b.build()
+        let val = f(&mut b)?;
+        b.build_return(Some(val), &[])?;
+        Ok(b.build())
     }
 
     fn return_kind(fg: &ir::BuiltFunctionGraph) -> NodeKind {
@@ -112,37 +113,40 @@ mod tests {
     // ── tests ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn load_from_rom_const_addr() {
+    fn load_from_rom_const_addr() -> Result<()> {
         let mut fg = make_fn(|b| {
             let addr = b.build_int_const(0x1000, NodeOutputType::U64);
-            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
-        });
-        assert!(LoadReadOnly(TestRom).optimize(&mut fg).changed());
+            Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
+        })?;
+        assert!(LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg), NodeKind::IntConst(42));
+        Ok(())
     }
 
     #[test]
-    fn load_non_rom_addr_no_change() {
+    fn load_non_rom_addr_no_change() -> Result<()> {
         let mut fg = make_fn(|b| {
             let addr = b.build_int_const(0xDEAD, NodeOutputType::U64);
-            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
-        });
-        assert!(!LoadReadOnly(TestRom).optimize(&mut fg).changed());
+            Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
+        })?;
+        assert!(!LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
         // Load node should still be present.
         assert!(fg.all_node_ids().any(|n| matches!(fg.graph.node_kind(n), NodeKind::Load(_))));
+        Ok(())
     }
 
     #[test]
-    fn load_non_const_addr_no_change() {
+    fn load_non_const_addr_no_change() -> Result<()> {
         let mut fg = make_fn(|b| {
             // addr = 0x1000 + 0 — a non-trivial expression that constant_fold
             // would simplify, but we don't run constant_fold here.
             let base = b.build_int_const(0x1000, NodeOutputType::U64);
             let off  = b.build_int_const(0, NodeOutputType::U64);
-            let addr = b.build_int_binary_operation(base, off, ir::IntBinaryOp::Add, NodeOutputType::U64);
-            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
-        });
+            let addr = b.build_int_binary_operation(base, off, ir::IntBinaryOp::Add, NodeOutputType::U64)?;
+            Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
+        })?;
         // addr is an Add node, not a const → LoadReadOnly must not fire.
-        assert!(!LoadReadOnly(TestRom).optimize(&mut fg).changed());
+        assert!(!LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
+        Ok(())
     }
 }

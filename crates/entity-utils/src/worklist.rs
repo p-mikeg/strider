@@ -3,6 +3,12 @@ use cranelift_entity::EntityRef;
 
 use crate::set::DenseEntitySet;
 
+/// A queue of unique [`EntityRef`] values for fixed-point iteration.
+///
+/// Each entity may be enqueued at most once at a time: if `entity` is already
+/// in the queue, a second `enqueue` call is a no-op.  This prevents redundant
+/// re-processing while still allowing an entity to be re-enqueued after it has
+/// been dequeued.
 #[derive(Clone)]
 pub struct Worklist<E> {
     worklist: VecDeque<E>,
@@ -10,6 +16,7 @@ pub struct Worklist<E> {
 }
 
 impl<E: EntityRef> Worklist<E> {
+    /// Creates an empty worklist.
     pub fn new() -> Self {
         Self {
             worklist: VecDeque::new(),
@@ -17,16 +24,22 @@ impl<E: EntityRef> Worklist<E> {
         }
     }
 
+    /// Returns `true` if the worklist contains no pending entities.
     pub fn is_empty(&self) -> bool {
         self.worklist.is_empty()
     }
 
+    /// Adds `entity` to the back of the queue.
+    ///
+    /// Has no effect if `entity` is already queued.
     pub fn enqueue(&mut self, entity: E) {
         if !self.workset.contains(entity) {
             self.worklist.push_back(entity);
         }
     }
 
+    /// Removes and returns the next entity from the front of the queue, or
+    /// `None` if the queue is empty.
     pub fn dequeue(&mut self) -> Option<E> {
         let entity = self.worklist.pop_front()?;
         self.workset.remove(entity);
