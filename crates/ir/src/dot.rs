@@ -104,7 +104,15 @@ fn edge_style<R: MemReader>(
         | NodeKind::CastToBool
         | NodeKind::CastToInt
         | NodeKind::Truncate
-        | NodeKind::Popcount  => ("val", "\"#88cc88\""),   // green
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extract { .. }  => ("val", "\"#88cc88\""),   // green
+
+        NodeKind::Piece | NodeKind::Insert { .. } => match input_idx {
+            0 => ("hi/dest", "\"#4488ff\""),
+            1 => ("lo/src",  "\"#ff4444\""),
+            _ => ("",        "\"#cccccc\""),
+        },
 
         NodeKind::Load(_) => match input_idx {
             0 => ("mem",  "\"#cc88aa\""),
@@ -291,6 +299,26 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 let to = self.out_type(node)
                     .map(|t| t.as_str()).unwrap_or("?");
                 format!("Popcount\n{from} → {to}")
+            }
+            NodeKind::Lzcount => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                format!("Lzcount\n{from} → {to}")
+            }
+            NodeKind::Piece => {
+                let hi_ty = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let lo_ty = self.input_type(node, 1).map(|t| t.as_str()).unwrap_or("?");
+                let to    = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                format!("Piece\n({hi_ty}\u{2016}{lo_ty}) \u{2192} {to}")
+            }
+            NodeKind::Extract { lsb, len } => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                format!("Extract[{lsb}..+{len}]\n{from} \u{2192} {to}")
+            }
+            NodeKind::Insert { lsb, len } => {
+                let dest_ty = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                format!("Insert[{lsb}..+{len}]\ninto {dest_ty}")
             }
 
             // ── arithmetic / logical ──────────────────────────────────────────

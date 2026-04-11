@@ -76,6 +76,7 @@ pub use pat::{
     bool_unary, bool_not,
     // Casts / coercions
     cast_to_bool, cast_to_int, truncate, extend, zero_extend, sign_extend, popcount,
+    lzcount, piece, extract, insert,
     // Memory
     load, store,
     // Phi nodes

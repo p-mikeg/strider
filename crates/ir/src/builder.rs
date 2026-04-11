@@ -307,6 +307,41 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntUnaryOp(op), [converted_input_id], output_type))
     }
 
+    /// Emits a `Popcount` node that counts set bits in `input_id`.
+    pub fn build_popcount(&mut self, input_id: NodeOutputId, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        let input = self.convert_to_int_if_needed(input_id, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Popcount, [input], output_type))
+    }
+
+    /// Emits a `Lzcount` node that counts leading zero bits in `input_id`.
+    pub fn build_lzcount(&mut self, input_id: NodeOutputId, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        let input = self.convert_to_int_if_needed(input_id, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
+    }
+
+    /// Emits a `Piece` node: `result = (hi << bit_width(lo)) | lo`.
+    /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
+    pub fn build_piece(&mut self, hi: NodeOutputId, lo: NodeOutputId, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(hi)?.is_integer() { return Err(Error::ExpectedInteger(hi)); }
+        if !self.get_output_type(lo)?.is_integer() { return Err(Error::ExpectedInteger(lo)); }
+        Ok(self.build_single_output_pure(NodeKind::Piece, [hi, lo], output_type))
+    }
+
+    /// Emits an `Extract` node: extracts `len` bits starting at bit `lsb`.
+    /// inputs[0] = value.
+    pub fn build_extract(&mut self, input_id: NodeOutputId, lsb: u8, len: u8, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input_id)?.is_integer() { return Err(Error::ExpectedInteger(input_id)); }
+        Ok(self.build_single_output_pure(NodeKind::Extract { lsb, len }, [input_id], output_type))
+    }
+
+    /// Emits an `Insert` node: inserts `len` bits from `src` into `dest` at bit `lsb`.
+    /// inputs[0] = dest, inputs[1] = src.
+    pub fn build_insert(&mut self, dest: NodeOutputId, src: NodeOutputId, lsb: u8, len: u8, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(dest)?.is_integer() { return Err(Error::ExpectedInteger(dest)); }
+        if !self.get_output_type(src)?.is_integer() { return Err(Error::ExpectedInteger(src)); }
+        Ok(self.build_single_output_pure(NodeKind::Insert { lsb, len }, [dest, src], output_type))
+    }
+
     /// Emits an integer comparison node.
     pub fn build_int_cmp_operation(&mut self, lhs_id: NodeOutputId, rhs_id: NodeOutputId, kind: IntCmpOp, output_type: NodeOutputType) -> Result<NodeOutputId> {
         let converted_lhs_id = self.convert_to_int_if_needed(lhs_id, output_type)?;

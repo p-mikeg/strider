@@ -1920,3 +1920,103 @@ fn predicate_in_field_position() -> ir::Result<()> {
     assert_eq!(hits.len(), 1);
     Ok(())
 }
+
+// ── Lzcount / Piece / Extract / Insert pattern tests ─────────────────────────
+
+#[test]
+fn lzcount_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let v = b.build_int_const(1, NodeOutputType::U8);
+    let lz = b.build_lzcount(v, NodeOutputType::U8)?;
+    b.build_return(Some(lz), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&lzcount(any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn piece_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let hi = b.build_int_const(0xAB, NodeOutputType::U8);
+    let lo = b.build_int_const(0xCD, NodeOutputType::U8);
+    let p = b.build_piece(hi, lo, NodeOutputType::U16)?;
+    b.build_return(Some(p), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&piece(any(), any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn extract_pattern_exact_lsb_len() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let v = b.build_int_const(0xABCD, NodeOutputType::U16);
+    let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
+    b.build_return(Some(ex), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Exact match on lsb=4, len=8 → finds it.
+    let hits = m.find_all(&extract(Some(4), Some(8), any()).into());
+    assert_eq!(hits.len(), 1);
+    // Wrong lsb → no match.
+    let miss = m.find_all(&extract(Some(0), Some(8), any()).into());
+    assert!(miss.is_empty());
+    Ok(())
+}
+
+#[test]
+fn extract_pattern_wildcard() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let v = b.build_int_const(0xABCD, NodeOutputType::U16);
+    let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
+    b.build_return(Some(ex), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&extract(None, None, any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn insert_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
+    let src  = b.build_int_const(0x42,   NodeOutputType::U16);
+    let ins = b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?;
+    b.build_return(Some(ins), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Wildcard match.
+    let hits = m.find_all(&insert(None, None, any(), any()).into());
+    assert_eq!(hits.len(), 1);
+    // Exact match on lsb=0, len=8.
+    let hits2 = m.find_all(&insert(Some(0), Some(8), any(), any()).into());
+    assert_eq!(hits2.len(), 1);
+    // Wrong lsb → no match.
+    let miss = m.find_all(&insert(Some(4), None, any(), any()).into());
+    assert!(miss.is_empty());
+    Ok(())
+}

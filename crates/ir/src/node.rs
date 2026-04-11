@@ -321,6 +321,18 @@ pub enum NodeKind {
     Truncate,
     /// Count the number of set bits in an integer value.
     Popcount,
+    /// Count the number of leading zero bits in an integer value.
+    Lzcount,
+    /// Concatenate two integers: result = (hi << bit_width(lo)) | lo.
+    /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
+    /// Output width = bit_width(hi) + bit_width(lo).
+    Piece,
+    /// Extract `len` bits starting at bit `lsb` from an integer value.
+    /// inputs[0] = value.  Upper bits of the output type are zero.
+    Extract { lsb: u8, len: u8 },
+    /// Insert `len` bits from `src` into `dest` starting at bit `lsb`.
+    /// inputs[0] = dest, inputs[1] = src.  Output has the same type as dest.
+    Insert { lsb: u8, len: u8 },
     /// Widen an integer value by zero- or sign-extending it.
     Extend(crate::ops::ExtendOp),
 

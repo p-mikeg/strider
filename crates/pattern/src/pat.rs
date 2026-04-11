@@ -91,6 +91,14 @@ pub enum PatKind {
     Extend     { op: ExtendOp, operand: Pat },
     /// Matches a `Popcount` node (counts set bits).
     Popcount   { operand: Pat },
+    /// Matches a `Lzcount` node (counts leading zero bits).
+    Lzcount    { operand: Pat },
+    /// Matches a `Piece` node (concatenates hi and lo: `(hi << bits(lo)) | lo`).
+    Piece      { hi: Pat, lo: Pat },
+    /// Matches an `Extract` node.  `None` for `lsb`/`len` matches any value.
+    Extract    { lsb: Option<u8>, len: Option<u8>, operand: Pat },
+    /// Matches an `Insert` node.  `None` for `lsb`/`len` matches any value.
+    Insert     { lsb: Option<u8>, len: Option<u8>, dest: Pat, src: Pat },
 
     // ── Memory ops ────────────────────────────────────────────────────────────
     /// `Load(space)`: inputs = [mem(0), addr(1)] → value output.
@@ -631,6 +639,20 @@ pub fn zero_extend(operand: impl Into<Pat>) -> Pat  { extend(ExtendOp::ZeroExten
 pub fn sign_extend(operand: impl Into<Pat>) -> Pat  { extend(ExtendOp::SignExtend, operand) }
 /// Matches a popcount (count-set-bits) node.
 pub fn popcount(operand: impl Into<Pat>) -> Pat     { Pat::new(PatKind::Popcount   { operand: operand.into() }) }
+/// Matches a leading-zero-count node.
+pub fn lzcount(operand: impl Into<Pat>) -> Pat      { Pat::new(PatKind::Lzcount    { operand: operand.into() }) }
+/// Matches a piece (concatenation) node: `(hi << bits(lo)) | lo`.
+pub fn piece(hi: impl Into<Pat>, lo: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::Piece { hi: hi.into(), lo: lo.into() })
+}
+/// Matches an extract node.  Pass `None` for `lsb`/`len` to match any value.
+pub fn extract(lsb: Option<u8>, len: Option<u8>, operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::Extract { lsb, len, operand: operand.into() })
+}
+/// Matches an insert node.  Pass `None` for `lsb`/`len` to match any value.
+pub fn insert(lsb: Option<u8>, len: Option<u8>, dest: impl Into<Pat>, src: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::Insert { lsb, len, dest: dest.into(), src: src.into() })
+}
 
 // Memory
 

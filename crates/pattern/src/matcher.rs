@@ -291,6 +291,48 @@ impl<'g> Matcher<'g> {
                 if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
             }
 
+            PatKind::Lzcount { operand } => {
+                if !matches!(kind, NodeKind::Lzcount) { return false; }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let snap = bindings.clone();
+                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+            }
+
+            PatKind::Piece { hi, lo } => {
+                if !matches!(kind, NodeKind::Piece) { return false; }
+                let Ok([h, l]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+                let snap = bindings.clone();
+                if self.match_output(h, hi, bindings) && self.match_output(l, lo, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
+            }
+
+            PatKind::Extract { lsb: pat_lsb, len: pat_len, operand } => {
+                let NodeKind::Extract { lsb, len } = kind else { return false; };
+                if pat_lsb.is_some_and(|pl| pl != *lsb) { return false; }
+                if pat_len.is_some_and(|pl| pl != *len)  { return false; }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let snap = bindings.clone();
+                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+            }
+
+            PatKind::Insert { lsb: pat_lsb, len: pat_len, dest, src } => {
+                let NodeKind::Insert { lsb, len } = kind else { return false; };
+                if pat_lsb.is_some_and(|pl| pl != *lsb) { return false; }
+                if pat_len.is_some_and(|pl| pl != *len)  { return false; }
+                let Ok([d, s]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+                let snap = bindings.clone();
+                if self.match_output(d, dest, bindings) && self.match_output(s, src, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
+            }
+
             PatKind::Extend { op, operand } => {
                 let NodeKind::Extend(actual) = kind else { return false; };
                 if actual != op { return false; }

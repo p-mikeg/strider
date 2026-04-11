@@ -380,6 +380,85 @@ fn try_fold_cast_to_int(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<
     replace_all_uses(fg, out, new_out)
 }
 
+fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty.get_unsigned_int(v).ok_or(Error::ExpectedIntegerType(input_ty))?;
+    let result = masked.count_ones() as u64;
+    let new_out = make_int_const(fg, result, ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
+fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty.get_unsigned_int(v).ok_or(Error::ExpectedIntegerType(input_ty))?;
+    let bits = input_ty.bit_width() as u32;
+    // Shift into the top of a u64 then count leading zeros within the type width.
+    let result = (masked << (64 - bits)).leading_zeros() as u64;
+    let new_out = make_int_const(fg, result, ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
+fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::Piece = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
+    let Some(hi_v) = int_const_val(fg, hi) else { return Ok(OptimizationResult::NoChange); };
+    let Some(lo_v) = int_const_val(fg, lo) else { return Ok(OptimizationResult::NoChange); };
+    let lo_kind = fg.graph.output_kind(lo);
+    let lo_ty = lo_kind.as_value().ok_or(Error::ExpectedValueOutput(lo_kind))?;
+    let lo_bits = lo_ty.bit_width() as u32;
+    let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(u64::MAX);
+    let result = (hi_v << lo_bits) | (lo_v & lo_mask);
+    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let new_out = make_int_const(fg, masked, ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
+fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::Extract { lsb, len } = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+    let result = (v >> lsb) & mask;
+    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let new_out = make_int_const(fg, masked, ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
+fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
+    let Some(dest_v) = int_const_val(fg, dest) else { return Ok(OptimizationResult::NoChange); };
+    let Some(src_v)  = int_const_val(fg, src)  else { return Ok(OptimizationResult::NoChange); };
+    let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+    let result = (dest_v & !(mask << lsb)) | ((src_v & mask) << lsb);
+    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let new_out = make_int_const(fg, masked, ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
 /// Folds constant expressions and applies algebraic identities.
@@ -404,6 +483,11 @@ impl Optimizer for ConstantFold {
             result |= try_fold_extend(function, node_id)?;
             result |= try_fold_cast_to_bool(function, node_id)?;
             result |= try_fold_cast_to_int(function, node_id)?;
+            result |= try_fold_popcount(function, node_id)?;
+            result |= try_fold_lzcount(function, node_id)?;
+            result |= try_fold_piece(function, node_id)?;
+            result |= try_fold_extract(function, node_id)?;
+            result |= try_fold_insert(function, node_id)?;
         }
         Ok(result)
     }
@@ -634,6 +718,93 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        Ok(())
+    }
+
+    // ── Popcount / Lzcount / Piece / Extract / Insert ─────────────────────────
+
+    #[test]
+    fn fold_popcount_const() -> Result<()> {
+        // popcount(0b10110101) = 5
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(0b10110101, NodeOutputType::U8);
+            Ok(b.build_popcount(v, NodeOutputType::U8)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(5));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_popcount_zero() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(0, NodeOutputType::U64);
+            Ok(b.build_popcount(v, NodeOutputType::U64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_lzcount_msb_set() -> Result<()> {
+        // lzcount(0x80u8) = 0 (MSB is set)
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(0x80, NodeOutputType::U8);
+            Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_lzcount_one() -> Result<()> {
+        // lzcount(1u8) = 7 (only bit 0 set in an 8-bit value)
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(1, NodeOutputType::U8);
+            Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(7));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_piece_consts() -> Result<()> {
+        // piece(0xABu8, 0xCDu8) → U16 = 0xABCD
+        let mut fg = make_fn(|b| {
+            let hi = b.build_int_const(0xAB, NodeOutputType::U8);
+            let lo = b.build_int_const(0xCD, NodeOutputType::U8);
+            Ok(b.build_piece(hi, lo, NodeOutputType::U16)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xABCD));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_extract_const() -> Result<()> {
+        // extract(0xABCDu16, lsb=4, len=8) = (0xABCD >> 4) & 0xFF = 0xBC
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(0xABCD, NodeOutputType::U16);
+            Ok(b.build_extract(v, 4, 8, NodeOutputType::U8)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xBC));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_insert_const() -> Result<()> {
+        // insert(0xFF00u16, 0x42u16, lsb=0, len=8) = 0xFF42
+        let mut fg = make_fn(|b| {
+            let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
+            let src  = b.build_int_const(0x42,   NodeOutputType::U16);
+            Ok(b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xFF42));
         Ok(())
     }
 }

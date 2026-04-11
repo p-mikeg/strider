@@ -158,6 +158,55 @@ fn node_known_bits(
             }
         }
 
+        NodeKind::Popcount | NodeKind::Lzcount => {
+            // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.graph.output_kind(input);
+            let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+            let max_val = input_ty.bit_width() as u64;
+            let bits_needed = if max_val == 0 { 1 } else { u64::BITS - max_val.leading_zeros() } as u64;
+            let result_mask = if bits_needed >= 64 { u64::MAX } else { (1u64 << bits_needed) - 1 };
+            let upper_zeros = type_mask & !result_mask;
+            Kb { ones: 0, zeros: upper_zeros }
+        }
+
+        NodeKind::Extract { lsb, len } => {
+            // Output is exactly `len` bits; upper bits of the output type are zero.
+            let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+            let upper_zeros = type_mask & !mask;
+            // Propagate known bits from the input for the extracted window.
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let kb_in = known.get(&input).copied().unwrap_or_default();
+            let shifted_ones  = (kb_in.ones  >> lsb) & mask;
+            let shifted_zeros = (kb_in.zeros >> lsb) & mask;
+            Kb { ones: shifted_ones, zeros: shifted_zeros | upper_zeros }
+        }
+
+        NodeKind::Piece => {
+            let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
+            let lo_kind = fg.graph.output_kind(lo);
+            let lo_ty = lo_kind.as_value().ok_or(Error::ExpectedValueOutput(lo_kind))?;
+            let lo_bits = lo_ty.bit_width() as u32;
+            let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
+            let hi_kb = known.get(&hi).copied().unwrap_or_default();
+            let lo_kb = known.get(&lo).copied().unwrap_or_default();
+            Kb {
+                ones:  ((hi_kb.ones  << lo_bits) | (lo_kb.ones  & lo_mask)) & type_mask,
+                zeros: ((hi_kb.zeros << lo_bits) | (lo_kb.zeros & lo_mask)) & type_mask,
+            }
+        }
+
+        NodeKind::Insert { lsb, len } => {
+            let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+            let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
+            let dest_kb = known.get(&dest).copied().unwrap_or_default();
+            let src_kb  = known.get(&src).copied().unwrap_or_default();
+            Kb {
+                ones:  ((dest_kb.ones  & !(mask << lsb)) | ((src_kb.ones  & mask) << lsb)) & type_mask,
+                zeros: ((dest_kb.zeros & !(mask << lsb)) | ((src_kb.zeros & mask) << lsb)) & type_mask,
+            }
+        }
+
         _ => return Ok(None),
     };
 
@@ -294,6 +343,61 @@ mod tests {
         let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64)))?;
         // KnownBits should see the const node but not replace it with itself.
         assert!(!KnownBits.optimize(&mut fg)?.changed());
+        Ok(())
+    }
+
+    // ── Extract / Popcount / Piece known-bits ─────────────────────────────────
+
+    /// `extract(x, lsb=0, len=4)` into U8 → upper nibble is always zero.
+    /// Therefore `and(result, 0xF0)` should fold to 0.
+    #[test]
+    fn known_bits_extract_upper_zero() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let x = b.build_int_const(0xFF, NodeOutputType::U8);
+            let extracted = b.build_extract(x, 0, 4, NodeOutputType::U8)?;
+            let mask = b.build_int_const(0xF0, NodeOutputType::U8);
+            Ok(b.build_int_binary_operation(extracted, mask, IntBinaryOp::And, NodeOutputType::U8)?)
+        })?;
+        let mut changed = true;
+        while changed {
+            changed = KnownBits.optimize(&mut fg)?.changed();
+        }
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+        Ok(())
+    }
+
+    /// `popcount(U8)` fits in 4 bits (max = 8), so bits 4..7 are known zero.
+    /// `and(popcount(x), 0xF0)` should fold to 0.
+    #[test]
+    fn known_bits_popcount_range() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let x = b.build_int_const(0xFF, NodeOutputType::U8);
+            let pc = b.build_popcount(x, NodeOutputType::U8)?;
+            let mask = b.build_int_const(0xF0, NodeOutputType::U8);
+            Ok(b.build_int_binary_operation(pc, mask, IntBinaryOp::And, NodeOutputType::U8)?)
+        })?;
+        let mut changed = true;
+        while changed {
+            changed = KnownBits.optimize(&mut fg)?.changed();
+        }
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+        Ok(())
+    }
+
+    /// `piece(IntConst(0xAB), IntConst(0xCD))` → all bits are fully determined
+    /// → KnownBits resolves it to `IntConst(0xABCD)`.
+    #[test]
+    fn known_bits_piece_propagation() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let hi = b.build_int_const(0xAB, NodeOutputType::U8);
+            let lo = b.build_int_const(0xCD, NodeOutputType::U8);
+            Ok(b.build_piece(hi, lo, NodeOutputType::U16)?)
+        })?;
+        let mut changed = true;
+        while changed {
+            changed = KnownBits.optimize(&mut fg)?.changed();
+        }
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xABCD));
         Ok(())
     }
 }

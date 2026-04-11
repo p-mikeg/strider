@@ -372,9 +372,6 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                     self.builder.build_return(None, &regs)?;
                 }
             }
-            Opcode::Popcount => {
-                println!("implement popcount");
-            }
             Opcode::Call | Opcode::CallIndirect => {
                 let call_address = self.read_vn(&insn.inputs[0])?;
                 self.builder.build_call(call_address)?;
@@ -395,6 +392,65 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                         input, shift_const, IntBinaryOp::ShiftRight, insn.inputs[0].size.try_into()?)?
                 };
                 let out = self.builder.truncate_if_needed(shifted, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            Opcode::Popcount => {
+                let input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_popcount(input, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            Opcode::Lzcount => {
+                let input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_lzcount(input, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            Opcode::Piece => {
+                // inputs[0] = hi (most significant), inputs[1] = lo (least significant)
+                let hi = self.read_vn(&insn.inputs[0])?;
+                let lo = self.read_vn(&insn.inputs[1])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_piece(hi, lo, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            Opcode::Extract => {
+                // inputs[0] = value, inputs[1] = lsb (CONST), inputs[2] = bit_count (CONST)
+                let input = self.read_vn(&insn.inputs[0])?;
+                let lsb = insn.inputs[1].addr.off as u8;
+                let len = insn.inputs[2].addr.off as u8;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_extract(input, lsb, len, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            Opcode::Insert => {
+                // inputs[0] = dest, inputs[1] = src, inputs[2] = lsb (CONST), inputs[3] = bit_count (CONST)
+                let dest = self.read_vn(&insn.inputs[0])?;
+                let src  = self.read_vn(&insn.inputs[1])?;
+                let lsb = insn.inputs[2].addr.off as u8;
+                let len = insn.inputs[3].addr.off as u8;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_insert(dest, src, lsb, len, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+            // PtrAdd: out = base + index * elem_size  (elem_size is a CONST input)
+            Opcode::PtrAdd => {
+                let base  = self.read_vn(&insn.inputs[0])?;
+                let index = self.read_vn(&insn.inputs[1])?;
+                let elem_size = insn.inputs[2].addr.off;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out_ty: ir::ValueType = out_vn.size.try_into()?;
+                let elem_const = self.builder.build_int_const(elem_size, out_ty);
+                let scaled = self.builder.build_int_binary_operation(index, elem_const, IntBinaryOp::Mul, out_ty)?;
+                let out = self.builder.build_int_binary_operation(base, scaled, IntBinaryOp::Add, out_ty)?;
+                self.write_vn(out_vn, out)?;
+            }
+            // PtrSub: out = base - index
+            Opcode::PtrSub => {
+                let base  = self.read_vn(&insn.inputs[0])?;
+                let index = self.read_vn(&insn.inputs[1])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_int_binary_operation(base, index, IntBinaryOp::Sub, out_vn.size.try_into()?)?;
                 self.write_vn(out_vn, out)?;
             }
             _ => return Err(Error::UnimplementedOpcode(insn.opcode)),
