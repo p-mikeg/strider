@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+ir-macros.workspace = true
 ir.workspace = true
 rsleigh.workspace = true
 thiserror = { workspace = true }

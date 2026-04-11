@@ -1,5 +1,6 @@
 use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
 use ir::node::{NodeId, NodeKind, NodeOutputKind, NodeOutputType};
+use ir_macros::match_value;
 
 use crate::error::{Error, Result};
 use crate::opt::{OptimizationResult, Optimizer};
@@ -171,62 +172,61 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             }
             // (a & C1) & C2 → a & (C1 & C2)
             if let Some(c2) = rhs_c {
-                let lhs_node = fg.graph.get_node_from_output(lhs);
-                let lhs_kind = *fg.graph.node_kind(lhs_node);
-                if let NodeKind::IntBinaryOp(IntBinaryOp::And) = lhs_kind {
-                    let [inner_lhs, inner_rhs] = fg.graph.node_inputs_exact::<2>(lhs_node)?;
-                    // Check inner rhs first, then inner lhs.
-                    let inner_rhs_c = int_const_val(fg, inner_rhs);
-                    if let Some(c1) = inner_rhs_c {
-                        let merged = make_int_const(fg, c1 & c2, ty)?;
-                        let new_node = fg.graph.create_node(
-                            NodeKind::IntBinaryOp(IntBinaryOp::And),
-                            [inner_lhs, merged],
-                            [NodeOutputKind::OutputType(ty)],
-                        );
-                        let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                        return replace_all_uses(fg, out, new_out);
-                    }
-                    let inner_lhs_c = int_const_val(fg, inner_lhs);
-                    if let Some(c1) = inner_lhs_c {
-                        let merged = make_int_const(fg, c1 & c2, ty)?;
-                        let new_node = fg.graph.create_node(
-                            NodeKind::IntBinaryOp(IntBinaryOp::And),
-                            [inner_rhs, merged],
-                            [NodeOutputKind::OutputType(ty)],
-                        );
-                        let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                        return replace_all_uses(fg, out, new_out);
+                let graph = &fg.graph;
+                match_value! {
+                    if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
+                        = graph, lhs
+                    {
+                        if let Some(c1) = int_const_val(fg, inner_rhs) {
+                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                            let new_node = fg.graph.create_node(
+                                NodeKind::IntBinaryOp(IntBinaryOp::And),
+                                [inner_lhs, merged],
+                                [NodeOutputKind::OutputType(ty)],
+                            );
+                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
+                            return replace_all_uses(fg, out, new_out);
+                        }
+                        if let Some(c1) = int_const_val(fg, inner_lhs) {
+                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                            let new_node = fg.graph.create_node(
+                                NodeKind::IntBinaryOp(IntBinaryOp::And),
+                                [inner_rhs, merged],
+                                [NodeOutputKind::OutputType(ty)],
+                            );
+                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
+                            return replace_all_uses(fg, out, new_out);
+                        }
                     }
                 }
             }
             // C1 & (a & C2) → a & (C1 & C2) (symmetric case)
             if let Some(c1) = lhs_c {
-                let rhs_node = fg.graph.get_node_from_output(rhs);
-                let rhs_kind = *fg.graph.node_kind(rhs_node);
-                if let NodeKind::IntBinaryOp(IntBinaryOp::And) = rhs_kind {
-                    let [inner_lhs, inner_rhs] = fg.graph.node_inputs_exact::<2>(rhs_node)?;
-                    let inner_rhs_c = int_const_val(fg, inner_rhs);
-                    if let Some(c2) = inner_rhs_c {
-                        let merged = make_int_const(fg, c1 & c2, ty)?;
-                        let new_node = fg.graph.create_node(
-                            NodeKind::IntBinaryOp(IntBinaryOp::And),
-                            [inner_lhs, merged],
-                            [NodeOutputKind::OutputType(ty)],
-                        );
-                        let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                        return replace_all_uses(fg, out, new_out);
-                    }
-                    let inner_lhs_c = int_const_val(fg, inner_lhs);
-                    if let Some(c2) = inner_lhs_c {
-                        let merged = make_int_const(fg, c1 & c2, ty)?;
-                        let new_node = fg.graph.create_node(
-                            NodeKind::IntBinaryOp(IntBinaryOp::And),
-                            [inner_rhs, merged],
-                            [NodeOutputKind::OutputType(ty)],
-                        );
-                        let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                        return replace_all_uses(fg, out, new_out);
+                let graph = &fg.graph;
+                match_value! {
+                    if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
+                        = graph, rhs
+                    {
+                        if let Some(c2) = int_const_val(fg, inner_rhs) {
+                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                            let new_node = fg.graph.create_node(
+                                NodeKind::IntBinaryOp(IntBinaryOp::And),
+                                [inner_lhs, merged],
+                                [NodeOutputKind::OutputType(ty)],
+                            );
+                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
+                            return replace_all_uses(fg, out, new_out);
+                        }
+                        if let Some(c2) = int_const_val(fg, inner_lhs) {
+                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                            let new_node = fg.graph.create_node(
+                                NodeKind::IntBinaryOp(IntBinaryOp::And),
+                                [inner_rhs, merged],
+                                [NodeOutputKind::OutputType(ty)],
+                            );
+                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
+                            return replace_all_uses(fg, out, new_out);
+                        }
                     }
                 }
             }

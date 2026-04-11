@@ -282,6 +282,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ir-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -355,6 +364,7 @@ name = "opt"
 version = "0.1.0"
 dependencies = [
  "ir",
+ "ir-macros",
  "rsleigh",
  "thiserror",
 ]
@@ -375,6 +385,7 @@ version = "0.1.0"
 dependencies = [
  "ir",
  "rsleigh",
+ "thiserror",
 ]
 
 [[package]]
