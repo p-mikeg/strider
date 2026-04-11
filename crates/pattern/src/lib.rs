@@ -49,6 +49,9 @@
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
 //! operand orderings.  Call `.ordered()` on the returned builder to opt out.
 
+mod error;
+pub use error::{Error, Result};
+
 mod var;
 mod pat;
 mod matcher;

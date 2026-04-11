@@ -40,6 +40,8 @@ pub enum NodeOutputType {
     U16,
     U32,
     U64,
+    U128,
+    U256,
     /// 32-bit IEEE 754 single-precision float.
     F32,
     /// 64-bit IEEE 754 double-precision float.
@@ -49,10 +51,10 @@ pub enum NodeOutputType {
 
 impl NodeOutputType {
     /// Returns `true` if this type is one of the unsigned integer variants
-    /// (U8, U16, U32, U64).
+    /// (U8, U16, U32, U64, U128, U256).
     #[inline]
     pub fn is_integer(self) -> bool {
-        matches!(self, NodeOutputType::U8 | NodeOutputType::U16 | NodeOutputType::U32 | NodeOutputType::U64)
+        matches!(self, NodeOutputType::U8 | NodeOutputType::U16 | NodeOutputType::U32 | NodeOutputType::U64 | NodeOutputType::U128 | NodeOutputType::U256)
     }
 
     /// Returns `true` if this type is `Bool`.
@@ -76,6 +78,8 @@ impl NodeOutputType {
             NodeOutputType::U16  => "u16",
             NodeOutputType::U32  => "u32",
             NodeOutputType::U64  => "u64",
+            NodeOutputType::U128 => "u128",
+            NodeOutputType::U256 => "u256",
             NodeOutputType::F32  => "f32",
             NodeOutputType::F64  => "f64",
         }
@@ -92,6 +96,8 @@ impl NodeOutputType {
             NodeOutputType::U16  => 2,
             NodeOutputType::U32  => 4,
             NodeOutputType::U64  => 8,
+            NodeOutputType::U128 => 16,
+            NodeOutputType::U256 => 32,
             NodeOutputType::F32  => 4,
             NodeOutputType::F64  => 8,
         }
@@ -108,10 +114,13 @@ impl NodeOutputType {
     #[inline]
     pub fn to_natural_int_type(self) -> NodeOutputType {
         match self.byte_size() {
-            1 => NodeOutputType::U8,
-            2 => NodeOutputType::U16,
-            4 => NodeOutputType::U32,
-            _ => NodeOutputType::U64,
+            1  => NodeOutputType::U8,
+            2  => NodeOutputType::U16,
+            4  => NodeOutputType::U32,
+            8  => NodeOutputType::U64,
+            16 => NodeOutputType::U128,
+            32 => NodeOutputType::U256,
+            _  => NodeOutputType::U64,
         }
     }
 
@@ -128,6 +137,7 @@ impl NodeOutputType {
             NodeOutputType::U16  => Some(val as u16 as u64),
             NodeOutputType::U32  => Some(val as u32 as u64),
             NodeOutputType::U64  => Some(val as u64),
+            NodeOutputType::U128 | NodeOutputType::U256 => None,
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
@@ -145,6 +155,7 @@ impl NodeOutputType {
             NodeOutputType::U16  => Some(val as i16 as i64),
             NodeOutputType::U32  => Some(val as i32 as i64),
             NodeOutputType::U64  => Some(val as i64),
+            NodeOutputType::U128 | NodeOutputType::U256 => None,
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
@@ -155,11 +166,13 @@ impl TryFrom<u32> for NodeOutputType {
 
     fn try_from(value: u32) -> crate::error::Result<Self> {
         match value {
-            1 => Ok(Self::U8),
-            2 => Ok(Self::U16),
-            4 => Ok(Self::U32),
-            8 => Ok(Self::U64),
-            n => Err(crate::error::Error::UnsupportedOutputSize(n)),
+            1  => Ok(Self::U8),
+            2  => Ok(Self::U16),
+            4  => Ok(Self::U32),
+            8  => Ok(Self::U64),
+            16 => Ok(Self::U128),
+            32 => Ok(Self::U256),
+            n  => Err(crate::error::Error::UnsupportedOutputSize(n)),
         }
     }
 }
@@ -520,7 +533,8 @@ mod tests {
     #[test]
     fn bit_width_is_eight_times_byte_size() {
         for ty in [NodeOutputType::Bool, NodeOutputType::U8, NodeOutputType::U16,
-                   NodeOutputType::U32, NodeOutputType::U64] {
+                   NodeOutputType::U32, NodeOutputType::U64, NodeOutputType::U128,
+                   NodeOutputType::U256] {
             assert_eq!(ty.bit_width(), ty.byte_size() * 8,
                 "bit_width mismatch for {ty:?}");
         }
@@ -550,7 +564,8 @@ mod tests {
     #[test]
     fn is_integer_for_all_integer_output_types() {
         for ty in [NodeOutputType::U8, NodeOutputType::U16,
-                   NodeOutputType::U32, NodeOutputType::U64] {
+                   NodeOutputType::U32, NodeOutputType::U64,
+                   NodeOutputType::U128, NodeOutputType::U256] {
             assert!(NodeOutputKind::OutputType(ty).is_integer(),
                 "{ty:?} should be integer");
         }

@@ -200,7 +200,15 @@ impl FunctionBuilder {
     }
 
     /// Emits an integer constant node with the given value and type.
+    ///
+    /// # Panics
+    /// Panics if `output_type` is `U128` or `U256` — constants are stored as
+    /// `u64` and cannot correctly represent values of those widths.
     pub fn build_int_const(&mut self, val: u64, output_type: NodeOutputType) -> NodeOutputId {
+        assert!(
+            !matches!(output_type, NodeOutputType::U128 | NodeOutputType::U256),
+            "cannot build an IntConst of type {output_type}: constants are stored as u64"
+        );
         self.build_single_output_pure(NodeKind::IntConst(val), [], output_type)
     }
 

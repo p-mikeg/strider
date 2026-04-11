@@ -1,0 +1,20 @@
+use thiserror::Error;
+
+/// Errors that can be produced by the reader crate.
+#[derive(Debug, Error)]
+pub enum Error {
+    /// The requested address is not mapped in any loaded region.
+    #[error("address {0:#x} is not mapped")]
+    NotMapped(u64),
+
+    /// An I/O error occurred while reading a file.
+    #[error("failed to read file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// An `object` crate error occurred while parsing or loading an ELF.
+    #[error("failed to parse ELF: {0}")]
+    Object(#[from] object::Error),
+}
+
+/// Convenience `Result` alias that uses [`Error`] as the error type.
+pub type Result<T> = std::result::Result<T, Error>;

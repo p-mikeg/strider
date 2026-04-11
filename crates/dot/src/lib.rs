@@ -29,22 +29,9 @@
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
 use std::{fmt::Debug, io::Write};
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum Error<E> {
-    #[error("svg conversion error {0:?}")]
-    SvgConversionError(String),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-
-    #[error(transparent)]
-    DotDumpError(E)
-}
-
-/// The result type using our error.
-pub type Result<T, E> = std::result::Result<T, Error<E>>;
+mod error;
+pub use error::{Error, Result};
 
 
 const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
@@ -146,7 +133,9 @@ fn escape_dot_label(s: &str) -> String {
                 match chars.peek() {
                     Some('n') | Some('l') | Some('r') => {
                         out.push('\\');
-                        out.push(chars.next().unwrap());
+                        if let Some(c) = chars.next() {
+                            out.push(c);
+                        }
                     }
                     _ => out.push_str("\\\\"),
                 }

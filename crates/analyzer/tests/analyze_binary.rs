@@ -28,7 +28,7 @@ fn binary(arch: &str) -> std::path::PathBuf {
 // ── analyzer_arch_tests! macro ────────────────────────────────────────────────
 //
 // Generates a test module for one architecture.
-// $setup_fn must be a zero-arg fn that returns (object::File<'static>, Analyzer, SleighArch).
+// $setup_fn must be a zero-arg fn that returns Result<(object::File<'static>, Analyzer, SleighArch)>.
 
 macro_rules! analyzer_arch_tests {
     (
@@ -40,116 +40,126 @@ macro_rules! analyzer_arch_tests {
         mod $mod_name {
             use object::{Object, ObjectSymbol};
 
+            type TestResult = Result<(), Box<dyn std::error::Error>>;
+
             fn binary_path() -> std::path::PathBuf {
                 super::binary($arch)
             }
 
             /// Runs the full analysis pipeline on `fn_name`.
             /// Returns the number of reachable nodes in the IR graph.
-            fn analyze(fn_name: &str) -> usize {
-                let setup: fn() -> (object::File<'static>, analyzer::Analyzer, analyzer::SleighArch) = $setup_fn;
-                let (obj, ana, arch) = setup();
+            fn analyze(fn_name: &str) -> Result<usize, Box<dyn std::error::Error>> {
+                let setup: fn() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> = $setup_fn;
+                let (obj, ana, arch) = setup()?;
                 let path = binary_path();
 
                 let sym = obj
                     .symbol_by_name(fn_name)
-                    .unwrap_or_else(|| panic!("symbol '{}' not found in {:?}", fn_name, path));
+                    .ok_or_else(|| format!("symbol '{}' not found in {:?}", fn_name, path))?;
                 let addr = sym.address();
 
-                let data: Vec<u8> = std::fs::read(&path).expect("read binary");
+                let data: Vec<u8> = std::fs::read(&path)?;
                 let leaked = Box::leak(data.into_boxed_slice());
-                let parsed = object::File::parse(&*leaked).expect("parse ELF");
-                let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)
-                    .expect("build mem reader");
+                let parsed = object::File::parse(&*leaked)?;
+                let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)?;
 
-                let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)
-                    .expect("create Sleigh context");
+                let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
 
                 let cfg_opts = cfg::OptionsBuilder::new()
                     .allow_code_before_start_addr()
                     .build();
-                let cfg = cfg::Builder::new(sleigh, addr, cfg_opts)
-                    .build()
-                    .unwrap_or_else(|e| panic!("CFG build failed for '{}': {e:?}", fn_name));
+                let cfg = cfg::Builder::new(sleigh, addr, cfg_opts).build()?;
 
-                let graph = ana
-                    .analyze_cfg(&cfg)
-                    .unwrap_or_else(|e| panic!("IR analysis failed for '{}': {e:?}", fn_name));
+                let graph = ana.analyze_cfg(&cfg)?;
 
-                graph.preorder().count()
+                Ok(graph.preorder().count())
             }
 
             // ── individual function tests ─────────────────────────────────────
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_add() {
-                assert!(analyze("add") > 0, "'add' IR graph must not be empty");
+            fn analyze_add() -> TestResult {
+                assert!(analyze("add")? > 0, "'add' IR graph must not be empty");
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_sub() {
-                assert!(analyze("sub") > 0);
+            fn analyze_sub() -> TestResult {
+                assert!(analyze("sub")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_mul() {
-                assert!(analyze("mul") > 0);
+            fn analyze_mul() -> TestResult {
+                assert!(analyze("mul")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_bitwise_ops() {
-                assert!(analyze("bitwise_ops") > 0, "'bitwise_ops' IR graph must not be empty");
+            fn analyze_bitwise_ops() -> TestResult {
+                assert!(analyze("bitwise_ops")? > 0, "'bitwise_ops' IR graph must not be empty");
+                Ok(())
             }
 
             /// `abs_val` contains a conditional branch — IR must be richer than a straight-line fn.
             #[test] $(#[ignore = $reason])?
-            fn analyze_abs_val_conditional_branch() {
-                assert!(analyze("abs_val") > 5, "conditional function must have a richer IR graph");
+            fn analyze_abs_val_conditional_branch() -> TestResult {
+                assert!(analyze("abs_val")? > 5, "conditional function must have a richer IR graph");
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_max_val() {
-                assert!(analyze("max_val") > 0);
+            fn analyze_max_val() -> TestResult {
+                assert!(analyze("max_val")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_clamp_nested_conditionals() {
-                assert!(analyze("clamp") > 0);
+            fn analyze_clamp_nested_conditionals() -> TestResult {
+                assert!(analyze("clamp")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_sum_to_n_loop() {
-                assert!(analyze("sum_to_n") > 0, "loop function must produce a valid IR graph");
+            fn analyze_sum_to_n_loop() -> TestResult {
+                assert!(analyze("sum_to_n")? > 0, "loop function must produce a valid IR graph");
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_factorial_loop() {
-                assert!(analyze("factorial") > 0);
+            fn analyze_factorial_loop() -> TestResult {
+                assert!(analyze("factorial")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_count_bits_loop_with_shift() {
-                assert!(analyze("count_bits") > 0);
+            fn analyze_count_bits_loop_with_shift() -> TestResult {
+                assert!(analyze("count_bits")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_array_sum_memory_load() {
-                assert!(analyze("array_sum") > 0);
+            fn analyze_array_sum_memory_load() -> TestResult {
+                assert!(analyze("array_sum")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_array_fill_memory_store() {
-                assert!(analyze("array_fill") > 0);
+            fn analyze_array_fill_memory_store() -> TestResult {
+                assert!(analyze("array_fill")? > 0);
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_fib_recursive() {
-                assert!(analyze("fib") > 0, "recursive function must produce a valid IR graph");
+            fn analyze_fib_recursive() -> TestResult {
+                assert!(analyze("fib")? > 0, "recursive function must produce a valid IR graph");
+                Ok(())
             }
 
             #[test] $(#[ignore = $reason])?
-            fn analyze_g_nested_calls() {
-                assert!(analyze("g") > 0);
+            fn analyze_g_nested_calls() -> TestResult {
+                assert!(analyze("g")? > 0);
+                Ok(())
             }
         }
     };
@@ -157,37 +167,39 @@ macro_rules! analyzer_arch_tests {
 
 // ── per-architecture setup functions ─────────────────────────────────────────
 
-fn setup_x86() -> (object::File<'static>, analyzer::Analyzer, analyzer::SleighArch) {
+fn setup_x86() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
     let path = binary("x86");
-    let obj = reader::load_elf(path.to_str().unwrap());
+    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::x86();
-    let ana = make_analyzer(arch, analyzer::CallingConvention::x86_cdecl());
-    (obj, ana, arch)
+    let ana = make_analyzer(arch, analyzer::CallingConvention::x86_cdecl())?;
+    Ok((obj, ana, arch))
 }
 
-fn setup_x64() -> (object::File<'static>, analyzer::Analyzer, analyzer::SleighArch) {
+fn setup_x64() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
     let path = binary("x64");
-    let obj = reader::load_elf(path.to_str().unwrap());
+    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::x86_64();
-    let ana = make_analyzer(arch, analyzer::CallingConvention::x86_64_systemv_abi());
-    (obj, ana, arch)
+    let ana = make_analyzer(arch, analyzer::CallingConvention::x86_64_systemv_abi())?;
+    Ok((obj, ana, arch))
 }
 
-fn setup_aarch64() -> (object::File<'static>, analyzer::Analyzer, analyzer::SleighArch) {
+fn setup_aarch64() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
     let path = binary("aarch64");
-    let obj = reader::load_elf(path.to_str().unwrap());
+    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::aarch64();
-    let ana = make_analyzer(arch, analyzer::CallingConvention::aarch64_aapcs64());
-    (obj, ana, arch)
+    let ana = make_analyzer(arch, analyzer::CallingConvention::aarch64_aapcs64())?;
+    Ok((obj, ana, arch))
 }
 
 /// Builds an `Analyzer` by probing the Sleigh register table for `arch`.
-fn make_analyzer(arch: analyzer::SleighArch, cc: analyzer::CallingConvention) -> analyzer::Analyzer {
+fn make_analyzer(
+    arch: analyzer::SleighArch,
+    cc: analyzer::CallingConvention,
+) -> Result<analyzer::Analyzer, Box<dyn std::error::Error>> {
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe Sleigh context");
-    let regs = sleigh.regs().expect("fetch register list");
-    analyzer::Analyzer::new(arch, regs, cc).expect("create Analyzer")
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)?;
+    let regs = sleigh.regs()?;
+    Ok(analyzer::Analyzer::new(arch, regs, cc)?)
 }
 
 // ── architecture instantiations ───────────────────────────────────────────────

@@ -3,14 +3,13 @@ use object::{Object, ObjectSymbol};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_path = "binary_tests/out/x86/test.elf";
 
-    let obj = reader::load_elf(binary_path);
+    let obj = reader::load_elf(binary_path)?;
 
     // Build a short-lived ELF reader for the Sleigh context.
     let data: Vec<u8> = std::fs::read(binary_path)?;
     let data = Box::leak(data.into_boxed_slice());
     let parsed = object::File::parse(&*data)?;
-    let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)
-        .expect("failed to build ELF section reader");
+    let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)?;
 
     let arch = analyzer::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
@@ -26,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = obj
         .symbol_by_name("fib")
-        .expect("'main' symbol not found in binary")
+        .ok_or("'fib' symbol not found in binary")?
         .address();
 
     let cfg = cfg::Builder::new(sleigh, addr, cfg_options).build()?;

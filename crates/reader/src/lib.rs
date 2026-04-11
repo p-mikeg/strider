@@ -25,7 +25,9 @@
 use std::collections::BTreeMap;
 
 use object::{Object, ObjectSection, ObjectSegment};
-use thiserror::Error;
+
+mod error;
+pub use error::{Error, Result};
 
 // ── MemRegion ─────────────────────────────────────────────────────────────────
 
@@ -151,14 +153,14 @@ impl RegionsMemReader {
 /// Converts a single ELF segment into a [`MemRegion`].
 pub fn elf_segment_to_mem_region(
     segment: &object::read::Segment<'_, '_>,
-) -> Result<MemRegion, object::Error> {
+) -> Result<MemRegion> {
     Ok(MemRegion::new(segment.address(), segment.data()?.to_vec()))
 }
 
 /// Converts a single ELF section into a [`MemRegion`].
 pub fn elf_section_to_mem_region(
     section: &object::read::Section<'_, '_>,
-) -> Result<MemRegion, object::Error> {
+) -> Result<MemRegion> {
     Ok(MemRegion::new(section.address(), section.data()?.to_vec()))
 }
 
@@ -170,7 +172,7 @@ pub fn elf_section_to_mem_region(
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
-) -> Result<Vec<MemRegion>, object::Error> {
+) -> Result<Vec<MemRegion>> {
     let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
 
     for seg in obj.segments() {
@@ -193,7 +195,7 @@ pub fn elf_segments_to_mem_regions(
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
-) -> Result<Vec<MemRegion>, object::Error> {
+) -> Result<Vec<MemRegion>> {
     let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
 
     for sec in obj.sections() {
@@ -213,7 +215,7 @@ pub fn elf_sections_to_mem_regions(
 /// as [`MemRegion`]s.
 pub fn elf_get_executable_segments_as_mem_regions(
     obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>, object::Error> {
+) -> Result<Vec<MemRegion>> {
     elf_segments_to_mem_regions(obj, |seg| {
         matches!(
             seg.flags(),
@@ -227,7 +229,7 @@ pub fn elf_get_executable_segments_as_mem_regions(
 /// as [`MemRegion`]s.
 pub fn elf_get_executable_sections_as_mem_regions(
     obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>, object::Error> {
+) -> Result<Vec<MemRegion>> {
     elf_sections_to_mem_regions(obj, |sec| {
         matches!(
             sec.flags(),
@@ -257,17 +259,6 @@ pub struct ElfFileMemReader<'a, 'data> {
     pub regions_mem_reader: RegionsMemReader,
 }
 
-/// Error returned by [`ElfFileMemReader`] when a read fails.
-#[derive(Debug, Error)]
-pub enum ElfMemReaderError {
-    /// The requested address is not mapped in any loaded region.
-    #[error("address {0:#x} is not mapped")]
-    NotMapped(u64),
-    /// An underlying `object` crate error occurred while loading regions.
-    #[error("object error: {0}")]
-    Object(#[from] object::Error),
-}
-
 impl<'a, 'data> ElfFileMemReader<'a, 'data> {
     /// Creates a reader from the executable **segments** of `obj`.
     ///
@@ -275,7 +266,7 @@ impl<'a, 'data> ElfFileMemReader<'a, 'data> {
     /// when the binary is not stripped and segments are available.
     pub fn from_elf_segments(
         obj: &'a object::File<'data>,
-    ) -> Result<Self, ElfMemReaderError> {
+    ) -> Result<Self> {
         let regions = elf_get_executable_segments_as_mem_regions(obj)?;
         let lookup = MemRegionsLookupTable::new(regions);
         Ok(Self {
@@ -291,7 +282,7 @@ impl<'a, 'data> ElfFileMemReader<'a, 'data> {
     /// for most use-cases.
     pub fn from_elf_sections(
         obj: &'a object::File<'data>,
-    ) -> Result<Self, ElfMemReaderError> {
+    ) -> Result<Self> {
         let regions = elf_get_executable_sections_as_mem_regions(obj)?;
         let lookup = MemRegionsLookupTable::new(regions);
         Ok(Self {
@@ -302,12 +293,12 @@ impl<'a, 'data> ElfFileMemReader<'a, 'data> {
 }
 
 impl<'a, 'data> rsleigh::MemReader for ElfFileMemReader<'a, 'data> {
-    type Err = ElfMemReaderError;
+    type Err = Error;
 
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
+    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize> {
         self.regions_mem_reader
             .read(addr.off, out_buf)
-            .ok_or(ElfMemReaderError::NotMapped(addr.off))
+            .ok_or(Error::NotMapped(addr.off))
     }
 }
 
@@ -319,14 +310,10 @@ impl<'a, 'data> rsleigh::MemReader for ElfFileMemReader<'a, 'data> {
 /// **leaked** so the returned `object::File<'static>` remains valid for the
 /// lifetime of the process.  This is suitable for tests and short-lived CLI
 /// tools where the cost of a one-time leak is acceptable.
-///
-/// # Panics
-///
-/// Panics when the file cannot be read or cannot be parsed as an ELF.
-pub fn load_elf(path: &str) -> object::File<'static> {
-    let data = std::fs::read(path).expect("failed to read ELF file");
+pub fn load_elf(path: &str) -> Result<object::File<'static>> {
+    let data = std::fs::read(path)?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
-    object::File::parse(leaked).expect("failed to parse ELF file")
+    Ok(object::File::parse(leaked)?)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
