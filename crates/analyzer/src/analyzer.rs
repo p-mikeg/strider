@@ -1,5 +1,3 @@
-use std::{collections::HashMap};
-
 use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use rsleigh::Opcode;
 
@@ -10,12 +8,10 @@ use crate::error::{Error, Result};
 /// graph region by region.
 ///
 /// Holds a reference to the shared [`Analyzer`] (register / calling-convention
-/// information), a fresh [`ir::FunctionBuilder`], and a mapping from CFG
-/// region ids to IR region ids.
+/// information) and a fresh [`ir::FunctionBuilder`].
 pub struct IrAnalyzer<'a, R: rsleigh::MemReader> {
     pub(crate) analyzer: &'a Analyzer,
     pub(crate) builder: ir::FunctionBuilder,
-    pub(crate) region_to_block: HashMap<cfg::RegionId, ir::RegionId>,
     pub(crate) cfg: &'a cfg::Cfg<R>
 }
 
@@ -23,9 +19,9 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
 
     /// Creates a new `IrAnalyzer` for the given CFG.
     ///
-    /// Collects all unique varnodes referenced by any instruction in `cfg`,
+    /// Collects all unique varnodes referenced by any instruction in `cfg` and
     /// constructs the IR [`FunctionBuilder`] with calling-convention
-    /// information from `analyzer`, and initialises an empty region map.
+    /// information from `analyzer`.
     fn new(analyzer: &'a Analyzer, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
         // Find all variables
         let all_vns = analyzer.find_all_unique_vns(cfg);
@@ -39,7 +35,6 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         Ok(Self {
             analyzer,
             builder,
-            region_to_block: HashMap::new(),
             cfg
         })
     }
@@ -227,47 +222,6 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         Ok(self.builder.build_entry()?)
     }
 
-    /// Creates one IR region for every CFG region and stores the mapping in
-    /// `region_to_block`.  Any previous mapping is cleared first.
-    fn create_ir_regions(&mut self) -> Result<()> {
-        // Clear state if there was something previously
-        self.region_to_block.clear();
-        for region_id in self.cfg.region_ids() {
-            self.region_to_block.insert(region_id, self.builder.create_region()?);
-        }
-        Ok(())
-    }
-
-    /// Marks the IR region that corresponds to the CFG's entry region as the
-    /// function entry point.
-    ///
-    /// Returns an error if the CFG entry region has no corresponding IR region
-    /// (i.e. [`create_ir_regions`] was not called first).
-    fn set_ir_entry_region(&mut self) -> Result<()>{
-        let entry_block = self.region_to_block.get(&self.cfg.entry).ok_or(Error::CfgNoRegion(self.cfg.entry))?;
-        self.builder.set_entry_region(*entry_block)?;
-        Ok(())
-    }
-
-    /// Returns an iterator over all `(cfg_region_id, ir_region_id)` pairs
-    /// currently stored in the region map.
-    fn iterate_region_block(&self) -> impl Iterator<Item = (cfg::RegionId, ir::RegionId)> {
-        self.region_to_block.iter().map(|(k, v)| (*k, *v))
-    }
-
-    /// Sets the IR builder's current region to `region`.
-    ///
-    /// All subsequent IR-building calls operate on this region until it is
-    /// changed or terminated.
-    fn set_curr_ir_region(&mut self, region: ir::RegionId) {
-        self.builder.set_region(region);
-    }
-
-    /// Returns the decoded p-code instructions for the given CFG region.
-    fn region_insn(&mut self, region_id: cfg::RegionId) -> Result<Vec<rsleigh::Insn>> {
-        self.cfg.region_insn(region_id).map_err(|e| Error::CfgError(e))
-    }
-
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
     fn process_int_unary_op(&mut self, insn: &rsleigh::Insn, op: IntUnaryOp) -> Result<()> {
@@ -329,8 +283,13 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
     /// one or more IR nodes.
     ///
     /// Matches on the opcode and delegates to the appropriate `process_*`
-    /// helper or inline logic.  Unimplemented opcodes return an error.
-    fn process_insn(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn) -> Result<()> {
+    /// helper or inline logic.  `region_lookup` resolves a CFG region id to its
+    /// IR counterpart; it is called only for branch and conditional-branch
+    /// opcodes.  Unimplemented opcodes return an error.
+    fn process_insn<F>(&mut self, region_id: cfg::RegionId, insn: &rsleigh::Insn, region_lookup: F) -> Result<()>
+    where
+        F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
+    {
         match insn.opcode {
             Opcode::Nop => {}
             Opcode::BoolNeg => self.process_bool_unary_op(insn, BoolUnaryOp::Neg)?,
@@ -373,17 +332,17 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
             }
             Opcode::Branch => {
                 let branch_region = self.cfg.region_branch(region_id)?.ok_or(cfg::Error::InvalidRegion(region_id))?;
-                let dest_block = self.region_to_block.get(&branch_region).ok_or(cfg::Error::InvalidRegion(branch_region))?;
-                self.builder.build_branch(*dest_block)?;
+                let dest_block = region_lookup(branch_region)?;
+                self.builder.build_branch(dest_block)?;
             }
             Opcode::CondBranch => {
                 let cond = self.read_vn(&insn.inputs[1])?;
                 let res = self.cfg.region_if(region_id)?;
                 let if_true_region = res.if_true_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
                 let if_false_region = res.if_false_region.ok_or(cfg::Error::InvalidRegion(region_id))?;
-                let true_block = self.region_to_block.get(&if_true_region).ok_or(cfg::Error::InvalidRegion(if_true_region))?;
-                let false_block = self.region_to_block.get(&if_false_region).ok_or(cfg::Error::InvalidRegion(if_false_region))?;
-                self.builder.build_if(cond, *true_block, *false_block)?;
+                let true_block = region_lookup(if_true_region)?;
+                let false_block = region_lookup(if_false_region)?;
+                self.builder.build_if(cond, true_block, false_block)?;
             }
             Opcode::Copy => {
                 let input = self.read_vn(&insn.inputs[0])?;
@@ -492,43 +451,61 @@ impl Analyzer {
     ///
     /// The pipeline:
     /// 1. Build the function entry node.
-    /// 2. Create one IR region per CFG region.
+    /// 2. Map the CFG graph: each node stores `Option<ir::RegionId>` (None first,
+    ///    then filled in fallibly via `node_weight_mut`).
     /// 3. Set the entry region.
-    /// 4. Translate instructions in each region.
-    /// 5. Link fallthrough edges between consecutive regions.
+    /// 4. Translate instructions in each region, resolving branch targets via
+    ///    the mapped graph.
+    /// 5. Link fallthrough edges by iterating `cfg_ir_graph`'s edges.
     pub fn analyze_cfg<R: rsleigh::MemReader>(&self, cfg: &cfg::Cfg<R>) -> Result<ir::BuiltFunctionGraph>{
         let mut ir_analyzer = IrAnalyzer::new(self, cfg)?;
 
-        // Build the entry for the graph
         ir_analyzer.build_entry()?;
 
-        // Create all ir blocks
-        ir_analyzer.create_ir_regions()?;
+        // Step 1: create the structural clone of the CFG graph with None placeholders.
+        // The map closure is infallible; IR region creation happens below.
+        let mut cfg_ir_graph = cfg.graph.map(|_, _| None::<ir::RegionId>, |_, e| *e);
 
-        // Set entry block
-        ir_analyzer.set_ir_entry_region()?;
+        // Step 2: fill in IR regions (fallible).
+        for region_id in cfg.region_ids() {
+            let ir_region = ir_analyzer.builder.create_region()?;
+            *cfg_ir_graph
+                .node_weight_mut(region_id)
+                .ok_or(Error::CfgNoRegion(region_id))? = Some(ir_region);
+        }
 
-        let region_blocks: Vec<_> = ir_analyzer.iterate_region_block().collect();
-        let fallthroughs: Vec<_> = cfg.iterate_fallthroughs().collect();
+        // Helper closure: map a CFG region id to its IR region id via the graph.
+        let ir_region_of = |region_id: cfg::RegionId| -> Result<ir::RegionId> {
+            cfg_ir_graph
+                .node_weight(region_id)
+                .copied()
+                .flatten()
+                .ok_or(Error::CfgNoRegion(region_id))
+        };
 
-        // process instructions
-        for (region_id, block_id) in region_blocks {
-            ir_analyzer.set_curr_ir_region(block_id);
-            let insns = ir_analyzer.region_insn(region_id)?;
+        // Set entry region.
+        ir_analyzer.builder.set_entry_region(ir_region_of(cfg.entry)?)?;
 
-            for insn in insns {
-                ir_analyzer.process_insn(region_id, &insn)?
+        // Translate instructions for each region.
+        for node_idx in cfg_ir_graph.node_indices() {
+            let ir_region = ir_region_of(node_idx)?;
+            ir_analyzer.builder.set_region(ir_region);
+            let region = cfg.graph
+                .node_weight(node_idx)
+                .ok_or(Error::CfgNoRegion(node_idx))?;
+            for wrapped_insn in &region.insns {
+                ir_analyzer.process_insn(node_idx, &wrapped_insn.insn, &ir_region_of)?;
             }
         }
 
-        // All blocks except fallthrough are linked
-        for (region_parent_id, region_child_id) in fallthroughs {
-            let block_parent_id = ir_analyzer.region_to_block.get(&region_parent_id)
-                .ok_or(Error::IrRegionNotFound(region_parent_id))?;
-            let block_child_id = ir_analyzer.region_to_block.get(&region_child_id)
-                .ok_or(Error::IrRegionNotFound(region_child_id))?;
-            ir_analyzer.builder.link_regions(*block_parent_id, *block_child_id)?;
+        // Link fallthrough edges by inspecting cfg_ir_graph's edges directly.
+        for edge_idx in cfg_ir_graph.edge_indices() {
+            let Some(weight) = cfg_ir_graph.edge_weight(edge_idx) else { continue };
+            if *weight != cfg::RegionEdgeKind::Fallthrough { continue; }
+            let Some((src, tgt)) = cfg_ir_graph.edge_endpoints(edge_idx) else { continue };
+            ir_analyzer.builder.link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
+
         Ok(ir_analyzer.builder.build())
     }
 }

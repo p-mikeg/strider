@@ -651,14 +651,6 @@ pub struct IfRegionState {
 }
 
 impl<R: rsleigh::MemReader> Cfg<R> {
-    /// Iterates all [`RegionEdgeKind::Fallthrough`] edges as `(src, tgt)` pairs.
-    pub fn iterate_fallthroughs(&self) -> impl Iterator<Item = (NodeIndex, NodeIndex)> {
-        use petgraph::visit::IntoEdgeReferences;
-        self.graph.edge_references()
-            .filter(|e| matches!(e.weight(), RegionEdgeKind::Fallthrough))
-            .map(|e| (e.source(), e.target()))
-    }
-
     /// Collects all outgoing edges from `region_id` into a map keyed by edge kind.
     ///
     /// # Errors
