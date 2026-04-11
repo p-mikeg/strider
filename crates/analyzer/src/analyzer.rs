@@ -1,4 +1,5 @@
-use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::node::NodeOutputType;
 use rsleigh::Opcode;
 
 use crate::error::{Error, Result};
@@ -279,6 +280,57 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
         self.write_vn(out_vn, out)
     }
 
+    // ── Float helpers ─────────────────────────────────────────────────────────
+
+    /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].
+    /// Returns an error for sizes other than 4 (F32) or 8 (F64).
+    fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<NodeOutputType> {
+        match vn.size {
+            4 => Ok(NodeOutputType::F32),
+            8 => Ok(NodeOutputType::F64),
+            n => Err(Error::UnsupportedFloatSize(n)),
+        }
+    }
+
+    /// Bitcasts a float result back to an integer of the same width and writes
+    /// it to the output varnode (float results in registers are stored as ints).
+    fn write_float_to_vn(&mut self, vn: &rsleigh::Vn, float_val: ir::Value) -> Result<()> {
+        let int_ty: NodeOutputType = vn.size.try_into()?;
+        let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
+        self.write_vn(vn, int_val)
+    }
+
+    /// Translates a float binary p-code instruction into an IR float binary node.
+    ///
+    /// Reads inputs via `read_vn` (may produce int or float values); the builder
+    /// automatically inserts `CastToFloat` nodes as needed.
+    fn process_float_binary_op(&mut self, insn: &rsleigh::Insn, op: FloatBinaryOp) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let float_ty = Self::float_type_from_vn(out_vn)?;
+        let result = self.builder.build_float_binary_op(lhs, rhs, op, float_ty)?;
+        self.write_float_to_vn(out_vn, result)
+    }
+
+    /// Translates a float unary p-code instruction into an IR float unary node.
+    fn process_float_unary_op(&mut self, insn: &rsleigh::Insn, op: FloatUnaryOp) -> Result<()> {
+        let input = self.read_vn(&insn.inputs[0])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let float_ty = Self::float_type_from_vn(out_vn)?;
+        let result = self.builder.build_float_unary_op(input, op, float_ty)?;
+        self.write_float_to_vn(out_vn, result)
+    }
+
+    /// Translates a float comparison p-code instruction into an IR float cmp node.
+    fn process_float_cmp_op(&mut self, insn: &rsleigh::Insn, op: FloatCmpOp) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+        let result = self.builder.build_float_cmp_op(lhs, rhs, op)?;
+        self.write_vn(out_vn, result)
+    }
+
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
     ///
@@ -453,6 +505,63 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                 let out = self.builder.build_int_binary_operation(base, index, IntBinaryOp::Sub, out_vn.size.try_into()?)?;
                 self.write_vn(out_vn, out)?;
             }
+            // ── Float arithmetic ──────────────────────────────────────────────
+            Opcode::FloatAdd  => self.process_float_binary_op(insn, FloatBinaryOp::Add)?,
+            Opcode::FloatSub  => self.process_float_binary_op(insn, FloatBinaryOp::Sub)?,
+            Opcode::FloatMul  => self.process_float_binary_op(insn, FloatBinaryOp::Mul)?,
+            Opcode::FloatDiv  => self.process_float_binary_op(insn, FloatBinaryOp::Div)?,
+
+            // ── Float unary (float → float) ───────────────────────────────────
+            Opcode::FloatNeg   => self.process_float_unary_op(insn, FloatUnaryOp::Neg)?,
+            Opcode::FloatAbs   => self.process_float_unary_op(insn, FloatUnaryOp::Abs)?,
+            Opcode::FloatSqrt  => self.process_float_unary_op(insn, FloatUnaryOp::Sqrt)?,
+            Opcode::FloatCeil  => self.process_float_unary_op(insn, FloatUnaryOp::Ceil)?,
+            Opcode::FloatFloor => self.process_float_unary_op(insn, FloatUnaryOp::Floor)?,
+            Opcode::FloatRound => self.process_float_unary_op(insn, FloatUnaryOp::Round)?,
+
+            // ── Float comparisons (→ bool) ────────────────────────────────────
+            Opcode::FloatEqual    => self.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
+            Opcode::FloatNotEqual => self.process_float_cmp_op(insn, FloatCmpOp::NotEqual)?,
+            Opcode::FloatLess     => self.process_float_cmp_op(insn, FloatCmpOp::Less)?,
+            Opcode::FloatLessEqual=> self.process_float_cmp_op(insn, FloatCmpOp::LessEqual)?,
+
+            // FloatNan: tests whether input is NaN (unary, → bool)
+            Opcode::FloatNan => {
+                let input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let result = self.builder.build_float_is_nan(input)?;
+                self.write_vn(out_vn, result)?;
+            }
+
+            // ── Float / integer conversions ───────────────────────────────────
+
+            // FloatInt2Float: convert integer value to float (e.g. (float)42)
+            Opcode::FloatInt2Float => {
+                let int_input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let float_ty = Self::float_type_from_vn(out_vn)?;
+                let float_result = self.builder.build_int_to_float(int_input, float_ty)?;
+                self.write_float_to_vn(out_vn, float_result)?;
+            }
+
+            // FloatFloat2Float: change float precision (F32 ↔ F64)
+            Opcode::FloatFloat2Float => {
+                let float_input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out_float_ty = Self::float_type_from_vn(out_vn)?;
+                let float_result = self.builder.build_float_to_float(float_input, out_float_ty)?;
+                self.write_float_to_vn(out_vn, float_result)?;
+            }
+
+            // FloatTrunc: truncate float toward zero to integer (e.g. (int)f)
+            Opcode::FloatTrunc => {
+                let float_input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let int_ty: NodeOutputType = out_vn.size.try_into()?;
+                let int_result = self.builder.build_float_to_int(float_input, int_ty)?;
+                self.write_vn(out_vn, int_result)?;
+            }
+
             _ => return Err(Error::UnimplementedOpcode(insn.opcode)),
         }
         Ok(())

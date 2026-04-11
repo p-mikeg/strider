@@ -43,6 +43,9 @@ pub enum Error {
 
     #[error("unimplemented p-code opcode {0:?}")]
     UnimplementedOpcode(rsleigh::Opcode),
+
+    #[error("unsupported float varnode size {0} bytes (expected 4 or 8)")]
+    UnsupportedFloatSize(u32),
 }
 
 /// the result type using our error.

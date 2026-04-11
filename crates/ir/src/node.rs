@@ -31,14 +31,19 @@ pub(crate) type NodeOutputIdList = EntityList<NodeOutputId>;
 /// The value type carried by a node output.
 ///
 /// Integer variants correspond directly to their C-style unsigned integer
-/// widths.  `Bool` is a 1-bit logical value.
+/// widths.  `Bool` is a 1-bit logical value.  `F32`/`F64` are IEEE 754
+/// floating-point types whose raw bit patterns are stored as `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeOutputType {
     Bool,
     U8,
     U16,
     U32,
-    U64
+    U64,
+    /// 32-bit IEEE 754 single-precision float.
+    F32,
+    /// 64-bit IEEE 754 double-precision float.
+    F64,
 }
 
 
@@ -56,15 +61,23 @@ impl NodeOutputType {
         matches!(self, NodeOutputType::Bool)
     }
 
+    /// Returns `true` if this type is `F32` or `F64`.
+    #[inline]
+    pub fn is_float(self) -> bool {
+        matches!(self, NodeOutputType::F32 | NodeOutputType::F64)
+    }
+
     /// Returns the canonical name of this type as a static string.
     #[inline]
     pub fn as_str(self) -> &'static str {
         match self {
             NodeOutputType::Bool => "bool",
-            NodeOutputType::U8 => "u8",
-            NodeOutputType::U16 => "u16",
-            NodeOutputType::U32 => "u32",
-            NodeOutputType::U64 => "u64",
+            NodeOutputType::U8   => "u8",
+            NodeOutputType::U16  => "u16",
+            NodeOutputType::U32  => "u32",
+            NodeOutputType::U64  => "u64",
+            NodeOutputType::F32  => "f32",
+            NodeOutputType::F64  => "f64",
         }
     }
 
@@ -75,10 +88,12 @@ impl NodeOutputType {
     pub fn byte_size(self) -> usize {
         match self {
             NodeOutputType::Bool => 1,
-            NodeOutputType::U8 => 1,
-            NodeOutputType::U16 => 2,
-            NodeOutputType::U32 => 4,
-            NodeOutputType::U64 => 8,
+            NodeOutputType::U8   => 1,
+            NodeOutputType::U16  => 2,
+            NodeOutputType::U32  => 4,
+            NodeOutputType::U64  => 8,
+            NodeOutputType::F32  => 4,
+            NodeOutputType::F64  => 8,
         }
     }
 
@@ -88,8 +103,20 @@ impl NodeOutputType {
         self.byte_size() * 8
     }
 
+    /// Returns the unsigned integer type with the same byte size.
+    /// (Bool→U8, F32→U32, F64→U64, Ux→Ux)
+    #[inline]
+    pub fn to_natural_int_type(self) -> NodeOutputType {
+        match self.byte_size() {
+            1 => NodeOutputType::U8,
+            2 => NodeOutputType::U16,
+            4 => NodeOutputType::U32,
+            _ => NodeOutputType::U64,
+        }
+    }
+
     /// Interprets `val` as an unsigned integer of this width and returns the
-    /// truncated value, or `None` if this type is `Bool`.
+    /// truncated value, or `None` if this type is `Bool` or a float type.
     ///
     /// The truncation ensures that bits beyond the type's width are cleared,
     /// matching the hardware behaviour of narrower registers.
@@ -97,15 +124,16 @@ impl NodeOutputType {
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
             NodeOutputType::Bool => None,
-            NodeOutputType::U8 => Some(val as u8 as u64),
-            NodeOutputType::U16 => Some(val as u16 as u64),
-            NodeOutputType::U32 => Some(val as u32 as u64),
-            NodeOutputType::U64 => Some(val as u64),
+            NodeOutputType::U8   => Some(val as u8 as u64),
+            NodeOutputType::U16  => Some(val as u16 as u64),
+            NodeOutputType::U32  => Some(val as u32 as u64),
+            NodeOutputType::U64  => Some(val as u64),
+            NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
 
     /// Interprets `val` as a signed integer of this width with sign-extension
-    /// and returns the result, or `None` if this type is `Bool`.
+    /// and returns the result, or `None` if this type is `Bool` or a float type.
     ///
     /// Casting through the signed type of the same width sign-extends the
     /// value to 64 bits.
@@ -113,10 +141,11 @@ impl NodeOutputType {
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
             NodeOutputType::Bool => None,
-            NodeOutputType::U8 => Some(val as i8 as i64),
-            NodeOutputType::U16 => Some(val as i16 as i64),
-            NodeOutputType::U32 => Some(val as i32 as i64),
-            NodeOutputType::U64 => Some(val as i64),
+            NodeOutputType::U8   => Some(val as i8 as i64),
+            NodeOutputType::U16  => Some(val as i16 as i64),
+            NodeOutputType::U32  => Some(val as i32 as i64),
+            NodeOutputType::U64  => Some(val as i64),
+            NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
 }
@@ -346,20 +375,54 @@ pub enum NodeKind {
     /// Convert an integer value to `Bool`.
     CastToBool,
 
-    // Float operations
-    // FloatConst(f64),
-    // FloatUnaryOp(FloatUnaryOpKind),
-    // FloatBinaryOp(FloatBinaryOpKind),
-    // FloatCmpOp(FloatCmpOpKind),
-    // CastToFloat,
+    // ── Float constants and operations ────────────────────────────────────────
+    /// A compile-time IEEE 754 floating-point constant.  The value is stored
+    /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
+    FloatConst(u64),
+    /// Floating-point binary operation (add, sub, mul, div).
+    FloatBinaryOp(crate::ops::FloatBinaryOp),
+    /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
+    FloatUnaryOp(crate::ops::FloatUnaryOp),
+    /// Floating-point comparison; produces a `Bool` output.
+    FloatCmpOp(crate::ops::FloatCmpOp),
+    /// Test whether a floating-point value is NaN; produces a `Bool` output.
+    FloatIsNan,
+
+    // ── Float / integer conversions ───────────────────────────────────────────
+    /// Convert an integer value to the nearest representable float
+    /// (like C's `(float)n`).  Input is integer, output is `F32` or `F64`.
+    IntToFloat,
+    /// Convert a float to an integer by truncating toward zero
+    /// (like C's `(int)f`).  Input is `F32`/`F64`, output is an integer type.
+    FloatToInt,
+    /// Change floating-point precision (`F32` ↔ `F64`).
+    FloatToFloat,
+
+    // ── Bitcasts (reinterpretation of bit patterns) ───────────────────────────
+    /// Reinterpret an integer's raw bits as a float of the same size.
+    /// `U32` → `F32`, `U64` → `F64`.  No value conversion — bits are unchanged.
+    IntBitsToFloat,
+    /// Reinterpret a float's raw bits as an integer of the same size.
+    /// `F32` → `U32`, `F64` → `U64`.  No value conversion — bits are unchanged.
+    FloatBitsToInt,
+
+    // ── Generic float cast ────────────────────────────────────────────────────
+    /// Generic cast of any value to a floating-point type (F32 or F64).
+    ///
+    /// The optimizer lowers this to the appropriate specific form based on the
+    /// actual input type:
+    /// - Integer same size (U32→F32, U64→F64) → `IntBitsToFloat`
+    /// - Float same type → eliminated (identity)
+    /// - Float different size → `FloatToFloat`
+    CastToFloat,
 }
 
 impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
-    /// (`BoolConst` or `IntConst`).
+    /// (`BoolConst`, `IntConst`, or `FloatConst`).
     #[inline]
     pub fn is_const(self) -> bool {
-        matches!(self, Self::BoolConst(..) | Self::IntConst(..))
+        matches!(self, Self::BoolConst(..) | Self::IntConst(..) | Self::FloatConst(..))
     }
 
     /// Returns `true` if nodes of this kind may be deduplicated in the graph
@@ -533,5 +596,74 @@ mod tests {
         assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
         assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
         assert!(NodeKind::If.is_cacheable());
+    }
+
+    // ── Float NodeOutputType ─────────────────────────────────────────────────
+
+    #[test]
+    fn float_byte_sizes() {
+        assert_eq!(NodeOutputType::F32.byte_size(), 4);
+        assert_eq!(NodeOutputType::F64.byte_size(), 8);
+    }
+
+    #[test]
+    fn float_bit_widths() {
+        assert_eq!(NodeOutputType::F32.bit_width(), 32);
+        assert_eq!(NodeOutputType::F64.bit_width(), 64);
+    }
+
+    #[test]
+    fn float_as_str() {
+        assert_eq!(NodeOutputType::F32.as_str(), "f32");
+        assert_eq!(NodeOutputType::F64.as_str(), "f64");
+    }
+
+    #[test]
+    fn is_float_only_for_float_types() {
+        assert!(NodeOutputType::F32.is_float());
+        assert!(NodeOutputType::F64.is_float());
+        assert!(!NodeOutputType::U32.is_float());
+        assert!(!NodeOutputType::U64.is_float());
+        assert!(!NodeOutputType::Bool.is_float());
+    }
+
+    #[test]
+    fn is_integer_false_for_float_types() {
+        assert!(!NodeOutputType::F32.is_integer());
+        assert!(!NodeOutputType::F64.is_integer());
+    }
+
+    #[test]
+    fn get_unsigned_int_returns_none_for_floats() {
+        assert_eq!(NodeOutputType::F32.get_unsigned_int(0x3F800000), None);
+        assert_eq!(NodeOutputType::F64.get_unsigned_int(0x3FF0000000000000), None);
+    }
+
+    #[test]
+    fn get_signed_int_returns_none_for_floats() {
+        assert_eq!(NodeOutputType::F32.get_signed_int(0x3F800000), None);
+        assert_eq!(NodeOutputType::F64.get_signed_int(0x3FF0000000000000), None);
+    }
+
+    // ── Float NodeKind ───────────────────────────────────────────────────────
+
+    #[test]
+    fn float_const_is_const_and_cacheable() {
+        let fc = NodeKind::FloatConst(0x3F800000);
+        assert!(fc.is_const());
+        assert!(fc.is_cacheable());
+    }
+
+    #[test]
+    fn float_ops_are_cacheable() {
+        assert!(NodeKind::FloatBinaryOp(crate::ops::FloatBinaryOp::Add).is_cacheable());
+        assert!(NodeKind::FloatUnaryOp(crate::ops::FloatUnaryOp::Neg).is_cacheable());
+        assert!(NodeKind::FloatCmpOp(crate::ops::FloatCmpOp::Equal).is_cacheable());
+        assert!(NodeKind::FloatIsNan.is_cacheable());
+        assert!(NodeKind::IntToFloat.is_cacheable());
+        assert!(NodeKind::FloatToInt.is_cacheable());
+        assert!(NodeKind::FloatToFloat.is_cacheable());
+        assert!(NodeKind::IntBitsToFloat.is_cacheable());
+        assert!(NodeKind::FloatBitsToInt.is_cacheable());
     }
 }

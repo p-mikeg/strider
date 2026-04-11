@@ -43,7 +43,8 @@ pub use crate::error::{Error, Result};
 pub use builder::{FunctionBuilder};
 pub use region::{RegionId};
 pub use ops::{
-    BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntUnaryOp, IntCmpOp, ExtendOp
+    BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntUnaryOp, IntCmpOp, ExtendOp,
+    FloatBinaryOp, FloatUnaryOp, FloatCmpOp,
 };
 
 pub type Value = node::NodeOutputId;

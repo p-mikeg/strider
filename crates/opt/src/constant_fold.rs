@@ -1,9 +1,9 @@
-use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp};
+use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
 use ir::node::{NodeId, NodeKind, NodeOutputKind, NodeOutputType};
 
 use crate::error::{Error, Result};
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{int_const_val, bool_const_val, make_int_const, make_bool_const, replace_all_uses};
+use crate::utils::{int_const_val, bool_const_val, float_const_val, make_int_const, make_bool_const, make_float_const, make_int_bits_to_float_node, make_float_to_float_node, replace_all_uses};
 
 // ── integer constant evaluation ───────────────────────────────────────────────
 
@@ -459,6 +459,244 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
     replace_all_uses(fg, out, new_out)
 }
 
+// ── float constant evaluation ─────────────────────────────────────────────────
+
+/// Evaluates a float binary op on raw bit patterns.  Returns the result as a
+/// raw bit pattern, or `None` for undefined operations (should not occur in
+/// IEEE 754, but we keep the Option for consistency with the int version).
+fn eval_float_binary(op: FloatBinaryOp, bits_l: u64, bits_r: u64, ty: NodeOutputType) -> Option<u64> {
+    match ty {
+        NodeOutputType::F32 => {
+            let l = f32::from_bits(bits_l as u32);
+            let r = f32::from_bits(bits_r as u32);
+            let result = match op {
+                FloatBinaryOp::Add => l + r,
+                FloatBinaryOp::Sub => l - r,
+                FloatBinaryOp::Mul => l * r,
+                FloatBinaryOp::Div => l / r,
+            };
+            Some(result.to_bits() as u64)
+        }
+        NodeOutputType::F64 => {
+            let l = f64::from_bits(bits_l);
+            let r = f64::from_bits(bits_r);
+            let result = match op {
+                FloatBinaryOp::Add => l + r,
+                FloatBinaryOp::Sub => l - r,
+                FloatBinaryOp::Mul => l * r,
+                FloatBinaryOp::Div => l / r,
+            };
+            Some(result.to_bits())
+        }
+        _ => None,
+    }
+}
+
+/// Evaluates a float comparison on raw bit patterns.
+fn eval_float_cmp(op: FloatCmpOp, bits_l: u64, bits_r: u64, ty: NodeOutputType) -> Option<bool> {
+    match ty {
+        NodeOutputType::F32 => {
+            let l = f32::from_bits(bits_l as u32);
+            let r = f32::from_bits(bits_r as u32);
+            Some(match op {
+                FloatCmpOp::Equal    => l == r,
+                FloatCmpOp::NotEqual => l != r,
+                FloatCmpOp::Less     => l < r,
+                FloatCmpOp::LessEqual=> l <= r,
+            })
+        }
+        NodeOutputType::F64 => {
+            let l = f64::from_bits(bits_l);
+            let r = f64::from_bits(bits_r);
+            Some(match op {
+                FloatCmpOp::Equal    => l == r,
+                FloatCmpOp::NotEqual => l != r,
+                FloatCmpOp::Less     => l < r,
+                FloatCmpOp::LessEqual=> l <= r,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Evaluates a float unary op on a raw bit pattern.
+fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u64> {
+    match ty {
+        NodeOutputType::F32 => {
+            let v = f32::from_bits(bits as u32);
+            let result = match op {
+                FloatUnaryOp::Neg   => -v,
+                FloatUnaryOp::Abs   => v.abs(),
+                FloatUnaryOp::Sqrt  => v.sqrt(),
+                FloatUnaryOp::Ceil  => v.ceil(),
+                FloatUnaryOp::Floor => v.floor(),
+                FloatUnaryOp::Round => v.round(),
+            };
+            Some(result.to_bits() as u64)
+        }
+        NodeOutputType::F64 => {
+            let v = f64::from_bits(bits);
+            let result = match op {
+                FloatUnaryOp::Neg   => -v,
+                FloatUnaryOp::Abs   => v.abs(),
+                FloatUnaryOp::Sqrt  => v.sqrt(),
+                FloatUnaryOp::Ceil  => v.ceil(),
+                FloatUnaryOp::Floor => v.floor(),
+                FloatUnaryOp::Round => v.round(),
+            };
+            Some(result.to_bits())
+        }
+        _ => None,
+    }
+}
+
+// ── per-node float folding ────────────────────────────────────────────────────
+
+fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::FloatBinaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+
+    let lhs_c = float_const_val(fg, lhs);
+    let rhs_c = float_const_val(fg, rhs);
+
+    // Full constant evaluation when both operands are known.
+    if let (Some(l), Some(r)) = (lhs_c, rhs_c) {
+        if let Some(folded) = eval_float_binary(op, l, r, ty) {
+            let new_out = make_float_const(fg, folded, ty)?;
+            return replace_all_uses(fg, out, new_out);
+        }
+    }
+
+    // Safe algebraic identities (no -0.0 or NaN corner cases).
+    match op {
+        FloatBinaryOp::Mul => {
+            // x * 1.0 → x   (valid for all IEEE 754 values including NaN/inf)
+            if let Some(r) = rhs_c {
+                let is_one = match ty {
+                    NodeOutputType::F32 => f32::from_bits(r as u32) == 1.0,
+                    NodeOutputType::F64 => f64::from_bits(r) == 1.0,
+                    _ => false,
+                };
+                if is_one { return replace_all_uses(fg, out, lhs); }
+            }
+            if let Some(l) = lhs_c {
+                let is_one = match ty {
+                    NodeOutputType::F32 => f32::from_bits(l as u32) == 1.0,
+                    NodeOutputType::F64 => f64::from_bits(l) == 1.0,
+                    _ => false,
+                };
+                if is_one { return replace_all_uses(fg, out, rhs); }
+            }
+        }
+        FloatBinaryOp::Div => {
+            // x / 1.0 → x
+            if let Some(r) = rhs_c {
+                let is_one = match ty {
+                    NodeOutputType::F32 => f32::from_bits(r as u32) == 1.0,
+                    NodeOutputType::F64 => f64::from_bits(r) == 1.0,
+                    _ => false,
+                };
+                if is_one { return replace_all_uses(fg, out, lhs); }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(OptimizationResult::NoChange)
+}
+
+fn try_fold_float_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::FloatUnaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+
+    if let Some(bits) = float_const_val(fg, input) {
+        if let Some(folded) = eval_float_unary(op, bits, ty) {
+            let new_out = make_float_const(fg, folded, ty)?;
+            return replace_all_uses(fg, out, new_out);
+        }
+    }
+    Ok(OptimizationResult::NoChange)
+}
+
+fn try_fold_float_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::FloatCmpOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+
+    // Determine the type from the inputs, not the (Bool) output.
+    let lhs_out_kind = fg.graph.output_kind(lhs);
+    let input_ty = lhs_out_kind.as_value().ok_or(Error::ExpectedValueOutput(lhs_out_kind))?;
+
+    if let (Some(l), Some(r)) = (float_const_val(fg, lhs), float_const_val(fg, rhs)) {
+        if let Some(result) = eval_float_cmp(op, l, r, input_ty) {
+            let new_out = make_bool_const(fg, result)?;
+            return replace_all_uses(fg, out, new_out);
+        }
+    }
+    Ok(OptimizationResult::NoChange)
+}
+
+fn try_fold_float_is_nan(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let NodeKind::FloatIsNan = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+
+    if let Some(bits) = float_const_val(fg, input) {
+        let is_nan = match input_ty {
+            NodeOutputType::F32 => f32::from_bits(bits as u32).is_nan(),
+            NodeOutputType::F64 => f64::from_bits(bits).is_nan(),
+            _ => return Ok(OptimizationResult::NoChange),
+        };
+        let new_out = make_bool_const(fg, is_nan)?;
+        return replace_all_uses(fg, out, new_out);
+    }
+    Ok(OptimizationResult::NoChange)
+}
+
+/// Folds `IntBitsToFloat(FloatBitsToInt(x)) → x` and
+/// `FloatBitsToInt(IntBitsToFloat(x)) → x`.
+fn try_fold_bitcast_identity(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    match kind {
+        NodeKind::IntBitsToFloat => {
+            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let inner = fg.graph.get_node_from_output(input);
+            if matches!(*fg.graph.node_kind(inner), NodeKind::FloatBitsToInt) {
+                let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
+                return replace_all_uses(fg, out, inner_input);
+            }
+        }
+        NodeKind::FloatBitsToInt => {
+            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let inner = fg.graph.get_node_from_output(input);
+            if matches!(*fg.graph.node_kind(inner), NodeKind::IntBitsToFloat) {
+                let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
+                return replace_all_uses(fg, out, inner_input);
+            }
+        }
+        _ => {}
+    }
+    Ok(OptimizationResult::NoChange)
+}
+
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
 /// Folds constant expressions and applies algebraic identities.
@@ -467,6 +705,50 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
 /// truncation, and extension operations.  Also applies identities such as
 /// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
 /// a & (C1 & C2)`.
+/// Lowers a `CastToFloat` node to the appropriate specific form based on the
+/// actual input type:
+///
+/// - Input is the same float type as output → eliminated (identity).
+/// - Input is a different float type → lowered to `FloatToFloat`.
+/// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
+/// - Input is any other integer type → lowered to `IntBitsToFloat`.
+fn try_lower_cast_to_float(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+    if !matches!(*fg.graph.node_kind(node_id), NodeKind::CastToFloat) {
+        return Ok(OptimizationResult::NoChange);
+    }
+
+    let [out]   = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+
+    let out_kind  = fg.graph.output_kind(out);
+    let in_kind   = fg.graph.output_kind(input);
+    let out_ty    = out_kind .as_value().ok_or(crate::error::Error::ExpectedValueOutput(out_kind))?;
+    let in_ty     = in_kind  .as_value().ok_or(crate::error::Error::ExpectedValueOutput(in_kind))?;
+
+    // 1. Identity: input already has the target float type.
+    if in_ty == out_ty {
+        return replace_all_uses(fg, out, input);
+    }
+
+    // 2. Float→float precision change.
+    if in_ty.is_float() {
+        let new_out = make_float_to_float_node(fg, input, out_ty)?;
+        return replace_all_uses(fg, out, new_out);
+    }
+
+    // Input is integer from here.
+
+    // 3. Integer constant → float constant (same bits).
+    if let Some(bits) = int_const_val(fg, input) {
+        let new_out = make_float_const(fg, bits, out_ty)?;
+        return replace_all_uses(fg, out, new_out);
+    }
+
+    // 4. Non-constant integer → explicit IntBitsToFloat.
+    let new_out = make_int_bits_to_float_node(fg, input, out_ty)?;
+    replace_all_uses(fg, out, new_out)
+}
+
 pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
@@ -488,6 +770,12 @@ impl Optimizer for ConstantFold {
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
+            result |= try_fold_float_binary(function, node_id)?;
+            result |= try_fold_float_unary(function, node_id)?;
+            result |= try_fold_float_cmp(function, node_id)?;
+            result |= try_fold_float_is_nan(function, node_id)?;
+            result |= try_fold_bitcast_identity(function, node_id)?;
+            result |= try_lower_cast_to_float(function, node_id)?;
         }
         Ok(result)
     }
@@ -498,7 +786,7 @@ impl Optimizer for ConstantFold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder, IntBinaryOp, BoolBinaryOp, IntCmpOp, BoolUnaryOp};
+    use ir::{FunctionBuilder, IntBinaryOp, BoolBinaryOp, IntCmpOp, BoolUnaryOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
     use ir::node::{NodeKind, NodeOutputType};
 
     /// Builds a minimal single-region function whose return value is produced
@@ -805,6 +1093,277 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg), NodeKind::IntConst(0xFF42));
+        Ok(())
+    }
+
+    // ── Float constant folding ────────────────────────────────────────────────
+
+    #[test]
+    fn fold_f32_add_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
+            let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F32)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(7.0f32.to_bits() as u64));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f32_mul_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
+            let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F32)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(12.0f32.to_bits() as u64));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f32_div_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(10.0f32.to_bits() as u64, NodeOutputType::F32);
+            let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F32)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f32.to_bits() as u64));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_add_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
+            let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(7.0f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_mul_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
+            let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(12.0f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_div_consts() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(10.0f64.to_bits(), NodeOutputType::F64);
+            let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f32_less_true() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
+            let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Less)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_equal_true() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_equal_nan_false() -> Result<()> {
+        // NaN != NaN per IEEE 754
+        let nan = f64::NAN.to_bits();
+        let mut fg = make_fn(|b| {
+            let a = b.build_float_const(nan, NodeOutputType::F64);
+            let c = b.build_float_const(nan, NodeOutputType::F64);
+            Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f32_neg_const() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(2.0f32.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_unary_op(v, FloatUnaryOp::Neg, NodeOutputType::F32)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst((-2.0f32).to_bits() as u64));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_abs_const() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const((-3.0f64).to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_unary_op(v, FloatUnaryOp::Abs, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.0f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_f64_sqrt_const() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_unary_op(v, FloatUnaryOp::Sqrt, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.0f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_float_is_nan_true() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(f32::NAN.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_is_nan(v)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_float_is_nan_false() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_is_nan(v)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_float_mul_by_one_identity() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+            let x = b.build_float_const(3.14f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.14f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_float_div_by_one_identity() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+            let x = b.build_float_const(3.14f64.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.14f64.to_bits()));
+        Ok(())
+    }
+
+    #[test]
+    fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> {
+        // IntBitsToFloat(FloatBitsToInt(FloatAdd(1.0, 2.0)))
+        // → first, FloatAdd(1.0, 2.0) folds to FloatConst(3.0)
+        // → then,  IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) simplifies to FloatConst(3.0)
+        //   via the bitcast-identity: replace uses of IntBitsToFloat with FloatBitsToInt's input.
+        let mut fg = make_fn(|b| {
+            let a   = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+            let b2  = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+            let sum = b.build_float_binary_op(a, b2, FloatBinaryOp::Add, NodeOutputType::F64)?;
+            let as_int       = b.build_float_bits_to_int(sum, NodeOutputType::U64)?;
+            let back_to_float = b.build_int_bits_to_float(as_int, NodeOutputType::F64)?;
+            Ok(back_to_float)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        // Float binary fold: sum → FloatConst(3.0).
+        // Bitcast identity fold: IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) → FloatConst(3.0).
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.0f64.to_bits()));
+        Ok(())
+    }
+
+    // ── CastToFloat lowering tests ────────────────────────────────────────────
+
+    #[test]
+    fn cast_to_float_int_const_folds_to_float_const() -> Result<()> {
+        let bits = 1.0f64.to_bits();
+        let mut fg = make_fn(|b| {
+            let int_val = b.build_int_const(bits, NodeOutputType::U64);
+            let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
+            Ok(cast)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        // CastToFloat(IntConst(bits)) → FloatConst(bits)
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(bits));
+        Ok(())
+    }
+
+    #[test]
+    fn cast_to_float_same_float_type_eliminates() -> Result<()> {
+        let bits = 1.0f32.to_bits() as u64;
+        let mut fg = make_fn(|b| {
+            let float_val = b.build_float_const(bits, NodeOutputType::F32);
+            let cast = b.build_cast_to_float(float_val, NodeOutputType::F32);
+            Ok(cast)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        // CastToFloat(F32 → F32) → identity (FloatConst)
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(bits));
+        Ok(())
+    }
+
+    #[test]
+    fn cast_to_float_int_non_const_lowers_to_int_bits_to_float() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let int_a = b.build_int_const(1, NodeOutputType::U32);
+            let int_b = b.build_int_const(2, NodeOutputType::U32);
+            // Non-const int (Add result).
+            let sum = b.build_int_binary_operation(int_a, int_b, IntBinaryOp::Add, NodeOutputType::U32)?;
+            let cast = b.build_cast_to_float(sum, NodeOutputType::F32);
+            Ok(cast)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        // Should lower to IntBitsToFloat.
+        assert_eq!(return_kind(&fg), NodeKind::IntBitsToFloat);
+        Ok(())
+    }
+
+    #[test]
+    fn cast_to_float_cross_precision_lowers_to_float_to_float() -> Result<()> {
+        let mut fg = make_fn(|b| {
+            let f32_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+            let cast = b.build_cast_to_float(f32_val, NodeOutputType::F64);
+            Ok(cast)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed());
+        // F32 → F64 should lower to FloatToFloat.
+        assert_eq!(return_kind(&fg), NodeKind::FloatToFloat);
         Ok(())
     }
 }

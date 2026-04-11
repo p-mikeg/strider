@@ -1,4 +1,4 @@
-# strider
+# Strider
 
 > *"He's one of them Rangers. Dangerous folk they are — wandering the Wilds."*
 > — Barliman Butterbur, The Fellowship of the Ring

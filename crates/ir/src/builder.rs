@@ -6,7 +6,7 @@ use crate::region::{Region, RegionId};
 use crate::error::{Error, Result};
 use cranelift_entity::{PrimaryMap, SecondaryMap, entity_impl};
 use smallvec::SmallVec;
-use crate::ops::{BoolBinaryOp, BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use crate::ops::{BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,24 +321,35 @@ impl FunctionBuilder {
 
     /// Emits a `Piece` node: `result = (hi << bit_width(lo)) | lo`.
     /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
+    ///
+    /// Non-integer inputs (bool, float) are automatically coerced to integers.
     pub fn build_piece(&mut self, hi: NodeOutputId, lo: NodeOutputId, output_type: NodeOutputType) -> Result<NodeOutputId> {
-        if !self.get_output_type(hi)?.is_integer() { return Err(Error::ExpectedInteger(hi)); }
-        if !self.get_output_type(lo)?.is_integer() { return Err(Error::ExpectedInteger(lo)); }
+        let hi_ty = self.get_output_type(hi)?.to_natural_int_type();
+        let hi = self.convert_to_int_if_needed(hi, hi_ty)?;
+        let lo_ty = self.get_output_type(lo)?.to_natural_int_type();
+        let lo = self.convert_to_int_if_needed(lo, lo_ty)?;
         Ok(self.build_single_output_pure(NodeKind::Piece, [hi, lo], output_type))
     }
 
     /// Emits an `Extract` node: extracts `len` bits starting at bit `lsb`.
     /// inputs[0] = value.
+    ///
+    /// Non-integer inputs are automatically coerced to integers.
     pub fn build_extract(&mut self, input_id: NodeOutputId, lsb: u8, len: u8, output_type: NodeOutputType) -> Result<NodeOutputId> {
-        if !self.get_output_type(input_id)?.is_integer() { return Err(Error::ExpectedInteger(input_id)); }
+        let input_ty = self.get_output_type(input_id)?.to_natural_int_type();
+        let input_id = self.convert_to_int_if_needed(input_id, input_ty)?;
         Ok(self.build_single_output_pure(NodeKind::Extract { lsb, len }, [input_id], output_type))
     }
 
     /// Emits an `Insert` node: inserts `len` bits from `src` into `dest` at bit `lsb`.
     /// inputs[0] = dest, inputs[1] = src.
+    ///
+    /// Non-integer inputs are automatically coerced to integers.
     pub fn build_insert(&mut self, dest: NodeOutputId, src: NodeOutputId, lsb: u8, len: u8, output_type: NodeOutputType) -> Result<NodeOutputId> {
-        if !self.get_output_type(dest)?.is_integer() { return Err(Error::ExpectedInteger(dest)); }
-        if !self.get_output_type(src)?.is_integer() { return Err(Error::ExpectedInteger(src)); }
+        let dest_ty = self.get_output_type(dest)?.to_natural_int_type();
+        let dest = self.convert_to_int_if_needed(dest, dest_ty)?;
+        let src_ty = self.get_output_type(src)?.to_natural_int_type();
+        let src  = self.convert_to_int_if_needed(src, src_ty)?;
         Ok(self.build_single_output_pure(NodeKind::Insert { lsb, len }, [dest, src], output_type))
     }
 
@@ -347,6 +358,141 @@ impl FunctionBuilder {
         let converted_lhs_id = self.convert_to_int_if_needed(lhs_id, output_type)?;
         let converted_rhs_id = self.convert_to_int_if_needed(rhs_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntCmpOp(kind), [converted_lhs_id, converted_rhs_id], NodeOutputType::Bool))
+    }
+
+    // ── Float helpers ─────────────────────────────────────────────────────────
+
+    /// Emits a float constant node with the given IEEE 754 bit pattern.
+    /// `output_type` must be `F32` or `F64`.
+    pub fn build_float_const(&mut self, bits: u64, output_type: NodeOutputType) -> NodeOutputId {
+        self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
+    }
+
+    /// If `output_id` is a `FloatConst` node, returns its raw bit pattern.
+    /// Returns `Ok(None)` for non-constant nodes.
+    pub fn get_as_float_bits(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
+        let output_type = self.get_output_type(output_id)?;
+        if !output_type.is_float() {
+            return Ok(None);
+        }
+        let node_id = self.graph().get_node_from_output(output_id);
+        match self.graph().node_kind(node_id) {
+            NodeKind::FloatConst(bits) => Ok(Some(*bits)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Generic cast of any value (int or float) to `float_type` (F32 or F64).
+    ///
+    /// Never fails — accepts any input type.  The optimizer lowers the node to
+    /// `IntBitsToFloat`, `FloatToFloat`, or an identity depending on the actual
+    /// input type at optimization time.
+    pub fn build_cast_to_float(&mut self, input: NodeOutputId, float_type: NodeOutputType) -> NodeOutputId {
+        self.build_single_output_pure(NodeKind::CastToFloat, [input], float_type)
+    }
+
+    /// If `input` is not already `float_ty`, wraps it in a `CastToFloat` node.
+    fn cast_to_float_if_needed(&mut self, input: NodeOutputId, float_ty: NodeOutputType) -> Result<NodeOutputId> {
+        if self.get_output_type(input)? == float_ty { return Ok(input); }
+        Ok(self.build_cast_to_float(input, float_ty))
+    }
+
+    /// Infers the float type to use for a value that may be int or float.
+    /// If the value is already a float type, that type is used.
+    /// For integers, maps byte size: ≤4 → F32, otherwise → F64.
+    fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
+        let ty = self.get_output_type(input)?;
+        if ty.is_float() { return Ok(ty); }
+        Ok(if ty.byte_size() <= 4 { NodeOutputType::F32 } else { NodeOutputType::F64 })
+    }
+
+    /// Emits a float binary operation node.
+    ///
+    /// Inputs that are not already `output_type` are automatically wrapped in a
+    /// `CastToFloat` node (int inputs, or float inputs of a different precision).
+    pub fn build_float_binary_op(&mut self, lhs: NodeOutputId, rhs: NodeOutputId, op: FloatBinaryOp, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        let lhs = self.cast_to_float_if_needed(lhs, output_type)?;
+        let rhs = self.cast_to_float_if_needed(rhs, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::FloatBinaryOp(op), [lhs, rhs], output_type))
+    }
+
+    /// Emits a float unary operation node (neg, abs, sqrt, ceil, floor, round).
+    ///
+    /// If `input` is not already `output_type`, a `CastToFloat` node is inserted.
+    pub fn build_float_unary_op(&mut self, input: NodeOutputId, op: FloatUnaryOp, output_type: NodeOutputType) -> Result<NodeOutputId> {
+        let input = self.cast_to_float_if_needed(input, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [input], output_type))
+    }
+
+    /// Emits a float comparison node; produces a `Bool` output.
+    ///
+    /// The float type is inferred from the inputs (existing float type, or
+    /// mapped from integer byte size).  Both inputs are cast if needed.
+    pub fn build_float_cmp_op(&mut self, lhs: NodeOutputId, rhs: NodeOutputId, op: FloatCmpOp) -> Result<NodeOutputId> {
+        let float_ty = self.infer_float_type(lhs)?;
+        let lhs = self.cast_to_float_if_needed(lhs, float_ty)?;
+        let rhs = self.cast_to_float_if_needed(rhs, float_ty)?;
+        Ok(self.build_single_output_pure(NodeKind::FloatCmpOp(op), [lhs, rhs], NodeOutputType::Bool))
+    }
+
+    /// Emits a `FloatIsNan` node; produces a `Bool` output.
+    ///
+    /// If `input` is not already a float, it is wrapped in a `CastToFloat`.
+    pub fn build_float_is_nan(&mut self, input: NodeOutputId) -> Result<NodeOutputId> {
+        let float_ty = self.infer_float_type(input)?;
+        let input = self.cast_to_float_if_needed(input, float_ty)?;
+        Ok(self.build_single_output_pure(NodeKind::FloatIsNan, [input], NodeOutputType::Bool))
+    }
+
+    /// Emits an `IntToFloat` node: converts an integer value to the nearest
+    /// representable float (like C's `(float)n`).
+    pub fn build_int_to_float(&mut self, input: NodeOutputId, float_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input)?.is_integer() { return Err(Error::ExpectedInteger(input)); }
+        if !float_type.is_float() { return Err(Error::ExpectedFloatType(float_type)); }
+        Ok(self.build_single_output_pure(NodeKind::IntToFloat, [input], float_type))
+    }
+
+    /// Emits a `FloatToInt` node: truncates a float toward zero to an integer
+    /// (like C's `(int)f`).
+    pub fn build_float_to_int(&mut self, input: NodeOutputId, int_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input)?.is_float() { return Err(Error::ExpectedFloat(input)); }
+        if !int_type.is_integer() { return Err(Error::ExpectedIntegerType(int_type)); }
+        Ok(self.build_single_output_pure(NodeKind::FloatToInt, [input], int_type))
+    }
+
+    /// Emits a `FloatToFloat` node: converts between float precisions (F32 ↔ F64).
+    pub fn build_float_to_float(&mut self, input: NodeOutputId, float_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input)?.is_float() { return Err(Error::ExpectedFloat(input)); }
+        if !float_type.is_float() { return Err(Error::ExpectedFloatType(float_type)); }
+        Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [input], float_type))
+    }
+
+    /// Emits an `IntBitsToFloat` node: reinterprets an integer's bit pattern as
+    /// a float of the same width.  If the input is an `IntConst`, immediately
+    /// returns a `FloatConst` with the same bit pattern (no extra node created).
+    pub fn build_int_bits_to_float(&mut self, input: NodeOutputId, float_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input)?.is_integer() { return Err(Error::ExpectedInteger(input)); }
+        if !float_type.is_float() { return Err(Error::ExpectedFloatType(float_type)); }
+        // Immediate fold: IntConst → FloatConst (same bits).
+        let node_id = self.graph().get_node_from_output(input);
+        if let NodeKind::IntConst(bits) = *self.graph().node_kind(node_id) {
+            return Ok(self.build_float_const(bits, float_type));
+        }
+        Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [input], float_type))
+    }
+
+    /// Emits a `FloatBitsToInt` node: reinterprets a float's bit pattern as an
+    /// integer of the same width.  If the input is a `FloatConst`, immediately
+    /// returns an `IntConst` with the same bit pattern (no extra node created).
+    pub fn build_float_bits_to_int(&mut self, input: NodeOutputId, int_type: NodeOutputType) -> Result<NodeOutputId> {
+        if !self.get_output_type(input)?.is_float() { return Err(Error::ExpectedFloat(input)); }
+        if !int_type.is_integer() { return Err(Error::ExpectedIntegerType(int_type)); }
+        // Immediate fold: FloatConst → IntConst (same bits).
+        let node_id = self.graph().get_node_from_output(input);
+        if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id) {
+            return Ok(self.build_int_const(bits, int_type));
+        }
+        Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))
     }
 
     /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.
@@ -641,8 +787,8 @@ impl FunctionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{IntBinaryOp, BoolBinaryOp, IntCmpOp, ExtendOp};
-    use crate::node::{NodeKind, NodeOutputType};
+    use crate::ops::{IntBinaryOp, BoolBinaryOp, IntCmpOp, ExtendOp, FloatBinaryOp, FloatCmpOp};
+    use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
     /// Build a minimal builder with no variables so tests that do not need
     /// SSA variables remain simple.
@@ -936,6 +1082,171 @@ mod tests {
         let a = b.build_int_const(1, NodeOutputType::U32);
         let c = b.build_int_const(2, NodeOutputType::U32);
         assert_ne!(a, c);
+        Ok(())
+    }
+
+    // ── Float builder methods ────────────────────────────────────────────────
+
+    #[test]
+    fn build_float_const_f32_has_correct_bits() -> Result<()> {
+        let mut b = empty_builder()?;
+        let bits = 1.0f32.to_bits() as u64;
+        let out = b.build_float_const(bits, NodeOutputType::F32);
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+        assert_eq!(kind, NodeKind::FloatConst(bits));
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::F32));
+        Ok(())
+    }
+
+    #[test]
+    fn build_float_const_f64_has_correct_bits() -> Result<()> {
+        let mut b = empty_builder()?;
+        let bits = 1.0f64.to_bits();
+        let out = b.build_float_const(bits, NodeOutputType::F64);
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+        assert_eq!(kind, NodeKind::FloatConst(bits));
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::F64));
+        Ok(())
+    }
+
+    #[test]
+    fn get_as_float_bits_returns_bits_for_float_const() -> Result<()> {
+        let mut b = empty_builder()?;
+        let bits = 3.14f64.to_bits();
+        let out = b.build_float_const(bits, NodeOutputType::F64);
+        assert_eq!(b.get_as_float_bits(out)?, Some(bits));
+        Ok(())
+    }
+
+    #[test]
+    fn get_as_float_bits_returns_none_for_int_const() -> Result<()> {
+        let mut b = empty_builder()?;
+        let out = b.build_int_const(42, NodeOutputType::U64);
+        assert_eq!(b.get_as_float_bits(out)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn int_bits_to_float_folds_int_const_immediately() -> Result<()> {
+        let mut b = empty_builder()?;
+        let bits = 1.0f32.to_bits() as u64;
+        let int_out = b.build_int_const(bits, NodeOutputType::U32);
+        let float_out = b.build_int_bits_to_float(int_out, NodeOutputType::F32)?;
+        // Should be a FloatConst, not an IntBitsToFloat node
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(float_out));
+        assert_eq!(kind, NodeKind::FloatConst(bits));
+        Ok(())
+    }
+
+    #[test]
+    fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
+        let mut b = empty_builder()?;
+        let bits = 1.0f64.to_bits();
+        let float_out = b.build_float_const(bits, NodeOutputType::F64);
+        let int_out = b.build_float_bits_to_int(float_out, NodeOutputType::U64)?;
+        // Should be an IntConst, not a FloatBitsToInt node
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(int_out));
+        assert_eq!(kind, NodeKind::IntConst(bits));
+        Ok(())
+    }
+
+    #[test]
+    fn build_float_binary_op_produces_correct_node() -> Result<()> {
+        let mut b = empty_builder()?;
+        let lhs = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+        let rhs = b.build_float_const(2.0f32.to_bits() as u64, NodeOutputType::F32);
+        let out = b.build_float_binary_op(lhs, rhs, FloatBinaryOp::Add, NodeOutputType::F32)?;
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+        assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
+        Ok(())
+    }
+
+    #[test]
+    fn build_float_cmp_op_produces_bool_output() -> Result<()> {
+        let mut b = empty_builder()?;
+        let lhs = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+        let rhs = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+        let out = b.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::Bool));
+        Ok(())
+    }
+
+    #[test]
+    fn build_float_is_nan_produces_bool_output() -> Result<()> {
+        let mut b = empty_builder()?;
+        let val = b.build_float_const(f32::NAN.to_bits() as u64, NodeOutputType::F32);
+        let out = b.build_float_is_nan(val)?;
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::Bool));
+        Ok(())
+    }
+
+    #[test]
+    fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
+        let mut b = empty_builder()?;
+        let int_val = b.build_int_const(0x3F800000, NodeOutputType::U32);
+        let zero = b.build_int_const(0, NodeOutputType::U32);
+        // Build an Add(x, 0) so the result is not an IntConst node.
+        let non_const = b.build_int_binary_operation(
+            int_val, zero, crate::ops::IntBinaryOp::Add, NodeOutputType::U32,
+        )?;
+        let float_out = b.build_int_bits_to_float(non_const, NodeOutputType::F32)?;
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(float_out));
+        assert_eq!(kind, NodeKind::IntBitsToFloat);
+        Ok(())
+    }
+
+    // ── CastToFloat tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn build_cast_to_float_creates_cast_node() -> Result<()> {
+        let mut b = empty_builder()?;
+        let int_val = b.build_int_const(42, NodeOutputType::U64);
+        let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(cast));
+        assert_eq!(kind, NodeKind::CastToFloat);
+        assert_eq!(b.get_output_type(cast)?, NodeOutputType::F64);
+        Ok(())
+    }
+
+    #[test]
+    fn cast_to_float_if_needed_is_identity_for_same_type() -> Result<()> {
+        let mut b = empty_builder()?;
+        let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+        let result = b.cast_to_float_if_needed(float_val, NodeOutputType::F32)?;
+        // Should be the same output — no new node inserted.
+        assert_eq!(result, float_val);
+        Ok(())
+    }
+
+    #[test]
+    fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
+        let mut b = empty_builder()?;
+        let i1 = b.build_int_const(0x3F800000u64, NodeOutputType::U32);
+        let i2 = b.build_int_const(0x40000000u64, NodeOutputType::U32);
+        // Both inputs are U32 — builder should auto-insert CastToFloat.
+        let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, NodeOutputType::F32)?;
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
+        assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
+        // Verify inputs are CastToFloat nodes.
+        let [lhs, rhs] = b.graph().node_inputs_exact::<2>(b.graph().get_node_from_output(result))?;
+        let lhs_node = b.graph().get_node_from_output(lhs);
+        let rhs_node = b.graph().get_node_from_output(rhs);
+        assert_eq!(*b.graph().node_kind(lhs_node), NodeKind::CastToFloat);
+        assert_eq!(*b.graph().node_kind(rhs_node), NodeKind::CastToFloat);
+        Ok(())
+    }
+
+    #[test]
+    fn build_piece_with_float_input_auto_casts() -> Result<()> {
+        let mut b = empty_builder()?;
+        // Create a float value to pass into piece.
+        let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+        let int_lo    = b.build_int_const(0, NodeOutputType::U32);
+        // Piece should succeed and insert a CastToInt for the float hi.
+        let result = b.build_piece(float_val, int_lo, NodeOutputType::U64)?;
+        // Result must be a Piece node.
+        let kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
+        assert_eq!(kind, NodeKind::Piece);
         Ok(())
     }
 }

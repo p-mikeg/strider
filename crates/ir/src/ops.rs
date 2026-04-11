@@ -87,3 +87,46 @@ pub enum IntUnaryOp {
     /// Bitwise complement: `~x`.
     Not,
 }
+
+/// Binary arithmetic operations on floating-point values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloatBinaryOp {
+    /// Floating-point addition: `l + r`.
+    Add,
+    /// Floating-point subtraction: `l - r`.
+    Sub,
+    /// Floating-point multiplication: `l * r`.
+    Mul,
+    /// Floating-point division: `l / r`.
+    Div,
+}
+
+/// Unary operations on floating-point values that produce a float result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloatUnaryOp {
+    /// Floating-point negation: `-x`.
+    Neg,
+    /// Absolute value: `|x|`.
+    Abs,
+    /// Square root: `√x`.
+    Sqrt,
+    /// Round toward positive infinity: `⌈x⌉`.
+    Ceil,
+    /// Round toward negative infinity: `⌊x⌋`.
+    Floor,
+    /// Round to nearest integer (ties to even): `round(x)`.
+    Round,
+}
+
+/// Comparison operations that produce a `Bool` from two floating-point operands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloatCmpOp {
+    /// IEEE 754 equality: `l == r` (false if either is NaN).
+    Equal,
+    /// IEEE 754 inequality: `l != r` (true if either is NaN).
+    NotEqual,
+    /// IEEE 754 less-than: `l < r` (false if either is NaN).
+    Less,
+    /// IEEE 754 less-than-or-equal: `l <= r` (false if either is NaN).
+    LessEqual,
+}

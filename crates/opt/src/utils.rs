@@ -3,6 +3,31 @@ use ir::node::{NodeOutputId, NodeKind, NodeOutputKind, NodeOutputType};
 use crate::opt::OptimizationResult;
 use crate::error::Result;
 
+/// Returns the float constant bit-pattern of `output` (raw `u64`), or `None`
+/// if the output does not hold a `FloatConst`.
+pub(crate) fn float_const_val(fg: &BuiltFunctionGraph, output: NodeOutputId) -> Option<u64> {
+    let ty = fg.graph.output_kind(output).as_value()?;
+    if !ty.is_float() {
+        return None;
+    }
+    let node = fg.graph.get_node_from_output(output);
+    match *fg.graph.node_kind(node) {
+        NodeKind::FloatConst(bits) => Some(bits),
+        _ => None,
+    }
+}
+
+/// Creates (or retrieves) a `FloatConst(bits)` node with type `ty` and returns
+/// its output id.
+pub(crate) fn make_float_const(fg: &mut BuiltFunctionGraph, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+    let node = fg.graph.create_node(
+        NodeKind::FloatConst(bits),
+        [],
+        [NodeOutputKind::OutputType(ty)],
+    );
+    Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
+}
+
 /// Returns the integer constant value of `output` (masked to its declared type),
 /// or `None` if the output does not hold an integer constant.
 pub(crate) fn int_const_val(fg: &BuiltFunctionGraph, output: NodeOutputId) -> Option<u64> {
@@ -47,6 +72,26 @@ pub(crate) fn make_bool_const(fg: &mut BuiltFunctionGraph, val: bool) -> Result<
         NodeKind::BoolConst(val),
         [],
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
+}
+
+/// Creates an `IntBitsToFloat` node directly on the graph and returns its output.
+pub(crate) fn make_int_bits_to_float_node(fg: &mut BuiltFunctionGraph, input: NodeOutputId, ty: NodeOutputType) -> Result<NodeOutputId> {
+    let node = fg.graph.create_node(
+        NodeKind::IntBitsToFloat,
+        [input],
+        [NodeOutputKind::OutputType(ty)],
+    );
+    Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
+}
+
+/// Creates a `FloatToFloat` node directly on the graph and returns its output.
+pub(crate) fn make_float_to_float_node(fg: &mut BuiltFunctionGraph, input: NodeOutputId, ty: NodeOutputType) -> Result<NodeOutputId> {
+    let node = fg.graph.create_node(
+        NodeKind::FloatToFloat,
+        [input],
+        [NodeOutputKind::OutputType(ty)],
     );
     Ok(fg.graph.node_outputs_exact::<1>(node)?[0])
 }

@@ -32,7 +32,8 @@ fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::Return                => "doublecircle",
 
         NodeKind::IntConst(_)
-        | NodeKind::BoolConst(_)        => "ellipse",
+        | NodeKind::BoolConst(_)
+        | NodeKind::FloatConst(_)       => "ellipse",
 
         _ => "box",
     }
@@ -63,6 +64,19 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Return                => "\"#103a10\"",
 
+        NodeKind::FloatConst(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatCmpOp(_)
+        | NodeKind::FloatIsNan          => "\"#1a3020\"",  // dark green
+
+        NodeKind::IntToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatToFloat
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt
+        | NodeKind::CastToFloat         => "\"#302018\"",  // dark amber
+
         _ => "\"#2d2d2d\"",
     }
 }
@@ -92,7 +106,9 @@ fn edge_style<R: MemReader>(
     match dumper.graph.node_kind(consumer) {
         NodeKind::IntBinaryOp(_)
         | NodeKind::IntCmpOp(_)
-        | NodeKind::BoolBinaryOp(_) => match input_idx {
+        | NodeKind::BoolBinaryOp(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatCmpOp(_) => match input_idx {
             0 => ("lhs", "\"#4488ff\""),   // blue
             1 => ("rhs", "\"#ff4444\""),   // red
             _ => ("",    "\"#cccccc\""),
@@ -106,7 +122,15 @@ fn edge_style<R: MemReader>(
         | NodeKind::Truncate
         | NodeKind::Popcount
         | NodeKind::Lzcount
-        | NodeKind::Extract { .. }  => ("val", "\"#88cc88\""),   // green
+        | NodeKind::Extract { .. }
+        | NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatIsNan
+        | NodeKind::IntToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatToFloat
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt
+        | NodeKind::CastToFloat     => ("val", "\"#88cc88\""),   // green
 
         NodeKind::Piece | NodeKind::Insert { .. } => match input_idx {
             0 => ("hi/dest", "\"#4488ff\""),
@@ -250,6 +274,18 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     .unwrap_or_default();
                 format!("const {v:#x}{ty}")
             }
+            NodeKind::FloatConst(bits) => {
+                match self.out_type(node) {
+                    Some(NodeOutputType::F32) => {
+                        let v = f32::from_bits(*bits as u32);
+                        format!("const {v}:f32")
+                    }
+                    _ => {
+                        let v = f64::from_bits(*bits);
+                        format!("const {v}:f64")
+                    }
+                }
+            }
 
             // ── memory operations ─────────────────────────────────────────────
             NodeKind::Load(space) => {
@@ -342,6 +378,59 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             }
             NodeKind::BoolBinaryOp(op) => format!("{op:?}:bool"),
             NodeKind::BoolUnaryOp(op)  => format!("{op:?}:bool"),
+
+            // ── float arithmetic / logical ────────────────────────────────────
+            NodeKind::FloatBinaryOp(op) => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("{op:?}{ty}")
+            }
+            NodeKind::FloatUnaryOp(op) => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("{op:?}\n{from} \u{2192} {to}")
+            }
+            NodeKind::FloatCmpOp(op) => {
+                let operand = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                format!("{op:?}\n{operand} \u{2192} bool")
+            }
+            NodeKind::FloatIsNan => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                format!("IsNaN\n{from} \u{2192} bool")
+            }
+
+            // ── float / integer conversions ───────────────────────────────────
+            NodeKind::IntToFloat => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("IntToFloat\n{from} \u{2192} {to}")
+            }
+            NodeKind::FloatToInt => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("FloatToInt\n{from} \u{2192} {to}")
+            }
+            NodeKind::FloatToFloat => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("FloatToFloat\n{from} \u{2192} {to}")
+            }
+            NodeKind::IntBitsToFloat => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("bitcast\n{from} \u{2192} {to}")
+            }
+            NodeKind::FloatBitsToInt => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("bitcast\n{from} \u{2192} {to}")
+            }
+            NodeKind::CastToFloat => {
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                format!("CastToFloat\n{from} \u{2192} {to}")
+            }
 
             // ── everything else ───────────────────────────────────────────────
             _ => format!("{kind:?}"),

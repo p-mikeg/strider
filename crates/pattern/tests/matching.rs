@@ -4,7 +4,8 @@
 /// then runs `Matcher::find_all` and asserts the expected number of matches
 /// and captured bindings.
 use ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+    FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
     node::{NodeKind, NodeOutputType},
 };
 use pattern::*;
@@ -2018,5 +2019,294 @@ fn insert_pattern_matches() -> ir::Result<()> {
     // Wrong lsb → no match.
     let miss = m.find_all(&insert(Some(4), None, any(), any()).into());
     assert!(miss.is_empty());
+    Ok(())
+}
+
+// ── Float pattern tests ───────────────────────────────────────────────────────
+
+/// `float_add(1.0f64, 2.0f64)` — basic binary float pattern match.
+#[test]
+fn float_add_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c1 = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+    let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
+    b.build_return(Some(sum), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+
+    // Match float_add with exact constants.
+    let hits = m.find_all(&float_add(
+        float_const(1.0f64.to_bits()),
+        float_const(2.0f64.to_bits()),
+    ).into());
+    assert_eq!(hits.len(), 1);
+
+    // Wrong constant → no match.
+    let miss = m.find_all(&float_add(
+        float_const(3.0f64.to_bits()),
+        float_const(2.0f64.to_bits()),
+    ).into());
+    assert!(miss.is_empty());
+    Ok(())
+}
+
+/// Float `mul` is commutative: `float_mul(a, b)` should also match with reversed operands.
+#[test]
+fn float_mul_commutative_pattern() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c3 = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
+    let c7 = b.build_float_const(7.0f32.to_bits() as u64, NodeOutputType::F32);
+    // Build node as 7 * 3.
+    let prod = b.build_float_binary_op(c7, c3, FloatBinaryOp::Mul, NodeOutputType::F32)?;
+    b.build_return(Some(prod), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let v_a = Var::new();
+    let v_b = Var::new();
+
+    // Pattern states 3 * 7; node stores 7 * 3 — commutative match must succeed.
+    let hits = m.find_all(&float_mul(
+        float_const(3.0f32.to_bits() as u64),
+        float_const(7.0f32.to_bits() as u64),
+    ).into());
+    assert_eq!(hits.len(), 1);
+
+    // Any-capture version also works.
+    let hits2 = m.find_all(&float_mul(any_float_const(v_a), any_float_const(v_b)).into());
+    assert_eq!(hits2.len(), 1);
+    Ok(())
+}
+
+/// Float `sub` is NOT commutative: wrong order must fail.
+#[test]
+fn float_sub_not_commutative() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c5 = b.build_float_const(5.0f64.to_bits(), NodeOutputType::F64);
+    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+    // 5.0 - 2.0
+    let diff = b.build_float_binary_op(c5, c2, FloatBinaryOp::Sub, NodeOutputType::F64)?;
+    b.build_return(Some(diff), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Correct order matches.
+    assert_eq!(m.find_all(&float_sub(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into()).len(), 1);
+    // Wrong order does NOT match.
+    assert!(m.find_all(&float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into()).is_empty());
+    Ok(())
+}
+
+/// Float comparison (`float_eq`) produces a `Bool` output.
+#[test]
+fn float_eq_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c3 = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
+    let c4 = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
+    let cmp = b.build_float_cmp_op(c3, c4, FloatCmpOp::Equal)?;
+    b.build_return(Some(cmp), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&float_eq(
+        float_const(3.0f64.to_bits()),
+        float_const(4.0f64.to_bits()),
+    ).into());
+    assert_eq!(hits.len(), 1);
+
+    // Wrong op kind → no match.
+    let miss = m.find_all(&float_lt(
+        float_const(3.0f64.to_bits()),
+        float_const(4.0f64.to_bits()),
+    ).into());
+    assert!(miss.is_empty());
+    Ok(())
+}
+
+/// `FloatIsNan` pattern match.
+#[test]
+fn float_is_nan_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let cv = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+    let is_nan = b.build_float_is_nan(cv)?;
+    b.build_return(Some(is_nan), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&float_is_nan(any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+/// `float_neg` unary pattern match.
+#[test]
+fn float_unary_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let cv = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+    let neg_v = b.build_float_unary_op(cv, FloatUnaryOp::Neg, NodeOutputType::F64)?;
+    b.build_return(Some(neg_v), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Correct unary op matches.
+    let hits = m.find_all(&float_neg(float_const(2.0f64.to_bits())).into());
+    assert_eq!(hits.len(), 1);
+    // Different unary op → no match.
+    let miss = m.find_all(&float_abs(float_const(2.0f64.to_bits())).into());
+    assert!(miss.is_empty());
+    Ok(())
+}
+
+/// `any_float_const` captures the float constant bits.
+#[test]
+fn any_float_const_captures_bits() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let bits = 42.5f64.to_bits();
+    let cv = b.build_float_const(bits, NodeOutputType::F64);
+    b.build_return(Some(cv), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let v = Var::new();
+    let hits = m.find_all(&any_float_const(v).into());
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].get_float_bits(v, &g), Some(bits));
+    Ok(())
+}
+
+/// `int_bits_to_float` bitcast pattern match.
+#[test]
+fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    // Non-const int → explicit IntBitsToFloat node must be emitted.
+    let int_val = b.build_int_const(0xDEAD, NodeOutputType::U64);
+    // Force a non-const path so we actually get an IntBitsToFloat node.
+    // Add 0 to make the optimizer think it's not constant (int_const 0).
+    let zero = b.build_int_const(0, NodeOutputType::U64);
+    let non_const = b.build_int_binary_operation(int_val, zero, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let float_v = b.build_int_bits_to_float(non_const, NodeOutputType::F64)?;
+    b.build_return(Some(float_v), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&int_bits_to_float(any()).into());
+    assert_eq!(hits.len(), 1);
+    // float_bits_to_int should NOT match.
+    assert!(m.find_all(&float_bits_to_int(any()).into()).is_empty());
+    Ok(())
+}
+
+/// `float_bits_to_int` bitcast pattern match.
+#[test]
+fn float_bits_to_int_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let cv = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+    // Force a non-const float so we get a FloatBitsToInt node.
+    let neg_v = b.build_float_unary_op(cv, FloatUnaryOp::Neg, NodeOutputType::F32)?;
+    let int_v = b.build_float_bits_to_int(neg_v, NodeOutputType::U32)?;
+    b.build_return(Some(int_v), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&float_bits_to_int(any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+/// `int_to_float`, `float_to_int`, `float_to_float` conversion patterns.
+#[test]
+fn float_conversion_patterns_match() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let int_v  = b.build_int_const(42, NodeOutputType::U64);
+    let f64_v  = b.build_int_to_float(int_v, NodeOutputType::F64)?;
+    let f32_v  = b.build_float_to_float(f64_v, NodeOutputType::F32)?;
+    let int_v2 = b.build_float_to_int(f32_v, NodeOutputType::U32)?;
+    b.build_return(Some(int_v2), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    assert_eq!(m.find_all(&int_to_float(any()).into()).len(), 1);
+    assert_eq!(m.find_all(&float_to_float(any()).into()).len(), 1);
+    assert_eq!(m.find_all(&float_to_int(any()).into()).len(), 1);
+    Ok(())
+}
+
+/// `.ordered()` on `float_add` prevents commutative fallback.
+#[test]
+fn float_add_ordered_no_commutative_fallback() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c1 = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+    let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
+    b.build_return(Some(sum), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Ordered: correct order matches.
+    assert_eq!(m.find_all(&float_add(
+        float_const(1.0f64.to_bits()),
+        float_const(2.0f64.to_bits()),
+    ).ordered().into()).len(), 1);
+    // Ordered: wrong order does NOT match even though Add is commutative.
+    assert!(m.find_all(&float_add(
+        float_const(2.0f64.to_bits()),
+        float_const(1.0f64.to_bits()),
+    ).ordered().into()).is_empty());
+    Ok(())
+}
+
+/// `cast_to_float` pattern matches a `CastToFloat` node.
+#[test]
+fn cast_to_float_pattern_matches() -> ir::Result<()> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let int_val = b.build_int_const(0x3F800000, NodeOutputType::U32);
+    let cast = b.build_cast_to_float(int_val, NodeOutputType::F32);
+    b.build_return(Some(cast), &[])?;
+    let g = b.build();
+
+    let m = Matcher::new(&g);
+    // Matches the CastToFloat node.
+    let hits = m.find_all(&cast_to_float(any()).into());
+    assert_eq!(hits.len(), 1);
+    // Other unary patterns do NOT match.
+    assert!(m.find_all(&int_bits_to_float(any()).into()).is_empty());
     Ok(())
 }

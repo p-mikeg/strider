@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use ir::BuiltFunctionGraph;
 use ir::node::NodeOutputId;
 
@@ -99,6 +99,34 @@ pub enum PatKind {
     Extract    { lsb: Option<u8>, len: Option<u8>, operand: Pat },
     /// Matches an `Insert` node.  `None` for `lsb`/`len` matches any value.
     Insert     { lsb: Option<u8>, len: Option<u8>, dest: Pat, src: Pat },
+
+    // ── Float ops ─────────────────────────────────────────────────────────────
+    /// Matches a `FloatConst` node whose raw bit representation equals `v`.
+    FloatConst(u64),
+    /// Matches any `FloatConst` node and binds its output to `v`.
+    AnyFloatConst(Var),
+    /// Matches a float binary operation node.
+    /// When `ordered` is `false` and the op is commutative (`Add`, `Mul`), both
+    /// operand orderings are tried automatically.
+    FloatBinaryOp { op: FloatBinaryOp, lhs: Pat, rhs: Pat, ordered: bool },
+    /// Matches a float unary operation node.
+    FloatUnaryOp  { op: FloatUnaryOp,  operand: Pat },
+    /// Matches a float comparison node (produces a `Bool` output).
+    FloatCmpOp    { op: FloatCmpOp,    lhs: Pat, rhs: Pat },
+    /// Matches a `FloatIsNan` node (unary, produces `Bool`).
+    FloatIsNan    { operand: Pat },
+    /// Matches an `IntToFloat` value-conversion node.
+    IntToFloat    { operand: Pat },
+    /// Matches a `FloatToInt` value-conversion node.
+    FloatToInt    { operand: Pat },
+    /// Matches a `FloatToFloat` precision-conversion node.
+    FloatToFloat  { operand: Pat },
+    /// Matches an `IntBitsToFloat` bitcast node.
+    IntBitsToFloat { operand: Pat },
+    /// Matches a `FloatBitsToInt` bitcast node.
+    FloatBitsToInt { operand: Pat },
+    /// Matches a `CastToFloat` generic-cast node.
+    CastToFloat    { operand: Pat },
 
     // ── Memory ops ────────────────────────────────────────────────────────────
     /// `Load(space)`: inputs = [mem(0), addr(1)] → value output.
@@ -248,6 +276,49 @@ impl BoolBinaryOpPat {
 impl From<BoolBinaryOpPat> for Pat {
     fn from(b: BoolBinaryOpPat) -> Pat {
         Pat::new(PatKind::BoolBinaryOp {
+            op:      b.op,
+            lhs:     b.lhs,
+            rhs:     b.rhs,
+            ordered: b.ordered,
+        })
+    }
+}
+
+// ── Builder: FloatBinaryOpPat ─────────────────────────────────────────────────
+
+/// Builder for float binary operation patterns.
+///
+/// Returned by [`float_binary`] and the shorthand constructors ([`float_add`],
+/// [`float_sub`], [`float_mul`], [`float_div`]).  Call `.into()` or pass
+/// directly to any `impl Into<Pat>` parameter to obtain a [`Pat`].
+pub struct FloatBinaryOpPat {
+    op:      FloatBinaryOp,
+    lhs:     Pat,
+    rhs:     Pat,
+    ordered: bool,
+}
+
+impl FloatBinaryOpPat {
+    /// Force the pattern to match operands in the stated order only.
+    /// By default, commutative operators (`Add`, `Mul`) will also try the
+    /// reversed operand order.
+    pub fn ordered(mut self) -> Self { self.ordered = true; self }
+
+    /// After matching, bind the matched output to `v`.
+    pub fn capture(self, v: Var) -> Pat { Pat::from(self).capture(v) }
+
+    /// After matching, additionally run `f` — fails if it returns `false`.
+    pub fn when<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    {
+        Pat::from(self).when(f)
+    }
+}
+
+impl From<FloatBinaryOpPat> for Pat {
+    fn from(b: FloatBinaryOpPat) -> Pat {
+        Pat::new(PatKind::FloatBinaryOp {
             op:      b.op,
             lhs:     b.lhs,
             rhs:     b.rhs,
@@ -652,6 +723,89 @@ pub fn extract(lsb: Option<u8>, len: Option<u8>, operand: impl Into<Pat>) -> Pat
 /// Matches an insert node.  Pass `None` for `lsb`/`len` to match any value.
 pub fn insert(lsb: Option<u8>, len: Option<u8>, dest: impl Into<Pat>, src: impl Into<Pat>) -> Pat {
     Pat::new(PatKind::Insert { lsb, len, dest: dest.into(), src: src.into() })
+}
+
+// Float ops
+
+/// Matches a float binary operation with the given `op`.
+///
+/// Commutative ops (`Add`, `Mul`) will try both operand orderings automatically.
+/// Call `.ordered()` on the result to disable this.
+pub fn float_binary(op: FloatBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> FloatBinaryOpPat {
+    FloatBinaryOpPat { op, lhs: lhs.into(), rhs: rhs.into(), ordered: false }
+}
+/// Matches a float addition node.  Commutative.
+pub fn float_add(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> FloatBinaryOpPat { float_binary(FloatBinaryOp::Add, lhs, rhs) }
+/// Matches a float subtraction node.  Not commutative.
+pub fn float_sub(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> FloatBinaryOpPat { float_binary(FloatBinaryOp::Sub, lhs, rhs) }
+/// Matches a float multiplication node.  Commutative.
+pub fn float_mul(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> FloatBinaryOpPat { float_binary(FloatBinaryOp::Mul, lhs, rhs) }
+/// Matches a float division node.  Not commutative.
+pub fn float_div(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> FloatBinaryOpPat { float_binary(FloatBinaryOp::Div, lhs, rhs) }
+
+/// Matches a float unary operation with the given `op`.
+pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatUnaryOp { op, operand: operand.into() })
+}
+/// Matches a float negation node.
+pub fn float_neg(operand: impl Into<Pat>) -> Pat   { float_unary(FloatUnaryOp::Neg,   operand) }
+/// Matches a float absolute-value node.
+pub fn float_abs(operand: impl Into<Pat>) -> Pat   { float_unary(FloatUnaryOp::Abs,   operand) }
+/// Matches a float square-root node.
+pub fn float_sqrt(operand: impl Into<Pat>) -> Pat  { float_unary(FloatUnaryOp::Sqrt,  operand) }
+/// Matches a float ceiling node.
+pub fn float_ceil(operand: impl Into<Pat>) -> Pat  { float_unary(FloatUnaryOp::Ceil,  operand) }
+/// Matches a float floor node.
+pub fn float_floor(operand: impl Into<Pat>) -> Pat { float_unary(FloatUnaryOp::Floor, operand) }
+/// Matches a float round node.
+pub fn float_round(operand: impl Into<Pat>) -> Pat { float_unary(FloatUnaryOp::Round, operand) }
+
+/// Matches a float comparison node with the given `op`.
+pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatCmpOp { op, lhs: lhs.into(), rhs: rhs.into() })
+}
+/// Matches a float equality comparison.
+pub fn float_eq(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat  { float_cmp(FloatCmpOp::Equal,     lhs, rhs) }
+/// Matches a float not-equal comparison.
+pub fn float_ne(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat  { float_cmp(FloatCmpOp::NotEqual,  lhs, rhs) }
+/// Matches a float less-than comparison.
+pub fn float_lt(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat  { float_cmp(FloatCmpOp::Less,      lhs, rhs) }
+/// Matches a float less-or-equal comparison.
+pub fn float_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat  { float_cmp(FloatCmpOp::LessEqual, lhs, rhs) }
+
+/// Matches a `FloatIsNan` node.
+pub fn float_is_nan(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatIsNan { operand: operand.into() })
+}
+
+/// Matches a `FloatConst` node with the exact bit pattern `bits`.
+pub fn float_const(bits: u64) -> Pat { Pat::new(PatKind::FloatConst(bits)) }
+/// Matches any `FloatConst` node and binds its output to `v`.
+pub fn any_float_const(v: Var) -> Pat { Pat::new(PatKind::AnyFloatConst(v)) }
+
+/// Matches an `IntToFloat` value-conversion node.
+pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::IntToFloat { operand: operand.into() })
+}
+/// Matches a `FloatToInt` value-conversion node.
+pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatToInt { operand: operand.into() })
+}
+/// Matches a `FloatToFloat` precision-conversion node.
+pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatToFloat { operand: operand.into() })
+}
+/// Matches an `IntBitsToFloat` bitcast node.
+pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::IntBitsToFloat { operand: operand.into() })
+}
+/// Matches a `FloatBitsToInt` bitcast node.
+pub fn float_bits_to_int(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::FloatBitsToInt { operand: operand.into() })
+}
+/// Matches a `CastToFloat` generic-cast node.
+pub fn cast_to_float(operand: impl Into<Pat>) -> Pat {
+    Pat::new(PatKind::CastToFloat { operand: operand.into() })
 }
 
 // Memory

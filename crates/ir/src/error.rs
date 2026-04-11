@@ -1,5 +1,5 @@
 use thiserror::Error;
-use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 /// Errors that can be produced by the IR builder and graph operations.
 #[derive(Debug, Error)]
@@ -39,6 +39,18 @@ pub enum Error {
     /// An output was expected to carry an integer value.
     #[error("output {0:?} is not an integer value")]
     ExpectedInteger(NodeOutputId),
+
+    /// An output was expected to carry a float value (F32 or F64).
+    #[error("output {0:?} is not a float value")]
+    ExpectedFloat(NodeOutputId),
+
+    /// A type was expected to be a float type (F32 or F64).
+    #[error("type {0:?} is not a float type")]
+    ExpectedFloatType(NodeOutputType),
+
+    /// A type was expected to be an integer type (U8/U16/U32/U64).
+    #[error("type {0:?} is not an integer type")]
+    ExpectedIntegerType(NodeOutputType),
 
     /// An output was expected to be a `ControlPhi` dispatch edge.
     #[error("output {0:?} is not a control-phi edge")]

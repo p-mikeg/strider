@@ -60,7 +60,7 @@ pub use pat::{
     Pat,
     // Builder types
     CallPat, RetPat, IfPat, LoadPat, StorePat, PhiPat,
-    IntBinaryOpPat, BoolBinaryOpPat,
+    IntBinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat,
     // Free-function constructors
     any, var, int_const, bool_const, any_const, predicate,
     // Int binary ops
@@ -77,6 +77,12 @@ pub use pat::{
     // Casts / coercions
     cast_to_bool, cast_to_int, truncate, extend, zero_extend, sign_extend, popcount,
     lzcount, piece, extract, insert,
+    // Float ops
+    float_binary, float_add, float_sub, float_mul, float_div,
+    float_unary, float_neg, float_abs, float_sqrt, float_ceil, float_floor, float_round,
+    float_cmp, float_eq, float_ne, float_lt, float_le,
+    float_is_nan, float_const, any_float_const,
+    int_to_float, float_to_int, float_to_float, int_bits_to_float, float_bits_to_int, cast_to_float,
     // Memory
     load, store,
     // Phi nodes
@@ -92,4 +98,5 @@ pub use matcher::{Matcher, Match, Bindings};
 
 // Re-export op enums so callers can use `int_binary(IntBinaryOp::Add, …)`
 // without also depending on the `ir` crate directly.
-pub use ir::{IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp};
+pub use ir::{IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp,
+             FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
