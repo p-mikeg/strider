@@ -424,7 +424,19 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                     self.builder.build_return(None, &regs)?;
                 }
             }
-            Opcode::Call | Opcode::CallIndirect => {
+            Opcode::Call => {
+                // Direct call: the target varnode is in the code space and its offset
+                // *is* the target address — it's not a pointer to dereference.
+                let target_vn = &insn.inputs[0];
+                let space_info = self.cfg.sleigh.space_info(target_vn.addr.space);
+                let call_address = self.builder.build_int_const(
+                    target_vn.addr.off,
+                    space_info.addr_size().try_into()?,
+                );
+                self.builder.build_call(call_address)?;
+            }
+            Opcode::CallIndirect => {
+                // Indirect call: target is a register/memory value holding the address.
                 let call_address = self.read_vn(&insn.inputs[0])?;
                 self.builder.build_call(call_address)?;
             }
