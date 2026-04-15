@@ -71,7 +71,11 @@ fn node_known_bits(
     };
     let out_kind = fg.graph.output_kind(out);
     let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
-    let type_mask = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))?;
+    // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
+    // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
+    let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
+        return Ok(None);
+    };
 
     let kb = match kind {
         NodeKind::IntConst(v) => Kb::from_const(v, ty),
@@ -249,7 +253,8 @@ impl Optimizer for KnownBits {
                 if !ty.is_integer() {
                     continue;
                 }
-                let type_mask = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))?;
+                // Skip types KnownBits doesn't track (U128/U256).
+                let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else { continue };
                 let Some(&kb) = known.get(&out) else { continue };
                 if !kb.all_known(type_mask) {
                     continue;

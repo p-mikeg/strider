@@ -172,7 +172,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
 
     let lhs_c = int_const_val(fg, lhs);
     let rhs_c = int_const_val(fg, rhs);
-    let all_ones = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))?;
+    // Types wider than U64 (U128/U256) aren't representable in the 64-bit
+    // IntConst slot — skip algebraic-identity folding for them.
+    let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     // Full constant evaluation when both operands are known.
     if let (Some(l), Some(r)) = (lhs_c, rhs_c) {

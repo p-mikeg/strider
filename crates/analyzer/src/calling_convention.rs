@@ -86,6 +86,26 @@ impl CallingConvention {
         }
     }
 
+    /// Returns the ARM 32-bit AAPCS calling convention.
+    ///
+    /// Argument registers: r0–r3
+    /// Callee-saved: r4–r11, sp, lr
+    /// Return value: r0, r1  (r0/r1 pair is used for 64-bit return values)
+    ///
+    /// Unlike x86, the ARM `bl` instruction stores the return address in the
+    /// link register `lr` rather than pushing it on the stack, so the first
+    /// stack-passed arg sits at SP + 0.
+    pub fn arm_aapcs() -> CallingConvention {
+        CallingConvention {
+            arch: crate::arch::SleighArch::arm(),
+            arg_passing_regs: &["r0", "r1", "r2", "r3"],
+            callee_saved_regs: &["r4", "r5", "r6", "r7", "r8",
+                                 "r9", "r10", "r11", "sp", "lr"],
+            ret_val_regs: &["r0", "r1"],
+            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+        }
+    }
+
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
@@ -150,6 +170,7 @@ mod tests {
 
     fn x86_64_regs() -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::x86_64()) }
     fn x86_regs()    -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::x86()) }
+    fn arm_regs()    -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::arm()) }
 
     /// Builds `cc` against `regs`, asserts success, and returns the result.
     #[track_caller]
@@ -259,6 +280,75 @@ mod tests {
         }
     }
 
+    // ── ARM AAPCS ────────────────────────────────────────────────────────────
+
+    /// `build` must resolve exactly as many varnodes as there are register
+    /// names in each category.
+    #[test]
+    fn arm_aapcs_resolves_correct_number_of_registers() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_eq!(built.arg_passing_regs.len(),  4,  "AAPCS has 4 arg registers (r0–r3)");
+        assert_eq!(built.callee_saved_regs.len(), 10, "AAPCS has 10 callee-saved (r4–r11, sp, lr)");
+        assert_eq!(built.ret_val_regs.len(),      2,  "AAPCS returns in r0/r1");
+    }
+
+    /// Arg-passing and callee-saved sets must be disjoint.
+    #[test]
+    fn arm_aapcs_arg_and_callee_saved_are_disjoint() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_disjoint(&built.arg_passing_regs, &built.callee_saved_regs,
+                        "ARM AAPCS arg vs callee-saved");
+    }
+
+    /// Every arg-passing register must be distinct from every other.
+    #[test]
+    fn arm_aapcs_all_arg_registers_are_distinct() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_all_distinct(&built.arg_passing_regs, "ARM AAPCS arg registers");
+    }
+
+    /// All callee-saved registers must be distinct from each other.
+    #[test]
+    fn arm_aapcs_all_callee_saved_registers_are_distinct() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_all_distinct(&built.callee_saved_regs, "ARM AAPCS callee-saved registers");
+    }
+
+    /// Return-value registers must be distinct from each other.
+    #[test]
+    fn arm_aapcs_return_registers_are_distinct() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_all_distinct(&built.ret_val_regs, "ARM AAPCS return registers");
+    }
+
+    /// On ARM 32-bit, all general-purpose registers are 4 bytes.
+    #[test]
+    fn arm_aapcs_all_resolved_registers_are_4_bytes() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        for vn in built.arg_passing_regs.iter()
+                       .chain(&built.callee_saved_regs)
+                       .chain(&built.ret_val_regs) {
+            assert_eq!(vn.size, 4, "expected 4-byte register on ARM-32, got {:?}", vn);
+        }
+    }
+
+    /// The stack-pointer varnode is resolved to `sp`.
+    #[test]
+    fn arm_aapcs_stack_ptr_is_sp() {
+        let regs = arm_regs();
+        let built = CallingConvention::arm_aapcs().build(&regs).unwrap();
+        let sp = regs.name_to_vn("sp").expect("sp must resolve");
+        assert_eq!(built.stack_ptr_vn, sp);
+    }
+
+    /// ARM `bl` does not push the return address, so stack args start at
+    /// SP + 0 and are 4-byte spaced.
+    #[test]
+    fn arm_aapcs_stack_arg_offsets_are_4_byte_spaced() {
+        let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
+        assert_eq!(built.stack_arg_offsets, vec![0, 4, 8, 12, 16, 20, 24, 28]);
+    }
+
     // ── cross-architecture invariants ─────────────────────────────────────────
 
     /// For any supported architecture, building with valid register names
@@ -269,6 +359,7 @@ mod tests {
         let cases = [
             Case { name: "x86-64 SysV", cc: CallingConvention::x86_64_systemv_abi(), regs: x86_64_regs() },
             Case { name: "x86 cdecl",   cc: CallingConvention::x86_cdecl(),           regs: x86_regs() },
+            Case { name: "ARM AAPCS",   cc: CallingConvention::arm_aapcs(),           regs: arm_regs() },
         ];
         for Case { name, cc, regs } in cases {
             let built = cc.build(&regs)
@@ -328,6 +419,7 @@ mod tests {
         let cases: &[(CallingConvention, rsleigh::SleighRegs)] = &[
             (CallingConvention::x86_64_systemv_abi(), x86_64_regs()),
             (CallingConvention::x86_cdecl(),           x86_regs()),
+            (CallingConvention::arm_aapcs(),           arm_regs()),
         ];
         for (cc, regs) in cases {
             let built = cc.build(regs).expect("preset must build");

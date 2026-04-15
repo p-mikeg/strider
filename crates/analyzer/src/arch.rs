@@ -65,6 +65,20 @@ impl SleighArch {
         }
     }
     
+    /// Returns the little-endian ARM 32-bit (ARMv8 A-profile, non-Thumb)
+    /// architecture descriptor.
+    ///
+    /// Uses the `ARM8_le` Sleigh spec with the `ARM_v45` processor spec, which
+    /// matches the `-marm` compilation target in `binary_tests/arch/arm.mk`.
+    pub fn arm() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
+            pspec: rsleigh::pspec::PSPEC_ARM_V45,
+            endianess: Endianess::Little,
+            stack_ptr_reg_name: "sp"
+        }
+    }
+
     /// Returns the little-endian AArch64 (ARM 64-bit) architecture descriptor.
     pub fn aarch64() -> SleighArch {
         SleighArch { 
