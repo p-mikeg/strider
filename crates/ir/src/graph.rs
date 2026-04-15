@@ -28,7 +28,10 @@ pub struct Graph {
     pub(crate) input_pool: ListPool<NodeInputId>,
     /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
     /// for cacheable node kinds.
-    pub(crate) node_to_id: HashMap<(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>), NodeId>
+    pub(crate) node_to_id: HashMap<(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>), NodeId>,
+    /// Side-map from [`NodeKind::StackStorePhi`] nodes to their per-predecessor
+    /// SP-relative offsets.  Kept external so that `NodeKind` stays `Copy`.
+    pub(crate) stack_phi_offsets: HashMap<NodeId, Vec<i64>>,
 }
 
 impl Default for Graph {
@@ -46,7 +49,8 @@ impl Graph {
             inputs: PrimaryMap::new(),
             output_pool: ListPool::new(),
             input_pool: ListPool::new(),
-            node_to_id: HashMap::new()
+            node_to_id: HashMap::new(),
+            stack_phi_offsets: HashMap::new(),
         }
     }
 
@@ -60,6 +64,23 @@ impl Graph {
     #[inline]
     pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut NodeKind {
         &mut self.nodes[node_id].kind
+    }
+
+    /// Returns the per-predecessor SP-relative offsets associated with a
+    /// [`NodeKind::StackStorePhi`] node, or an empty slice if none are set.
+    #[inline]
+    pub fn stack_phi_offsets(&self, node_id: NodeId) -> &[i64] {
+        self.stack_phi_offsets
+            .get(&node_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Associates a list of per-predecessor SP-relative offsets with a
+    /// [`NodeKind::StackStorePhi`] node.  Replaces any prior value.
+    #[inline]
+    pub fn set_stack_phi_offsets(&mut self, node_id: NodeId, offsets: Vec<i64>) {
+        self.stack_phi_offsets.insert(node_id, offsets);
     }
 
     /// Creates a new node with the given kind, inputs, and output kinds.
@@ -263,6 +284,25 @@ impl Graph {
         // Get all input ids of the node
         let input_ids: SmallVec<[NodeInputId; 4]> =
             self.nodes[node_id].inputs.as_slice(&self.input_pool).into();
+
+        // Remove the node from the dedup cache before we mutate its inputs —
+        // otherwise a later `create_node` with the original (kind, inputs,
+        // outputs) key would return this zombie with an empty input list.
+        if self.nodes[node_id].kind.is_cacheable() {
+            let input_outputs: Vec<NodeOutputId> = input_ids
+                .iter()
+                .map(|&iid| self.inputs[iid].output_id)
+                .collect();
+            let output_kinds: Vec<NodeOutputKind> = self.nodes[node_id]
+                .outputs
+                .as_slice(&self.output_pool)
+                .iter()
+                .map(|&oid| self.outputs[oid].kind)
+                .collect();
+            let key = (Node::new(self.nodes[node_id].kind), input_outputs, output_kinds);
+            self.node_to_id.remove(&key);
+        }
+
         // Remove their dependency on the output
         for &input_id in &input_ids {
             self.unlink_input_from_output_list(input_id);
@@ -422,6 +462,40 @@ mod tests {
         assert_ne!(id_a, id_b, "non-cacheable nodes must always produce distinct ids");
     }
 
+    /// Two adjacent `Call` nodes with identical target and argument outputs
+    /// must stay distinct — Call is non-cacheable because `CallStackArgCollect`
+    /// mutates its inputs after construction.
+    #[test]
+    fn adjacent_calls_with_same_args_are_distinct() {
+        let mut graph = Graph::new();
+        let ctrl_a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem_a = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let [ctrl_out] = graph.node_outputs_exact::<1>(ctrl_a).unwrap();
+        let [mem_out]  = graph.node_outputs_exact::<1>(mem_a).unwrap();
+        let target = graph.create_node(NodeKind::IntConst(0x1000), [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let [target_out] = graph.node_outputs_exact::<1>(target).unwrap();
+        let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
+        let call_a = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
+        let call_b = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
+        assert_ne!(call_a, call_b,
+            "Call is non-cacheable so identical-argument calls must be distinct");
+    }
+
+    /// `StackStorePhi` is non-cacheable; its offsets live in a side-map and
+    /// two distinct phis with the same space and inputs must remain distinct.
+    #[test]
+    fn stack_store_phi_is_never_deduplicated() {
+        let mut graph = Graph::new();
+        let space = rsleigh::VnSpace::RAM;
+        let id_a = graph.create_node(NodeKind::StackStorePhi { space }, [], [NodeOutputKind::Memory]);
+        let id_b = graph.create_node(NodeKind::StackStorePhi { space }, [], [NodeOutputKind::Memory]);
+        assert_ne!(id_a, id_b);
+        graph.set_stack_phi_offsets(id_a, vec![0, -4]);
+        assert_eq!(graph.stack_phi_offsets(id_a), &[0, -4]);
+        assert_eq!(graph.stack_phi_offsets(id_b), &[] as &[i64]);
+    }
+
     /// After adding an input to a non-cacheable node the output's use-list
     /// must contain exactly that input, and `node_inputs` must reflect it.
     #[test]
@@ -529,6 +603,46 @@ mod tests {
 
         assert_eq!(graph.output_uses(out).count(), 0, "all uses must be removed after detach");
         assert_eq!(graph.node_inputs(ret).len(), 0, "node must have no inputs after detach");
+    }
+
+    /// After `detach_node_inputs` on a cacheable node, a subsequent
+    /// `create_node` call with the same `(kind, inputs, output_kinds)` must
+    /// produce a fresh, fully-connected node — not return the detached
+    /// zombie whose input list is empty.
+    ///
+    /// Regression: before the dedup-cache was cleaned on detach, optimizer
+    /// passes that created identical Adds after `RedundantPhis` had detached
+    /// the original unreachable Add would alias to the zombie, and any
+    /// follow-up pass calling `node_inputs_exact::<2>` would fail with
+    /// `WrongInputCount(..., 2, 0)`.
+    #[test]
+    fn detach_evicts_cacheable_node_from_dedup_cache() {
+        use crate::ops::IntBinaryOp;
+        let mut graph = Graph::new();
+        let lhs = graph.create_node(NodeKind::IntConst(7), [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
+        let rhs = graph.create_node(NodeKind::IntConst(9), [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
+        let [lhs_out] = graph.node_outputs_exact::<1>(lhs).unwrap();
+        let [rhs_out] = graph.node_outputs_exact::<1>(rhs).unwrap();
+
+        let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
+        let add_a = graph.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [lhs_out, rhs_out], [ty]);
+
+        graph.detach_node_inputs(add_a);
+        assert_eq!(graph.node_inputs(add_a).len(), 0);
+
+        let add_b = graph.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [lhs_out, rhs_out], [ty]);
+
+        assert_ne!(add_a, add_b,
+            "detach must evict the zombie from the dedup cache so a re-created \
+             identical node is fresh");
+        assert_eq!(graph.node_inputs(add_b).len(), 2,
+            "the re-created node must be fully connected");
     }
 
     /// An output consumed by a single node must be reported by

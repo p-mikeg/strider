@@ -32,7 +32,11 @@ pub struct CallingConvention {
     arch: crate::arch::SleighArch,
     arg_passing_regs:  &'static [&'static str],
     callee_saved_regs:  &'static [&'static str],
-    ret_val_regs: &'static [&'static str]
+    ret_val_regs: &'static [&'static str],
+    /// Byte offsets from the call-time stack pointer for each positional
+    /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
+    /// (after register arguments are exhausted).
+    stack_arg_offsets: &'static [i64],
 }
 
 /// A calling convention whose register names have been resolved to concrete
@@ -42,6 +46,8 @@ pub struct BuiltCallingConvention {
     pub arg_passing_regs: Vec<rsleigh::Vn>,
     pub callee_saved_regs: Vec<rsleigh::Vn>,
     pub ret_val_regs: Vec<rsleigh::Vn>,
+    pub stack_ptr_vn: rsleigh::Vn,
+    pub stack_arg_offsets: Vec<i64>,
 }
 
 
@@ -57,34 +63,45 @@ impl CallingConvention {
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             callee_saved_regs: &["RBX", "RSP", "RBP", "R12", "R13", "R14", "R15"],
             ret_val_regs: &["RAX", "RDX"],
+            // Offsets start at +8: the `call` instruction pushes an 8-byte
+            // return address, so SP-at-call points to the return address and
+            // the first stack-passed arg (arg 7) lives one slot above it.
+            stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
          }
     }
 
     /// Returns the AArch64 AAPCS64 calling convention.
     ///
     /// Argument registers: x0–x7
-    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register)
+    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register), sp
     /// Return value: x0, x1
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
             arch: crate::arch::SleighArch::aarch64(),
             arg_passing_regs:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             callee_saved_regs: &["x19", "x20", "x21", "x22", "x23",
-                                  "x24", "x25", "x26", "x27", "x28", "x29", "x30"],
+                                  "x24", "x25", "x26", "x27", "x28", "x29", "x30", "sp"],
             ret_val_regs: &["x0", "x1"],
+            stack_arg_offsets: &[0, 8, 16, 24],
         }
     }
 
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
+    /// ESP is listed as callee-saved because cdecl requires the caller to
+    /// clean up: the value of ESP after the call equals its value before.
     /// Return value: EAX, EDX
     pub fn x86_cdecl() -> CallingConvention {
         CallingConvention {
             arch: crate::arch::SleighArch::x86(),
             arg_passing_regs: &[],
-            callee_saved_regs: &[],
+            callee_saved_regs: &["EBX", "ESI", "EDI", "EBP", "ESP"],
             ret_val_regs: &["EAX", "EDX"],
+            // Offsets start at +4: the `call` instruction pushes a 4-byte
+            // return address, so SP-at-call points to the return address and
+            // arg 0 lives one slot above it.
+            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
          }
     }
 
@@ -93,12 +110,26 @@ impl CallingConvention {
     ///
     /// The number of varnodes in each resulting list equals the length of the
     /// corresponding name list.  Returns an error if any register name is
-    /// unknown.
+    /// unknown, or if the architecture's stack-pointer register is not
+    /// included in `callee_saved_regs` (this property is required by the
+    /// stack-argument tracking passes).
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
+        let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
+        let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
+        let ret_val_regs = regs_to_vns(self.ret_val_regs, sleigh_regs)?;
+        let stack_ptr_name = self.arch.stack_ptr_reg_name;
+        let stack_ptr_vn = sleigh_regs
+            .name_to_vn(stack_ptr_name)
+            .ok_or(Error::UnknownRegName(stack_ptr_name.to_string()))?;
+        if !callee_saved_regs.contains(&stack_ptr_vn) {
+            return Err(Error::StackPtrNotCalleeSaved(stack_ptr_name));
+        }
         Ok(BuiltCallingConvention {
-            arg_passing_regs: regs_to_vns(self.arg_passing_regs, &sleigh_regs)?,
-            callee_saved_regs: regs_to_vns(self.callee_saved_regs, &sleigh_regs)?,
-            ret_val_regs: regs_to_vns(self.ret_val_regs, &sleigh_regs)?,
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            stack_ptr_vn,
+            stack_arg_offsets: self.stack_arg_offsets.to_vec(),
         })
     }
 }
@@ -262,6 +293,7 @@ mod tests {
                 arg_passing_regs: std::slice::from_ref(bad_name),
                 callee_saved_regs: &[],
                 ret_val_regs: &[],
+                stack_arg_offsets: &[],
             };
             let result = cc.build(&x86_64_regs());
             assert!(
@@ -280,8 +312,81 @@ mod tests {
             arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
             callee_saved_regs: &[],
             ret_val_regs: &[],
+            stack_arg_offsets: &[],
         };
         let result = cc.build(&x86_64_regs());
         assert!(result.is_err(), "a list with one bad name must fail");
+    }
+
+    // ── stack pointer / stack argument offsets ───────────────────────────────
+
+    /// Every preset must list its stack-pointer register in `callee_saved_regs`
+    /// so that the `CallStackArgCollect` pass can assume SP is restored after
+    /// the call.
+    #[test]
+    fn every_preset_has_sp_in_callee_saved() {
+        let cases: &[(CallingConvention, rsleigh::SleighRegs)] = &[
+            (CallingConvention::x86_64_systemv_abi(), x86_64_regs()),
+            (CallingConvention::x86_cdecl(),           x86_regs()),
+        ];
+        for (cc, regs) in cases {
+            let built = cc.build(regs).expect("preset must build");
+            assert!(
+                built.callee_saved_regs.contains(&built.stack_ptr_vn),
+                "stack pointer {:?} missing from callee_saved_regs",
+                built.stack_ptr_vn,
+            );
+        }
+    }
+
+    /// The stack-pointer varnode is resolved from the architecture's
+    /// `stack_ptr_reg_name` and exposed on `BuiltCallingConvention`.
+    #[test]
+    fn x86_cdecl_stack_ptr_is_esp() {
+        let regs = x86_regs();
+        let built = CallingConvention::x86_cdecl().build(&regs).unwrap();
+        let esp = regs.name_to_vn("ESP").expect("ESP must resolve");
+        assert_eq!(built.stack_ptr_vn, esp);
+    }
+
+    #[test]
+    fn x86_64_sysv_stack_ptr_is_rsp() {
+        let regs = x86_64_regs();
+        let built = CallingConvention::x86_64_systemv_abi().build(&regs).unwrap();
+        let rsp = regs.name_to_vn("RSP").expect("RSP must resolve");
+        assert_eq!(built.stack_ptr_vn, rsp);
+    }
+
+    /// Stack argument offsets are preserved from the preset.
+    #[test]
+    fn x86_cdecl_stack_arg_offsets_are_positional() {
+        let built = build_ok(CallingConvention::x86_cdecl(), &x86_regs());
+        assert_eq!(built.stack_arg_offsets, vec![4, 8, 12, 16, 20, 24, 28, 32]);
+    }
+
+    #[test]
+    fn x86_64_sysv_stack_arg_offsets_are_8_byte_spaced() {
+        let built = build_ok(CallingConvention::x86_64_systemv_abi(), &x86_64_regs());
+        assert_eq!(built.stack_arg_offsets, vec![8, 16, 24, 32, 40, 48]);
+    }
+
+    /// `build` must reject a calling convention whose callee-saved list does
+    /// not include the stack pointer.
+    #[test]
+    fn build_rejects_missing_stack_ptr_in_callee_saved() {
+        // cdecl's SP is ESP; if we construct a custom convention without ESP
+        // in callee_saved_regs, build() must error.
+        let cc = CallingConvention {
+            arch: crate::arch::SleighArch::x86(),
+            arg_passing_regs: &[],
+            callee_saved_regs: &["EBX"], // intentionally missing ESP
+            ret_val_regs: &["EAX"],
+            stack_arg_offsets: &[],
+        };
+        let result = cc.build(&x86_regs());
+        assert!(
+            matches!(result, Err(Error::StackPtrNotCalleeSaved("ESP"))),
+            "expected StackPtrNotCalleeSaved(\"ESP\"), got {result:?}",
+        );
     }
 }

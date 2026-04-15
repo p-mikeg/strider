@@ -348,6 +348,24 @@ pub enum NodeKind {
     /// Store to the given address space.
     Store(rsleigh::VnSpace),
 
+    // ── Stack-slot stores (produced by StackStoreDetect) ──────────────────────
+    /// Store whose address has been resolved to `base + offset`, where `base`
+    /// is an SP-rooted node (either `InitialVar(stack_ptr)` or a
+    /// `ControlPhi(stack_ptr)` that could not be further reduced — typically
+    /// a loop-header SP phi with a back-edge to itself).
+    ///
+    /// Inputs: `[memory, base, data]`.  Outputs: `[Memory]`.
+    ///
+    /// The base is tracked explicitly so that stores with identical offsets
+    /// taken from different SP versions are not conflated.
+    StackStore { space: rsleigh::VnSpace, offset: i64 },
+    /// Store whose address is an SP-phi of known per-branch offsets.
+    /// Inputs: `[phi_token, memory, data]`.  Outputs: `[Memory]`.
+    /// The per-branch offsets are stored in
+    /// [`Graph::stack_phi_offsets`](crate::Graph::stack_phi_offsets) rather
+    /// than inline so that `NodeKind` remains `Copy`.
+    StackStorePhi { space: rsleigh::VnSpace },
+
     // ── Integer constants and operations ──────────────────────────────────────
     /// A compile-time integer constant of value `u64`.
     IntConst(u64),
@@ -458,6 +476,9 @@ impl NodeKind {
 
                 | Self::MemPhi
                 | Self::ControlPhi(..)
+
+                | Self::Call
+                | Self::StackStorePhi { .. }
         )
     }
 
@@ -590,12 +611,15 @@ mod tests {
     /// dynamically after creation.
     #[test]
     fn non_cacheable_kinds_are_not_cacheable() {
+        let space = rsleigh::VnSpace::RAM;
         let non_cacheable = [
             NodeKind::Entry,
             NodeKind::InitialMemory,
             NodeKind::Return,
             NodeKind::ControlState,
             NodeKind::MemPhi,
+            NodeKind::Call,
+            NodeKind::StackStorePhi { space },
         ];
         for kind in non_cacheable {
             assert!(!kind.is_cacheable(), "{kind:?} should not be cacheable");
@@ -611,6 +635,16 @@ mod tests {
         assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
         assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
         assert!(NodeKind::If.is_cacheable());
+    }
+
+    /// `StackStore` is a normal cacheable memory operation (its identity is
+    /// fully determined by space+offset+inputs), while `StackStorePhi` must
+    /// stay non-cacheable because its offsets live in a side-map.
+    #[test]
+    fn stack_store_cacheability() {
+        let space = rsleigh::VnSpace::RAM;
+        assert!(NodeKind::StackStore { space, offset: 0 }.is_cacheable());
+        assert!(!NodeKind::StackStorePhi { space }.is_cacheable());
     }
 
     // ── Float NodeOutputType ─────────────────────────────────────────────────

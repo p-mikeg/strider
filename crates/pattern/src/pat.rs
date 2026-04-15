@@ -148,6 +148,31 @@ pub enum PatKind {
         /// Bind the store's `NodeId` to this variable.
         node_var:   Option<NodeVar>,
     },
+    /// `StackStore { space, offset }`: inputs = [mem(0), data(1)] → mem output.
+    /// Produced by the `StackStoreDetect` optimization pass when a store's
+    /// address resolves to `InitialVar(stack_ptr) + offset`.
+    StackStore {
+        space:      Option<rsleigh::VnSpace>,
+        offset:     Option<i64>,
+        data:       Option<Pat>,
+        /// Bind the stack-store's memory output `NodeOutputId` to this variable.
+        output_var: Option<Var>,
+        /// Bind the stack-store's `NodeId` to this variable.
+        node_var:   Option<NodeVar>,
+    },
+    /// `StackStorePhi { space }`: inputs = [phi_token(0), mem(1), data(2)] → mem output.
+    /// Per-branch offsets are stored as a side map on the graph; see
+    /// [`ir::Graph::stack_phi_offsets`].  `offsets` (if supplied) matches the
+    /// sorted-ascending list of per-branch offsets exactly.
+    StackStorePhi {
+        space:      Option<rsleigh::VnSpace>,
+        offsets:    Option<Vec<i64>>,
+        data:       Option<Pat>,
+        /// Bind the stack-store-phi's memory output to this variable.
+        output_var: Option<Var>,
+        /// Bind the stack-store-phi's `NodeId` to this variable.
+        node_var:   Option<NodeVar>,
+    },
 
     // ── Phi nodes ─────────────────────────────────────────────────────────────
     /// `ControlPhi(vn)`: inputs = [phi_token(0), pred_val(1), pred_val(2)…].
@@ -410,6 +435,104 @@ impl From<StorePat> for Pat {
         Pat::new(PatKind::Store {
             space:      b.space,
             addr:       b.addr,
+            data:       b.data,
+            output_var: b.output_var,
+            node_var:   b.node_var,
+        })
+    }
+}
+
+// ── Builder: StackStorePat ────────────────────────────────────────────────────
+
+/// Builder for `StackStore` node patterns.  Created by [`stack_store`].
+pub struct StackStorePat {
+    space:      Option<rsleigh::VnSpace>,
+    offset:     Option<i64>,
+    data:       Option<Pat>,
+    output_var: Option<Var>,
+    node_var:   Option<NodeVar>,
+}
+
+impl StackStorePat {
+    pub(crate) fn new() -> Self {
+        Self { space: None, offset: None, data: None, output_var: None, node_var: None }
+    }
+
+    /// Restrict the match to stack-stores in address space `s`.
+    pub fn space(mut self, s: rsleigh::VnSpace) -> Self { self.space = Some(s); self }
+    /// Match only the stack-store at the given SP-relative offset.
+    pub fn offset(mut self, o: i64) -> Self { self.offset = Some(o); self }
+    /// Constrain the stored value.
+    pub fn data(mut self, p: impl Into<Pat>) -> Self { self.data = Some(p.into()); self }
+    /// Bind the stack-store's memory output (`NodeOutputId`) to `v`.
+    pub fn capture_output(mut self, v: Var) -> Self { self.output_var = Some(v); self }
+    /// Bind the stack-store's node (`NodeId`) to `nv`.
+    pub fn capture_node(mut self, nv: NodeVar) -> Self { self.node_var = Some(nv); self }
+    /// After matching, bind the matched output to `v`.
+    pub fn capture(self, v: Var) -> Pat { Pat::from(self).capture(v) }
+    /// After matching, additionally run `f` — fails if it returns `false`.
+    pub fn when<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    {
+        Pat::from(self).when(f)
+    }
+}
+
+impl From<StackStorePat> for Pat {
+    fn from(b: StackStorePat) -> Pat {
+        Pat::new(PatKind::StackStore {
+            space:      b.space,
+            offset:     b.offset,
+            data:       b.data,
+            output_var: b.output_var,
+            node_var:   b.node_var,
+        })
+    }
+}
+
+// ── Builder: StackStorePhiPat ─────────────────────────────────────────────────
+
+/// Builder for `StackStorePhi` node patterns.  Created by [`stack_store_phi`].
+pub struct StackStorePhiPat {
+    space:      Option<rsleigh::VnSpace>,
+    offsets:    Option<Vec<i64>>,
+    data:       Option<Pat>,
+    output_var: Option<Var>,
+    node_var:   Option<NodeVar>,
+}
+
+impl StackStorePhiPat {
+    pub(crate) fn new() -> Self {
+        Self { space: None, offsets: None, data: None, output_var: None, node_var: None }
+    }
+
+    pub fn space(mut self, s: rsleigh::VnSpace) -> Self { self.space = Some(s); self }
+    /// Match the per-branch offsets exactly.  The supplied list is sorted
+    /// ascending before comparison, so caller order is irrelevant.
+    pub fn offsets<I: IntoIterator<Item = i64>>(mut self, os: I) -> Self {
+        let mut v: Vec<i64> = os.into_iter().collect();
+        v.sort();
+        self.offsets = Some(v);
+        self
+    }
+    pub fn data(mut self, p: impl Into<Pat>) -> Self { self.data = Some(p.into()); self }
+    pub fn capture_output(mut self, v: Var) -> Self { self.output_var = Some(v); self }
+    pub fn capture_node(mut self, nv: NodeVar) -> Self { self.node_var = Some(nv); self }
+    pub fn capture(self, v: Var) -> Pat { Pat::from(self).capture(v) }
+    pub fn when<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    {
+        Pat::from(self).when(f)
+    }
+}
+
+impl From<StackStorePhiPat> for Pat {
+    fn from(b: StackStorePhiPat) -> Pat {
+        Pat::new(PatKind::StackStorePhi {
+            space:      b.space,
+            offsets:    b.offsets,
             data:       b.data,
             output_var: b.output_var,
             node_var:   b.node_var,
@@ -816,6 +939,12 @@ pub fn load() -> LoadPat  { LoadPat::new() }
 /// Starts building a `Store` pattern.  Chain `.addr()` / `.data()` / `.space()`
 /// to add constraints.
 pub fn store() -> StorePat { StorePat::new() }
+/// Starts building a `StackStore` pattern.  Chain `.offset()` / `.data()` /
+/// `.space()` to add constraints.
+pub fn stack_store() -> StackStorePat { StackStorePat::new() }
+/// Starts building a `StackStorePhi` pattern.  Chain `.offsets(…)` /
+/// `.data()` / `.space()` to add constraints.
+pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 // Phi nodes
 

@@ -6,6 +6,18 @@ use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 
+/// Formats a signed SP-relative offset so that the sign is always shown
+/// (e.g. `0` → ` + 0`, `-4` → ` - 4`, `8` → ` + 8`).  Used by the StackStore
+/// / StackStorePhi labels.
+fn signed_offset(o: i64) -> String {
+    if o < 0 {
+        format!(" - {}", -(o as i128))
+    } else {
+        format!(" + {o}")
+    }
+}
+
+
 // ── node appearance ───────────────────────────────────────────────────────────
 
 fn node_shape(kind: &NodeKind) -> &'static str {
@@ -22,7 +34,9 @@ fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::IfCase(_)             => "trapezium",
 
         NodeKind::Load(_)
-        | NodeKind::Store(_)            => "box3d",
+        | NodeKind::Store(_)
+        | NodeKind::StackStore { .. }
+        | NodeKind::StackStorePhi { .. } => "box3d",
 
         NodeKind::Call                  => "rarrow",
 
@@ -56,6 +70,9 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::Load(_)
         | NodeKind::Store(_)            => "\"#102030\"",
+
+        NodeKind::StackStore { .. }
+        | NodeKind::StackStorePhi { .. } => "\"#20182a\"",   // stack-slot purple
 
         NodeKind::Call                  => "\"#3a1010\"",
 
@@ -147,6 +164,22 @@ fn edge_style<R: MemReader>(
         NodeKind::Store(_) => match input_idx {
             0 => ("mem",  "\"#cc88aa\""),
             1 => ("addr", "\"#cc88ff\""),  // purple
+            2 => ("data", "\"#ff8800\""),  // orange
+            _ => ("",     "\"#cccccc\""),
+        },
+
+        // StackStore inputs = [memory, base, data].
+        NodeKind::StackStore { .. } => match input_idx {
+            0 => ("mem",  "\"#cc88aa\""),
+            1 => ("sp",   "\"#cc88ff\""),  // purple — SP base
+            2 => ("data", "\"#ff8800\""),  // orange
+            _ => ("",     "\"#cccccc\""),
+        },
+
+        // StackStorePhi inputs = [phi_token, memory, data].
+        NodeKind::StackStorePhi { .. } => match input_idx {
+            0 => ("phi",  "\"#dddddd\""),
+            1 => ("mem",  "\"#cc88aa\""),
             2 => ("data", "\"#ff8800\""),  // orange
             _ => ("",     "\"#cccccc\""),
         },
@@ -303,6 +336,31 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     .unwrap_or_default();
                 format!("Store{ty}\n→ {space}")
             }
+            NodeKind::StackStore { space, offset } => {
+                let space = self.pretty_vnspace(*space);
+                // data is input 2; memory and base are 0 and 1
+                let ty = self.input_type(node, 2)
+                    .map(|t| format!(" {}", t.as_str()))
+                    .unwrap_or_default();
+                format!("StackStore{ty}\n→ {space}[sp{}]", signed_offset(*offset))
+            }
+            NodeKind::StackStorePhi { space } => {
+                let space = self.pretty_vnspace(*space);
+                let ty = self.input_type(node, 2)
+                    .map(|t| format!(" {}", t.as_str()))
+                    .unwrap_or_default();
+                let offsets = self.graph.stack_phi_offsets(node);
+                let offsets_str = if offsets.is_empty() {
+                    "?".to_string()
+                } else {
+                    offsets
+                        .iter()
+                        .map(|o| format!("sp{}", signed_offset(*o)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                format!("φ StackStore{ty}\n→ {space}[{offsets_str}]")
+            }
 
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
@@ -447,6 +505,17 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
+    /// Emits an `InitialVar` node at the given dot id, for inline duplication
+    /// as the SP-base of `StackStore` consumers.  Keeps the visual style
+    /// identical to the shared `InitialVar` rendering.
+    fn emit_initial_var_node(&self, node: NodeId, dot_id: &str, out: &mut dot::DotEmitter) {
+        let kind = self.graph.node_kind(node);
+        let shape = node_shape(&kind);
+        let fc = node_fillcolor(&kind);
+        let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
+        out.node(dot_id, &label, shape, &[("fillcolor", fc)]);
+    }
+
     /// Returns the register name for a clobbered call output using the
     /// `call_clobbered` map: the i-th clobbered output (output_index - 2)
     /// corresponds to the i-th vn in the map entry for that call node.
@@ -573,15 +642,27 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
         for (idx, parent_output) in self.graph.node_inputs(node).into_iter().enumerate() {
             let parent_id = self.graph.get_node_from_output(parent_output);
+            let parent_kind = *self.graph.node_kind(parent_id);
+
+            // Inline the SP `InitialVar` into each StackStore/StackStorePhi
+            // consumer: otherwise every stack store edges back to a single
+            // shared node, which turns the graph into a visual hub.
+            let inline_initial_var = matches!(parent_kind, NodeKind::InitialVar(_))
+                && matches!(kind, NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. })
+                && idx == 1;
 
             // If the producing output has a virtual node, connect from it.
             // For clobbered Call outputs (index >= 2), create the virtual node
             // on the fly the first time a consumer is encountered.
-            let parent_dot_id = {
+            let parent_dot_id = if inline_initial_var {
+                let v = state.alloc_virtual_id();
+                self.emit_initial_var_node(parent_id, &v, out);
+                v
+            } else {
                 let maybe_virt = state.virtual_nodes.get(&parent_output).cloned();
                 if let Some(virt_id) = maybe_virt {
                     virt_id
-                } else if *self.graph.node_kind(parent_id) == NodeKind::Call {
+                } else if parent_kind == NodeKind::Call {
                     let (_, output_index) = self.graph.output_definition(parent_output);
                     if output_index >= 2 {
                         let name = self.call_clobbered_name(parent_output)?;
@@ -626,9 +707,19 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
             let (label, color) = edge_style(self, node, idx, parent_output);
 
+            // Numbered Call arg labels: inputs[0..2] are ctrl/mem/target,
+            // so arg N lives at inputs[3 + N].
+            let owned_label: Option<String> =
+                if matches!(kind, NodeKind::Call) && idx >= 3 {
+                    Some(format!("arg{}", idx - 3))
+                } else {
+                    None
+                };
+            let label_str: &str = owned_label.as_deref().unwrap_or(label);
+
             let mut extra: Vec<(&str, &str)> = vec![("color", color)];
-            if !label.is_empty() {
-                extra.push(("label", label));
+            if !label_str.is_empty() {
+                extra.push(("label", label_str));
                 extra.push(("fontcolor", "\"#cccccc\""));
                 extra.push(("fontsize", "9"));
             }

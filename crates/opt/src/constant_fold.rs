@@ -1,5 +1,5 @@
 use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
-use ir::node::{NodeId, NodeKind, NodeOutputKind, NodeOutputType};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use ir_macros::match_value;
 
 use crate::error::{Error, Result};
@@ -101,6 +101,66 @@ fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool
 
 // ── per-node folding ──────────────────────────────────────────────────────────
 
+/// If `out` is the output of an `Add` or `Sub` node that has one constant
+/// operand, returns `(base, delta)` such that `out == base + delta (mod 2^N)`.
+/// For `base - C` the delta is `-C mod 2^N`. Returns `None` otherwise.
+fn extract_const_offset(
+    fg: &BuiltFunctionGraph,
+    out: NodeOutputId,
+    ty: NodeOutputType,
+) -> Option<(NodeOutputId, u64)> {
+    let node = fg.graph.get_node_from_output(out);
+    let kind = *fg.graph.node_kind(node);
+    let inputs = fg.graph.node_inputs(node);
+    if inputs.len() != 2 { return None; }
+    let (l, r) = (inputs[0], inputs[1]);
+    match kind {
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+            if let Some(c) = int_const_val(fg, r) { return Some((l, c)); }
+            if let Some(c) = int_const_val(fg, l) { return Some((r, c)); }
+            None
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
+            let c = int_const_val(fg, r)?;
+            let neg = 0u64.wrapping_sub(c);
+            ty.get_unsigned_int(neg).map(|n| (l, n))
+        }
+        _ => None,
+    }
+}
+
+/// Rewrites `(base ± C1) ± C2` into `base ± K` for a single folded constant.
+/// `outer_const` is the constant operand on the outer op, `inner_out` is the
+/// non-constant operand (expected to decompose via [`extract_const_offset`]).
+/// `outer_is_sub_with_const_rhs` is true when the outer op is `base - C2`.
+/// Returns `Changed` on rewrite.
+fn try_reassociate_add_sub(
+    fg: &mut BuiltFunctionGraph,
+    out: NodeOutputId,
+    ty: NodeOutputType,
+    inner_out: NodeOutputId,
+    outer_const: u64,
+    outer_is_sub_with_const_rhs: bool,
+) -> Result<OptimizationResult> {
+    let Some((base, inner_delta)) = extract_const_offset(fg, inner_out, ty) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let merged = if outer_is_sub_with_const_rhs {
+        inner_delta.wrapping_sub(outer_const)
+    } else {
+        inner_delta.wrapping_add(outer_const)
+    };
+    let masked = ty.get_unsigned_int(merged).ok_or(Error::ExpectedIntegerType(ty))?;
+    let merged_c = make_int_const(fg, masked, ty)?;
+    let new_node = fg.graph.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [base, merged_c],
+        [NodeOutputKind::OutputType(ty)],
+    );
+    let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
+    replace_all_uses(fg, out, new_out)
+}
+
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
     let NodeKind::IntBinaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
@@ -131,6 +191,15 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             if lhs_c == Some(0) {
                 return replace_all_uses(fg, out, rhs); // 0 + x → x
             }
+            // (base ± C1) + C2 → base + K
+            if let Some(c2) = rhs_c {
+                let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, false)?;
+                if r.changed() { return Ok(r); }
+            }
+            if let Some(c1) = lhs_c {
+                let r = try_reassociate_add_sub(fg, out, ty, rhs, c1, false)?;
+                if r.changed() { return Ok(r); }
+            }
         }
         IntBinaryOp::Sub => {
             if rhs_c == Some(0) {
@@ -139,6 +208,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             if lhs == rhs {
                 let zero = make_int_const(fg, 0, ty)?;
                 return replace_all_uses(fg, out, zero); // x - x → 0
+            }
+            // (base ± C1) - C2 → base + K
+            if let Some(c2) = rhs_c {
+                let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, true)?;
+                if r.changed() { return Ok(r); }
             }
         }
         IntBinaryOp::Mul => {
@@ -918,6 +992,225 @@ mod tests {
         }
         // 0xFF & 4 = 4, 4 & 7 = 4.
         assert_eq!(return_kind(&fg), NodeKind::IntConst(4));
+        Ok(())
+    }
+
+    // ── add/sub reassociation with constants ──────────────────────────────────
+
+    /// Fabricates a register varnode for use as a non-constant operand.
+    fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            size,
+            addr: rsleigh::VnAddr { off, space: rsleigh::VnSpace::REGISTER },
+        }
+    }
+
+    /// Builds a minimal function exposing a single tracked variable via
+    /// `read_variable` (which returns a `ControlPhi` output wrapping the
+    /// entry's `InitialVar`). The closure receives that non-constant value.
+    fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(ir::BuiltFunctionGraph, ir::Value)>
+    where
+        F: FnOnce(&mut FunctionBuilder, ir::Value) -> Result<ir::Value>,
+    {
+        let mut b = FunctionBuilder::new(vec![vn], &[vn], &[], &[])?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let x = b.read_variable(&vn)?;
+        let val = f(&mut b, x)?;
+        b.build_return(Some(val), &[])?;
+        Ok((b.build(), x))
+    }
+
+    /// Asserts the return-value node is `expected_base + expected_const`
+    /// (type-masked; operand order irrelevant).
+    fn assert_add_with_const(
+        fg: &ir::BuiltFunctionGraph,
+        expected_base: ir::Value,
+        expected_const: u64,
+        ty: NodeOutputType,
+    ) {
+        let val = return_value(fg);
+        let node = fg.graph.get_node_from_output(val);
+        assert!(
+            matches!(fg.graph.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+            "expected outer Add, got {:?}", fg.graph.node_kind(node)
+        );
+        let inputs = fg.graph.node_inputs(node);
+        assert_eq!(inputs.len(), 2);
+        let l = inputs[0];
+        let r = inputs[1];
+        let masked = ty.get_unsigned_int(expected_const).unwrap();
+        let const_on = |o: ir::Value| -> bool {
+            matches!(
+                *fg.graph.node_kind(fg.graph.get_node_from_output(o)),
+                NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
+            )
+        };
+        let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
+        assert!(
+            ok,
+            "expected `base + {:#x}`; got lhs kind={:?}, rhs kind={:?}",
+            masked,
+            fg.graph.node_kind(fg.graph.get_node_from_output(l)),
+            fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+        );
+    }
+
+    #[test]
+    fn reassoc_add_add_consts() -> Result<()> {
+        // (x + 3) + 4 → x + 7
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_add_sub_consts() -> Result<()> {
+        // (x - 3) + 4 → x + 1
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 1, NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_sub_add_consts_wrapping() -> Result<()> {
+        // (x + 3) - 4 → x + (3 - 4)  = x + 0xFFFF_FFFF_FFFF_FFFF
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 0xFFFF_FFFF_FFFF_FFFF, NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_sub_sub_consts() -> Result<()> {
+        // (x - 3) - 4 → x + (-7 mod 2^64)
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 0u64.wrapping_sub(7), NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_add_commuted_inner() -> Result<()> {
+        // (3 + x) + 4 → x + 7 (inner Add has const on lhs)
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(c3, x, IntBinaryOp::Add, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_add_commuted_outer() -> Result<()> {
+        // 4 + (x + 3) → x + 7 (outer Add has const on lhs)
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c3 = b.build_int_const(3, NodeOutputType::U64);
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_chain_three_subs() -> Result<()> {
+        // ((x - 4) - 4) - 4 → x + (-12 mod 2^64).  Requires the fixed-point
+        // loop to compose multiple reassociation steps.
+        let vn = reg_vn(0x1000, 8);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c4 = b.build_int_const(4, NodeOutputType::U64);
+            let a = b.build_int_binary_operation(x, c4, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            let b_ = b.build_int_binary_operation(a, c4, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        assert_add_with_const(&fg, x, 0u64.wrapping_sub(12), NodeOutputType::U64);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_chain_three_subs_u32() -> Result<()> {
+        // Same chain but at U32: the constant must be masked to 32 bits.
+        let vn = reg_vn(0x1000, 4);
+        let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+            let c4 = b.build_int_const(4, NodeOutputType::U32);
+            let a = b.build_int_binary_operation(x, c4, IntBinaryOp::Sub, NodeOutputType::U32)?;
+            let b_ = b.build_int_binary_operation(a, c4, IntBinaryOp::Sub, NodeOutputType::U32)?;
+            Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U32)?)
+        })?;
+        let mut changed = true;
+        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
+        let masked = NodeOutputType::U32.get_unsigned_int(0u64.wrapping_sub(12)).unwrap();
+        assert_add_with_const(&fg, x, masked, NodeOutputType::U32);
+        Ok(())
+    }
+
+    #[test]
+    fn reassoc_no_fold_without_const() -> Result<()> {
+        // (x + y) + z, no constants → untouched.
+        let xv = reg_vn(0x1000, 8);
+        let yv = reg_vn(0x1008, 8);
+        let zv = reg_vn(0x1010, 8);
+        let mut b = FunctionBuilder::new(
+            vec![xv, yv, zv], &[xv, yv, zv], &[], &[],
+        )?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let x = b.read_variable(&xv)?;
+        let y = b.read_variable(&yv)?;
+        let z = b.read_variable(&zv)?;
+        let inner = b.build_int_binary_operation(x, y, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let outer = b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
+        b.build_return(Some(outer), &[])?;
+        let mut fg = b.build();
+        let before = return_value(&fg);
+        // Should not change: no constants anywhere.
+        let res = ConstantFold.optimize(&mut fg)?;
+        assert!(!res.changed(), "no-const chain should not reassociate");
+        assert_eq!(return_value(&fg), before);
         Ok(())
     }
 

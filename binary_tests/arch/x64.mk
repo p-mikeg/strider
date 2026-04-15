@@ -1,2 +1,2 @@
 CC     := gcc
-CFLAGS := -m64 -O2 -g
+CFLAGS := -m64 -O2 -g -fno-stack-protector

@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let addr = obj
-        .symbol_by_name("fib")
+        .symbol_by_name("hard_func")
         .ok_or("'fib' symbol not found in binary")?
         .address();
 
@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    opt::default_pipeline().run(&mut function)?;
+    analyzer.build_optimizer_pipeline().run(&mut function)?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
     println!("dumping opt IR graph...");

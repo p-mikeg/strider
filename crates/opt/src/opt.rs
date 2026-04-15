@@ -57,6 +57,7 @@ pub trait Optimizer {
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 pub struct OptimizerPipeline {
     optimizers: Vec<Box<dyn Optimizer>>,
+    post_passes: Vec<Box<dyn Optimizer>>,
 }
 
 impl OptimizerPipeline {
@@ -64,6 +65,7 @@ impl OptimizerPipeline {
     pub fn new() -> Self {
         Self {
             optimizers: Vec::new(),
+            post_passes: Vec::new(),
         }
     }
 
@@ -72,10 +74,19 @@ impl OptimizerPipeline {
         self.optimizers.push(Box::new(opt));
     }
 
-    /// Runs all registered passes in a fixed-point loop until convergence.
+    /// Appends `opt` to the post-pass list.  Post-passes run once, in
+    /// registration order, after the fixed-point loop converges.  Their return
+    /// value is ignored (no re-entry into the fixed-point loop).
+    pub fn add_post_pass<O: Optimizer + 'static>(&mut self, opt: O) {
+        self.post_passes.push(Box::new(opt));
+    }
+
+    /// Runs all registered passes in a fixed-point loop until convergence,
+    /// then runs each post-pass exactly once in registration order.
     ///
-    /// Returns `Ok(())` when no pass changed the graph in a full iteration.
-    /// Propagates the first error returned by any pass.
+    /// Returns `Ok(())` when no pass changed the graph in a full iteration
+    /// and all post-passes completed without error.  Propagates the first
+    /// error returned by any pass.
     pub fn run(&self, graph: &mut ir::BuiltFunctionGraph) -> crate::Result<()> {
         loop {
             let mut changed = false;
@@ -89,6 +100,9 @@ impl OptimizerPipeline {
             if !changed {
                 break;
             }
+        }
+        for opt in &self.post_passes {
+            opt.optimize(graph)?;
         }
         Ok(())
     }

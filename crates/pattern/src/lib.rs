@@ -62,7 +62,7 @@ pub use var::{Var, NodeVar};
 pub use pat::{
     Pat,
     // Builder types
-    CallPat, RetPat, IfPat, LoadPat, StorePat, PhiPat,
+    CallPat, RetPat, IfPat, LoadPat, StorePat, StackStorePat, StackStorePhiPat, PhiPat,
     IntBinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat,
     // Free-function constructors
     any, var, int_const, bool_const, any_const, predicate,
@@ -87,7 +87,7 @@ pub use pat::{
     float_is_nan, float_const, any_float_const,
     int_to_float, float_to_int, float_to_float, int_bits_to_float, float_bits_to_int, cast_to_float,
     // Memory
-    load, store,
+    load, store, stack_store, stack_store_phi,
     // Phi nodes
     phi, phi_for,
     // Entry values

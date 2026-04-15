@@ -410,6 +410,64 @@ impl<'g> Matcher<'g> {
                 true
             }
 
+            PatKind::StackStore { space, offset, data, output_var, node_var } => {
+                let NodeKind::StackStore { space: actual_space, offset: actual_offset } = *kind
+                    else { return false; };
+                if let Some(s) = space {
+                    if actual_space != *s { return false; }
+                }
+                if let Some(o) = offset {
+                    if actual_offset != *o { return false; }
+                }
+                let inputs = self.fn_graph.graph.node_inputs(node);
+                let snap = bindings.clone();
+                if let Some(data_pat) = data {
+                    // StackStore inputs = [memory(0), base(1), data(2)].
+                    let Some(&data_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    if !self.match_output(data_out, data_pat, bindings) {
+                        *bindings = snap;
+                        return false;
+                    }
+                }
+                if let Some(v) = output_var {
+                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                }
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
+                true
+            }
+
+            PatKind::StackStorePhi { space, offsets, data, output_var, node_var } => {
+                let NodeKind::StackStorePhi { space: actual_space } = *kind
+                    else { return false; };
+                if let Some(s) = space {
+                    if actual_space != *s { return false; }
+                }
+                if let Some(expected) = offsets {
+                    let mut actual: Vec<i64> = self.fn_graph.graph.stack_phi_offsets(node).to_vec();
+                    actual.sort();
+                    if &actual != expected { return false; }
+                }
+                let inputs = self.fn_graph.graph.node_inputs(node);
+                let snap = bindings.clone();
+                if let Some(data_pat) = data {
+                    // StackStorePhi inputs = [phi_token(0), memory(1), data(2)].
+                    let Some(&data_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    if !self.match_output(data_out, data_pat, bindings) {
+                        *bindings = snap;
+                        return false;
+                    }
+                }
+                if let Some(v) = output_var {
+                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                }
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
+                true
+            }
+
             PatKind::Phi { vn, inputs: slot_pats, output_var, node_var } => {
                 let NodeKind::ControlPhi(actual_vn) = kind else { return false; };
                 if let Some(v) = vn {

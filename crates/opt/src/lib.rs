@@ -27,6 +27,7 @@ mod constant_fold;
 mod known_bits;
 mod dead_branch;
 mod load_readonly;
+mod stack_store;
 
 pub use opt::{OptimizationResult, OptimizerPipeline, Optimizer};
 pub use redundant_phis::RedundantPhis;
@@ -34,6 +35,7 @@ pub use constant_fold::ConstantFold;
 pub use known_bits::KnownBits;
 pub use dead_branch::DeadBranchElimination;
 pub use load_readonly::{ReadOnlyMemory, LoadReadOnly};
+pub use stack_store::{StackStoreDetect, CallStackArgCollect};
 
 /// Builds the default optimizer pipeline containing all built-in passes.
 ///

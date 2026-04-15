@@ -46,6 +46,9 @@ pub enum Error {
 
     #[error("unsupported float varnode size {0} bytes (expected 4 or 8)")]
     UnsupportedFloatSize(u32),
+
+    #[error("stack pointer register {0:?} must be listed in callee_saved_regs")]
+    StackPtrNotCalleeSaved(&'static str),
 }
 
 /// the result type using our error.

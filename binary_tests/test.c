@@ -113,6 +113,19 @@ int __attribute__((noinline)) g(int x, int y) {
     return add(x + 2, mul(2 * x, sub(x, y)));
 }
 
+/* ── recursion ─────────────────────────────────────────────────────── */
+
+int __attribute__((noinline)) hard_func(int a, int b, int c) {
+    char buf[16] = { 0 };
+    if (c > 5) {
+        array_fill(&buf, 1, a);
+    } else {
+        b += array_sum(&buf, 1);
+    }
+    array_fill(&a, 1, b);
+    return g(a, b);
+}
+
 /* ── jump-table candidates ─────────────────────────────────────────── */
 
 /*

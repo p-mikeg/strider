@@ -607,6 +607,29 @@ impl Analyzer {
         })
     }
 
+    /// Returns the resolved calling convention this analyzer was built with.
+    pub fn calling_convention(&self) -> &crate::calling_convention::BuiltCallingConvention {
+        &self.calling_convention
+    }
+
+    /// Builds an optimizer pipeline containing the default passes plus the
+    /// convention-aware stack-argument passes:
+    ///
+    /// 1. All passes from [`opt::default_pipeline`] (constant folding,
+    ///    known-bits, redundant-phi, dead-branch).
+    /// 2. [`opt::StackStoreDetect`] inside the fixed-point loop, using the
+    ///    convention's stack-pointer varnode.
+    /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after
+    ///    convergence), using the convention's positional stack-arg offsets.
+    pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
+        let mut p = opt::default_pipeline();
+        p.add(opt::StackStoreDetect::new(self.calling_convention.stack_ptr_vn));
+        p.add_post_pass(opt::CallStackArgCollect::new(
+            self.calling_convention.stack_arg_offsets.clone(),
+        ));
+        p
+    }
+
     /// Collects the set of all distinct varnodes referenced by any instruction
     /// across all regions of `cfg`.
     ///

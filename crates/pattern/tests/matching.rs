@@ -2310,3 +2310,150 @@ fn cast_to_float_pattern_matches() -> ir::Result<()> {
     assert!(m.find_all(&int_bits_to_float(any()).into()).is_empty());
     Ok(())
 }
+
+// ── StackStore / StackStorePhi patterns ─────────────────────────────────────
+
+/// Builds a graph where `*(sp - 4) = 0xAB`; returns the loaded value to keep
+/// the store live.  The `StackStoreDetect` pass then rewrites it into a
+/// `StackStore { offset: -4 }`.
+fn graph_with_stack_store() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
+    let sp = make_reg_vn(0x20, 4);
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let sp_val = b.read_variable(&sp)?;
+    let four = b.build_int_const(4, NodeOutputType::U32);
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let data = b.build_int_const(0xAB, NodeOutputType::U32);
+    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build();
+    let mut pipeline = opt::OptimizerPipeline::new();
+    pipeline.add(opt::ConstantFold);
+    pipeline.add(opt::RedundantPhis);
+    pipeline.add(opt::StackStoreDetect::new(sp));
+    pipeline.run(&mut fg).expect("opt pipeline should succeed");
+    Ok((fg, sp))
+}
+
+#[test]
+fn stack_store_matches_offset_and_data() -> ir::Result<()> {
+    let (g, _sp) = graph_with_stack_store()?;
+    let m = Matcher::new(&g);
+    // Exact offset + exact data → match.
+    let hits = m.find_all(&stack_store().offset(-4).data(int_const(0xAB)).into());
+    assert_eq!(hits.len(), 1, "expected one match for offset=-4 & data=0xAB");
+    // Wrong offset → no match.
+    assert!(m.find_all(&stack_store().offset(0).into()).is_empty());
+    // Wrong data → no match.
+    assert!(m.find_all(&stack_store().data(int_const(0x42)).into()).is_empty());
+    // Offset-only, no data constraint → match.
+    assert_eq!(m.find_all(&stack_store().offset(-4).into()).len(), 1);
+    Ok(())
+}
+
+/// Builds a two-branch graph where both predecessors adjust SP differently
+/// before merging and storing through the SP-phi, yielding a `StackStorePhi`
+/// node with offsets `[-4, -8]`.
+fn graph_with_stack_store_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
+    let sp = make_reg_vn(0x20, 4);
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let entry = b.create_region()?;
+    let a = b.create_region()?;
+    let bb = b.create_region()?;
+    let c = b.create_region()?;
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, a, bb)?;
+    b.set_region(a);
+    let sp_a = b.read_variable(&sp)?;
+    let four = b.build_int_const(4, NodeOutputType::U32);
+    let sp_a2 = b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_a2)?;
+    b.build_branch(c)?;
+    b.set_region(bb);
+    let sp_b = b.read_variable(&sp)?;
+    let eight = b.build_int_const(8, NodeOutputType::U32);
+    let sp_b2 = b.build_int_binary_operation(sp_b, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_b2)?;
+    b.build_branch(c)?;
+    b.set_region(c);
+    let sp_c = b.read_variable(&sp)?;
+    let data = b.build_int_const(0xCC, NodeOutputType::U32);
+    b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build();
+    let mut pipeline = opt::OptimizerPipeline::new();
+    pipeline.add(opt::ConstantFold);
+    pipeline.add(opt::RedundantPhis);
+    pipeline.add(opt::StackStoreDetect::new(sp));
+    pipeline.run(&mut fg).expect("opt pipeline should succeed");
+    Ok((fg, sp))
+}
+
+#[test]
+fn stack_store_phi_matches_offsets() -> ir::Result<()> {
+    let (g, _sp) = graph_with_stack_store_phi()?;
+    let m = Matcher::new(&g);
+    // Exact offsets (order-independent) → match.
+    assert_eq!(m.find_all(&stack_store_phi().offsets([-4, -8]).into()).len(), 1);
+    assert_eq!(m.find_all(&stack_store_phi().offsets([-8, -4]).into()).len(), 1);
+    // Wrong offsets → no match.
+    assert!(m.find_all(&stack_store_phi().offsets([0, -4]).into()).is_empty());
+    // No offset constraint → still matches.
+    assert_eq!(m.find_all(&stack_store_phi().into()).len(), 1);
+    Ok(())
+}
+
+/// cdecl-style call with two pushed stack arguments.  After
+/// `CallStackArgCollect` runs, the Call's inputs include the pushed values
+/// as positional stack args.
+fn graph_cdecl_call_with_stack_args() -> ir::Result<ir::BuiltFunctionGraph> {
+    let sp = make_reg_vn(0x20, 4);
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let sp_v0 = b.read_variable(&sp)?;
+    let four = b.build_int_const(4, NodeOutputType::U32);
+    let sp_v1 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v1)?;
+    let arg1 = b.build_int_const(22, NodeOutputType::U32);
+    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
+    let sp_v2 = b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v2)?;
+    let arg0 = b.build_int_const(11, NodeOutputType::U32);
+    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
+    let target = b.build_int_const(0x1000, NodeOutputType::U32);
+    b.build_call(target)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build();
+    let mut pipeline = opt::OptimizerPipeline::new();
+    pipeline.add(opt::ConstantFold);
+    pipeline.add(opt::RedundantPhis);
+    pipeline.add(opt::StackStoreDetect::new(sp));
+    pipeline.add_post_pass(opt::CallStackArgCollect::new(vec![0, 4, 8, 12]));
+    pipeline.run(&mut fg).expect("opt pipeline should succeed");
+    Ok(fg)
+}
+
+#[test]
+fn call_arg_matches_stack_arg_after_collection() -> ir::Result<()> {
+    let g = graph_cdecl_call_with_stack_args()?;
+    let m = Matcher::new(&g);
+    // arg(0) should be the pushed-last value 11, arg(1) should be 22.
+    assert_eq!(m.find_all(&call().arg(0, int_const(11)).into()).len(), 1);
+    assert_eq!(m.find_all(&call().arg(1, int_const(22)).into()).len(), 1);
+    // Both together.
+    assert_eq!(
+        m.find_all(&call().arg(0, int_const(11)).arg(1, int_const(22)).into()).len(),
+        1
+    );
+    // Wrong arg → no match.
+    assert!(m.find_all(&call().arg(0, int_const(22)).into()).is_empty());
+    Ok(())
+}
