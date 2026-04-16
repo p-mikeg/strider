@@ -87,6 +87,10 @@ pub enum Error {
     /// A node was queried for exactly `N` inputs but had a different count.
     #[error("node {0:?} does not have exactly {1} inputs (has {2})")]
     WrongInputCount(NodeId, usize, usize),
+
+    /// Whole-graph validation detected one or more structural violations.
+    #[error("ir validation failed:\n{0}")]
+    ValidationFailed(#[from] crate::validate::ValidationErrors),
 }
 
 /// Convenience `Result` alias that uses [`Error`] as the error type.

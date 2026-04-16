@@ -39,8 +39,10 @@ mod ops;
 // mod node_view;
 mod node_signature;
 mod iterators;
+pub mod validate;
 
 pub use crate::error::{Error, Result};
+pub use validate::{ValidationError, ValidationErrors};
 pub use builder::{FunctionBuilder};
 pub use region::{RegionId};
 pub use ops::{
