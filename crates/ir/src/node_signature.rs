@@ -22,7 +22,6 @@ use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 ///
 /// For variable-arity kinds, the returned vectors describe only the fixed
 /// prefix of the signature; see the module-level docs.
-#[allow(dead_code)] // Used by the validator added in a later task.
 pub(crate) fn expected_signature(
     kind: &NodeKind,
 ) -> (Vec<NodeOutputKind>, Vec<NodeOutputKind>) {
