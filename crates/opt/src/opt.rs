@@ -110,7 +110,7 @@ impl OptimizerPipeline {
         for opt in &self.post_passes {
             opt.optimize(graph)?;
         }
-        ir::validate::validate(&graph.graph, graph.entry).map_err(ir::Error::from)?;
+        ir::validate::validate(&graph.graph, graph.entry)?;
         Ok(())
     }
 }
