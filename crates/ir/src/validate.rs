@@ -9,18 +9,33 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
+use std::collections::HashSet;
+
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::node_signature::{expected_signature, ExpectedOutputKind};
+use crate::walk::walk_graph;
 
 /// Validates the structural invariants of `graph` starting from `entry`.
 ///
 /// Returns `Ok(())` if every checked invariant holds, or a
 /// [`ValidationErrors`] bundle describing every violation otherwise.
+///
+/// Local per-node checks (Layer A) are scoped to nodes reachable from `entry`
+/// so that detached zombie nodes left behind by optimization passes (see
+/// `opt::redundant_phis::detach_unreachable_nodes`) do not trigger false
+/// positives.  Layer B and Layer C iterate all nodes but are naturally
+/// tolerant of detached nodes: `detach_node_inputs` scrubs the use-lists of
+/// the producers it disconnects, so a detached node contributes no inputs and
+/// no live use-list entries anywhere.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
+    let reachable: HashSet<NodeId> = walk_graph(graph, entry).collect();
     let mut errs: Vec<ValidationError> = Vec::new();
 
     for node in graph.nodes.keys() {
+        if !reachable.contains(&node) {
+            continue;
+        }
         check_layer_a(graph, node, &mut errs);
     }
 
@@ -35,8 +50,6 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_layer_c_postcall_producer(graph, &mut errs);
 
     check_layer_c_postcall_uniqueness(graph, &mut errs);
-
-    let _ = entry;
 
     if errs.is_empty() {
         Ok(())
@@ -960,6 +973,7 @@ mod tests {
         let mut graph = Graph::new();
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
         let c = graph.create_node(
             NodeKind::IntConst(5),
             [],
@@ -968,11 +982,17 @@ mod tests {
         let c_out = graph.node_outputs(c).into_iter().next().unwrap();
 
         // IntBinaryOp expects 2 inputs; give it 1.
-        let _bad = graph.create_node(
+        let bad = graph.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [c_out],
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
+        let bad_out = graph.node_outputs(bad).into_iter().next().unwrap();
+
+        // Wire `bad` into the reachable sub-graph so the reachability-scoped
+        // Layer A actually inspects it.  A Return consuming entry's Control
+        // plus `bad`'s value output is the smallest reachable shape.
+        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, bad_out], []);
 
         let errs = validate(&graph, entry).unwrap_err();
         assert!(
