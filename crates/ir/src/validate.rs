@@ -301,11 +301,9 @@ fn check_layer_c_postcall_producer(graph: &Graph, errs: &mut Vec<ValidationError
             _ => continue,
         };
 
-        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
-        if inputs.is_empty() {
+        let Ok([target]) = graph.node_inputs_exact::<1>(node) else {
             continue; // Layer A fires a count mismatch here.
-        }
-        let target = inputs[0];
+        };
         let (producer, producer_out_idx) = graph.output_definition(target);
         let producer_kind = graph.output_kind(target);
 
@@ -771,6 +769,27 @@ mod tests {
         assert!(errs.0.iter().any(|e| matches!(
             e,
             ValidationError::PostCallMemStateNotAfterCall { .. }
+        )), "got: {errs:?}");
+    }
+
+    #[test]
+    fn layer_c_postcall_var_state_from_entry_is_error() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+
+        let vn = test_vn();
+        let _bad = graph.create_node(
+            NodeKind::PostCallVarState(vn),
+            [entry_ctrl],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PostCallVarStateNotAfterCall { .. }
         )), "got: {errs:?}");
     }
 
