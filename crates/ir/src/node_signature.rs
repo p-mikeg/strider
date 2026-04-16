@@ -39,6 +39,9 @@ pub enum ExpectedOutputKind {
     AnyInt,
     /// Any float-typed value (F32, F64).
     AnyFloat,
+    /// Any value-typed output: `Bool`, `AnyInt`, or `AnyFloat`.  Used by the
+    /// type-polymorphic cast ops (`CastToInt`, `CastToBool`, `CastToFloat`).
+    AnyValue,
 }
 
 /// Expected (input kinds, output kinds) for a given [`NodeKind`].
@@ -92,7 +95,7 @@ pub(crate) fn expected_signature(
         NodeKind::IntUnaryOp(_) => (vec![AnyInt], vec![AnyInt]),
         NodeKind::IntBinaryOp(_) => (vec![AnyInt, AnyInt], vec![AnyInt]),
         NodeKind::IntCmpOp(_) => (vec![AnyInt, AnyInt], vec![Bool]),
-        NodeKind::CastToInt => (vec![Bool], vec![AnyInt]),
+        NodeKind::CastToInt => (vec![AnyValue], vec![AnyInt]),
         NodeKind::Truncate => (vec![AnyInt], vec![AnyInt]),
         NodeKind::Popcount => (vec![AnyInt], vec![AnyInt]),
         NodeKind::Lzcount => (vec![AnyInt], vec![AnyInt]),
@@ -105,7 +108,7 @@ pub(crate) fn expected_signature(
         NodeKind::BoolConst(_) => (vec![], vec![Bool]),
         NodeKind::BoolUnaryOp(_) => (vec![Bool], vec![Bool]),
         NodeKind::BoolBinaryOp(_) => (vec![Bool, Bool], vec![Bool]),
-        NodeKind::CastToBool => (vec![AnyInt], vec![Bool]),
+        NodeKind::CastToBool => (vec![AnyValue], vec![Bool]),
 
         // ── Float constants and operations ──────────────────────────────────
         NodeKind::FloatConst(_) => (vec![], vec![AnyFloat]),
@@ -118,7 +121,7 @@ pub(crate) fn expected_signature(
         NodeKind::FloatToFloat => (vec![AnyFloat], vec![AnyFloat]),
         NodeKind::IntBitsToFloat => (vec![AnyInt], vec![AnyFloat]),
         NodeKind::FloatBitsToInt => (vec![AnyFloat], vec![AnyInt]),
-        NodeKind::CastToFloat => (vec![AnyInt], vec![AnyFloat]),
+        NodeKind::CastToFloat => (vec![AnyValue], vec![AnyFloat]),
 
         // ── User-defined / opaque opcodes ───────────────────────────────────
         // CallOther: [control, memory, ...args].
@@ -288,7 +291,7 @@ mod tests {
     #[test]
     fn expected_signature_cast_to_bool() {
         let (inputs, outputs) = expected_signature(&NodeKind::CastToBool);
-        assert_eq!(inputs, vec![ExpectedOutputKind::AnyInt]);
+        assert_eq!(inputs, vec![ExpectedOutputKind::AnyValue]);
         assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
     }
 

@@ -381,6 +381,7 @@ fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
         (ExpectedOutputKind::Bool, NodeOutputKind::OutputType(NodeOutputType::Bool)) => true,
         (ExpectedOutputKind::AnyInt, NodeOutputKind::OutputType(t)) if t.is_integer() => true,
         (ExpectedOutputKind::AnyFloat, NodeOutputKind::OutputType(t)) if t.is_float() => true,
+        (ExpectedOutputKind::AnyValue, NodeOutputKind::OutputType(_)) => true,
         _ => false,
     }
 }
