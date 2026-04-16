@@ -37,6 +37,7 @@ mod function;
 mod region;
 mod ops;
 // mod node_view;
+mod node_signature;
 mod iterators;
 
 pub use crate::error::{Error, Result};
