@@ -1,7 +1,7 @@
-use ir::{BuiltFunctionGraph};
-use ir::node::{NodeOutputId, NodeKind, NodeOutputKind, NodeOutputType};
-use crate::opt::OptimizationResult;
 use crate::error::Result;
+use crate::opt::OptimizationResult;
+use ir::BuiltFunctionGraph;
+use ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 /// Returns the float constant bit-pattern of `output` (raw `u64`), or `None`
 /// if the output does not hold a `FloatConst`.
@@ -19,7 +19,11 @@ pub(crate) fn float_const_val(fg: &BuiltFunctionGraph, output: NodeOutputId) -> 
 
 /// Creates (or retrieves) a `FloatConst(bits)` node with type `ty` and returns
 /// its output id.
-pub(crate) fn make_float_const(fg: &mut BuiltFunctionGraph, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+pub(crate) fn make_float_const(
+    fg: &mut BuiltFunctionGraph,
+    bits: u64,
+    ty: NodeOutputType,
+) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::FloatConst(bits),
         [],
@@ -57,7 +61,11 @@ pub(crate) fn bool_const_val(fg: &BuiltFunctionGraph, output: NodeOutputId) -> O
 
 /// Creates (or retrieves from the deduplication cache) an `IntConst(val)` node
 /// with the given type and returns its output id.
-pub(crate) fn make_int_const(fg: &mut BuiltFunctionGraph, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+pub(crate) fn make_int_const(
+    fg: &mut BuiltFunctionGraph,
+    val: u64,
+    ty: NodeOutputType,
+) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::IntConst(val),
         [],
@@ -77,7 +85,11 @@ pub(crate) fn make_bool_const(fg: &mut BuiltFunctionGraph, val: bool) -> Result<
 }
 
 /// Creates an `IntBitsToFloat` node directly on the graph and returns its output.
-pub(crate) fn make_int_bits_to_float_node(fg: &mut BuiltFunctionGraph, input: NodeOutputId, ty: NodeOutputType) -> Result<NodeOutputId> {
+pub(crate) fn make_int_bits_to_float_node(
+    fg: &mut BuiltFunctionGraph,
+    input: NodeOutputId,
+    ty: NodeOutputType,
+) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::IntBitsToFloat,
         [input],
@@ -87,7 +99,11 @@ pub(crate) fn make_int_bits_to_float_node(fg: &mut BuiltFunctionGraph, input: No
 }
 
 /// Creates a `FloatToFloat` node directly on the graph and returns its output.
-pub(crate) fn make_float_to_float_node(fg: &mut BuiltFunctionGraph, input: NodeOutputId, ty: NodeOutputType) -> Result<NodeOutputId> {
+pub(crate) fn make_float_to_float_node(
+    fg: &mut BuiltFunctionGraph,
+    input: NodeOutputId,
+    ty: NodeOutputType,
+) -> Result<NodeOutputId> {
     let node = fg.graph.create_node(
         NodeKind::FloatToFloat,
         [input],

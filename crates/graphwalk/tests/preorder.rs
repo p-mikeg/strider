@@ -1,3 +1,10 @@
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable
+)]
+
 use expect_test::expect;
 use graphmock::Graph;
 use graphwalk::entity_preorder;

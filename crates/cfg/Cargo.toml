@@ -7,7 +7,11 @@ edition.workspace = true
 thiserror.workspace = true
 petgraph.workspace = true
 rsleigh.workspace = true
+strider-error.workspace = true
 dot.workspace = true
+
+[lints]
+workspace = true
 
 [dev-dependencies]
 reader.workspace = true

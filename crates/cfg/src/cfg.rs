@@ -1,9 +1,9 @@
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use petgraph::{graph::NodeIndex, visit::EdgeRef};
-use petgraph::stable_graph::StableDiGraph;
 use dot::GraphDotDumper;
+use petgraph::stable_graph::StableDiGraph;
+use petgraph::{graph::NodeIndex, visit::EdgeRef};
 
 /// Classifies the control-flow relationship between two CFG regions.
 ///
@@ -23,7 +23,7 @@ pub enum RegionEdgeKind {
     IfCaseTrue,
     /// Conditional branch — not-taken path: the source region ends with a
     /// pcode `CondBranch` and the branch condition evaluated to *false*.
-    IfCaseFalse
+    IfCaseFalse,
 }
 
 /// A virtual address identifying a native machine instruction.
@@ -56,7 +56,7 @@ pub struct PcodeInsnAddr {
     /// Virtual address of the enclosing machine instruction.
     pub machine_addr: MachineInsnAddr,
     /// Zero-based index of this pcode instruction within the machine instruction.
-    pub insn_index: u64
+    pub insn_index: u64,
 }
 
 /// A single pcode instruction together with its address inside the CFG.
@@ -65,7 +65,7 @@ pub struct RegionInstruction {
     /// Address of this pcode instruction.
     pub addr: PcodeInsnAddr,
     /// The decoded pcode instruction.
-    pub insn: rsleigh::Insn
+    pub insn: rsleigh::Insn,
 }
 
 /// A completed Control Flow Graph for a single function.
@@ -100,7 +100,7 @@ pub struct Region {
     /// `true` when the region ends with an unconditional branch that the
     /// builder classified as a tail call (i.e. a jump to code outside the
     /// current function).
-    pub ends_with_tail_call: bool
+    pub ends_with_tail_call: bool,
 }
 
 impl Region {
@@ -128,8 +128,7 @@ pub type RegionGraph = StableDiGraph<Region, RegionEdgeKind>;
 /// Configuration that governs how [`Builder`] builds the CFG.
 ///
 /// Construct via [`OptionsBuilder`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Options {
     /// When `Some(n)`, any unconditional branch whose target lies at an
     /// address ≥ `start + n` is treated as a tail call.
@@ -137,7 +136,7 @@ pub struct Options {
     /// When `false` (the default), unconditional branches whose target
     /// address is *below* the function start are treated as tail calls.
     /// When `true`, such branches are followed normally.
-    allow_code_before_start_addr: bool
+    allow_code_before_start_addr: bool,
 }
 
 /// Builder for [`Options`].
@@ -151,7 +150,7 @@ pub struct Options {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OptionsBuilder {
-    lifter_options: Options
+    lifter_options: Options,
 }
 
 impl Default for OptionsBuilder {
@@ -218,30 +217,30 @@ pub struct Builder<R: rsleigh::MemReader> {
     start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from.  Processed LIFO (depth-first).
-    work_queue: VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>
+    work_queue: VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>,
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` that will construct a CFG starting at
     /// `start_addr` using `sleigh` to disassemble instructions.
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
-        Self { 
+        Self {
             sleigh,
             start_addr: start_addr.into(),
             options,
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
-            work_queue: VecDeque::new()
+            work_queue: VecDeque::new(),
         }
     }
     /// Inserts `region` into the graph and records its start address in the
     /// lookup map.  Returns the assigned [`NodeIndex`].
     ///
     /// # Errors
-    /// Returns [`Error::EmptyRegion`] if `region.insns` is empty.
+    /// Returns [`ErrorKind::EmptyRegion`] if `region.insns` is empty.
     fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty() {
-            return Err(Error::EmptyRegion(region))
+            return Err(ErrorKind::EmptyRegion(region).into());
         }
 
         let start_addr = region.start_addr;
@@ -257,10 +256,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// region's instruction range via [`Region::contains_addr`].
     fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
         // Find the last region whose start_addr <= addr
-        let (_, &region_id) = self
-            .start_addr_to_region_id
-            .range(..=addr)
-            .next_back()?;
+        let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
         let region = self.graph.node_weight(region_id)?;
         if region.contains_addr(addr) {
@@ -273,7 +269,10 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Returns the pcode address corresponding to the function entry point.
     #[inline]
     fn start_pcode_addr(&self) -> PcodeInsnAddr {
-        PcodeInsnAddr{ machine_addr: self.start_addr, insn_index: 0 }
+        PcodeInsnAddr {
+            machine_addr: self.start_addr,
+            insn_index: 0,
+        }
     }
 
     /// Splits the region identified by `region_id` at `addr`, creating two
@@ -301,11 +300,16 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // 3. The items in the queue that use region_id as parent should point to the second region - solved due to replacement
         // 4. The parent of the popped value from that called the split should also point to the second region
 
-        let second_region = self.graph.node_weight_mut(region_id)
-            .ok_or(Error::InvalidRegion(region_id))?;
-        let split_index = second_region.insns.iter().position(|insn| insn.addr == addr)
-            .ok_or(Error::FailedSplitingRegion(region_id, addr))?;
-    
+        let second_region = self
+            .graph
+            .node_weight_mut(region_id)
+            .ok_or(ErrorKind::InvalidRegion(region_id))?;
+        let split_index = second_region
+            .insns
+            .iter()
+            .position(|insn| insn.addr == addr)
+            .ok_or(ErrorKind::FailedSplitingRegion(region_id, addr))?;
+
         if split_index == 0 {
             return Ok(region_id);
         }
@@ -317,33 +321,34 @@ impl<R: rsleigh::MemReader> Builder<R> {
         let first_region_start_addr = second_region.start_addr;
         second_region.start_addr = addr;
 
-
         // We need to update the region location in the mapping to get the correct one when accessed later
-        self.start_addr_to_region_id.insert(second_region.start_addr, second_region_id);
+        self.start_addr_to_region_id
+            .insert(second_region.start_addr, second_region_id);
 
-        let first_region = self.add_region(Region { 
-            start_addr: first_region_start_addr, 
-            insns: first_region_insns, 
-            ends_with_tail_call: false
+        let first_region = self.add_region(Region {
+            start_addr: first_region_start_addr,
+            insns: first_region_insns,
+            ends_with_tail_call: false,
         })?;
 
-
         // second region inherits all parents of the original region
-        let parent_edges: Vec<_> = self.graph
+        let parent_edges: Vec<_> = self
+            .graph
             .edges_directed(second_region_id, petgraph::Incoming)
             .map(|e| (e.id(), e.source(), *e.weight()))
             .collect();
 
         // Move the parent edges to be in the first region instead of the first one
         for (edge_id, parent_id, edge_data) in parent_edges {
-            // re-add edge from second_region to the child 
+            // re-add edge from second_region to the child
             self.graph.add_edge(parent_id, first_region, edge_data);
 
             // remove the original edge
             self.graph.remove_edge(edge_id);
         }
         // link the first and the second regions with fallthrough
-        self.graph.add_edge(first_region, second_region_id, RegionEdgeKind::Fallthrough);
+        self.graph
+            .add_edge(first_region, second_region_id, RegionEdgeKind::Fallthrough);
         Ok(second_region_id)
     }
 
@@ -354,17 +359,23 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// - If a region contains `addr` in its *interior*, calls [`split_region`](Self::split_region)
     ///   to split it and then adds the edge to the second half.
     /// - If no region contains `addr`, calls [`explore_new_region`](Self::explore_new_region).
-    fn explore(&mut self, parent_region: Option<(NodeIndex, RegionEdgeKind)>, addr: PcodeInsnAddr) -> Result<()> {
+    fn explore(
+        &mut self,
+        parent_region: Option<(NodeIndex, RegionEdgeKind)>,
+        addr: PcodeInsnAddr,
+    ) -> Result<()> {
         let existing_region = self.find_region_containing_addr(addr);
         if let Some((region_id, region)) = existing_region {
             // This is the case that someone just referenced our region - add an edge between them
-            let (parent_region_id, edge_kind) = parent_region.ok_or(Error::MissingParentEdge)?;
+            let (parent_region_id, edge_kind) =
+                parent_region.ok_or(ErrorKind::MissingParentEdge)?;
             // We checked and the address is within the current region and needs to start a new region
             // This means we reached here by jumping to the middle of a region and the current region needs to be split in 2
             if region.start_addr != addr {
                 // found a jump to the middle of the region. we need to split it.
                 let second_region = self.split_region(region_id, addr)?;
-                self.graph.add_edge(parent_region_id, second_region, edge_kind);
+                self.graph
+                    .add_edge(parent_region_id, second_region, edge_kind);
             } else {
                 self.graph.add_edge(parent_region_id, region_id, edge_kind);
             }
@@ -377,11 +388,18 @@ impl<R: rsleigh::MemReader> Builder<R> {
 
     /// Creates a [`RegionBuilder`] anchored at `start_addr` and decodes
     /// instructions until the region is complete.
-    fn explore_new_region(&mut self, start_addr: PcodeInsnAddr,
-            parent_edge: Option<(NodeIndex, RegionEdgeKind)>) -> Result<()> {
+    fn explore_new_region(
+        &mut self,
+        start_addr: PcodeInsnAddr,
+        parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
+    ) -> Result<()> {
         RegionBuilder {
-            builder: self, start_addr, insns: VecDeque::new(), parent_edge
-        }.build()?;
+            builder: self,
+            start_addr,
+            insns: VecDeque::new(),
+            parent_edge,
+        }
+        .build()?;
         Ok(())
     }
 
@@ -394,12 +412,17 @@ impl<R: rsleigh::MemReader> Builder<R> {
         while let Some((parent_region, address)) = self.work_queue.pop_back() {
             self.explore(parent_region, address)?;
         }
-        let (starting_region, _) = self.find_region_containing_addr(self.start_pcode_addr()).ok_or(Error::FailedCreatingStartRegion)?;
+        let (starting_region, _) = self
+            .find_region_containing_addr(self.start_pcode_addr())
+            .ok_or(ErrorKind::FailedCreatingStartRegion)?;
 
-        Ok(Cfg { graph: self.graph, sleigh: self.sleigh, entry: starting_region })
+        Ok(Cfg {
+            graph: self.graph,
+            sleigh: self.sleigh,
+            entry: starting_region,
+        })
     }
 }
-
 
 /// Outcome of processing a single pcode instruction in [`RegionBuilder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -408,7 +431,7 @@ pub enum ProcessInsnRes {
     /// fall-through into an already-existing region).
     FinishedProcessing,
     /// The instruction did not terminate the region; decoding continues.
-    DidntFinishProcessing
+    DidntFinishProcessing,
 }
 
 /// Builds a single [`Region`] by decoding pcode instructions one at a time.
@@ -426,7 +449,7 @@ struct RegionBuilder<'a, R: rsleigh::MemReader> {
     insns: VecDeque<RegionInstruction>,
     /// The edge from the predecessor region to this one, if any.
     /// `None` only for the function entry region.
-    parent_edge: Option<(NodeIndex, RegionEdgeKind)>
+    parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
 }
 
 impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
@@ -437,21 +460,29 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     ///   index *offset* within the same machine instruction.
     /// - **Absolute** (default code space): the target is a raw virtual
     ///   address; the pcode index is implicitly 0 (start of machine insn).
-    fn decode_branch_target(&mut self, branch_target_var: rsleigh::Vn, branch_insn_addr: PcodeInsnAddr) -> Result<PcodeInsnAddr> {
+    fn decode_branch_target(
+        &mut self,
+        branch_target_var: rsleigh::Vn,
+        branch_insn_addr: PcodeInsnAddr,
+    ) -> Result<PcodeInsnAddr> {
         let default_code_space = self.builder.sleigh.default_code_space();
 
         match branch_target_var.addr.space {
             // Relative branch: offset from the current pcode insn index
             rsleigh::VnSpace::CONST => Ok(PcodeInsnAddr {
                 machine_addr: branch_insn_addr.machine_addr,
-                insn_index: branch_insn_addr.insn_index + branch_target_var.addr.off
+                insn_index: branch_insn_addr.insn_index + branch_target_var.addr.off,
             }),
             // Absolute branch: the offset IS the target machine address
-            space if space == default_code_space => Ok(PcodeInsnAddr{
-                machine_addr: MachineInsnAddr { addr: branch_target_var.addr.off },
-                insn_index: 0
+            space if space == default_code_space => Ok(PcodeInsnAddr {
+                machine_addr: MachineInsnAddr {
+                    addr: branch_target_var.addr.off,
+                },
+                insn_index: 0,
             }),
-            _ => Err(Error::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr))
+            _ => {
+                Err(ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr).into())
+            }
         }
     }
 
@@ -473,9 +504,10 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         }
 
         if let Some(fn_max_size) = self.builder.options.fn_max_size
-            && fn_max_size + self.builder.start_addr.addr <= addr.addr {
-                return true;
-            }
+            && fn_max_size + self.builder.start_addr.addr <= addr.addr
+        {
+            return true;
+        }
         false
     }
 
@@ -485,7 +517,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// A well-formed tail call must target the *first* pcode instruction of a
     /// machine instruction (`insn_index == 0`).  A branch whose address bounds
     /// indicate a tail call but whose `insn_index != 0` is malformed and
-    /// returns [`Error::InvalidTailCall`].
+    /// returns [`ErrorKind::InvalidTailCall`].
     fn is_branch_tail_call(&mut self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
 
@@ -493,7 +525,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             // Tail calls may only jump to the start of a machine insn. They
             // cannot target a specific pcode op inside a machine insn.
             if branch_target_addr.insn_index != 0 {
-                return Err(Error::InvalidTailCall(branch_target_addr));
+                return Err(ErrorKind::InvalidTailCall(branch_target_addr).into());
             }
         }
 
@@ -507,8 +539,16 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// - `CondBranch`: enqueues both the taken and not-taken successors.
     /// - `Return`: ends the region.
     /// - Everything else: returns [`ProcessInsnRes::DidntFinishProcessing`].
-    fn process_new_insn(&mut self, insn: &rsleigh::Insn, addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<ProcessInsnRes> {
-        self.insns.push_back(RegionInstruction { addr, insn: insn.to_owned() });
+    fn process_new_insn(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) -> Result<ProcessInsnRes> {
+        self.insns.push_back(RegionInstruction {
+            addr,
+            insn: insn.to_owned(),
+        });
 
         match insn.opcode {
             rsleigh::Opcode::Branch => {
@@ -520,7 +560,9 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 } else {
                     // We reached the end of the current bb but we know the next address to jump to so enqueue it
                     let region = self.finish_current_region(false)?;
-                    self.builder.work_queue.push_back((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
+                    self.builder
+                        .work_queue
+                        .push_back((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
                     Ok(ProcessInsnRes::FinishedProcessing)
                 }
             }
@@ -531,29 +573,35 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 let region = self.finish_current_region(false)?;
 
                 // Add the true case
-                self.builder.work_queue.push_back((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
+                self.builder
+                    .work_queue
+                    .push_back((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
                 // The false case requires calculation of the next instruction (is it in the current pcode instr or the next one)
                 let next_insn_addr = if addr.insn_index + 1 == lift_res.insns.len() as u64 {
-                    PcodeInsnAddr { 
-                        machine_addr: MachineInsnAddr {addr: addr.machine_addr.addr + lift_res.machine_insn_len as u64},
-                        insn_index: 0 
+                    PcodeInsnAddr {
+                        machine_addr: MachineInsnAddr {
+                            addr: addr.machine_addr.addr + lift_res.machine_insn_len as u64,
+                        },
+                        insn_index: 0,
                     }
                 } else {
-                    PcodeInsnAddr { 
+                    PcodeInsnAddr {
                         machine_addr: addr.machine_addr,
-                        insn_index: addr.insn_index + 1
+                        insn_index: addr.insn_index + 1,
                     }
                 };
 
                 // Add the false case
-                self.builder.work_queue.push_back((Some((region, RegionEdgeKind::IfCaseFalse)), next_insn_addr));
+                self.builder
+                    .work_queue
+                    .push_back((Some((region, RegionEdgeKind::IfCaseFalse)), next_insn_addr));
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::Return => {
                 let _region = self.finish_current_region(false)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
-            _ => Ok(ProcessInsnRes::DidntFinishProcessing)
+            _ => Ok(ProcessInsnRes::DidntFinishProcessing),
         }
     }
 
@@ -563,17 +611,18 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// that edge to the graph.  Returns the new region's [`NodeIndex`].
     fn finish_current_region(&mut self, ends_with_tail_call: bool) -> Result<NodeIndex> {
         if self.insns.is_empty() {
-            return Err(Error::NoInstructionsRegionBuilder);
+            return Err(ErrorKind::NoInstructionsRegionBuilder.into());
         }
-        let region = self.builder.add_region(
-            Region { start_addr: self.start_addr, insns: self.insns.to_owned(), ends_with_tail_call }
-        )?;
+        let region = self.builder.add_region(Region {
+            start_addr: self.start_addr,
+            insns: self.insns.to_owned(),
+            ends_with_tail_call,
+        })?;
         if let Some((parent_id, edge_kind)) = self.parent_edge {
             self.builder.graph.add_edge(parent_id, region, edge_kind);
         }
         Ok(region)
     }
-
 
     /// Processes `insn` at `addr`, first checking whether `addr` is already
     /// the start of a known region.
@@ -582,14 +631,21 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// region: the current region is finalised and a
     /// [`RegionEdgeKind::Fallthrough`] edge is added to the existing region.
     /// Otherwise delegates to [`process_new_insn`](Self::process_new_insn).
-    fn process_insn(&mut self, insn: &rsleigh::Insn, addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<ProcessInsnRes> {
+    fn process_insn(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) -> Result<ProcessInsnRes> {
         let existing_region = self.builder.start_addr_to_region_id.get(&addr);
         // If we already processed the instruction - we fell through to an already processed region
         if let Some(region_id) = existing_region {
             let region_id = *region_id;
             // The parent region falls through to this region
             let region = self.finish_current_region(false)?;
-            self.builder.graph.add_edge(region, region_id, RegionEdgeKind::Fallthrough);
+            self.builder
+                .graph
+                .add_edge(region, region_id, RegionEdgeKind::Fallthrough);
             return Ok(ProcessInsnRes::FinishedProcessing);
         }
         self.process_new_insn(insn, addr, lift_res)
@@ -611,14 +667,22 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            let lift_res = self.builder.sleigh.lift_one(cur_addr.machine_addr.addr)
-                .map_err(|e| Error::GenericSleighError(format!("{:?}", e)))?;
+            let lift_res = self
+                .builder
+                .sleigh
+                .lift_one(cur_addr.machine_addr.addr)
+                .map_err(|e| ErrorKind::GenericSleighError(format!("{:?}", e)))?;
             // Save the starting pcode index for this machine instruction.
             // For the first machine instruction this may be non-zero when the
             // work queue delivered a mid-instruction entry point.  For all
             // subsequent machine instructions it is always 0.
             let start_pcode_idx = cur_addr.insn_index;
-            for (i, insn) in lift_res.insns.iter().skip(start_pcode_idx as usize).enumerate() {
+            for (i, insn) in lift_res
+                .insns
+                .iter()
+                .skip(start_pcode_idx as usize)
+                .enumerate()
+            {
                 cur_addr = PcodeInsnAddr {
                     machine_addr: cur_addr.machine_addr,
                     insn_index: start_pcode_idx + i as u64,
@@ -631,7 +695,9 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             }
             // We're done exploring a single machine insn, continue to the next one
             cur_addr = PcodeInsnAddr {
-                machine_addr: MachineInsnAddr { addr: cur_addr.machine_addr.addr + (lift_res.machine_insn_len as u64) },
+                machine_addr: MachineInsnAddr {
+                    addr: cur_addr.machine_addr.addr + (lift_res.machine_insn_len as u64),
+                },
                 insn_index: 0,
             };
         }
@@ -648,21 +714,24 @@ pub struct IfRegionState {
     /// Region reached when the branch condition is *true*, if present.
     pub if_true_region: Option<NodeIndex>,
     /// Region reached when the branch condition is *false* (fall-through), if present.
-    pub if_false_region: Option<NodeIndex>
+    pub if_false_region: Option<NodeIndex>,
 }
 
 impl<R: rsleigh::MemReader> Cfg<R> {
     /// Collects all outgoing edges from `region_id` into a map keyed by edge kind.
     ///
     /// # Errors
-    /// Returns [`Error::DuplicateEdgeKind`] if the same edge kind appears more
+    /// Returns [`ErrorKind::DuplicateEdgeKind`] if the same edge kind appears more
     /// than once on a single region (which would indicate a malformed CFG).
-    fn following_regions(&self, region_id: RegionId) -> Result<HashMap<&RegionEdgeKind, NodeIndex>> {
+    fn following_regions(
+        &self,
+        region_id: RegionId,
+    ) -> Result<HashMap<&RegionEdgeKind, NodeIndex>> {
         let mut next_regions = HashMap::new();
         for edge in self.graph.edges_directed(region_id, petgraph::Outgoing) {
             let kind = edge.weight();
             if next_regions.contains_key(kind) {
-                return Err(Error::DuplicateEdgeKind(region_id, *kind));
+                return Err(ErrorKind::DuplicateEdgeKind(region_id, *kind).into());
             }
             next_regions.insert(kind, edge.target());
         }
@@ -686,7 +755,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         let next_regions = self.following_regions(region_id)?;
         Ok(IfRegionState {
             if_true_region: next_regions.get(&RegionEdgeKind::IfCaseTrue).copied(),
-            if_false_region: next_regions.get(&RegionEdgeKind::IfCaseFalse).copied()
+            if_false_region: next_regions.get(&RegionEdgeKind::IfCaseFalse).copied(),
         })
     }
 
@@ -703,10 +772,17 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns the pcode instructions contained in `region_id`.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidRegion`] when `region_id` does not exist.
+    /// Returns [`ErrorKind::InvalidRegion`] when `region_id` does not exist.
     pub fn region_insn(&self, region_id: NodeIndex) -> Result<Vec<rsleigh::Insn>> {
-        let region = self.graph.node_weight(region_id).ok_or(Error::InvalidRegion(region_id))?;
-        Ok(region.insns.iter().map(|region_insn| region_insn.insn.clone()).collect())
+        let region = self
+            .graph
+            .node_weight(region_id)
+            .ok_or(ErrorKind::InvalidRegion(region_id))?;
+        Ok(region
+            .insns
+            .iter()
+            .map(|region_insn| region_insn.insn.clone())
+            .collect())
     }
 
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> Result<String> {
@@ -715,12 +791,15 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         match vn.addr.space {
             rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
             rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs().map_err(Error::SleighError)?;
-                Ok(regs.vn_to_name(*vn).ok_or(Error::InvalidRegVn(*vn))?.to_string())
-            },
+                let regs = self.sleigh.regs().map_err(ErrorKind::SleighError)?;
+                Ok(regs
+                    .vn_to_name(*vn)
+                    .ok_or(ErrorKind::InvalidRegVn(*vn))?
+                    .to_string())
+            }
             rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
             rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-            s => Err(Error::UnsupportedVnSpaceDisplay(s))
+            s => Err(ErrorKind::UnsupportedVnSpaceDisplay(s).into()),
         }
     }
 
@@ -733,7 +812,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
 pub struct CfgDotDumperState;
 pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
 
-impl <'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
+impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
     type Node = NodeIndex;
     type Error = Error;
     type State = CfgDotDumperState;
@@ -746,27 +825,47 @@ impl <'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
         self.0.graph.node_indices()
     }
 
-    fn dump_as_dot(&self, node_id: Self::Node, out: &mut dot::DotEmitter, _state: &mut Self::State) -> Result<()> {
+    fn dump_as_dot(
+        &self,
+        node_id: Self::Node,
+        out: &mut dot::DotEmitter,
+        _state: &mut Self::State,
+    ) -> Result<()> {
         use std::fmt::Write;
 
         let dot_id = node_id.index().to_string();
-        let node = self.0.graph.node_weight(node_id).ok_or(Error::InvalidRegion(node_id))?;
-        let first_insn_index = node.insns.front().ok_or(Error::EmptyRegion(node.clone()))?.addr.insn_index;
+        let node = self
+            .0
+            .graph
+            .node_weight(node_id)
+            .ok_or(ErrorKind::InvalidRegion(node_id))?;
+        let first_insn_index = node
+            .insns
+            .front()
+            .ok_or(ErrorKind::EmptyRegion(node.clone()))?
+            .addr
+            .insn_index;
         let start_addr = node.start_addr.machine_addr.addr;
 
         // Build node label once
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
         for insn in node.insns.iter() {
-            let variables: Vec<String> = insn.insn.output.iter().chain(insn.insn.inputs.iter())
-                .map(|vn| self.0.vn_to_name(vn)).collect::<Result<_>>()?;
+            let variables: Vec<String> = insn
+                .insn
+                .output
+                .iter()
+                .chain(insn.insn.inputs.iter())
+                .map(|vn| self.0.vn_to_name(vn))
+                .collect::<Result<_>>()?;
             let insn_addr = insn.addr.machine_addr.addr;
-            write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode).map_err(Error::FormatError)?;
+            write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode)
+                .map_err(ErrorKind::FormatError)?;
             if !variables.is_empty() {
-                write!(&mut label, ", {}", variables.join(", ")).map_err(Error::FormatError)?;
+                write!(&mut label, ", {}", variables.join(", ")).map_err(ErrorKind::FormatError)?;
             }
         }
-        write!(&mut label, "\\l").map_err(Error::FormatError)?;
+        write!(&mut label, "\\l").map_err(ErrorKind::FormatError)?;
 
         // Add node
         out.node(&dot_id, &label, "box", &[]);
@@ -778,7 +877,7 @@ impl <'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
             let edge_style = match edge.weight() {
                 RegionEdgeKind::Branch => "bold",
                 RegionEdgeKind::Fallthrough => "solid",
-                RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed"
+                RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed",
             };
             out.edge(
                 &src_id,
@@ -836,7 +935,11 @@ mod tests {
 
     /// A minimal dummy pcode instruction (no inputs/outputs, opcode = Copy).
     fn fake_insn() -> rsleigh::Insn {
-        rsleigh::Insn { opcode: rsleigh::Opcode::Copy, output: None, inputs: vec![] }
+        rsleigh::Insn {
+            opcode: rsleigh::Opcode::Copy,
+            output: None,
+            inputs: vec![],
+        }
     }
 
     /// Builds a [`Region`] from a list of `(machine_addr, insn_index)` pairs.
@@ -844,13 +947,23 @@ mod tests {
     /// The first pair is used as `start_addr`; all pairs become instructions.
     /// Panics if `addrs` is empty.
     fn make_region(addrs: &[(u64, u64)]) -> Region {
-        assert!(!addrs.is_empty(), "make_region requires at least one address");
+        assert!(
+            !addrs.is_empty(),
+            "make_region requires at least one address"
+        );
         let start = addr(addrs[0].0, addrs[0].1);
         let insns = addrs
             .iter()
-            .map(|&(m, i)| RegionInstruction { addr: addr(m, i), insn: fake_insn() })
+            .map(|&(m, i)| RegionInstruction {
+                addr: addr(m, i),
+                insn: fake_insn(),
+            })
             .collect();
-        Region { start_addr: start, insns, ends_with_tail_call: false }
+        Region {
+            start_addr: start,
+            insns,
+            ends_with_tail_call: false,
+        }
     }
 
     /// Builds a [`RegionBuilder`] for `builder` that starts at `start`.
@@ -858,7 +971,12 @@ mod tests {
         builder: &'a mut Builder<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
         start: PcodeInsnAddr,
     ) -> RegionBuilder<'a, rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
-        RegionBuilder { builder, start_addr: start, insns: VecDeque::new(), parent_edge: None }
+        RegionBuilder {
+            builder,
+            start_addr: start,
+            insns: VecDeque::new(),
+            parent_edge: None,
+        }
     }
 
     // ── MachineInsnAddr ───────────────────────────────────────────────────────
@@ -1031,7 +1149,7 @@ mod tests {
         assert_eq!(b.start_addr_to_region_id.get(&addr(0x1000, 0)), Some(&id));
     }
 
-    /// Adding an empty region must return `Error::EmptyRegion`.
+    /// Adding an empty region must return `ErrorKind::EmptyRegion`.
     #[test]
     fn add_region_empty_returns_error() {
         let mut b = make_builder(0x1000);
@@ -1040,7 +1158,10 @@ mod tests {
             insns: VecDeque::new(),
             ends_with_tail_call: false,
         };
-        assert!(matches!(b.add_region(empty), Err(crate::Error::EmptyRegion(_))));
+        assert!(matches!(
+            b.add_region(empty).as_ref().map_err(|e| e.kind()),
+            Err(crate::ErrorKind::EmptyRegion(_))
+        ));
     }
 
     /// Adding two non-overlapping regions places both in the graph.
@@ -1071,31 +1192,50 @@ mod tests {
     #[test]
     fn find_region_at_start_addr() {
         let mut b = make_builder(0x1000);
-        let id = b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)])).unwrap();
-        assert_eq!(b.find_region_containing_addr(addr(0x1000, 0)).map(|(i, _)| i), Some(id));
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1000, 0))
+                .map(|(i, _)| i),
+            Some(id)
+        );
     }
 
     /// Finds a region when queried at an interior address.
     #[test]
     fn find_region_at_interior_addr() {
         let mut b = make_builder(0x1000);
-        let id = b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)])).unwrap();
-        assert_eq!(b.find_region_containing_addr(addr(0x1008, 0)).map(|(i, _)| i), Some(id));
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1008, 0))
+                .map(|(i, _)| i),
+            Some(id)
+        );
     }
 
     /// Finds a region when queried exactly at its last instruction.
     #[test]
     fn find_region_at_last_insn() {
         let mut b = make_builder(0x1000);
-        let id = b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)])).unwrap();
-        assert_eq!(b.find_region_containing_addr(addr(0x100f, 0)).map(|(i, _)| i), Some(id));
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x100f, 0))
+                .map(|(i, _)| i),
+            Some(id)
+        );
     }
 
     /// Returns `None` for an address beyond the region's last instruction.
     #[test]
     fn find_region_beyond_end_returns_none() {
         let mut b = make_builder(0x1000);
-        b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)])).unwrap();
+        b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
         assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
     }
 
@@ -1103,12 +1243,28 @@ mod tests {
     #[test]
     fn find_region_two_adjacent_regions_correct_routing() {
         let mut b = make_builder(0x1000);
-        let id1 = b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)])).unwrap();
-        let id2 = b.add_region(make_region(&[(0x1010, 0), (0x1020, 0)])).unwrap();
+        let id1 = b
+            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
+            .unwrap();
+        let id2 = b
+            .add_region(make_region(&[(0x1010, 0), (0x1020, 0)]))
+            .unwrap();
 
-        assert_eq!(b.find_region_containing_addr(addr(0x1004, 0)).map(|(i, _)| i), Some(id1));
-        assert_eq!(b.find_region_containing_addr(addr(0x1010, 0)).map(|(i, _)| i), Some(id2));
-        assert_eq!(b.find_region_containing_addr(addr(0x1018, 0)).map(|(i, _)| i), Some(id2));
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1004, 0))
+                .map(|(i, _)| i),
+            Some(id1)
+        );
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1010, 0))
+                .map(|(i, _)| i),
+            Some(id2)
+        );
+        assert_eq!(
+            b.find_region_containing_addr(addr(0x1018, 0))
+                .map(|(i, _)| i),
+            Some(id2)
+        );
     }
 
     // ── Builder::split_region ─────────────────────────────────────────────────
@@ -1118,7 +1274,9 @@ mod tests {
     #[test]
     fn split_region_at_start_is_noop() {
         let mut b = make_builder(0x1000);
-        let id = b.add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)])).unwrap();
+        let id = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
+            .unwrap();
         let result = b.split_region(id, addr(0x1000, 0)).unwrap();
 
         assert_eq!(result, id, "split at start must return original id");
@@ -1131,7 +1289,12 @@ mod tests {
     fn split_region_creates_two_regions() {
         let mut b = make_builder(0x1000);
         let original = b
-            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0), (0x100c, 0)]))
+            .add_region(make_region(&[
+                (0x1000, 0),
+                (0x1004, 0),
+                (0x1008, 0),
+                (0x100c, 0),
+            ]))
             .unwrap();
         let second = b.split_region(original, addr(0x1008, 0)).unwrap();
 
@@ -1146,7 +1309,12 @@ mod tests {
     fn split_region_correct_addr_ranges() {
         let mut b = make_builder(0x1000);
         let original = b
-            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0), (0x100c, 0)]))
+            .add_region(make_region(&[
+                (0x1000, 0),
+                (0x1004, 0),
+                (0x1008, 0),
+                (0x100c, 0),
+            ]))
             .unwrap();
         b.split_region(original, addr(0x1008, 0)).unwrap();
 
@@ -1155,8 +1323,7 @@ mod tests {
         assert_eq!(b.graph[original].insns.len(), 2);
 
         // first half starts at the original start
-        let first_id = b
-            .start_addr_to_region_id[&addr(0x1000, 0)];
+        let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
         assert_eq!(b.graph[first_id].start_addr, addr(0x1000, 0));
         assert_eq!(b.graph[first_id].insns.len(), 2);
     }
@@ -1174,7 +1341,11 @@ mod tests {
         let edges: Vec<_> = b.graph.edge_references().collect();
         assert_eq!(edges.len(), 1, "exactly one edge after split");
         assert_eq!(*edges[0].weight(), RegionEdgeKind::Fallthrough);
-        assert_eq!(edges[0].target(), original, "edge must point to the second half");
+        assert_eq!(
+            edges[0].target(),
+            original,
+            "edge must point to the second half"
+        );
     }
 
     /// Incoming edges to the original region are rewired to the first half.
@@ -1184,7 +1355,9 @@ mod tests {
         // Region A (parent)
         let a = b.add_region(make_region(&[(0x0ff0, 0)])).unwrap();
         // Region B (to be split); A → B via Branch
-        let b_id = b.add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)])).unwrap();
+        let b_id = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
+            .unwrap();
         b.graph.add_edge(a, b_id, RegionEdgeKind::Branch);
 
         // Split B at 0x1004
@@ -1192,15 +1365,14 @@ mod tests {
 
         // The original incoming Branch edge must now point to the first half
         let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
-        let incoming: Vec<_> = b.graph
-            .edges_directed(first, petgraph::Incoming)
-            .collect();
+        let incoming: Vec<_> = b.graph.edges_directed(first, petgraph::Incoming).collect();
         assert_eq!(incoming.len(), 1);
         assert_eq!(*incoming[0].weight(), RegionEdgeKind::Branch);
         assert_eq!(incoming[0].source(), a);
 
         // The second half (b_id) must NOT have the old Branch incoming edge
-        let second_incoming: Vec<_> = b.graph
+        let second_incoming: Vec<_> = b
+            .graph
             .edges_directed(b_id, petgraph::Incoming)
             .filter(|e| *e.weight() == RegionEdgeKind::Branch)
             .collect();
@@ -1265,8 +1437,10 @@ mod tests {
         let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
         // target is below start → tail call; insn_index != 0 → error
         assert!(matches!(
-            rb.is_branch_tail_call(addr(0x0800, 3)),
-            Err(crate::Error::InvalidTailCall(_))
+            rb.is_branch_tail_call(addr(0x0800, 3))
+                .as_ref()
+                .map_err(|e| e.kind()),
+            Err(crate::ErrorKind::InvalidTailCall(_))
         ));
     }
 

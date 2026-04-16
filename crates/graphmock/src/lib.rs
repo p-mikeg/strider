@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
@@ -62,6 +72,10 @@ pub fn graph(input: &str) -> Graph {
             continue;
         }
 
+        // graphmock is a test-only DSL helper; input is a hard-coded string in
+        // downstream tests, so a malformed line is a programmer error, not a
+        // runtime condition that deserves error plumbing.
+        #[allow(clippy::unwrap_used)]
         let [preds, succs]: [&str; 2] = line.split("->").collect::<Vec<_>>().try_into().unwrap();
         let preds = preds.split(',').map(|pred| pred.trim());
         let succs: Vec<_> = succs.split(',').map(|succ| succ.trim()).collect();

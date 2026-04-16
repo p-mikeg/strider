@@ -81,7 +81,10 @@ fn decompose_sp(
         return None;
     }
     let result = match *fg.graph.node_kind(node) {
-        NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal { base: out, offset: 0 }),
+        NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
+            base: out,
+            offset: 0,
+        }),
         NodeKind::ControlPhi(vn) if vn == sp_vn => {
             // Try to resolve every predecessor to `InitialVar(sp) + K_j` so
             // that we can emit a `StackStorePhi`.  If any predecessor can't
@@ -92,7 +95,10 @@ fn decompose_sp(
             let inputs = fg.graph.node_inputs(node);
             if inputs.len() < 2 {
                 // Bare phi with no value predecessors: treat as opaque base.
-                Some(SpExpr::Terminal { base: out, offset: 0 })
+                Some(SpExpr::Terminal {
+                    base: out,
+                    offset: 0,
+                })
             } else {
                 let mut offsets = Vec::with_capacity(inputs.len() - 1);
                 let mut bases = Vec::with_capacity(inputs.len() - 1);
@@ -132,7 +138,10 @@ fn decompose_sp(
                 } else {
                     // Phi is SP-rooted but has a cycle / unresolvable
                     // predecessor — treat it as an opaque base.
-                    Some(SpExpr::Terminal { base: out, offset: 0 })
+                    Some(SpExpr::Terminal {
+                        base: out,
+                        offset: 0,
+                    })
                 }
             }
         }
@@ -157,8 +166,9 @@ fn decompose_sp(
             if inputs.len() == 2 {
                 let l = inputs[0];
                 let r = inputs[1];
-                int_const_signed(fg, r)
-                    .and_then(|c| decompose_sp(fg, l, sp_vn, visiting).map(|e| e.shifted(c.wrapping_neg())))
+                int_const_signed(fg, r).and_then(|c| {
+                    decompose_sp(fg, l, sp_vn, visiting).map(|e| e.shifted(c.wrapping_neg()))
+                })
             } else {
                 None
             }
@@ -420,6 +430,7 @@ impl Optimizer for CallStackArgCollect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
     use ir::node::NodeOutputType;
     use ir::{FunctionBuilder, IntBinaryOp};
@@ -457,7 +468,8 @@ mod tests {
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4, NodeOutputType::U32);
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         let data = b.build_int_const(0x11, NodeOutputType::U32);
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -470,7 +482,9 @@ mod tests {
         pipeline.add(StackStoreDetect::new(sp));
         pipeline.run(&mut fg)?;
 
-        let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: -4, .. }));
+        let stack_stores = count(&fg, |k| {
+            matches!(k, NodeKind::StackStore { offset: -4, .. })
+        });
         assert_eq!(stack_stores, 1, "expected one StackStore at offset -4");
         // Every reachable Store must have been rewritten.
         let reachable: std::collections::HashSet<_> = fg.preorder().collect();
@@ -542,7 +556,8 @@ mod tests {
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
         let four = b.build_int_const(4, NodeOutputType::U32);
-        let sp_a2 = b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_a2 =
+            b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_a2)?;
         b.build_branch(c)?;
 
@@ -550,7 +565,8 @@ mod tests {
         b.set_region(bb);
         let sp_b = b.read_variable(&sp)?;
         let eight = b.build_int_const(8, NodeOutputType::U32);
-        let sp_b2 = b.build_int_binary_operation(sp_b, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_b2 =
+            b.build_int_binary_operation(sp_b, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_b2)?;
         b.build_branch(c)?;
 
@@ -577,7 +593,11 @@ mod tests {
         let offsets = fg.graph.stack_phi_offsets(phis[0]);
         let mut sorted: Vec<i64> = offsets.to_vec();
         sorted.sort();
-        assert_eq!(sorted, vec![-8, -4], "expected per-branch offsets -4 and -8");
+        assert_eq!(
+            sorted,
+            vec![-8, -4],
+            "expected per-branch offsets -4 and -8"
+        );
         Ok(())
     }
 
@@ -604,7 +624,8 @@ mod tests {
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
         let four = b.build_int_const(4, NodeOutputType::U32);
-        let sp_a2 = b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_a2 =
+            b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_a2)?;
         b.build_branch(c)?;
 
@@ -612,7 +633,8 @@ mod tests {
         b.set_region(bb);
         let sp_b = b.read_variable(&sp)?;
         let four2 = b.build_int_const(4, NodeOutputType::U32);
-        let sp_b2 = b.build_int_binary_operation(sp_b, four2, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_b2 =
+            b.build_int_binary_operation(sp_b, four2, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_b2)?;
         b.build_branch(c)?;
 
@@ -636,7 +658,9 @@ mod tests {
             stack_store_phis, 0,
             "phi with all-equal offsets must not produce a StackStorePhi"
         );
-        let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: -4, .. }));
+        let stack_stores = count(&fg, |k| {
+            matches!(k, NodeKind::StackStore { offset: -4, .. })
+        });
         assert_eq!(
             stack_stores, 1,
             "phi with all-equal offsets must collapse to a plain StackStore"
@@ -687,7 +711,12 @@ mod tests {
         let zero = b.build_int_const(0, NodeOutputType::U32);
         for k in 0..4 {
             let off = b.build_int_const((k * 4) as u64, NodeOutputType::U32);
-            let addr = b.build_int_binary_operation(sp_after_sub, off, IntBinaryOp::Add, NodeOutputType::U32)?;
+            let addr = b.build_int_binary_operation(
+                sp_after_sub,
+                off,
+                IntBinaryOp::Add,
+                NodeOutputType::U32,
+            )?;
             b.build_store(addr, zero, rsleigh::VnSpace::RAM)?;
         }
 
@@ -738,7 +767,7 @@ mod tests {
         pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8, 12, 16, 20, 24, 28, 32]));
         pipeline.run(&mut fg)?;
 
-        let call_id = find_call(&fg);
+        let call_id = find_call(&fg)?;
         let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
         // ctrl + mem + target + exactly 2 args = 5 inputs.
         assert_eq!(
@@ -748,8 +777,14 @@ mod tests {
         );
         let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[3]));
         let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[4]));
-        assert!(matches!(arg0_kind, NodeKind::IntConst(42)), "arg0 should be 42, got {arg0_kind:?}");
-        assert!(matches!(arg1_kind, NodeKind::IntConst(1)), "arg1 should be 1, got {arg1_kind:?}");
+        assert!(
+            matches!(arg0_kind, NodeKind::IntConst(42)),
+            "arg0 should be 42, got {arg0_kind:?}"
+        );
+        assert!(
+            matches!(arg1_kind, NodeKind::IntConst(1)),
+            "arg1 should be 1, got {arg1_kind:?}"
+        );
         Ok(())
     }
 
@@ -786,10 +821,10 @@ mod tests {
     // ── CallStackArgCollect tests ────────────────────────────────────────────
 
     /// Finds the unique Call node in `fg`.
-    fn find_call(fg: &BuiltFunctionGraph) -> NodeId {
+    fn find_call(fg: &BuiltFunctionGraph) -> Result<NodeId> {
         fg.all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Call))
-            .expect("expected one Call node")
+            .ok_or_else(|| ErrorKind::ExpectedNodeNotFound("Call", NodeKind::Call).into())
     }
 
     /// cdecl-style: `push arg1=22; push arg0=11; call target(0x1000)`.
@@ -806,13 +841,15 @@ mod tests {
         // push arg1 (= 22) at sp - 4
         let sp_v0 = b.read_variable(&sp)?;
         let four = b.build_int_const(4, NodeOutputType::U32);
-        let sp_v1 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_v1 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let arg1 = b.build_int_const(22, NodeOutputType::U32);
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 (= 11) at sp - 8
-        let sp_v2 = b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_v2 =
+            b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v2)?;
         let arg0 = b.build_int_const(11, NodeOutputType::U32);
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
@@ -830,18 +867,28 @@ mod tests {
         pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12]));
         pipeline.run(&mut fg)?;
 
-        let call_id = find_call(&fg);
+        let call_id = find_call(&fg)?;
         let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
         // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
         // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
-        assert_eq!(inputs.len(), 5, "expected ctrl+mem+target+2 stack args; got {inputs:?}");
+        assert_eq!(
+            inputs.len(),
+            5,
+            "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+        );
 
         let arg0_val = inputs[3];
         let arg1_val = inputs[4];
         let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(arg0_val));
         let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(arg1_val));
-        assert!(matches!(arg0_kind, NodeKind::IntConst(11)), "arg0 should be 11, got {arg0_kind:?}");
-        assert!(matches!(arg1_kind, NodeKind::IntConst(22)), "arg1 should be 22, got {arg1_kind:?}");
+        assert!(
+            matches!(arg0_kind, NodeKind::IntConst(11)),
+            "arg0 should be 11, got {arg0_kind:?}"
+        );
+        assert!(
+            matches!(arg1_kind, NodeKind::IntConst(22)),
+            "arg1 should be 22, got {arg1_kind:?}"
+        );
         Ok(())
     }
 
@@ -863,7 +910,8 @@ mod tests {
         // there is no store at offset 0, collection must stop after slot_0.
         let sp_v0 = b.read_variable(&sp)?;
         let four = b.build_int_const(4, NodeOutputType::U32);
-        let sp_v1 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let sp_v1 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_v1)?;
         let only_arg = b.build_int_const(99, NodeOutputType::U32);
         b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
@@ -880,7 +928,7 @@ mod tests {
         pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4]));
         pipeline.run(&mut fg)?;
 
-        let call_id = find_call(&fg);
+        let call_id = find_call(&fg)?;
         let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
         // ctrl + memory + target + stack_arg_0 — only the one we have.
         assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
@@ -902,7 +950,7 @@ mod tests {
         b.build_return(None, &[])?;
         let mut fg = b.build()?;
 
-        let before_inputs = fg.graph.node_inputs(find_call(&fg)).into_iter().count();
+        let before_inputs = fg.graph.node_inputs(find_call(&fg)?).into_iter().count();
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -911,8 +959,11 @@ mod tests {
         pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8]));
         pipeline.run(&mut fg)?;
 
-        let after_inputs = fg.graph.node_inputs(find_call(&fg)).into_iter().count();
-        assert_eq!(before_inputs, after_inputs, "no args should have been collected");
+        let after_inputs = fg.graph.node_inputs(find_call(&fg)?).into_iter().count();
+        assert_eq!(
+            before_inputs, after_inputs,
+            "no args should have been collected"
+        );
         Ok(())
     }
 }

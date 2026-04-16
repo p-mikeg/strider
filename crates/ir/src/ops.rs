@@ -6,23 +6,23 @@ pub enum BoolBinaryOp {
     /// Logical and: `a & b`.
     And,
     /// Logical or: `a | b`.
-    Or
+    Or,
 }
 
 /// Unary operations on boolean (`Bool`) values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BoolUnaryOp {
     /// Logical negation: `!a`.
-    Neg
+    Neg,
 }
 
 /// How to fill the bits produced by a widening integer extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ExtendOp {
     /// Fill new high bits with zero.
-   ZeroExtend,
-   /// Replicate the sign bit into all new high bits.
-   SignExtend
+    ZeroExtend,
+    /// Replicate the sign bit into all new high bits.
+    SignExtend,
 }
 
 /// Comparison operations that produce a `Bool` from two integer operands.
@@ -76,7 +76,7 @@ pub enum IntBinaryOp {
     /// Left shift: `l << r`.
     ShiftLeft,
     /// Wrapping multiplication: `l * r`.
-    Mul
+    Mul,
 }
 
 /// Unary arithmetic and bitwise operations on integer values.

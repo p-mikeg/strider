@@ -12,4 +12,8 @@ graphwalk.workspace = true
 entity-utils.workspace = true
 itertools.workspace = true
 dot.workspace = true
+strider-error.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -9,3 +9,6 @@ edition.workspace = true
 graphwalk.workspace = true
 
 cranelift-entity.workspace = true
+
+[lints]
+workspace = true

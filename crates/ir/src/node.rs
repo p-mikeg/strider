@@ -1,18 +1,14 @@
 use std::fmt::Debug;
 
-use cranelift_entity::{
-    EntityList, entity_impl, packed_option::PackedOption,
-};
+use cranelift_entity::{EntityList, entity_impl, packed_option::PackedOption};
 
 /// A unique identifier for a node in the IR graph.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
 entity_impl!(NodeId, "node");
 
-
 /// A unique identifier for one output slot of a node.
-#[derive(Default)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeOutputId(u32);
 entity_impl!(NodeOutputId, "%");
 
@@ -26,7 +22,6 @@ pub(crate) type NodeInputIdList = EntityList<NodeInputId>;
 
 /// A list of output slot ids stored in an entity pool.
 pub(crate) type NodeOutputIdList = EntityList<NodeOutputId>;
-
 
 /// The value type carried by a node output.
 ///
@@ -48,13 +43,20 @@ pub enum NodeOutputType {
     F64,
 }
 
-
 impl NodeOutputType {
     /// Returns `true` if this type is one of the unsigned integer variants
     /// (U8, U16, U32, U64, U128, U256).
     #[inline]
     pub fn is_integer(self) -> bool {
-        matches!(self, NodeOutputType::U8 | NodeOutputType::U16 | NodeOutputType::U32 | NodeOutputType::U64 | NodeOutputType::U128 | NodeOutputType::U256)
+        matches!(
+            self,
+            NodeOutputType::U8
+                | NodeOutputType::U16
+                | NodeOutputType::U32
+                | NodeOutputType::U64
+                | NodeOutputType::U128
+                | NodeOutputType::U256
+        )
     }
 
     /// Returns `true` if this type is `Bool`.
@@ -74,14 +76,14 @@ impl NodeOutputType {
     pub fn as_str(self) -> &'static str {
         match self {
             NodeOutputType::Bool => "bool",
-            NodeOutputType::U8   => "u8",
-            NodeOutputType::U16  => "u16",
-            NodeOutputType::U32  => "u32",
-            NodeOutputType::U64  => "u64",
+            NodeOutputType::U8 => "u8",
+            NodeOutputType::U16 => "u16",
+            NodeOutputType::U32 => "u32",
+            NodeOutputType::U64 => "u64",
             NodeOutputType::U128 => "u128",
             NodeOutputType::U256 => "u256",
-            NodeOutputType::F32  => "f32",
-            NodeOutputType::F64  => "f64",
+            NodeOutputType::F32 => "f32",
+            NodeOutputType::F64 => "f64",
         }
     }
 
@@ -92,14 +94,14 @@ impl NodeOutputType {
     pub fn byte_size(self) -> usize {
         match self {
             NodeOutputType::Bool => 1,
-            NodeOutputType::U8   => 1,
-            NodeOutputType::U16  => 2,
-            NodeOutputType::U32  => 4,
-            NodeOutputType::U64  => 8,
+            NodeOutputType::U8 => 1,
+            NodeOutputType::U16 => 2,
+            NodeOutputType::U32 => 4,
+            NodeOutputType::U64 => 8,
             NodeOutputType::U128 => 16,
             NodeOutputType::U256 => 32,
-            NodeOutputType::F32  => 4,
-            NodeOutputType::F64  => 8,
+            NodeOutputType::F32 => 4,
+            NodeOutputType::F64 => 8,
         }
     }
 
@@ -114,13 +116,13 @@ impl NodeOutputType {
     #[inline]
     pub fn to_natural_int_type(self) -> NodeOutputType {
         match self.byte_size() {
-            1  => NodeOutputType::U8,
-            2  => NodeOutputType::U16,
-            4  => NodeOutputType::U32,
-            8  => NodeOutputType::U64,
+            1 => NodeOutputType::U8,
+            2 => NodeOutputType::U16,
+            4 => NodeOutputType::U32,
+            8 => NodeOutputType::U64,
             16 => NodeOutputType::U128,
             32 => NodeOutputType::U256,
-            _  => NodeOutputType::U64,
+            _ => NodeOutputType::U64,
         }
     }
 
@@ -133,10 +135,10 @@ impl NodeOutputType {
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
             NodeOutputType::Bool => None,
-            NodeOutputType::U8   => Some(val as u8 as u64),
-            NodeOutputType::U16  => Some(val as u16 as u64),
-            NodeOutputType::U32  => Some(val as u32 as u64),
-            NodeOutputType::U64  => Some(val),
+            NodeOutputType::U8 => Some(val as u8 as u64),
+            NodeOutputType::U16 => Some(val as u16 as u64),
+            NodeOutputType::U32 => Some(val as u32 as u64),
+            NodeOutputType::U64 => Some(val),
             NodeOutputType::U128 | NodeOutputType::U256 => None,
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
@@ -151,10 +153,10 @@ impl NodeOutputType {
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
             NodeOutputType::Bool => None,
-            NodeOutputType::U8   => Some(val as i8 as i64),
-            NodeOutputType::U16  => Some(val as i16 as i64),
-            NodeOutputType::U32  => Some(val as i32 as i64),
-            NodeOutputType::U64  => Some(val as i64),
+            NodeOutputType::U8 => Some(val as i8 as i64),
+            NodeOutputType::U16 => Some(val as i16 as i64),
+            NodeOutputType::U32 => Some(val as i32 as i64),
+            NodeOutputType::U64 => Some(val as i64),
             NodeOutputType::U128 | NodeOutputType::U256 => None,
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
@@ -166,13 +168,13 @@ impl TryFrom<u32> for NodeOutputType {
 
     fn try_from(value: u32) -> crate::error::Result<Self> {
         match value {
-            1  => Ok(Self::U8),
-            2  => Ok(Self::U16),
-            4  => Ok(Self::U32),
-            8  => Ok(Self::U64),
+            1 => Ok(Self::U8),
+            2 => Ok(Self::U16),
+            4 => Ok(Self::U32),
+            8 => Ok(Self::U64),
             16 => Ok(Self::U128),
             32 => Ok(Self::U256),
-            n  => Err(crate::error::Error::UnsupportedOutputSize(n)),
+            n => Err(crate::error::ErrorKind::UnsupportedOutputSize(n).into()),
         }
     }
 }
@@ -196,7 +198,7 @@ pub enum NodeOutputKind {
     /// that links each phi to exactly one `ControlState`.
     ControlPhi,
     /// Memory token tracking the current state of memory through the graph.
-    Memory
+    Memory,
 }
 
 impl NodeOutputKind {
@@ -239,7 +241,7 @@ impl NodeOutputKind {
     pub fn is_bool(self) -> bool {
         if let Some(output_type) = self.as_value() {
             output_type.is_bool()
-        } else  {
+        } else {
             false
         }
     }
@@ -249,7 +251,7 @@ impl NodeOutputKind {
     pub fn is_integer(self) -> bool {
         if let Some(output_type) = self.as_value() {
             output_type.is_integer()
-        } else  {
+        } else {
             false
         }
     }
@@ -271,8 +273,13 @@ pub struct NodeOutput {
 
 impl NodeOutput {
     /// Creates a new `NodeOutput` with no uses yet.
-    pub fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self{
-        NodeOutput { kind, source_id, output_index, first_use: None.into() }
+    pub fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self {
+        NodeOutput {
+            kind,
+            source_id,
+            output_index,
+            first_use: None.into(),
+        }
     }
 }
 
@@ -297,10 +304,15 @@ pub struct NodeInput {
 impl NodeInput {
     /// Creates a new `NodeInput` not yet linked into any use list.
     pub fn new(output_id: NodeOutputId, node_id: NodeId, input_index: u32) -> Self {
-        NodeInput { output_id, prev: None.into(), next: None.into(), node_id, input_index}
+        NodeInput {
+            output_id,
+            prev: None.into(),
+            next: None.into(),
+            node_id,
+            input_index,
+        }
     }
 }
-
 
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -358,7 +370,10 @@ pub enum NodeKind {
     ///
     /// The base is tracked explicitly so that stores with identical offsets
     /// taken from different SP versions are not conflated.
-    StackStore { space: rsleigh::VnSpace, offset: i64 },
+    StackStore {
+        space: rsleigh::VnSpace,
+        offset: i64,
+    },
     /// Store whose address is an SP-phi of known per-branch offsets.
     /// Inputs: `[phi_token, memory, data]`.  Outputs: `[Memory]`.
     /// The per-branch offsets are stored in
@@ -485,7 +500,10 @@ impl NodeKind {
     /// (`BoolConst`, `IntConst`, or `FloatConst`).
     #[inline]
     pub fn is_const(self) -> bool {
-        matches!(self, Self::BoolConst(..) | Self::IntConst(..) | Self::FloatConst(..))
+        matches!(
+            self,
+            Self::BoolConst(..) | Self::IntConst(..) | Self::FloatConst(..)
+        )
     }
 
     /// Returns `true` if nodes of this kind may be deduplicated in the graph
@@ -498,17 +516,13 @@ impl NodeKind {
     pub fn is_cacheable(&self) -> bool {
         !matches!(
             self,
-                  Self::Entry
+            Self::Entry
                 | Self::InitialMemory
                 | Self::InitialVar(..)
-
                 | Self::Return
-
                 | Self::ControlState
-
                 | Self::MemPhi
                 | Self::ControlPhi(..)
-
                 | Self::Call
                 | Self::CallOther { .. }
                 | Self::CPoolRef
@@ -516,7 +530,6 @@ impl NodeKind {
                 | Self::StackStorePhi { .. }
         )
     }
-
 }
 
 /// A node in the IR graph.
@@ -533,7 +546,11 @@ pub struct Node {
 impl Node {
     /// Creates a new node with the given kind and empty input/output lists.
     pub fn new(kind: NodeKind) -> Self {
-        Self { kind, inputs: NodeInputIdList::new(), outputs: NodeOutputIdList::new() }
+        Self {
+            kind,
+            inputs: NodeInputIdList::new(),
+            outputs: NodeOutputIdList::new(),
+        }
     }
 }
 
@@ -549,9 +566,18 @@ mod tests {
     #[test]
     fn unsigned_int_masks_to_declared_width() {
         let wide: u64 = u64::MAX;
-        assert_eq!(NodeOutputType::U8.get_unsigned_int(wide),  Some(u8::MAX  as u64));
-        assert_eq!(NodeOutputType::U16.get_unsigned_int(wide), Some(u16::MAX as u64));
-        assert_eq!(NodeOutputType::U32.get_unsigned_int(wide), Some(u32::MAX as u64));
+        assert_eq!(
+            NodeOutputType::U8.get_unsigned_int(wide),
+            Some(u8::MAX as u64)
+        );
+        assert_eq!(
+            NodeOutputType::U16.get_unsigned_int(wide),
+            Some(u16::MAX as u64)
+        );
+        assert_eq!(
+            NodeOutputType::U32.get_unsigned_int(wide),
+            Some(u32::MAX as u64)
+        );
         assert_eq!(NodeOutputType::U64.get_unsigned_int(wide), Some(u64::MAX));
     }
 
@@ -568,15 +594,27 @@ mod tests {
     #[test]
     fn signed_int_sign_extends_from_declared_width() {
         // u8::MAX as i8 is -1
-        assert_eq!(NodeOutputType::U8.get_signed_int(u8::MAX as u64),     Some(-1));
+        assert_eq!(NodeOutputType::U8.get_signed_int(u8::MAX as u64), Some(-1));
         // i8::MIN (0x80) sign-extends to -128
-        assert_eq!(NodeOutputType::U8.get_signed_int(i8::MIN as u8 as u64), Some(i8::MIN as i64));
+        assert_eq!(
+            NodeOutputType::U8.get_signed_int(i8::MIN as u8 as u64),
+            Some(i8::MIN as i64)
+        );
         // i8::MAX (0x7F) stays positive
-        assert_eq!(NodeOutputType::U8.get_signed_int(i8::MAX as u64),     Some(i8::MAX as i64));
+        assert_eq!(
+            NodeOutputType::U8.get_signed_int(i8::MAX as u64),
+            Some(i8::MAX as i64)
+        );
         // i16::MIN (0x8000) sign-extends to -32768
-        assert_eq!(NodeOutputType::U16.get_signed_int(i16::MIN as u16 as u64), Some(i16::MIN as i64));
+        assert_eq!(
+            NodeOutputType::U16.get_signed_int(i16::MIN as u16 as u64),
+            Some(i16::MIN as i64)
+        );
         // u32::MAX as u64 sign-extends as i32 to -1
-        assert_eq!(NodeOutputType::U32.get_signed_int(u32::MAX as u64), Some(-1));
+        assert_eq!(
+            NodeOutputType::U32.get_signed_int(u32::MAX as u64),
+            Some(-1)
+        );
     }
 
     /// `get_signed_int` must return `None` for `Bool`.
@@ -588,11 +626,20 @@ mod tests {
     /// `bit_width` must equal `byte_size * 8` for every variant.
     #[test]
     fn bit_width_is_eight_times_byte_size() {
-        for ty in [NodeOutputType::Bool, NodeOutputType::U8, NodeOutputType::U16,
-                   NodeOutputType::U32, NodeOutputType::U64, NodeOutputType::U128,
-                   NodeOutputType::U256] {
-            assert_eq!(ty.bit_width(), ty.byte_size() * 8,
-                "bit_width mismatch for {ty:?}");
+        for ty in [
+            NodeOutputType::Bool,
+            NodeOutputType::U8,
+            NodeOutputType::U16,
+            NodeOutputType::U32,
+            NodeOutputType::U64,
+            NodeOutputType::U128,
+            NodeOutputType::U256,
+        ] {
+            assert_eq!(
+                ty.bit_width(),
+                ty.byte_size() * 8,
+                "bit_width mismatch for {ty:?}"
+            );
         }
     }
 
@@ -619,11 +666,18 @@ mod tests {
     /// `false` for `Bool`, `Control`, `ControlPhi`, and `Memory`.
     #[test]
     fn is_integer_for_all_integer_output_types() {
-        for ty in [NodeOutputType::U8, NodeOutputType::U16,
-                   NodeOutputType::U32, NodeOutputType::U64,
-                   NodeOutputType::U128, NodeOutputType::U256] {
-            assert!(NodeOutputKind::OutputType(ty).is_integer(),
-                "{ty:?} should be integer");
+        for ty in [
+            NodeOutputType::U8,
+            NodeOutputType::U16,
+            NodeOutputType::U32,
+            NodeOutputType::U64,
+            NodeOutputType::U128,
+            NodeOutputType::U256,
+        ] {
+            assert!(
+                NodeOutputKind::OutputType(ty).is_integer(),
+                "{ty:?} should be integer"
+            );
         }
         assert!(!NodeOutputKind::OutputType(NodeOutputType::Bool).is_integer());
         assert!(!NodeOutputKind::Control.is_integer());
@@ -720,7 +774,10 @@ mod tests {
     #[test]
     fn get_unsigned_int_returns_none_for_floats() {
         assert_eq!(NodeOutputType::F32.get_unsigned_int(0x3F800000), None);
-        assert_eq!(NodeOutputType::F64.get_unsigned_int(0x3FF0000000000000), None);
+        assert_eq!(
+            NodeOutputType::F64.get_unsigned_int(0x3FF0000000000000),
+            None
+        );
     }
 
     #[test]

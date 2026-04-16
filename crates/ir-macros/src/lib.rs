@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote};
@@ -185,6 +195,11 @@ fn build_match_code(
     }
 
     if let Some(NodeMatch { kind_pat, inputs }) = pat.node_match {
+        // `need_node` (computed above) is true whenever `pat.node_match.is_some()`,
+        // so `node_tmp` is unconditionally `Some` here. This `unwrap` runs at
+        // proc-macro expansion time; a panic would produce a compile error on a
+        // broken invariant, never at runtime.
+        #[allow(clippy::unwrap_used)]
         let node_tmp = node_tmp.as_ref().unwrap();
 
         let input_match = match inputs {

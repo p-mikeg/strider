@@ -1,9 +1,7 @@
-
 use core::{ops::Index, slice};
 
-use super::node::{NodeId, NodeOutputId, NodeInputId};
 use super::graph::Graph;
-
+use super::node::{NodeId, NodeInputId, NodeOutputId};
 
 #[derive(Clone, Copy)]
 pub struct Outputs<'a>(pub(crate) &'a [NodeOutputId]);
@@ -61,8 +59,6 @@ impl DoubleEndedIterator for OutputIter<'_> {
 }
 
 impl ExactSizeIterator for OutputIter<'_> {}
-
-
 
 // -------------------------------------------------------------------------------------
 
@@ -133,7 +129,6 @@ impl DoubleEndedIterator for InputIter<'_> {
 
 impl ExactSizeIterator for InputIter<'_> {}
 
-
 #[derive(Clone)]
 pub struct OutputUsageIter<'a> {
     pub(crate) graph: &'a Graph,
@@ -173,7 +168,7 @@ impl InputCursor<'_> {
     }
 
     pub fn replace_current_with(&mut self, new_value: NodeOutputId) -> crate::error::Result<()> {
-        let current = self.current.ok_or(crate::error::Error::NullCursorUse)?;
+        let current = self.current.ok_or(crate::error::ErrorKind::NullCursorUse)?;
         self.move_next();
         self.graph.update_input(current, new_value);
         Ok(())

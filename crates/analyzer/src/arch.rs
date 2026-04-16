@@ -4,7 +4,7 @@ pub enum Endianess {
     /// Least-significant byte at the lowest address (x86, AArch64 LE, …).
     Little,
     /// Most-significant byte at the lowest address (MIPS BE, AArch64 BE, …).
-    Big
+    Big,
 }
 
 /// A collection of Sleigh configuration items that together describe a
@@ -21,50 +21,50 @@ pub struct SleighArch {
     /// The byte order of this architecture.
     pub endianess: Endianess,
     /// The Sleigh register name of the hardware stack pointer.
-    pub stack_ptr_reg_name: &'static str
+    pub stack_ptr_reg_name: &'static str,
 }
 
 impl SleighArch {
     /// Returns the x86-64 (64-bit Intel/AMD) architecture descriptor.
     pub fn x86_64() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64, 
-            pspec: rsleigh::pspec::PSPEC_X86_64, 
-            endianess: Endianess::Little, 
-            stack_ptr_reg_name: "RSP"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64,
+            pspec: rsleigh::pspec::PSPEC_X86_64,
+            endianess: Endianess::Little,
+            stack_ptr_reg_name: "RSP",
         }
     }
 
     /// Returns the x86 (32-bit Intel/AMD) architecture descriptor.
     pub fn x86() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_X86, 
-            pspec: rsleigh::pspec::PSPEC_X86, 
-            endianess: Endianess::Little, 
-            stack_ptr_reg_name: "ESP"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_X86,
+            pspec: rsleigh::pspec::PSPEC_X86,
+            endianess: Endianess::Little,
+            stack_ptr_reg_name: "ESP",
         }
     }
 
     /// Returns the big-endian MIPS-32 architecture descriptor.
     pub fn mipsbe32() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE, 
-            pspec: rsleigh::pspec::PSPEC_MIPS32, 
-            endianess: Endianess::Big, 
-            stack_ptr_reg_name: "sp"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE,
+            pspec: rsleigh::pspec::PSPEC_MIPS32,
+            endianess: Endianess::Big,
+            stack_ptr_reg_name: "sp",
         }
     }
 
     /// Returns the little-endian MIPS-32 architecture descriptor.
     pub fn mipsle32() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE, 
-            pspec: rsleigh::pspec::PSPEC_MIPS32, 
-            endianess: Endianess::Little, 
-            stack_ptr_reg_name: "sp"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE,
+            pspec: rsleigh::pspec::PSPEC_MIPS32,
+            endianess: Endianess::Little,
+            stack_ptr_reg_name: "sp",
         }
     }
-    
+
     /// Returns the little-endian ARM 32-bit (ARMv8 A-profile, non-Thumb)
     /// architecture descriptor.
     ///
@@ -75,27 +75,27 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
             pspec: rsleigh::pspec::PSPEC_ARM_V45,
             endianess: Endianess::Little,
-            stack_ptr_reg_name: "sp"
+            stack_ptr_reg_name: "sp",
         }
     }
 
     /// Returns the little-endian AArch64 (ARM 64-bit) architecture descriptor.
     pub fn aarch64() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64, 
-            pspec: rsleigh::pspec::PSPEC_AARCH64, 
-            endianess: Endianess::Little, 
-            stack_ptr_reg_name: "sp"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64,
+            pspec: rsleigh::pspec::PSPEC_AARCH64,
+            endianess: Endianess::Little,
+            stack_ptr_reg_name: "sp",
         }
     }
 
     /// Returns the big-endian AArch64 architecture descriptor.
     pub fn aarchbe64() -> SleighArch {
-        SleighArch { 
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE, 
-            pspec: rsleigh::pspec::PSPEC_AARCH64, 
-            endianess: Endianess::Big, 
-            stack_ptr_reg_name: "sp"
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
+            pspec: rsleigh::pspec::PSPEC_AARCH64,
+            endianess: Endianess::Big,
+            stack_ptr_reg_name: "sp",
         }
     }
 }

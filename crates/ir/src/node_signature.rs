@@ -86,9 +86,7 @@ pub(crate) fn expected_signature(
         // StackStore: [memory, base, data].
         NodeKind::StackStore { .. } => (vec![Memory, AnyInt, AnyInt], vec![Memory]),
         // StackStorePhi: [phi_token, memory, data].
-        NodeKind::StackStorePhi { .. } => {
-            (vec![ControlPhi, Memory, AnyInt], vec![Memory])
-        }
+        NodeKind::StackStorePhi { .. } => (vec![ControlPhi, Memory, AnyInt], vec![Memory]),
 
         // ── Integer constants and operations ────────────────────────────────
         NodeKind::IntConst(_) => (vec![], vec![AnyInt]),
@@ -203,8 +201,7 @@ mod tests {
     #[test]
     fn expected_signature_stack_store() {
         let space = rsleigh::VnSpace::RAM;
-        let (inputs, outputs) =
-            expected_signature(&NodeKind::StackStore { space, offset: -4 });
+        let (inputs, outputs) = expected_signature(&NodeKind::StackStore { space, offset: -4 });
         assert_eq!(
             inputs,
             vec![
@@ -260,8 +257,7 @@ mod tests {
     #[test]
     fn expected_signature_int_binary_op() {
         use crate::ops::IntBinaryOp;
-        let (inputs, outputs) =
-            expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        let (inputs, outputs) = expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(
             inputs,
             vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
@@ -272,8 +268,7 @@ mod tests {
     #[test]
     fn expected_signature_int_cmp_op() {
         use crate::ops::IntCmpOp;
-        let (inputs, outputs) =
-            expected_signature(&NodeKind::IntCmpOp(IntCmpOp::Equal));
+        let (inputs, outputs) = expected_signature(&NodeKind::IntCmpOp(IntCmpOp::Equal));
         assert_eq!(
             inputs,
             vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
@@ -324,8 +319,7 @@ mod tests {
     #[test]
     fn expected_signature_float_binary_op() {
         use crate::ops::FloatBinaryOp;
-        let (inputs, outputs) =
-            expected_signature(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
+        let (inputs, outputs) = expected_signature(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
         assert_eq!(
             inputs,
             vec![ExpectedOutputKind::AnyFloat, ExpectedOutputKind::AnyFloat]

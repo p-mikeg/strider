@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use crate::node_signature::{expected_signature, ExpectedOutputKind};
+use crate::node_signature::{ExpectedOutputKind, expected_signature};
 use crate::walk::walk_graph;
 
 /// Validates the structural invariants of `graph` starting from `entry`.
@@ -319,11 +319,13 @@ fn check_layer_c_postcall_producer(graph: &Graph, errs: &mut Vec<ValidationError
                 producer: p,
                 producer_kind: k,
             },
-            NodeKind::PostCallVarState(_) => |n, p, k| ValidationError::PostCallVarStateNotAfterCall {
-                node: n,
-                producer: p,
-                producer_kind: k,
-            },
+            NodeKind::PostCallVarState(_) => {
+                |n, p, k| ValidationError::PostCallVarStateNotAfterCall {
+                    node: n,
+                    producer: p,
+                    producer_kind: k,
+                }
+            }
             _ => continue,
         };
 
@@ -703,10 +705,9 @@ mod tests {
 
         let errs = validate(&graph, entry).unwrap_err();
         assert!(
-            errs.0.iter().any(|e| matches!(
-                e,
-                ValidationError::UseListContainsStaleInput { .. }
-            )),
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::UseListContainsStaleInput { .. })),
             "expected UseListContainsStaleInput, got: {errs:?}"
         );
     }
@@ -772,10 +773,13 @@ mod tests {
         );
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::ControlStateNonControlPredecessor { input_idx: 0, .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0.iter().any(|e| matches!(
+                e,
+                ValidationError::ControlStateNonControlPredecessor { input_idx: 0, .. }
+            )),
+            "got: {errs:?}"
+        );
     }
 
     fn test_vn() -> rsleigh::Vn {
@@ -808,10 +812,12 @@ mod tests {
         );
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::PhiTokenNotFromControlState { .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::PhiTokenNotFromControlState { .. })),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -828,8 +834,16 @@ mod tests {
         );
         let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
 
-        let c1 = graph.create_node(NodeKind::IntConst(1), [], [NodeOutputKind::OutputType(NodeOutputType::U64)]);
-        let c2 = graph.create_node(NodeKind::IntConst(2), [], [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c1 = graph.create_node(
+            NodeKind::IntConst(1),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let c2 = graph.create_node(
+            NodeKind::IntConst(2),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let c1_out = graph.node_outputs(c1).into_iter().next().unwrap();
         let c2_out = graph.node_outputs(c2).into_iter().next().unwrap();
         let vn = test_vn();
@@ -840,10 +854,17 @@ mod tests {
         );
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2, .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0.iter().any(|e| matches!(
+                e,
+                ValidationError::PhiValueArityMismatch {
+                    expected_predecessors: 1,
+                    actual_values: 2,
+                    ..
+                }
+            )),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -875,7 +896,9 @@ mod tests {
         let data_out = graph.node_outputs(data).into_iter().next().unwrap();
 
         let _ssp = graph.create_node(
-            NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
+            NodeKind::StackStorePhi {
+                space: rsleigh::VnSpace::RAM,
+            },
             [cs_phi_out, mem_out, data_out],
             [NodeOutputKind::Memory],
         );
@@ -883,10 +906,10 @@ mod tests {
         let res = validate(&graph, entry);
         if let Err(errs) = &res {
             assert!(
-                !errs.0.iter().any(|e| matches!(
-                    e,
-                    ValidationError::PhiValueArityMismatch { .. }
-                )),
+                !errs
+                    .0
+                    .iter()
+                    .any(|e| matches!(e, ValidationError::PhiValueArityMismatch { .. })),
                 "StackStorePhi must not trigger PhiValueArityMismatch; got: {errs:?}"
             );
         }
@@ -906,10 +929,12 @@ mod tests {
         );
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::PostCallMemStateNotAfterCall { .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::PostCallMemStateNotAfterCall { .. })),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -927,14 +952,20 @@ mod tests {
         );
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::PostCallVarStateNotAfterCall { .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::PostCallVarStateNotAfterCall { .. })),
+            "got: {errs:?}"
+        );
     }
 
     // Helpers for constructing a Call node and its outputs.
-    fn make_call(graph: &mut Graph, ctrl: NodeOutputId, mem: NodeOutputId) -> (NodeId, NodeOutputId) {
+    fn make_call(
+        graph: &mut Graph,
+        ctrl: NodeOutputId,
+        mem: NodeOutputId,
+    ) -> (NodeId, NodeOutputId) {
         let addr = graph.create_node(
             NodeKind::IntConst(0x1000),
             [],
@@ -969,8 +1000,16 @@ mod tests {
         // PostCallMemState NodeIds).
         let (_, call2_ctrl) = make_call(&mut graph, entry_ctrl, mem_out);
 
-        let _pcm1 = graph.create_node(NodeKind::PostCallMemState, [call1_ctrl], [NodeOutputKind::Memory]);
-        let pcm2 = graph.create_node(NodeKind::PostCallMemState, [call2_ctrl], [NodeOutputKind::Memory]);
+        let _pcm1 = graph.create_node(
+            NodeKind::PostCallMemState,
+            [call1_ctrl],
+            [NodeOutputKind::Memory],
+        );
+        let pcm2 = graph.create_node(
+            NodeKind::PostCallMemState,
+            [call2_ctrl],
+            [NodeOutputKind::Memory],
+        );
 
         // Retarget pcm2's input to call1_ctrl so call1 now has two consumers.
         // (Use test_only_retarget_input so the use-list is not updated — that
@@ -979,10 +1018,12 @@ mod tests {
         graph.test_only_retarget_input(pcm2_input, call1_ctrl);
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::DuplicatePostCallMemState { .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::DuplicatePostCallMemState { .. })),
+            "got: {errs:?}"
+        );
     }
 
     #[test]
@@ -1013,10 +1054,12 @@ mod tests {
         graph.test_only_retarget_input(v2_input, call1_ctrl);
 
         let errs = validate(&graph, entry).unwrap_err();
-        assert!(errs.0.iter().any(|e| matches!(
-            e,
-            ValidationError::DuplicatePostCallVarState { .. }
-        )), "got: {errs:?}");
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::DuplicatePostCallVarState { .. })),
+            "got: {errs:?}"
+        );
 
         // v1 still consumes call1 ctrl legitimately.
         let _ = v1;

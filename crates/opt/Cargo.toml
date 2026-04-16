@@ -7,4 +7,8 @@ edition.workspace = true
 ir-macros.workspace = true
 ir.workspace = true
 rsleigh.workspace = true
+strider-error.workspace = true
 thiserror = { workspace = true }
+
+[lints]
+workspace = true

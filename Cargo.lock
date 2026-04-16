@@ -28,6 +28,7 @@ dependencies = [
  "opt",
  "reader",
  "rsleigh",
+ "strider-error",
  "thiserror",
 ]
 
@@ -52,6 +53,7 @@ dependencies = [
  "petgraph",
  "reader",
  "rsleigh",
+ "strider-error",
  "thiserror",
 ]
 
@@ -139,6 +141,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 name = "dot"
 version = "0.1.0"
 dependencies = [
+ "strider-error",
  "thiserror",
 ]
 
@@ -278,6 +281,7 @@ dependencies = [
  "itertools 0.13.0",
  "rsleigh",
  "smallvec",
+ "strider-error",
  "thiserror",
 ]
 
@@ -366,6 +370,7 @@ dependencies = [
  "ir",
  "ir-macros",
  "rsleigh",
+ "strider-error",
  "thiserror",
 ]
 
@@ -386,6 +391,7 @@ dependencies = [
  "ir",
  "opt",
  "rsleigh",
+ "strider-error",
  "thiserror",
 ]
 
@@ -455,6 +461,7 @@ version = "0.1.0"
 dependencies = [
  "object",
  "rsleigh",
+ "strider-error",
  "thiserror",
 ]
 
@@ -603,6 +610,13 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "strider-error"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "syn"

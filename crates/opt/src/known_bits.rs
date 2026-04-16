@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, ExtendOp};
-use ir::node::{NodeId, NodeOutputId, NodeKind, NodeOutputType};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 use crate::opt::{OptimizationResult, Optimizer};
 use crate::utils::{make_int_const, replace_all_uses};
 
@@ -25,7 +25,10 @@ impl Kb {
     fn from_const(val: u64, ty: NodeOutputType) -> Self {
         let masked = ty.get_unsigned_int(val).unwrap_or(0);
         let type_mask = ty.get_unsigned_int(u64::MAX).unwrap_or(0);
-        Kb { ones: masked, zeros: type_mask ^ masked }
+        Kb {
+            ones: masked,
+            zeros: type_mask ^ masked,
+        }
     }
 
     /// Returns `true` if merging `other` into `self` changed anything.
@@ -70,7 +73,9 @@ fn node_known_bits(
         None => return Ok(None),
     };
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
     let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
@@ -86,42 +91,60 @@ fn node_known_bits(
             let r = known.get(&rhs).copied().unwrap_or_default();
             match op {
                 IntBinaryOp::And => Kb {
-                    ones:  l.ones  & r.ones,
+                    ones: l.ones & r.ones,
                     zeros: (l.zeros | r.zeros) & type_mask,
                 },
                 IntBinaryOp::Or => Kb {
-                    ones:  (l.ones  | r.ones) & type_mask,
+                    ones: (l.ones | r.ones) & type_mask,
                     zeros: l.zeros & r.zeros,
                 },
                 IntBinaryOp::Xor => Kb {
                     // bit is known 1 if exactly one input is known 1.
-                    ones:  (l.ones & r.zeros) | (l.zeros & r.ones),
+                    ones: (l.ones & r.zeros) | (l.zeros & r.ones),
                     // bit is known 0 if both inputs agree (both 0 or both 1).
                     zeros: (l.ones & r.ones) | (l.zeros & r.zeros),
                 },
                 IntBinaryOp::ShiftLeft => {
                     // Lower bits of a left-shifted value are known zero.
-                    let rhs_mask = fg.graph.output_kind(rhs).as_value()
+                    let rhs_mask = fg
+                        .graph
+                        .output_kind(rhs)
+                        .as_value()
                         .and_then(|t| t.get_unsigned_int(u64::MAX))
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
                         let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
-                        return Ok(Some((out, Kb { ones: 0, zeros: lower_mask })));
+                        return Ok(Some((
+                            out,
+                            Kb {
+                                ones: 0,
+                                zeros: lower_mask,
+                            },
+                        )));
                     }
                     return Ok(None);
                 }
                 IntBinaryOp::ShiftRight => {
                     // Logical right-shift: upper bits become 0.
-                    let rhs_mask = fg.graph.output_kind(rhs).as_value()
+                    let rhs_mask = fg
+                        .graph
+                        .output_kind(rhs)
+                        .as_value()
                         .and_then(|t| t.get_unsigned_int(u64::MAX))
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
                         let upper_mask = !((type_mask) >> shift) & type_mask;
-                        return Ok(Some((out, Kb { ones: 0, zeros: upper_mask })));
+                        return Ok(Some((
+                            out,
+                            Kb {
+                                ones: 0,
+                                zeros: upper_mask,
+                            },
+                        )));
                     }
                     return Ok(None);
                 }
@@ -134,8 +157,8 @@ fn node_known_bits(
             let kb = known.get(&input).copied().unwrap_or_default();
             // NOT swaps known ones and zeros.
             Kb {
-                ones:  kb.zeros & type_mask,
-                zeros: kb.ones  & type_mask,
+                ones: kb.zeros & type_mask,
+                zeros: kb.ones & type_mask,
             }
         }
 
@@ -144,7 +167,7 @@ fn node_known_bits(
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
-                ones:  kb.ones  & type_mask,
+                ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
             }
         }
@@ -153,11 +176,13 @@ fn node_known_bits(
             // Upper bits are explicitly zeroed by the extension.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.graph.output_kind(input);
-            let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+            let input_ty = input_kind
+                .as_value()
+                .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
             let input_mask = input_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
-                ones:  kb.ones,
+                ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
             }
         }
@@ -166,48 +191,75 @@ fn node_known_bits(
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.graph.output_kind(input);
-            let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+            let input_ty = input_kind
+                .as_value()
+                .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
             let max_val = input_ty.bit_width() as u64;
-            let bits_needed = if max_val == 0 { 1 } else { u64::BITS - max_val.leading_zeros() } as u64;
-            let result_mask = if bits_needed >= 64 { u64::MAX } else { (1u64 << bits_needed) - 1 };
+            let bits_needed = if max_val == 0 {
+                1
+            } else {
+                u64::BITS - max_val.leading_zeros()
+            } as u64;
+            let result_mask = if bits_needed >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits_needed) - 1
+            };
             let upper_zeros = type_mask & !result_mask;
-            Kb { ones: 0, zeros: upper_zeros }
+            Kb {
+                ones: 0,
+                zeros: upper_zeros,
+            }
         }
 
         NodeKind::Extract { lsb, len } => {
             // Output is exactly `len` bits; upper bits of the output type are zero.
-            let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+            let mask = if len >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << len) - 1
+            };
             let upper_zeros = type_mask & !mask;
             // Propagate known bits from the input for the extracted window.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let kb_in = known.get(&input).copied().unwrap_or_default();
-            let shifted_ones  = (kb_in.ones  >> lsb) & mask;
+            let shifted_ones = (kb_in.ones >> lsb) & mask;
             let shifted_zeros = (kb_in.zeros >> lsb) & mask;
-            Kb { ones: shifted_ones, zeros: shifted_zeros | upper_zeros }
+            Kb {
+                ones: shifted_ones,
+                zeros: shifted_zeros | upper_zeros,
+            }
         }
 
         NodeKind::Piece => {
             let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
             let lo_kind = fg.graph.output_kind(lo);
-            let lo_ty = lo_kind.as_value().ok_or(Error::ExpectedValueOutput(lo_kind))?;
+            let lo_ty = lo_kind
+                .as_value()
+                .ok_or(ErrorKind::ExpectedValueOutput(lo_kind))?;
             let lo_bits = lo_ty.bit_width() as u32;
             let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
             let hi_kb = known.get(&hi).copied().unwrap_or_default();
             let lo_kb = known.get(&lo).copied().unwrap_or_default();
             Kb {
-                ones:  ((hi_kb.ones  << lo_bits) | (lo_kb.ones  & lo_mask)) & type_mask,
+                ones: ((hi_kb.ones << lo_bits) | (lo_kb.ones & lo_mask)) & type_mask,
                 zeros: ((hi_kb.zeros << lo_bits) | (lo_kb.zeros & lo_mask)) & type_mask,
             }
         }
 
         NodeKind::Insert { lsb, len } => {
-            let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+            let mask = if len >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << len) - 1
+            };
             let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
             let dest_kb = known.get(&dest).copied().unwrap_or_default();
-            let src_kb  = known.get(&src).copied().unwrap_or_default();
+            let src_kb = known.get(&src).copied().unwrap_or_default();
             Kb {
-                ones:  ((dest_kb.ones  & !(mask << lsb)) | ((src_kb.ones  & mask) << lsb)) & type_mask,
-                zeros: ((dest_kb.zeros & !(mask << lsb)) | ((src_kb.zeros & mask) << lsb)) & type_mask,
+                ones: ((dest_kb.ones & !(mask << lsb)) | ((src_kb.ones & mask) << lsb)) & type_mask,
+                zeros: ((dest_kb.zeros & !(mask << lsb)) | ((src_kb.zeros & mask) << lsb))
+                    & type_mask,
             }
         }
 
@@ -249,12 +301,16 @@ impl Optimizer for KnownBits {
         for &node_id in &nodes {
             let outputs: Vec<_> = function.graph.node_outputs(node_id).into_iter().collect();
             for out in outputs {
-                let Some(ty) = function.graph.output_kind(out).as_value() else { continue };
+                let Some(ty) = function.graph.output_kind(out).as_value() else {
+                    continue;
+                };
                 if !ty.is_integer() {
                     continue;
                 }
                 // Skip types KnownBits doesn't track (U128/U256).
-                let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else { continue };
+                let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
+                    continue;
+                };
                 let Some(&kb) = known.get(&out) else { continue };
                 if !kb.all_known(type_mask) {
                     continue;
@@ -276,8 +332,8 @@ impl Optimizer for KnownBits {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder, IntBinaryOp};
     use ir::node::{NodeKind, NodeOutputType};
+    use ir::{FunctionBuilder, IntBinaryOp};
 
     fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
     where
@@ -296,7 +352,7 @@ mod tests {
         let ret = fg
             .all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-            .ok_or(Error::NoReturnNode)?;
+            .ok_or(ErrorKind::NoReturnNode)?;
         let val = fg.graph.node_inputs(ret)[1];
         Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
     }
@@ -310,7 +366,8 @@ mod tests {
             let x_seed = b.build_int_const(0, NodeOutputType::U64); // value 0; bits 0-2 = 0
             let c7 = b.build_int_const(7, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
+            let ored =
+                b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)?)
         })?;
         // Run KnownBits until convergence.
@@ -330,7 +387,8 @@ mod tests {
             let x = b.build_int_const(0xFF, NodeOutputType::U8); // any value
             let f0 = b.build_int_const(0xF0, NodeOutputType::U8);
             let f = b.build_int_const(0x0F, NodeOutputType::U8);
-            let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
+            let inner =
+                b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
             Ok(b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)?)
         })?;
         let mut changed = true;
@@ -357,12 +415,18 @@ mod tests {
     /// Therefore `and(result, 0xF0)` should fold to 0.
     #[test]
     fn known_bits_extract_upper_zero() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let x = b.build_int_const(0xFF, NodeOutputType::U8);
-            let extracted = b.build_extract(x, 0, 4, NodeOutputType::U8)?;
-            let mask = b.build_int_const(0xF0, NodeOutputType::U8);
-            Ok(b.build_int_binary_operation(extracted, mask, IntBinaryOp::And, NodeOutputType::U8)?)
-        })?;
+        let mut fg =
+            make_fn(|b| {
+                let x = b.build_int_const(0xFF, NodeOutputType::U8);
+                let extracted = b.build_extract(x, 0, 4, NodeOutputType::U8)?;
+                let mask = b.build_int_const(0xF0, NodeOutputType::U8);
+                Ok(b.build_int_binary_operation(
+                    extracted,
+                    mask,
+                    IntBinaryOp::And,
+                    NodeOutputType::U8,
+                )?)
+            })?;
         let mut changed = true;
         while changed {
             changed = KnownBits.optimize(&mut fg)?.changed();

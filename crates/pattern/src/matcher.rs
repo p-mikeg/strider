@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use ir::BuiltFunctionGraph;
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 
 use crate::pat::{Pat, PatKind};
 use crate::var::{NodeVar, Var};
@@ -10,8 +10,10 @@ use crate::var::{NodeVar, Var};
 // ── Commutativity helpers ─────────────────────────────────────────────────────
 
 fn is_commutative_int_op(op: IntBinaryOp) -> bool {
-    matches!(op, IntBinaryOp::Add | IntBinaryOp::Mul
-               | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+    matches!(
+        op,
+        IntBinaryOp::Add | IntBinaryOp::Mul | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor
+    )
 }
 
 fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
@@ -32,7 +34,7 @@ fn is_commutative_float_op(op: FloatBinaryOp) -> bool {
 /// restores `Bindings` to implement backtracking.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    vars:      HashMap<Var,     NodeOutputId>,
+    vars: HashMap<Var, NodeOutputId>,
     node_vars: HashMap<NodeVar, NodeId>,
 }
 
@@ -95,7 +97,7 @@ impl Match {
     /// the stored constant value.  Returns `None` for unbound vars or non-const
     /// outputs.
     pub fn get_int_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
-        let out  = self.bindings.get(v)?;
+        let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
         match graph.graph.node_kind(node) {
             NodeKind::IntConst(val) => Some(*val),
@@ -107,7 +109,7 @@ impl Match {
     /// the constant value.  Returns `None` for unbound vars or non-bool-const
     /// outputs.
     pub fn get_bool_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<bool> {
-        let out  = self.bindings.get(v)?;
+        let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
         match graph.graph.node_kind(node) {
             NodeKind::BoolConst(val) => Some(*val),
@@ -119,7 +121,7 @@ impl Match {
     /// the raw IEEE 754 bit pattern stored as `u64`.  Returns `None` for
     /// unbound vars or non-float-const outputs.
     pub fn get_float_bits(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
-        let out  = self.bindings.get(v)?;
+        let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
         match graph.graph.node_kind(node) {
             NodeKind::FloatConst(bits) => Some(*bits),
@@ -135,12 +137,12 @@ impl Match {
 /// `Matcher::new` pre-indexes all `Call`, `Return`, and `If` nodes in the
 /// graph so that control-level queries can skip the full node list.
 pub struct Matcher<'g> {
-    fn_graph:         &'g BuiltFunctionGraph,
-    call_nodes:       Vec<NodeId>,
+    fn_graph: &'g BuiltFunctionGraph,
+    call_nodes: Vec<NodeId>,
     call_other_nodes: Vec<NodeId>,
-    return_nodes:     Vec<NodeId>,
-    if_nodes:         Vec<NodeId>,
-    all_nodes:        Vec<NodeId>,
+    return_nodes: Vec<NodeId>,
+    if_nodes: Vec<NodeId>,
+    all_nodes: Vec<NodeId>,
 }
 
 impl<'g> Matcher<'g> {
@@ -149,24 +151,31 @@ impl<'g> Matcher<'g> {
     /// This does a single preorder traversal over all nodes; subsequent
     /// `find_all` calls pay only the cost of the pattern match itself.
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
-        let mut call_nodes       = Vec::new();
+        let mut call_nodes = Vec::new();
         let mut call_other_nodes = Vec::new();
-        let mut return_nodes     = Vec::new();
-        let mut if_nodes         = Vec::new();
-        let mut all_nodes        = Vec::new();
+        let mut return_nodes = Vec::new();
+        let mut if_nodes = Vec::new();
+        let mut all_nodes = Vec::new();
 
         for node in fn_graph.preorder() {
             all_nodes.push(node);
             match fn_graph.graph.node_kind(node) {
-                NodeKind::Call             => call_nodes.push(node),
+                NodeKind::Call => call_nodes.push(node),
                 NodeKind::CallOther { .. } => call_other_nodes.push(node),
-                NodeKind::Return           => return_nodes.push(node),
-                NodeKind::If               => if_nodes.push(node),
+                NodeKind::Return => return_nodes.push(node),
+                NodeKind::If => if_nodes.push(node),
                 _ => {}
             }
         }
 
-        Self { fn_graph, call_nodes, call_other_nodes, return_nodes, if_nodes, all_nodes }
+        Self {
+            fn_graph,
+            call_nodes,
+            call_other_nodes,
+            return_nodes,
+            if_nodes,
+            all_nodes,
+        }
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
@@ -177,21 +186,27 @@ impl<'g> Matcher<'g> {
     /// lists and skip the others.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let candidates: &[NodeId] = match pat.inner() {
-            PatKind::Call      { .. } => &self.call_nodes,
+            PatKind::Call { .. } => &self.call_nodes,
             PatKind::CallOther { .. } => &self.call_other_nodes,
-            PatKind::Return    { .. } => &self.return_nodes,
-            PatKind::If        { .. } => &self.if_nodes,
-            _                         => &self.all_nodes,
+            PatKind::Return { .. } => &self.return_nodes,
+            PatKind::If { .. } => &self.if_nodes,
+            _ => &self.all_nodes,
         };
 
-        candidates.iter().filter_map(|&node| {
-            let mut bindings = Bindings::default();
-            if self.match_node_id(node, pat, &mut bindings) {
-                Some(Match { root: node, bindings })
-            } else {
-                None
-            }
-        }).collect()
+        candidates
+            .iter()
+            .filter_map(|&node| {
+                let mut bindings = Bindings::default();
+                if self.match_node_id(node, pat, &mut bindings) {
+                    Some(Match {
+                        root: node,
+                        bindings,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     // ── match_output ──────────────────────────────────────────────────────────
@@ -214,14 +229,27 @@ impl<'g> Matcher<'g> {
             PatKind::BoolConst(c) => matches!(kind, NodeKind::BoolConst(v) if *v == *c),
 
             PatKind::AnyIntConst(v) => {
-                if !matches!(kind, NodeKind::IntConst(_)) { return false; }
+                if !matches!(kind, NodeKind::IntConst(_)) {
+                    return false;
+                }
                 bindings.bind_var(*v, output)
             }
 
-            PatKind::IntBinaryOp { op, lhs, rhs, ordered } => {
-                let NodeKind::IntBinaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+            PatKind::IntBinaryOp {
+                op,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::IntBinaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     return true;
@@ -237,17 +265,34 @@ impl<'g> Matcher<'g> {
             }
 
             PatKind::IntUnaryOp { op, operand } => {
-                let NodeKind::IntUnaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let NodeKind::IntUnaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::IntCmpOp { op, lhs, rhs } => {
-                let NodeKind::IntCmpOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+                let NodeKind::IntCmpOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     true
@@ -257,10 +302,21 @@ impl<'g> Matcher<'g> {
                 }
             }
 
-            PatKind::BoolBinaryOp { op, lhs, rhs, ordered } => {
-                let NodeKind::BoolBinaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+            PatKind::BoolBinaryOp {
+                op,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::BoolBinaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     return true;
@@ -276,51 +332,111 @@ impl<'g> Matcher<'g> {
             }
 
             PatKind::BoolUnaryOp { op, operand } => {
-                let NodeKind::BoolUnaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let NodeKind::BoolUnaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::CastToBool { operand } => {
-                if !matches!(kind, NodeKind::CastToBool) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::CastToBool) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::CastToInt { operand } => {
-                if !matches!(kind, NodeKind::CastToInt) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::CastToInt) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::Truncate { operand } => {
-                if !matches!(kind, NodeKind::Truncate) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::Truncate) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::Popcount { operand } => {
-                if !matches!(kind, NodeKind::Popcount) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::Popcount) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::Lzcount { operand } => {
-                if !matches!(kind, NodeKind::Lzcount) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::Lzcount) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::Piece { hi, lo } => {
-                if !matches!(kind, NodeKind::Piece) { return false; }
-                let Ok([h, l]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+                if !matches!(kind, NodeKind::Piece) {
+                    return false;
+                }
+                let Ok([h, l]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(h, hi, bindings) && self.match_output(l, lo, bindings) {
                     true
@@ -330,20 +446,50 @@ impl<'g> Matcher<'g> {
                 }
             }
 
-            PatKind::Extract { lsb: pat_lsb, len: pat_len, operand } => {
-                let NodeKind::Extract { lsb, len } = kind else { return false; };
-                if pat_lsb.is_some_and(|pl| pl != *lsb) { return false; }
-                if pat_len.is_some_and(|pl| pl != *len)  { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+            PatKind::Extract {
+                lsb: pat_lsb,
+                len: pat_len,
+                operand,
+            } => {
+                let NodeKind::Extract { lsb, len } = kind else {
+                    return false;
+                };
+                if pat_lsb.is_some_and(|pl| pl != *lsb) {
+                    return false;
+                }
+                if pat_len.is_some_and(|pl| pl != *len) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
-            PatKind::Insert { lsb: pat_lsb, len: pat_len, dest, src } => {
-                let NodeKind::Insert { lsb, len } = kind else { return false; };
-                if pat_lsb.is_some_and(|pl| pl != *lsb) { return false; }
-                if pat_len.is_some_and(|pl| pl != *len)  { return false; }
-                let Ok([d, s]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+            PatKind::Insert {
+                lsb: pat_lsb,
+                len: pat_len,
+                dest,
+                src,
+            } => {
+                let NodeKind::Insert { lsb, len } = kind else {
+                    return false;
+                };
+                if pat_lsb.is_some_and(|pl| pl != *lsb) {
+                    return false;
+                }
+                if pat_len.is_some_and(|pl| pl != *len) {
+                    return false;
+                }
+                let Ok([d, s]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(d, dest, bindings) && self.match_output(s, src, bindings) {
                     true
@@ -354,135 +500,272 @@ impl<'g> Matcher<'g> {
             }
 
             PatKind::Extend { op, operand } => {
-                let NodeKind::Extend(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let NodeKind::Extend(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
-            PatKind::Load { space, addr, output_var, node_var } => {
-                let NodeKind::Load(actual_space) = kind else { return false; };
+            PatKind::Load {
+                space,
+                addr,
+                output_var,
+                node_var,
+            } => {
+                let NodeKind::Load(actual_space) = kind else {
+                    return false;
+                };
                 if let Some(s) = space
-                    && actual_space != s { return false; }
+                    && actual_space != s
+                {
+                    return false;
+                }
                 let snap = bindings.clone();
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 if let Some(addr_pat) = addr {
-                    let Some(&addr_out) = inputs.get(1) else { *bindings = snap; return false; };
+                    let Some(&addr_out) = inputs.get(1) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(addr_out, addr_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(v) = output_var
-                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                    && !bindings.bind_var(*v, output)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::Store { space, addr, data, output_var, node_var } => {
-                let NodeKind::Store(actual_space) = kind else { return false; };
+            PatKind::Store {
+                space,
+                addr,
+                data,
+                output_var,
+                node_var,
+            } => {
+                let NodeKind::Store(actual_space) = kind else {
+                    return false;
+                };
                 if let Some(s) = space
-                    && actual_space != s { return false; }
+                    && actual_space != s
+                {
+                    return false;
+                }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 if let Some(addr_pat) = addr {
-                    let Some(&addr_out) = inputs.get(1) else { *bindings = snap; return false; };
+                    let Some(&addr_out) = inputs.get(1) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(addr_out, addr_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(data_pat) = data {
-                    let Some(&data_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    let Some(&data_out) = inputs.get(2) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(data_out, data_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(v) = output_var
-                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                    && !bindings.bind_var(*v, output)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::StackStore { space, offset, data, output_var, node_var } => {
-                let NodeKind::StackStore { space: actual_space, offset: actual_offset } = *kind
-                    else { return false; };
+            PatKind::StackStore {
+                space,
+                offset,
+                data,
+                output_var,
+                node_var,
+            } => {
+                let NodeKind::StackStore {
+                    space: actual_space,
+                    offset: actual_offset,
+                } = *kind
+                else {
+                    return false;
+                };
                 if let Some(s) = space
-                    && actual_space != *s { return false; }
+                    && actual_space != *s
+                {
+                    return false;
+                }
                 if let Some(o) = offset
-                    && actual_offset != *o { return false; }
+                    && actual_offset != *o
+                {
+                    return false;
+                }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 if let Some(data_pat) = data {
                     // StackStore inputs = [memory(0), base(1), data(2)].
-                    let Some(&data_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    let Some(&data_out) = inputs.get(2) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(data_out, data_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(v) = output_var
-                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                    && !bindings.bind_var(*v, output)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::StackStorePhi { space, offsets, data, output_var, node_var } => {
-                let NodeKind::StackStorePhi { space: actual_space } = *kind
-                    else { return false; };
+            PatKind::StackStorePhi {
+                space,
+                offsets,
+                data,
+                output_var,
+                node_var,
+            } => {
+                let NodeKind::StackStorePhi {
+                    space: actual_space,
+                } = *kind
+                else {
+                    return false;
+                };
                 if let Some(s) = space
-                    && actual_space != *s { return false; }
+                    && actual_space != *s
+                {
+                    return false;
+                }
                 if let Some(expected) = offsets {
                     let mut actual: Vec<i64> = self.fn_graph.graph.stack_phi_offsets(node).to_vec();
                     actual.sort();
-                    if &actual != expected { return false; }
+                    if &actual != expected {
+                        return false;
+                    }
                 }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 if let Some(data_pat) = data {
                     // StackStorePhi inputs = [phi_token(0), memory(1), data(2)].
-                    let Some(&data_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    let Some(&data_out) = inputs.get(2) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(data_out, data_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(v) = output_var
-                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                    && !bindings.bind_var(*v, output)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::Phi { vn, inputs: slot_pats, output_var, node_var } => {
-                let NodeKind::ControlPhi(actual_vn) = kind else { return false; };
+            PatKind::Phi {
+                vn,
+                inputs: slot_pats,
+                output_var,
+                node_var,
+            } => {
+                let NodeKind::ControlPhi(actual_vn) = kind else {
+                    return false;
+                };
                 if let Some(v) = vn
-                    && actual_vn != v { return false; }
+                    && actual_vn != v
+                {
+                    return false;
+                }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 for (idx, slot_pat) in slot_pats {
-                    let Some(&slot_out) = inputs.get(*idx) else { *bindings = snap; return false; };
+                    let Some(&slot_out) = inputs.get(*idx) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(slot_out, slot_pat, bindings) {
                         *bindings = snap;
                         return false;
                     }
                 }
                 if let Some(v) = output_var
-                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                    && !bindings.bind_var(*v, output)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
             PatKind::InitialVar { vn } => {
-                let NodeKind::InitialVar(actual_vn) = kind else { return false; };
+                let NodeKind::InitialVar(actual_vn) = kind else {
+                    return false;
+                };
                 if let Some(v) = vn
-                    && actual_vn != v { return false; }
+                    && actual_vn != v
+                {
+                    return false;
+                }
                 true
             }
 
@@ -515,14 +798,27 @@ impl<'g> Matcher<'g> {
             PatKind::FloatConst(c) => matches!(kind, NodeKind::FloatConst(v) if *v == *c),
 
             PatKind::AnyFloatConst(v) => {
-                if !matches!(kind, NodeKind::FloatConst(_)) { return false; }
+                if !matches!(kind, NodeKind::FloatConst(_)) {
+                    return false;
+                }
                 bindings.bind_var(*v, output)
             }
 
-            PatKind::FloatBinaryOp { op, lhs, rhs, ordered } => {
-                let NodeKind::FloatBinaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+            PatKind::FloatBinaryOp {
+                op,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::FloatBinaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     return true;
@@ -538,17 +834,34 @@ impl<'g> Matcher<'g> {
             }
 
             PatKind::FloatUnaryOp { op, operand } => {
-                let NodeKind::FloatUnaryOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                let NodeKind::FloatUnaryOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::FloatCmpOp { op, lhs, rhs } => {
-                let NodeKind::FloatCmpOp(actual) = kind else { return false; };
-                if actual != op { return false; }
-                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else { return false; };
+                let NodeKind::FloatCmpOp(actual) = kind else {
+                    return false;
+                };
+                if actual != op {
+                    return false;
+                }
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
                     true
@@ -559,57 +872,122 @@ impl<'g> Matcher<'g> {
             }
 
             PatKind::FloatIsNan { operand } => {
-                if !matches!(kind, NodeKind::FloatIsNan) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::FloatIsNan) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::IntToFloat { operand } => {
-                if !matches!(kind, NodeKind::IntToFloat) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::IntToFloat) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::FloatToInt { operand } => {
-                if !matches!(kind, NodeKind::FloatToInt) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::FloatToInt) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::FloatToFloat { operand } => {
-                if !matches!(kind, NodeKind::FloatToFloat) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::FloatToFloat) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::IntBitsToFloat { operand } => {
-                if !matches!(kind, NodeKind::IntBitsToFloat) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::IntBitsToFloat) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::FloatBitsToInt { operand } => {
-                if !matches!(kind, NodeKind::FloatBitsToInt) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::FloatBitsToInt) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             PatKind::CastToFloat { operand } => {
-                if !matches!(kind, NodeKind::CastToFloat) { return false; }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else { return false; };
+                if !matches!(kind, NodeKind::CastToFloat) {
+                    return false;
+                }
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
                 let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) { true } else { *bindings = snap; false }
+                if self.match_output(inp, operand, bindings) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
             }
 
             // Control-level patterns in a data context → no match.
-            PatKind::Call { .. } | PatKind::CallOther { .. }
-            | PatKind::Return { .. } | PatKind::If { .. }
+            PatKind::Call { .. }
+            | PatKind::CallOther { .. }
+            | PatKind::Return { .. }
+            | PatKind::If { .. }
             | PatKind::Contains(_) => false,
         }
     }
@@ -622,12 +1000,21 @@ impl<'g> Matcher<'g> {
         let inputs: Vec<NodeOutputId> = self.fn_graph.graph.node_inputs(node).into_iter().collect();
 
         match pat.inner() {
-            PatKind::Call { target, args, node_var } => {
-                if !matches!(kind, NodeKind::Call) { return false; }
+            PatKind::Call {
+                target,
+                args,
+                node_var,
+            } => {
+                if !matches!(kind, NodeKind::Call) {
+                    return false;
+                }
                 let snap = bindings.clone();
 
                 if let Some(tgt_pat) = target {
-                    let Some(&tgt_out) = inputs.get(2) else { *bindings = snap; return false; };
+                    let Some(&tgt_out) = inputs.get(2) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(tgt_out, tgt_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -635,7 +1022,10 @@ impl<'g> Matcher<'g> {
                 }
 
                 for (idx, arg_pat) in args {
-                    let Some(&arg_out) = inputs.get(3 + idx) else { *bindings = snap; return false; };
+                    let Some(&arg_out) = inputs.get(3 + idx) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(arg_out, arg_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -643,19 +1033,38 @@ impl<'g> Matcher<'g> {
                 }
 
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::CallOther { user_op_id, args, node_var } => {
-                let NodeKind::CallOther { user_op_id: actual_id } = kind else { return false; };
+            PatKind::CallOther {
+                user_op_id,
+                args,
+                node_var,
+            } => {
+                let NodeKind::CallOther {
+                    user_op_id: actual_id,
+                } = kind
+                else {
+                    return false;
+                };
                 if let Some(id) = user_op_id
-                    && actual_id != id { return false; }
+                    && actual_id != id
+                {
+                    return false;
+                }
                 let snap = bindings.clone();
 
                 for (idx, arg_pat) in args {
                     // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), …]
-                    let Some(&arg_out) = inputs.get(2 + idx) else { *bindings = snap; return false; };
+                    let Some(&arg_out) = inputs.get(2 + idx) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(arg_out, arg_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -663,16 +1072,29 @@ impl<'g> Matcher<'g> {
                 }
 
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::Return { preceded_by, ret_vals, node_var } => {
-                if !matches!(kind, NodeKind::Return) { return false; }
+            PatKind::Return {
+                preceded_by,
+                ret_vals,
+                node_var,
+            } => {
+                if !matches!(kind, NodeKind::Return) {
+                    return false;
+                }
                 let snap = bindings.clone();
 
                 if let Some(call_pat) = preceded_by {
-                    let Some(&ctrl_in) = inputs.first() else { *bindings = snap; return false; };
+                    let Some(&ctrl_in) = inputs.first() else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.preceded_by_search(ctrl_in, call_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -682,7 +1104,10 @@ impl<'g> Matcher<'g> {
                 // Return inputs: [ctrl(0), retval0(1), retval1(2), …]
                 // There is no memory edge on Return — only ctrl then the return values.
                 for (idx, rv_pat) in ret_vals {
-                    let Some(&rv_out) = inputs.get(1 + idx) else { *bindings = snap; return false; };
+                    let Some(&rv_out) = inputs.get(1 + idx) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(rv_out, rv_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -690,16 +1115,30 @@ impl<'g> Matcher<'g> {
                 }
 
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
-            PatKind::If { cond, true_branch, false_branch, node_var } => {
-                if !matches!(kind, NodeKind::If) { return false; }
+            PatKind::If {
+                cond,
+                true_branch,
+                false_branch,
+                node_var,
+            } => {
+                if !matches!(kind, NodeKind::If) {
+                    return false;
+                }
                 let snap = bindings.clone();
 
                 if let Some(cond_pat) = cond {
-                    let Some(&cond_out) = inputs.get(1) else { *bindings = snap; return false; };
+                    let Some(&cond_out) = inputs.get(1) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     if !self.match_output(cond_out, cond_pat, bindings) {
                         *bindings = snap;
                         return false;
@@ -709,7 +1148,10 @@ impl<'g> Matcher<'g> {
                 let outputs = self.fn_graph.graph.node_outputs(node);
 
                 if let Some(tb_pat) = true_branch {
-                    let Some(&true_ctrl) = outputs.get(0) else { *bindings = snap; return false; };
+                    let Some(&true_ctrl) = outputs.get(0) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     let mut visited = HashSet::new();
                     if !self.match_contains(true_ctrl, tb_pat, bindings, &mut visited) {
                         *bindings = snap;
@@ -718,7 +1160,10 @@ impl<'g> Matcher<'g> {
                 }
 
                 if let Some(fb_pat) = false_branch {
-                    let Some(&false_ctrl) = outputs.get(1) else { *bindings = snap; return false; };
+                    let Some(&false_ctrl) = outputs.get(1) else {
+                        *bindings = snap;
+                        return false;
+                    };
                     let mut visited = HashSet::new();
                     if !self.match_contains(false_ctrl, fb_pat, bindings, &mut visited) {
                         *bindings = snap;
@@ -727,7 +1172,11 @@ impl<'g> Matcher<'g> {
                 }
 
                 if let Some(nv) = node_var
-                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                    && !bindings.bind_node_var(*nv, node)
+                {
+                    *bindings = snap;
+                    return false;
+                }
                 true
             }
 
@@ -775,7 +1224,9 @@ impl<'g> Matcher<'g> {
         let consumers: Vec<(NodeId, u32)> = self.fn_graph.graph.output_uses(ctrl_output).collect();
 
         for (consumer, _) in consumers {
-            if !visited.insert(consumer) { continue; }
+            if !visited.insert(consumer) {
+                continue;
+            }
 
             // Try to match here.
             let snap = bindings.clone();
@@ -788,16 +1239,18 @@ impl<'g> Matcher<'g> {
             match self.fn_graph.graph.node_kind(consumer) {
                 NodeKind::ControlState | NodeKind::IfCase(_) => {
                     if let Some(next_ctrl) = self.first_ctrl_output(consumer)
-                        && self.match_contains(next_ctrl, inner_pat, bindings, visited) {
-                            return true;
-                        }
+                        && self.match_contains(next_ctrl, inner_pat, bindings, visited)
+                    {
+                        return true;
+                    }
                 }
                 NodeKind::Call => {
                     // Continue past the call.
                     if let Some(next_ctrl) = self.first_ctrl_output(consumer)
-                        && self.match_contains(next_ctrl, inner_pat, bindings, visited) {
-                            return true;
-                        }
+                        && self.match_contains(next_ctrl, inner_pat, bindings, visited)
+                    {
+                        return true;
+                    }
                 }
                 // If / Return are terminating — don't cross them.
                 _ => {}
@@ -827,8 +1280,12 @@ impl<'g> Matcher<'g> {
                     // its own ctrl input so earlier calls in a sequence can
                     // still be found.
                     *bindings = snap;
-                    let call_inputs: Vec<NodeOutputId> =
-                        self.fn_graph.graph.node_inputs(producing).into_iter().collect();
+                    let call_inputs: Vec<NodeOutputId> = self
+                        .fn_graph
+                        .graph
+                        .node_inputs(producing)
+                        .into_iter()
+                        .collect();
                     if let Some(&prev_ctrl) = call_inputs.first() {
                         self.preceded_by_search(prev_ctrl, call_pat, bindings)
                     } else {
@@ -838,8 +1295,12 @@ impl<'g> Matcher<'g> {
             }
             NodeKind::ControlState => {
                 // Try each predecessor ctrl edge.
-                let preds: Vec<NodeOutputId> =
-                    self.fn_graph.graph.node_inputs(producing).into_iter().collect();
+                let preds: Vec<NodeOutputId> = self
+                    .fn_graph
+                    .graph
+                    .node_inputs(producing)
+                    .into_iter()
+                    .collect();
                 for pred_ctrl in preds {
                     let snap = bindings.clone();
                     if self.preceded_by_search(pred_ctrl, call_pat, bindings) {
@@ -856,7 +1317,9 @@ impl<'g> Matcher<'g> {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     fn first_ctrl_output(&self, node: NodeId) -> Option<NodeOutputId> {
-        self.fn_graph.graph.node_outputs(node)
+        self.fn_graph
+            .graph
+            .node_outputs(node)
             .into_iter()
             .find(|&o| self.fn_graph.graph.output_kind(o) == NodeOutputKind::Control)
     }

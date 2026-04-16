@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 //! CFG-to-IR translator for the Strider binary analysis framework.
 //!
 //! This crate drives [`ir::FunctionBuilder`] from a Sleigh p-code CFG
@@ -23,11 +33,10 @@
 mod analyzer;
 mod arch;
 mod calling_convention;
+pub mod error;
 mod utils;
-mod error;
 
-
-pub use calling_convention::CallingConvention;
 pub use analyzer::Analyzer;
 pub use arch::SleighArch;
-pub use error::{Error, Result};
+pub use calling_convention::CallingConvention;
+pub use error::{Error, ErrorKind, Result};

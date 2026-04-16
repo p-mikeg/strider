@@ -1,53 +1,62 @@
-use petgraph::graph::NodeIndex;
-use thiserror::Error;
 use crate::cfg::{PcodeInsnAddr, Region};
+use petgraph::graph::NodeIndex;
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error(transparent)]
-    SleighError(#[from] rsleigh::error::BaseError),
+strider_error::define_error! {
+    pub struct Error wraps ErrorKind;
+    sources: [rsleigh::error::BaseError, core::fmt::Error];
 
-    #[error("generic sleigh error {0:?}")]
-    GenericSleighError(String),
+    #[derive(Debug, thiserror::Error)]
+    pub enum ErrorKind {
+        #[error(transparent)]
+        SleighError(#[from] rsleigh::error::BaseError),
 
-    #[error("empty region {0:?}")]
-    EmptyRegion(Region),
+        #[error("generic sleigh error {0:?}")]
+        GenericSleighError(String),
 
-    #[error("unknown register name by sleign {0:?}")]
-    UnknownRegName(String),
+        #[error("empty region {0:?}")]
+        EmptyRegion(Region),
 
-    #[error("invalid branch target variable {0:?} at opcode {1:?}")]
-    InvalidBranchTargetVaErr(rsleigh::Vn, PcodeInsnAddr),
+        #[error("unknown register name by sleign {0:?}")]
+        UnknownRegName(String),
 
-    #[error("invalid tail call at opcode {0:?}")]
-    InvalidTailCall(PcodeInsnAddr),
+        #[error("invalid branch target variable {0:?} at opcode {1:?}")]
+        InvalidBranchTargetVaErr(rsleigh::Vn, PcodeInsnAddr),
 
-    #[error("cfg failed accessing starting region")]
-    FailedCreatingStartRegion,
+        #[error("invalid tail call at opcode {0:?}")]
+        InvalidTailCall(PcodeInsnAddr),
 
-    #[error("failed spliting region {0:?} into 2 parts at {1:?}")]
-    FailedSplitingRegion(NodeIndex, PcodeInsnAddr),
+        #[error("cfg failed accessing starting region")]
+        FailedCreatingStartRegion,
 
-    #[error("builder about to build an empty instruction region")]
-    NoInstructionsRegionBuilder,
+        #[error("failed spliting region {0:?} into 2 parts at {1:?}")]
+        FailedSplitingRegion(NodeIndex, PcodeInsnAddr),
 
-    #[error("invalid register vn")]
-    InvalidRegVn(rsleigh::Vn),
+        #[error("builder about to build an empty instruction region")]
+        NoInstructionsRegionBuilder,
 
-    #[error(transparent)]
-    FormatError(#[from] core::fmt::Error),
+        #[error("invalid register vn")]
+        InvalidRegVn(rsleigh::Vn),
 
-    #[error("invalid region index {0:?}")]
-    InvalidRegion(NodeIndex),
+        #[error(transparent)]
+        FormatError(#[from] core::fmt::Error),
 
-    #[error("region {0:?} has more than one outgoing edge of kind {1:?}")]
-    DuplicateEdgeKind(NodeIndex, crate::cfg::RegionEdgeKind),
+        #[error("invalid region index {0:?}")]
+        InvalidRegion(NodeIndex),
 
-    #[error("non-entry work-queue item has no parent edge")]
-    MissingParentEdge,
+        #[error("region {0:?} has more than one outgoing edge of kind {1:?}")]
+        DuplicateEdgeKind(NodeIndex, crate::cfg::RegionEdgeKind),
 
-    #[error("unsupported varnode space for display: {0:?}")]
-    UnsupportedVnSpaceDisplay(rsleigh::VnSpace),
+        #[error("non-entry work-queue item has no parent edge")]
+        MissingParentEdge,
+
+        #[error("unsupported varnode space for display: {0:?}")]
+        UnsupportedVnSpaceDisplay(rsleigh::VnSpace),
+
+        /// A test assertion failed. Exists so tests can return `Result<(), Error>`
+        /// instead of using `panic!`.
+        #[error("assertion failed: {0}")]
+        AssertionFailed(String),
+    }
 }
 
 /// the result type using our error.

@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use entity_utils::set::DenseEntitySet;
 
 use crate::{
+    graph::Graph,
     node::{NodeId, NodeOutputId},
-    graph::{Graph},
 };
 
 /// Returns the set of all nodes reachable from `entry` following only
@@ -75,7 +75,6 @@ pub fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(move |input| graph.output_definition(input).0)
         .chain(cfg_succs(graph, node))
 }
-
 
 /// Returns an iterator over all `Control`-kind outputs of `node`.
 pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeOutputId> + '_ {
@@ -208,7 +207,7 @@ mod tests {
         );
         let [ctrl_l, ctrl_r] = graph.node_outputs_exact::<2>(entry).unwrap();
 
-        let (_left, left_ctrl)  = make_ctrl_node(&mut graph, ctrl_l);
+        let (_left, left_ctrl) = make_ctrl_node(&mut graph, ctrl_l);
         let (_right, right_ctrl) = make_ctrl_node(&mut graph, ctrl_r);
 
         // Merge consumes both branch ctrl outputs.
@@ -236,7 +235,10 @@ mod tests {
         let isolated = graph.create_node(NodeKind::Return, [], []);
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
-        assert!(!visited.contains(&isolated), "isolated node must not be visited");
+        assert!(
+            !visited.contains(&isolated),
+            "isolated node must not be visited"
+        );
         assert!(visited.contains(&entry));
     }
 
@@ -273,8 +275,14 @@ mod tests {
         // graph_walk_succs does NOT follow output uses — it follows inputs.
         assert!(visited.contains(&entry));
         assert!(visited.contains(&sink1));
-        assert!(visited.contains(&src), "src is reachable via sink1's data input");
-        assert!(!visited.contains(&sink2), "sink2 has no path from entry through inputs");
+        assert!(
+            visited.contains(&src),
+            "src is reachable via sink1's data input"
+        );
+        assert!(
+            !visited.contains(&sink2),
+            "sink2 has no path from entry through inputs"
+        );
     }
 
     // ── cfg_succs ─────────────────────────────────────────────────────────────
@@ -289,7 +297,10 @@ mod tests {
             [NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
         let succs: Vec<_> = cfg_succs(&graph, node).collect();
-        assert!(succs.is_empty(), "data-only node must have no cfg successors");
+        assert!(
+            succs.is_empty(),
+            "data-only node must have no cfg successors"
+        );
     }
 
     /// A node whose single Control output is consumed by two different nodes
@@ -320,7 +331,7 @@ mod tests {
         );
         let [ctrl0, ctrl1] = graph.node_outputs_exact::<2>(entry).unwrap();
 
-        let left  = make_return(&mut graph, ctrl0);
+        let left = make_return(&mut graph, ctrl0);
         let right = make_return(&mut graph, ctrl1);
 
         let succs: Vec<_> = cfg_succs(&graph, entry).collect();
@@ -359,7 +370,11 @@ mod tests {
             ],
         );
         let ctrl_outs: Vec<_> = cfg_outputs(&graph, node).collect();
-        assert_eq!(ctrl_outs.len(), 2, "only the two Control outputs must appear");
+        assert_eq!(
+            ctrl_outs.len(),
+            2,
+            "only the two Control outputs must appear"
+        );
         for out in ctrl_outs {
             assert_eq!(
                 graph.output_kind(out),

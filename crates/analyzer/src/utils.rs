@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 
 /// Returns a bitmask that covers all bits for a varnode's width in bytes.
 ///
@@ -14,7 +14,7 @@ pub fn vn_mask(reg: &rsleigh::Vn) -> Result<u64> {
         2 => Ok(u16::MAX as u64),
         4 => Ok(u32::MAX as u64),
         8 => Ok(u64::MAX),
-        _ => Err(Error::UnsupportedRegSize(reg.size))
+        _ => Err(ErrorKind::UnsupportedRegSize(reg.size).into()),
     }
 }
 
@@ -25,14 +25,17 @@ mod tests {
     fn reg(size: u32) -> rsleigh::Vn {
         rsleigh::Vn {
             size,
-            addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::REGISTER },
+            addr: rsleigh::VnAddr {
+                off: 0,
+                space: rsleigh::VnSpace::REGISTER,
+            },
         }
     }
 
     /// Masks must exactly cover each supported byte width with no extra bits.
     #[test]
     fn mask_covers_only_the_declared_width() -> Result<()> {
-        assert_eq!(vn_mask(&reg(1))?, u8::MAX  as u64);
+        assert_eq!(vn_mask(&reg(1))?, u8::MAX as u64);
         assert_eq!(vn_mask(&reg(2))?, u16::MAX as u64);
         assert_eq!(vn_mask(&reg(4))?, u32::MAX as u64);
         assert_eq!(vn_mask(&reg(8))?, u64::MAX);

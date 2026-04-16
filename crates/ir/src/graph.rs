@@ -1,12 +1,12 @@
-use std::{collections::HashMap};
-use cranelift_entity::{PrimaryMap, ListPool};
+use cranelift_entity::{ListPool, PrimaryMap};
+use std::collections::HashMap;
 
 use smallvec::SmallVec;
 
 use crate::iterators::InputCursor;
 
-use super::node::*;
 use super::iterators::{Inputs, OutputUsageIter, Outputs};
+use super::node::*;
 
 /// The core IR graph structure.
 ///
@@ -102,25 +102,26 @@ impl Graph {
         let node = Node::new(kind);
 
         // Check if node is already in cache
-        let node_entry = (
-            node,
-            inputs.to_vec(),
-            output_kinds.to_vec(),
-        );
+        let node_entry = (node, inputs.to_vec(), output_kinds.to_vec());
         if let Some(node_id) = self.node_to_id.get(&node_entry) {
             return *node_id;
         }
         // Create a new node id
-        let node_id =  self.nodes.push(node);
+        let node_id = self.nodes.push(node);
         // Store the new node id if the node is allowed to be cached
         if kind.is_cacheable() {
             self.node_to_id.insert(node_entry, node_id);
         }
 
         // Add all inputs to the graph
-        let inputs: SmallVec<[NodeInputId; 2]> = inputs.into_iter().enumerate().map(|(index, output)| {
-                self.inputs.push(NodeInput::new(output, node_id, index as u32))
-            }).collect();
+        let inputs: SmallVec<[NodeInputId; 2]> = inputs
+            .into_iter()
+            .enumerate()
+            .map(|(index, output)| {
+                self.inputs
+                    .push(NodeInput::new(output, node_id, index as u32))
+            })
+            .collect();
 
         // Make sure that the inputs store their usage of the output
         for &input_use in &inputs {
@@ -128,9 +129,9 @@ impl Graph {
         }
 
         // Create outputs for the given node
-        let outputs = output_kinds.into_iter().enumerate()
-            .map(|(index, kind)| {
-            self.outputs.push(NodeOutput::new(kind, node_id, index as u32))
+        let outputs = output_kinds.into_iter().enumerate().map(|(index, kind)| {
+            self.outputs
+                .push(NodeOutput::new(kind, node_id, index as u32))
         });
 
         // Update the node state
@@ -199,17 +200,25 @@ impl Graph {
     /// Only valid for non-cacheable nodes (those whose inputs can grow after
     /// creation, e.g. `ControlState` and `ControlPhi`).  Panics if called on
     /// a cacheable node.
-    pub fn add_node_input(&mut self, node_id: NodeId, output_id: NodeOutputId) -> crate::error::Result<()> {
+    pub fn add_node_input(
+        &mut self,
+        node_id: NodeId,
+        output_id: NodeOutputId,
+    ) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
-            return Err(crate::error::Error::AddInputToCacheableNode(node_id));
+            return Err(crate::error::ErrorKind::AddInputToCacheableNode(node_id).into());
         }
 
         // Get the last input index to know the index for the new input
         let input_index = self.nodes[node_id].inputs.len(&self.input_pool) as u32;
         // Create the new input
-        let input_id = self.inputs.push(NodeInput::new(output_id, node_id, input_index));
+        let input_id = self
+            .inputs
+            .push(NodeInput::new(output_id, node_id, input_index));
         // Add it to the inputs of the node
-        self.nodes[node_id].inputs.push(input_id, &mut self.input_pool);
+        self.nodes[node_id]
+            .inputs
+            .push(input_id, &mut self.input_pool);
         // Track the input in the linked list
         self.link_input_to_output_list(input_id);
         Ok(())
@@ -221,7 +230,7 @@ impl Graph {
     /// remain contiguous.  Only valid for non-cacheable nodes.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
-            return Err(crate::error::Error::AddInputToCacheableNode(node_id));
+            return Err(crate::error::ErrorKind::AddInputToCacheableNode(node_id).into());
         }
         let index = index as usize;
         let inputs = &mut self.nodes[node_id].inputs;
@@ -299,7 +308,11 @@ impl Graph {
                 .iter()
                 .map(|&oid| self.outputs[oid].kind)
                 .collect();
-            let key = (Node::new(self.nodes[node_id].kind), input_outputs, output_kinds);
+            let key = (
+                Node::new(self.nodes[node_id].kind),
+                input_outputs,
+                output_kinds,
+            );
             self.node_to_id.remove(&key);
         }
 
@@ -321,10 +334,15 @@ impl Graph {
     ///
     /// Returns an error if the node does not have exactly `N` outputs.
     #[inline]
-    pub fn node_outputs_exact<const N: usize>(&self, node_id: NodeId) -> crate::error::Result<[NodeOutputId; N]> {
+    pub fn node_outputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> crate::error::Result<[NodeOutputId; N]> {
         let outputs = self.node_outputs(node_id);
         if outputs.len() != N {
-            return Err(crate::error::Error::WrongOutputCount(node_id, N, outputs.len()));
+            return Err(
+                crate::error::ErrorKind::WrongOutputCount(node_id, N, outputs.len()).into(),
+            );
         }
         let mut result = [NodeOutputId::default(); N];
         for (i, v) in outputs.into_iter().enumerate() {
@@ -346,10 +364,13 @@ impl Graph {
     ///
     /// Returns an error if the node does not have exactly `N` inputs.
     #[inline]
-    pub fn node_inputs_exact<const N: usize>(&self, node_id: NodeId) -> crate::error::Result<[NodeOutputId; N]> {
+    pub fn node_inputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> crate::error::Result<[NodeOutputId; N]> {
         let inputs = self.node_inputs(node_id);
         if inputs.len() != N {
-            return Err(crate::error::Error::WrongInputCount(node_id, N, inputs.len()));
+            return Err(crate::error::ErrorKind::WrongInputCount(node_id, N, inputs.len()).into());
         }
         let mut result = [NodeOutputId::default(); N];
         for (i, v) in inputs.into_iter().enumerate() {
@@ -427,7 +448,11 @@ impl Graph {
     /// construct the corrupted state that Layer B of the validator should
     /// detect.
     #[cfg(test)]
-    pub(crate) fn test_only_retarget_input(&mut self, input: NodeInputId, new_target: NodeOutputId) {
+    pub(crate) fn test_only_retarget_input(
+        &mut self,
+        input: NodeInputId,
+        new_target: NodeOutputId,
+    ) {
         self.inputs[input].output_id = new_target;
     }
 }
@@ -456,8 +481,11 @@ mod tests {
         expected: impl IntoIterator<Item = NodeOutputKind>,
     ) {
         let expected: Vec<_> = expected.into_iter().collect();
-        let actual: Vec<_> = graph.node_outputs(node_id).into_iter()
-                    .map(|output_id| graph.output_kind(output_id)).collect();
+        let actual: Vec<_> = graph
+            .node_outputs(node_id)
+            .into_iter()
+            .map(|output_id| graph.output_kind(output_id))
+            .collect();
         assert_eq!(actual, expected);
     }
 
@@ -468,8 +496,11 @@ mod tests {
         expected: impl IntoIterator<Item = (NodeId, u32)>,
     ) {
         let expected: Vec<_> = expected.into_iter().collect();
-        let actual: Vec<_> = graph.node_outputs(node_id).into_iter()
-                    .map(|output_id| graph.output_definition(output_id)).collect();
+        let actual: Vec<_> = graph
+            .node_outputs(node_id)
+            .into_iter()
+            .map(|output_id| graph.output_definition(output_id))
+            .collect();
         assert_eq!(actual, expected);
     }
 
@@ -478,12 +509,19 @@ mod tests {
     #[test]
     fn create_single_node() {
         let mut graph = Graph::new();
-        let node_id = graph.create_node(NodeKind::IntConst(5), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let node_id = graph.create_node(
+            NodeKind::IntConst(5),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         assert_eq!(graph.node_kind(node_id), &NodeKind::IntConst(5));
         assert_eq!(graph.nodes.len(), 1);
         check_node_inputs(&graph, node_id, []);
-        check_node_output_kinds(&graph, node_id, vec![NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        check_node_output_kinds(
+            &graph,
+            node_id,
+            vec![NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         check_node_output_defintions(&graph, node_id, vec![(node_id, 0)]);
     }
 
@@ -493,12 +531,25 @@ mod tests {
     #[test]
     fn cacheable_node_is_deduplicated() {
         let mut graph = Graph::new();
-        let id_a = graph.create_node(NodeKind::IntConst(42), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
-        let id_b = graph.create_node(NodeKind::IntConst(42), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
-        assert_eq!(id_a, id_b, "identical cacheable nodes must alias to the same id");
-        assert_eq!(graph.nodes.len(), 1, "deduplication must not create a second node");
+        let id_a = graph.create_node(
+            NodeKind::IntConst(42),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let id_b = graph.create_node(
+            NodeKind::IntConst(42),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        assert_eq!(
+            id_a, id_b,
+            "identical cacheable nodes must alias to the same id"
+        );
+        assert_eq!(
+            graph.nodes.len(),
+            1,
+            "deduplication must not create a second node"
+        );
     }
 
     /// Non-cacheable nodes (e.g. `Return`) must always produce fresh ids even
@@ -508,7 +559,10 @@ mod tests {
         let mut graph = Graph::new();
         let id_a = graph.create_node(NodeKind::Return, [], []);
         let id_b = graph.create_node(NodeKind::Return, [], []);
-        assert_ne!(id_a, id_b, "non-cacheable nodes must always produce distinct ids");
+        assert_ne!(
+            id_a, id_b,
+            "non-cacheable nodes must always produce distinct ids"
+        );
     }
 
     /// Two adjacent `Call` nodes with identical target and argument outputs
@@ -520,15 +574,20 @@ mod tests {
         let ctrl_a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let mem_a = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
         let [ctrl_out] = graph.node_outputs_exact::<1>(ctrl_a).unwrap();
-        let [mem_out]  = graph.node_outputs_exact::<1>(mem_a).unwrap();
-        let target = graph.create_node(NodeKind::IntConst(0x1000), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let [mem_out] = graph.node_outputs_exact::<1>(mem_a).unwrap();
+        let target = graph.create_node(
+            NodeKind::IntConst(0x1000),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [target_out] = graph.node_outputs_exact::<1>(target).unwrap();
         let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
         let call_a = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
         let call_b = graph.create_node(NodeKind::Call, [ctrl_out, mem_out, target_out], outs);
-        assert_ne!(call_a, call_b,
-            "Call is non-cacheable so identical-argument calls must be distinct");
+        assert_ne!(
+            call_a, call_b,
+            "Call is non-cacheable so identical-argument calls must be distinct"
+        );
     }
 
     /// `StackStorePhi` is non-cacheable; its offsets live in a side-map and
@@ -537,8 +596,16 @@ mod tests {
     fn stack_store_phi_is_never_deduplicated() {
         let mut graph = Graph::new();
         let space = rsleigh::VnSpace::RAM;
-        let id_a = graph.create_node(NodeKind::StackStorePhi { space }, [], [NodeOutputKind::Memory]);
-        let id_b = graph.create_node(NodeKind::StackStorePhi { space }, [], [NodeOutputKind::Memory]);
+        let id_a = graph.create_node(
+            NodeKind::StackStorePhi { space },
+            [],
+            [NodeOutputKind::Memory],
+        );
+        let id_b = graph.create_node(
+            NodeKind::StackStorePhi { space },
+            [],
+            [NodeOutputKind::Memory],
+        );
         assert_ne!(id_a, id_b);
         graph.set_stack_phi_offsets(id_a, vec![0, -4]);
         assert_eq!(graph.stack_phi_offsets(id_a), &[0, -4]);
@@ -551,8 +618,11 @@ mod tests {
     fn add_node_input_registers_use() {
         let mut graph = Graph::new();
         // Produce a value
-        let const_node = graph.create_node(NodeKind::IntConst(1), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let const_node = graph.create_node(
+            NodeKind::IntConst(1),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
 
         // Create a non-cacheable sink
@@ -574,12 +644,18 @@ mod tests {
     fn remove_node_input_cleans_up_use_list() {
         let mut graph = Graph::new();
 
-        let c0 = graph.create_node(NodeKind::IntConst(0), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c0 = graph.create_node(
+            NodeKind::IntConst(0),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [out0] = graph.node_outputs_exact::<1>(c0).unwrap();
 
-        let c1 = graph.create_node(NodeKind::IntConst(1), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c1 = graph.create_node(
+            NodeKind::IntConst(1),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [out1] = graph.node_outputs_exact::<1>(c1).unwrap();
 
         let ret = graph.create_node(NodeKind::Return, [], []);
@@ -593,9 +669,17 @@ mod tests {
         check_node_inputs(&graph, ret, [out1]);
 
         // out0 must no longer be used
-        assert_eq!(graph.output_uses(out0).count(), 0, "out0 should have no uses after removal");
+        assert_eq!(
+            graph.output_uses(out0).count(),
+            0,
+            "out0 should have no uses after removal"
+        );
         // out1 must still be used
-        assert_eq!(graph.output_uses(out1).count(), 1, "out1 should still have one use");
+        assert_eq!(
+            graph.output_uses(out1).count(),
+            1,
+            "out1 should still have one use"
+        );
 
         // The surviving input must have its index adjusted to 0
         let inputs_slice = graph.nodes[ret].inputs.as_slice(&graph.input_pool);
@@ -608,12 +692,18 @@ mod tests {
     fn update_input_moves_use_to_new_output() {
         let mut graph = Graph::new();
 
-        let old = graph.create_node(NodeKind::IntConst(10), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let old = graph.create_node(
+            NodeKind::IntConst(10),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [old_out] = graph.node_outputs_exact::<1>(old).unwrap();
 
-        let new = graph.create_node(NodeKind::IntConst(20), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let new = graph.create_node(
+            NodeKind::IntConst(20),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [new_out] = graph.node_outputs_exact::<1>(new).unwrap();
 
         let ret = graph.create_node(NodeKind::Return, [], []);
@@ -638,8 +728,11 @@ mod tests {
     fn detach_node_inputs_removes_all_uses() {
         let mut graph = Graph::new();
 
-        let c = graph.create_node(NodeKind::IntConst(5), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c = graph.create_node(
+            NodeKind::IntConst(5),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
         let [out] = graph.node_outputs_exact::<1>(c).unwrap();
 
         let ret = graph.create_node(NodeKind::Return, [], []);
@@ -650,8 +743,16 @@ mod tests {
 
         graph.detach_node_inputs(ret);
 
-        assert_eq!(graph.output_uses(out).count(), 0, "all uses must be removed after detach");
-        assert_eq!(graph.node_inputs(ret).len(), 0, "node must have no inputs after detach");
+        assert_eq!(
+            graph.output_uses(out).count(),
+            0,
+            "all uses must be removed after detach"
+        );
+        assert_eq!(
+            graph.node_inputs(ret).len(),
+            0,
+            "node must have no inputs after detach"
+        );
     }
 
     /// After `detach_node_inputs` on a cacheable node, a subsequent
@@ -668,30 +769,45 @@ mod tests {
     fn detach_evicts_cacheable_node_from_dedup_cache() {
         use crate::ops::IntBinaryOp;
         let mut graph = Graph::new();
-        let lhs = graph.create_node(NodeKind::IntConst(7), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
-        let rhs = graph.create_node(NodeKind::IntConst(9), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
+        let lhs = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let rhs = graph.create_node(
+            NodeKind::IntConst(9),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
         let [lhs_out] = graph.node_outputs_exact::<1>(lhs).unwrap();
         let [rhs_out] = graph.node_outputs_exact::<1>(rhs).unwrap();
 
         let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
         let add_a = graph.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [lhs_out, rhs_out], [ty]);
+            [lhs_out, rhs_out],
+            [ty],
+        );
 
         graph.detach_node_inputs(add_a);
         assert_eq!(graph.node_inputs(add_a).len(), 0);
 
         let add_b = graph.create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
-            [lhs_out, rhs_out], [ty]);
+            [lhs_out, rhs_out],
+            [ty],
+        );
 
-        assert_ne!(add_a, add_b,
+        assert_ne!(
+            add_a, add_b,
             "detach must evict the zombie from the dedup cache so a re-created \
-             identical node is fresh");
-        assert_eq!(graph.node_inputs(add_b).len(), 2,
-            "the re-created node must be fully connected");
+             identical node is fresh"
+        );
+        assert_eq!(
+            graph.node_inputs(add_b).len(),
+            2,
+            "the re-created node must be fully connected"
+        );
     }
 
     /// An output consumed by a single node must be reported by
@@ -701,27 +817,39 @@ mod tests {
     fn output_has_one_usage_tracks_consumer_count() {
         let mut graph = Graph::new();
 
-        let c = graph.create_node(NodeKind::IntConst(99), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U32)]);
+        let c = graph.create_node(
+            NodeKind::IntConst(99),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
         let [out] = graph.node_outputs_exact::<1>(c).unwrap();
 
         assert!(!graph.output_has_one_usage(out), "zero uses is not one");
 
         let ret1 = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(ret1, out).unwrap();
-        assert!(graph.output_has_one_usage(out), "one use should return true");
+        assert!(
+            graph.output_has_one_usage(out),
+            "one use should return true"
+        );
 
         let ret2 = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(ret2, out).unwrap();
-        assert!(!graph.output_has_one_usage(out), "two uses should return false");
+        assert!(
+            !graph.output_has_one_usage(out),
+            "two uses should return false"
+        );
     }
 
     /// `get_node_from_output` must return the node that created the output.
     #[test]
     fn get_node_from_output_returns_source_node() {
         let mut graph = Graph::new();
-        let node = graph.create_node(NodeKind::IntConst(7), [],
-            [NodeOutputKind::OutputType(NodeOutputType::U8)]);
+        let node = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U8)],
+        );
         let [out] = graph.node_outputs_exact::<1>(node).unwrap();
         assert_eq!(graph.get_node_from_output(out), node);
     }
@@ -737,9 +865,9 @@ mod tests {
             [NodeOutputKind::Control, NodeOutputKind::Control],
         );
         let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(node).unwrap();
-        assert_eq!(graph.output_kind(true_ctrl),  NodeOutputKind::Control);
+        assert_eq!(graph.output_kind(true_ctrl), NodeOutputKind::Control);
         assert_eq!(graph.output_kind(false_ctrl), NodeOutputKind::Control);
-        assert_eq!(graph.output_definition(true_ctrl),  (node, 0));
+        assert_eq!(graph.output_definition(true_ctrl), (node, 0));
         assert_eq!(graph.output_definition(false_ctrl), (node, 1));
     }
 
@@ -841,8 +969,16 @@ mod tests {
         }
 
         // After one replacement: old_out has one use, new_out has one use.
-        assert_eq!(graph.output_uses(old_out).count(), 1, "one use must remain on old_out");
-        assert_eq!(graph.output_uses(new_out).count(), 1, "one use must move to new_out");
+        assert_eq!(
+            graph.output_uses(old_out).count(),
+            1,
+            "one use must remain on old_out"
+        );
+        assert_eq!(
+            graph.output_uses(new_out).count(),
+            1,
+            "one use must move to new_out"
+        );
     }
 
     /// `output_use_cursor` with `replace_current_with` applied to every
@@ -879,8 +1015,16 @@ mod tests {
             cursor.replace_current_with(new_out).unwrap();
         }
 
-        assert_eq!(graph.output_uses(old_out).count(), 0, "all uses must be drained from old_out");
-        assert_eq!(graph.output_uses(new_out).count(), 3, "all uses must land on new_out");
+        assert_eq!(
+            graph.output_uses(old_out).count(),
+            0,
+            "all uses must be drained from old_out"
+        );
+        assert_eq!(
+            graph.output_uses(new_out).count(),
+            3,
+            "all uses must land on new_out"
+        );
     }
 
     /// Removing the middle input of a three-input node must: leave the
@@ -891,18 +1035,27 @@ mod tests {
         let mut graph = Graph::new();
 
         let out0 = {
-            let n = graph.create_node(NodeKind::IntConst(10), [],
-                [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+            let n = graph.create_node(
+                NodeKind::IntConst(10),
+                [],
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
             graph.node_outputs_exact::<1>(n).unwrap()[0]
         };
         let out1 = {
-            let n = graph.create_node(NodeKind::IntConst(20), [],
-                [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+            let n = graph.create_node(
+                NodeKind::IntConst(20),
+                [],
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
             graph.node_outputs_exact::<1>(n).unwrap()[0]
         };
         let out2 = {
-            let n = graph.create_node(NodeKind::IntConst(30), [],
-                [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+            let n = graph.create_node(
+                NodeKind::IntConst(30),
+                [],
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
             graph.node_outputs_exact::<1>(n).unwrap()[0]
         };
 
@@ -919,8 +1072,14 @@ mod tests {
         assert_eq!(graph.output_uses(out2).count(), 1);
 
         let inputs_slice = graph.nodes[sink].inputs.as_slice(&graph.input_pool);
-        assert_eq!(graph.inputs[inputs_slice[0]].input_index, 0, "surviving input 0 must have index 0");
-        assert_eq!(graph.inputs[inputs_slice[1]].input_index, 1, "surviving input 1 must have index 1");
+        assert_eq!(
+            graph.inputs[inputs_slice[0]].input_index, 0,
+            "surviving input 0 must have index 0"
+        );
+        assert_eq!(
+            graph.inputs[inputs_slice[1]].input_index, 1,
+            "surviving input 1 must have index 1"
+        );
     }
 
     /// Removing the last input must not disturb the preceding inputs.
@@ -929,13 +1088,19 @@ mod tests {
         let mut graph = Graph::new();
 
         let out0 = {
-            let n = graph.create_node(NodeKind::IntConst(1), [],
-                [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+            let n = graph.create_node(
+                NodeKind::IntConst(1),
+                [],
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
             graph.node_outputs_exact::<1>(n).unwrap()[0]
         };
         let out1 = {
-            let n = graph.create_node(NodeKind::IntConst(2), [],
-                [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+            let n = graph.create_node(
+                NodeKind::IntConst(2),
+                [],
+                [NodeOutputKind::OutputType(NodeOutputType::U64)],
+            );
             graph.node_outputs_exact::<1>(n).unwrap()[0]
         };
 
@@ -973,7 +1138,11 @@ mod tests {
         let input_id = graph.nodes[sink].inputs.as_slice(&graph.input_pool)[0];
         graph.update_input(input_id, out);
 
-        assert_eq!(graph.output_uses(out).count(), 1, "self-update must not change use count");
+        assert_eq!(
+            graph.output_uses(out).count(),
+            1,
+            "self-update must not change use count"
+        );
         check_node_inputs(&graph, sink, [out]);
     }
 
@@ -996,13 +1165,21 @@ mod tests {
         assert_eq!(graph.output_uses(out).count(), 2);
 
         graph.detach_node_inputs(sink);
-        assert_eq!(graph.output_uses(out).count(), 0, "uses cleared after detach");
+        assert_eq!(
+            graph.output_uses(out).count(),
+            0,
+            "uses cleared after detach"
+        );
         assert_eq!(graph.node_inputs(sink).len(), 0);
 
         // Re-add; use count must be restored.
         graph.add_node_input(sink, out).unwrap();
         graph.add_node_input(sink, out).unwrap();
-        assert_eq!(graph.output_uses(out).count(), 2, "re-adding inputs must restore use count");
+        assert_eq!(
+            graph.output_uses(out).count(),
+            2,
+            "re-adding inputs must restore use count"
+        );
         assert_eq!(graph.node_inputs(sink).len(), 2);
     }
 

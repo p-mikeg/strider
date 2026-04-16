@@ -1,10 +1,9 @@
+use crate::builder::VarId;
 use crate::dot::GraphDotDumper;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeOutputId};
+use cranelift_entity::PrimaryMap;
 use cranelift_entity::packed_option::ReservedValue;
-use cranelift_entity::{PrimaryMap};
-use crate::builder::VarId;
-
 
 /// An under-construction IR function graph.
 ///
@@ -72,7 +71,10 @@ impl BuiltFunctionGraph {
 
     /// Returns a [`GraphDotDumper`](crate::dot::GraphDotDumper) that can render
     /// this function graph to a `.dot` / `.html` file.
-    pub fn dot_dumper<'a, R: rsleigh::MemReader>(&'a self, sleigh: &'a rsleigh::Sleigh<R>) -> crate::dot::GraphDotDumper<'a, R> {
+    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
+        &'a self,
+        sleigh: &'a rsleigh::Sleigh<R>,
+    ) -> crate::dot::GraphDotDumper<'a, R> {
         GraphDotDumper {
             entry: self.entry,
             graph: &self.graph,

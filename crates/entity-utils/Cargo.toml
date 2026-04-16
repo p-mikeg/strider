@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
+
+[lints]
+workspace = true

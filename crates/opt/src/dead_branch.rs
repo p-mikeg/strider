@@ -35,7 +35,7 @@ fn try_eliminate_dead_branch(
     if inputs.len() < 2 {
         return Ok(OptimizationResult::NoChange);
     }
-    let ctrl_in  = inputs[0];
+    let ctrl_in = inputs[0];
     let cond_out = inputs[1];
 
     let Some(cond_val) = bool_const_val(fg, cond_out) else {
@@ -131,7 +131,7 @@ impl Optimizer for DeadBranchElimination {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder};
+    use ir::FunctionBuilder;
     use ir::node::NodeKind;
 
     // Helper: count ControlState nodes with N ctrl inputs.
@@ -148,7 +148,7 @@ mod tests {
     fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
         let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
         let entry = b.create_region()?;
-        let true_region  = b.create_region()?;
+        let true_region = b.create_region()?;
         let false_region = b.create_region()?;
 
         b.set_entry_region(entry)?;
@@ -180,8 +180,16 @@ mod tests {
 
         // After: true region's CS loses its input (dead branch removed).
         // Entry CS and false region's CS each still have 1 input.
-        assert_eq!(count_cs_with_n_inputs(&fg, 0), 1, "dead branch CS should have 0 inputs");
-        assert_eq!(count_cs_with_n_inputs(&fg, 1), 2, "entry and live branch CS should have 1 input");
+        assert_eq!(
+            count_cs_with_n_inputs(&fg, 0),
+            1,
+            "dead branch CS should have 0 inputs"
+        );
+        assert_eq!(
+            count_cs_with_n_inputs(&fg, 1),
+            2,
+            "entry and live branch CS should have 1 input"
+        );
         Ok(())
     }
 
@@ -194,8 +202,16 @@ mod tests {
         let result = DeadBranchElimination.optimize(&mut fg)?;
         assert!(result.changed());
 
-        assert_eq!(count_cs_with_n_inputs(&fg, 0), 1, "dead (false) branch CS should have 0 inputs");
-        assert_eq!(count_cs_with_n_inputs(&fg, 1), 2, "entry and live (true) branch CS should have 1 input");
+        assert_eq!(
+            count_cs_with_n_inputs(&fg, 0),
+            1,
+            "dead (false) branch CS should have 0 inputs"
+        );
+        assert_eq!(
+            count_cs_with_n_inputs(&fg, 1),
+            2,
+            "entry and live (true) branch CS should have 1 input"
+        );
         Ok(())
     }
 
@@ -204,7 +220,7 @@ mod tests {
         // Build if(x) where x is a non-const boolean.
         let mut fg = {
             let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-            let entry  = b.create_region()?;
+            let entry = b.create_region()?;
             let true_r = b.create_region()?;
             let false_r = b.create_region()?;
             b.set_entry_region(entry)?;

@@ -38,7 +38,9 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
 
         for node_id in nodes {
             let kind = *function.graph.node_kind(node_id);
-            let NodeKind::Load(space) = kind else { continue };
+            let NodeKind::Load(space) = kind else {
+                continue;
+            };
 
             // Load inputs: [memory_token, addr].
             let inputs = function.graph.node_inputs(node_id);
@@ -46,16 +48,24 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
                 continue;
             }
             let addr_input = inputs[1];
-            let Some(addr) = int_const_val(function, addr_input) else { continue };
+            let Some(addr) = int_const_val(function, addr_input) else {
+                continue;
+            };
 
             // Load output: the single value output carries the loaded data type.
             let [data_out] = function.graph.node_outputs_exact::<1>(node_id)?;
-            let Some(ty) = function.graph.output_kind(data_out).as_value() else { continue };
+            let Some(ty) = function.graph.output_kind(data_out).as_value() else {
+                continue;
+            };
             let size = ty.byte_size();
 
-            let Some(loaded) = self.0.read(space, addr, size) else { continue };
+            let Some(loaded) = self.0.read(space, addr, size) else {
+                continue;
+            };
 
-            let Some(masked) = ty.get_unsigned_int(loaded) else { continue };
+            let Some(masked) = ty.get_unsigned_int(loaded) else {
+                continue;
+            };
             let new_out = make_int_const(function, masked, ty)?;
             result |= replace_all_uses(function, data_out, new_out)?;
         }
@@ -68,9 +78,9 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::{ErrorKind, Result};
     use ir::FunctionBuilder;
     use ir::node::{NodeKind, NodeOutputType};
-    use crate::error::Result;
 
     // ── tiny ROM fixture ──────────────────────────────────────────────────────
 
@@ -101,13 +111,13 @@ mod tests {
         Ok(b.build()?)
     }
 
-    fn return_kind(fg: &ir::BuiltFunctionGraph) -> NodeKind {
+    fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
         let ret = fg
             .all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-            .expect("no Return");
+            .ok_or(ErrorKind::NoReturnNode)?;
         let val = fg.graph.node_inputs(ret)[1];
-        *fg.graph.node_kind(fg.graph.get_node_from_output(val))
+        Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
     }
 
     // ── tests ─────────────────────────────────────────────────────────────────
@@ -119,7 +129,7 @@ mod tests {
             Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
         })?;
         assert!(LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(42));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
         Ok(())
     }
 
@@ -131,7 +141,10 @@ mod tests {
         })?;
         assert!(!LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
         // Load node should still be present.
-        assert!(fg.all_node_ids().any(|n| matches!(fg.graph.node_kind(n), NodeKind::Load(_))));
+        assert!(
+            fg.all_node_ids()
+                .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        );
         Ok(())
     }
 
@@ -141,8 +154,9 @@ mod tests {
             // addr = 0x1000 + 0 — a non-trivial expression that constant_fold
             // would simplify, but we don't run constant_fold here.
             let base = b.build_int_const(0x1000, NodeOutputType::U64);
-            let off  = b.build_int_const(0, NodeOutputType::U64);
-            let addr = b.build_int_binary_operation(base, off, ir::IntBinaryOp::Add, NodeOutputType::U64)?;
+            let off = b.build_int_const(0, NodeOutputType::U64);
+            let addr =
+                b.build_int_binary_operation(base, off, ir::IntBinaryOp::Add, NodeOutputType::U64)?;
             Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
         })?;
         // addr is an Add node, not a const → LoadReadOnly must not fire.

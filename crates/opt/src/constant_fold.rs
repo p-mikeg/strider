@@ -1,10 +1,16 @@
-use ir::{BuiltFunctionGraph, IntBinaryOp, IntUnaryOp, IntCmpOp, BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use ir::{
+    BoolBinaryOp, BoolUnaryOp, BuiltFunctionGraph, ExtendOp, FloatBinaryOp, FloatCmpOp,
+    FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
 use ir_macros::match_value;
 
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{int_const_val, bool_const_val, float_const_val, make_int_const, make_bool_const, make_float_const, make_int_bits_to_float_node, make_float_to_float_node, replace_all_uses};
+use crate::utils::{
+    bool_const_val, float_const_val, int_const_val, make_bool_const, make_float_const,
+    make_float_to_float_node, make_int_bits_to_float_node, make_int_const, replace_all_uses,
+};
 
 // ── integer constant evaluation ───────────────────────────────────────────────
 
@@ -20,33 +26,43 @@ fn eval_int_binary(op: IntBinaryOp, l: u64, r: u64, ty: NodeOutputType) -> Optio
         IntBinaryOp::Sub => l.wrapping_sub(r),
         IntBinaryOp::Mul => l.wrapping_mul(r),
         IntBinaryOp::And => l & r,
-        IntBinaryOp::Or  => l | r,
+        IntBinaryOp::Or => l | r,
         IntBinaryOp::Xor => l ^ r,
-        IntBinaryOp::ShiftLeft  => l.wrapping_shl(shift(r)),
+        IntBinaryOp::ShiftLeft => l.wrapping_shl(shift(r)),
         IntBinaryOp::ShiftRight => l.wrapping_shr(shift(r)),
         IntBinaryOp::SShiftRight => {
             let sl = ty.get_signed_int(l)?;
             (sl >> shift(r)) as u64
         }
         IntBinaryOp::Div => {
-            if r == 0 { return None; }
+            if r == 0 {
+                return None;
+            }
             l / r
         }
         IntBinaryOp::Sdiv => {
             let sl = ty.get_signed_int(l)?;
             let sr = ty.get_signed_int(r)?;
-            if sr == 0 { return None; }
-            if sl == i64::MIN && sr == -1 { return None; } // overflow
+            if sr == 0 {
+                return None;
+            }
+            if sl == i64::MIN && sr == -1 {
+                return None;
+            } // overflow
             (sl / sr) as u64
         }
         IntBinaryOp::Rem => {
-            if r == 0 { return None; }
+            if r == 0 {
+                return None;
+            }
             l % r
         }
         IntBinaryOp::Srem => {
             let sl = ty.get_signed_int(l)?;
             let sr = ty.get_signed_int(r)?;
-            if sr == 0 { return None; }
+            if sr == 0 {
+                return None;
+            }
             (sl % sr) as u64
         }
     };
@@ -56,20 +72,27 @@ fn eval_int_binary(op: IntBinaryOp, l: u64, r: u64, ty: NodeOutputType) -> Optio
 /// Evaluates a comparison on two constant integer values.
 fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool> {
     Ok(match op {
-        IntCmpOp::Equal      => l == r,
-        IntCmpOp::Less       => l < r,
-        IntCmpOp::LessEqual  => l <= r,
-        IntCmpOp::Sless      => {
-            ty.get_signed_int(l).ok_or(Error::ExpectedIntegerType(ty))?
-                < ty.get_signed_int(r).ok_or(Error::ExpectedIntegerType(ty))?
+        IntCmpOp::Equal => l == r,
+        IntCmpOp::Less => l < r,
+        IntCmpOp::LessEqual => l <= r,
+        IntCmpOp::Sless => {
+            ty.get_signed_int(l)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))?
+                < ty.get_signed_int(r)
+                    .ok_or(ErrorKind::ExpectedIntegerType(ty))?
         }
         IntCmpOp::SlessEqual => {
-            ty.get_signed_int(l).ok_or(Error::ExpectedIntegerType(ty))?
-                <= ty.get_signed_int(r).ok_or(Error::ExpectedIntegerType(ty))?
+            ty.get_signed_int(l)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))?
+                <= ty
+                    .get_signed_int(r)
+                    .ok_or(ErrorKind::ExpectedIntegerType(ty))?
         }
         IntCmpOp::Carry => {
             // Carry = unsigned addition overflows the type.
-            let max = ty.get_unsigned_int(u64::MAX).ok_or(Error::ExpectedIntegerType(ty))? as u128;
+            let max = ty
+                .get_unsigned_int(u64::MAX)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as u128;
             (l as u128 + r as u128) > max
         }
         IntCmpOp::Borrow => {
@@ -78,8 +101,12 @@ fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool
         }
         IntCmpOp::Scarry => {
             // Signed overflow of l + r.
-            let sl = ty.get_signed_int(l).ok_or(Error::ExpectedIntegerType(ty))? as i128;
-            let sr = ty.get_signed_int(r).ok_or(Error::ExpectedIntegerType(ty))? as i128;
+            let sl = ty
+                .get_signed_int(l)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
+            let sr = ty
+                .get_signed_int(r)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
             let result = sl + sr;
             let bits = ty.bit_width() as u32;
             let min_val = -(1i128 << (bits - 1));
@@ -88,8 +115,12 @@ fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool
         }
         IntCmpOp::Sborrow => {
             // Signed overflow of l - r.
-            let sl = ty.get_signed_int(l).ok_or(Error::ExpectedIntegerType(ty))? as i128;
-            let sr = ty.get_signed_int(r).ok_or(Error::ExpectedIntegerType(ty))? as i128;
+            let sl = ty
+                .get_signed_int(l)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
+            let sr = ty
+                .get_signed_int(r)
+                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
             let result = sl - sr;
             let bits = ty.bit_width() as u32;
             let min_val = -(1i128 << (bits - 1));
@@ -112,12 +143,18 @@ fn extract_const_offset(
     let node = fg.graph.get_node_from_output(out);
     let kind = *fg.graph.node_kind(node);
     let inputs = fg.graph.node_inputs(node);
-    if inputs.len() != 2 { return None; }
+    if inputs.len() != 2 {
+        return None;
+    }
     let (l, r) = (inputs[0], inputs[1]);
     match kind {
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            if let Some(c) = int_const_val(fg, r) { return Some((l, c)); }
-            if let Some(c) = int_const_val(fg, l) { return Some((r, c)); }
+            if let Some(c) = int_const_val(fg, r) {
+                return Some((l, c));
+            }
+            if let Some(c) = int_const_val(fg, l) {
+                return Some((r, c));
+            }
             None
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
@@ -150,7 +187,9 @@ fn try_reassociate_add_sub(
     } else {
         inner_delta.wrapping_add(outer_const)
     };
-    let masked = ty.get_unsigned_int(merged).ok_or(Error::ExpectedIntegerType(ty))?;
+    let masked = ty
+        .get_unsigned_int(merged)
+        .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
     let merged_c = make_int_const(fg, masked, ty)?;
     let new_node = fg.graph.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
@@ -163,11 +202,15 @@ fn try_reassociate_add_sub(
 
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntBinaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::IntBinaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
     let lhs_c = int_const_val(fg, lhs);
@@ -180,10 +223,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
 
     // Full constant evaluation when both operands are known.
     if let (Some(l), Some(r)) = (lhs_c, rhs_c)
-        && let Some(folded) = eval_int_binary(op, l, r, ty) {
-            let new_out = make_int_const(fg, folded, ty)?;
-            return replace_all_uses(fg, out, new_out);
-        }
+        && let Some(folded) = eval_int_binary(op, l, r, ty)
+    {
+        let new_out = make_int_const(fg, folded, ty)?;
+        return replace_all_uses(fg, out, new_out);
+    }
 
     // Algebraic identities and absorbing elements.
     match op {
@@ -197,11 +241,15 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             // (base ± C1) + C2 → base + K
             if let Some(c2) = rhs_c {
                 let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, false)?;
-                if r.changed() { return Ok(r); }
+                if r.changed() {
+                    return Ok(r);
+                }
             }
             if let Some(c1) = lhs_c {
                 let r = try_reassociate_add_sub(fg, out, ty, rhs, c1, false)?;
-                if r.changed() { return Ok(r); }
+                if r.changed() {
+                    return Ok(r);
+                }
             }
         }
         IntBinaryOp::Sub => {
@@ -215,7 +263,9 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             // (base ± C1) - C2 → base + K
             if let Some(c2) = rhs_c {
                 let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, true)?;
-                if r.changed() { return Ok(r); }
+                if r.changed() {
+                    return Ok(r);
+                }
             }
         }
         IntBinaryOp::Mul => {
@@ -344,48 +394,73 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
 
 fn try_fold_int_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntUnaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::IntUnaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let raw = match op {
         IntUnaryOp::Neg => v.wrapping_neg(),
         IntUnaryOp::Not => !v,
     };
-    let Some(folded) = ty.get_unsigned_int(raw) else { return Ok(OptimizationResult::NoChange); };
+    let Some(folded) = ty.get_unsigned_int(raw) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, folded, ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntCmpOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::IntCmpOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let lhs_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_kind.as_value().ok_or(Error::ExpectedValueOutput(lhs_kind))?;
-    let Some(l) = int_const_val(fg, lhs) else { return Ok(OptimizationResult::NoChange); };
-    let Some(r) = int_const_val(fg, rhs) else { return Ok(OptimizationResult::NoChange); };
+    let input_ty = lhs_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(lhs_kind))?;
+    let Some(l) = int_const_val(fg, lhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(r) = int_const_val(fg, rhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let result = eval_int_cmp(op, l, r, input_ty)?;
     let new_out = make_bool_const(fg, result)?;
     replace_all_uses(fg, out, new_out)
 }
 
-fn try_fold_bool_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_bool_binary(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::BoolBinaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::BoolBinaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(l) = bool_const_val(fg, lhs) else { return Ok(OptimizationResult::NoChange); };
-    let Some(r) = bool_const_val(fg, rhs) else { return Ok(OptimizationResult::NoChange); };
+    let Some(l) = bool_const_val(fg, lhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(r) = bool_const_val(fg, rhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let result = match op {
         BoolBinaryOp::And => l && r,
-        BoolBinaryOp::Or  => l || r,
+        BoolBinaryOp::Or => l || r,
         BoolBinaryOp::Xor => l ^ r,
     };
     let new_out = make_bool_const(fg, result)?;
@@ -394,94 +469,155 @@ fn try_fold_bool_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<
 
 fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::BoolUnaryOp(BoolUnaryOp::Neg) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::BoolUnaryOp(BoolUnaryOp::Neg) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = bool_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = bool_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_bool_const(fg, !v)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::Truncate = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Truncate = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let target_ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
-    let Some(folded) = target_ty.get_unsigned_int(v) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(folded) = target_ty.get_unsigned_int(v) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, folded, target_ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::Extend(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Extend(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let target_ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let folded = match op {
         ExtendOp::ZeroExtend => v, // already an unsigned value, just reinterpret at wider type
-        ExtendOp::SignExtend  => input_ty.get_signed_int(v).ok_or(Error::ExpectedIntegerType(input_ty))? as u64,
+        ExtendOp::SignExtend => input_ty
+            .get_signed_int(v)
+            .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?
+            as u64,
     };
-    let Some(masked) = target_ty.get_unsigned_int(folded) else { return Ok(OptimizationResult::NoChange); };
+    let Some(masked) = target_ty.get_unsigned_int(folded) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, masked, target_ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
-fn try_fold_cast_to_bool(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_cast_to_bool(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::CastToBool = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::CastToBool = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_bool_const(fg, v != 0)?;
     replace_all_uses(fg, out, new_out)
 }
 
-fn try_fold_cast_to_int(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_cast_to_int(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::CastToInt = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::CastToInt = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let target_ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = bool_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = bool_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, v as u64, target_ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
-    let masked = input_ty.get_unsigned_int(v).ok_or(Error::ExpectedIntegerType(input_ty))?;
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty
+        .get_unsigned_int(v)
+        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
     let result = masked.count_ones() as u64;
     let new_out = make_int_const(fg, result, ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
-    let masked = input_ty.get_unsigned_int(v).ok_or(Error::ExpectedIntegerType(input_ty))?;
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty
+        .get_unsigned_int(v)
+        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
     let bits = input_ty.bit_width() as u32;
     // Shift into the top of a u64 then count leading zeros within the type width.
     let result = (masked << (64 - bits)).leading_zeros() as u64;
@@ -490,48 +626,86 @@ fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
 }
 
 fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Piece = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Piece = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(hi_v) = int_const_val(fg, hi) else { return Ok(OptimizationResult::NoChange); };
-    let Some(lo_v) = int_const_val(fg, lo) else { return Ok(OptimizationResult::NoChange); };
+    let Some(hi_v) = int_const_val(fg, hi) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(lo_v) = int_const_val(fg, lo) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let lo_kind = fg.graph.output_kind(lo);
-    let lo_ty = lo_kind.as_value().ok_or(Error::ExpectedValueOutput(lo_kind))?;
+    let lo_ty = lo_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(lo_kind))?;
     let lo_bits = lo_ty.bit_width() as u32;
     let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(u64::MAX);
     let result = (hi_v << lo_bits) | (lo_v & lo_mask);
-    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let Some(masked) = ty.get_unsigned_int(result) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, masked, ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Extract { lsb, len } = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Extract { lsb, len } = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else { return Ok(OptimizationResult::NoChange); };
-    let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+    let Some(v) = int_const_val(fg, input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let mask = if len >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << len) - 1
+    };
     let result = (v >> lsb) & mask;
-    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let Some(masked) = ty.get_unsigned_int(result) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, masked, ty)?;
     replace_all_uses(fg, out, new_out)
 }
 
 fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(dest_v) = int_const_val(fg, dest) else { return Ok(OptimizationResult::NoChange); };
-    let Some(src_v)  = int_const_val(fg, src)  else { return Ok(OptimizationResult::NoChange); };
-    let mask = if len >= 64 { u64::MAX } else { (1u64 << len) - 1 };
+    let Some(dest_v) = int_const_val(fg, dest) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(src_v) = int_const_val(fg, src) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let mask = if len >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << len) - 1
+    };
     let result = (dest_v & !(mask << lsb)) | ((src_v & mask) << lsb);
-    let Some(masked) = ty.get_unsigned_int(result) else { return Ok(OptimizationResult::NoChange); };
+    let Some(masked) = ty.get_unsigned_int(result) else {
+        return Ok(OptimizationResult::NoChange);
+    };
     let new_out = make_int_const(fg, masked, ty)?;
     replace_all_uses(fg, out, new_out)
 }
@@ -541,7 +715,12 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
 /// Evaluates a float binary op on raw bit patterns.  Returns the result as a
 /// raw bit pattern, or `None` for undefined operations (should not occur in
 /// IEEE 754, but we keep the Option for consistency with the int version).
-fn eval_float_binary(op: FloatBinaryOp, bits_l: u64, bits_r: u64, ty: NodeOutputType) -> Option<u64> {
+fn eval_float_binary(
+    op: FloatBinaryOp,
+    bits_l: u64,
+    bits_r: u64,
+    ty: NodeOutputType,
+) -> Option<u64> {
     match ty {
         NodeOutputType::F32 => {
             let l = f32::from_bits(bits_l as u32);
@@ -576,20 +755,20 @@ fn eval_float_cmp(op: FloatCmpOp, bits_l: u64, bits_r: u64, ty: NodeOutputType) 
             let l = f32::from_bits(bits_l as u32);
             let r = f32::from_bits(bits_r as u32);
             Some(match op {
-                FloatCmpOp::Equal    => l == r,
+                FloatCmpOp::Equal => l == r,
                 FloatCmpOp::NotEqual => l != r,
-                FloatCmpOp::Less     => l < r,
-                FloatCmpOp::LessEqual=> l <= r,
+                FloatCmpOp::Less => l < r,
+                FloatCmpOp::LessEqual => l <= r,
             })
         }
         NodeOutputType::F64 => {
             let l = f64::from_bits(bits_l);
             let r = f64::from_bits(bits_r);
             Some(match op {
-                FloatCmpOp::Equal    => l == r,
+                FloatCmpOp::Equal => l == r,
                 FloatCmpOp::NotEqual => l != r,
-                FloatCmpOp::Less     => l < r,
-                FloatCmpOp::LessEqual=> l <= r,
+                FloatCmpOp::Less => l < r,
+                FloatCmpOp::LessEqual => l <= r,
             })
         }
         _ => None,
@@ -602,10 +781,10 @@ fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u
         NodeOutputType::F32 => {
             let v = f32::from_bits(bits as u32);
             let result = match op {
-                FloatUnaryOp::Neg   => -v,
-                FloatUnaryOp::Abs   => v.abs(),
-                FloatUnaryOp::Sqrt  => v.sqrt(),
-                FloatUnaryOp::Ceil  => v.ceil(),
+                FloatUnaryOp::Neg => -v,
+                FloatUnaryOp::Abs => v.abs(),
+                FloatUnaryOp::Sqrt => v.sqrt(),
+                FloatUnaryOp::Ceil => v.ceil(),
                 FloatUnaryOp::Floor => v.floor(),
                 FloatUnaryOp::Round => v.round(),
             };
@@ -614,10 +793,10 @@ fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u
         NodeOutputType::F64 => {
             let v = f64::from_bits(bits);
             let result = match op {
-                FloatUnaryOp::Neg   => -v,
-                FloatUnaryOp::Abs   => v.abs(),
-                FloatUnaryOp::Sqrt  => v.sqrt(),
-                FloatUnaryOp::Ceil  => v.ceil(),
+                FloatUnaryOp::Neg => -v,
+                FloatUnaryOp::Abs => v.abs(),
+                FloatUnaryOp::Sqrt => v.sqrt(),
+                FloatUnaryOp::Ceil => v.ceil(),
                 FloatUnaryOp::Floor => v.floor(),
                 FloatUnaryOp::Round => v.round(),
             };
@@ -629,13 +808,20 @@ fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u
 
 // ── per-node float folding ────────────────────────────────────────────────────
 
-fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_float_binary(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::FloatBinaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::FloatBinaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
     let lhs_c = float_const_val(fg, lhs);
@@ -643,10 +829,11 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
 
     // Full constant evaluation when both operands are known.
     if let (Some(l), Some(r)) = (lhs_c, rhs_c)
-        && let Some(folded) = eval_float_binary(op, l, r, ty) {
-            let new_out = make_float_const(fg, folded, ty)?;
-            return replace_all_uses(fg, out, new_out);
-        }
+        && let Some(folded) = eval_float_binary(op, l, r, ty)
+    {
+        let new_out = make_float_const(fg, folded, ty)?;
+        return replace_all_uses(fg, out, new_out);
+    }
 
     // Safe algebraic identities (no -0.0 or NaN corner cases).
     match op {
@@ -658,7 +845,9 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
                     NodeOutputType::F64 => f64::from_bits(r) == 1.0,
                     _ => false,
                 };
-                if is_one { return replace_all_uses(fg, out, lhs); }
+                if is_one {
+                    return replace_all_uses(fg, out, lhs);
+                }
             }
             if let Some(l) = lhs_c {
                 let is_one = match ty {
@@ -666,7 +855,9 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
                     NodeOutputType::F64 => f64::from_bits(l) == 1.0,
                     _ => false,
                 };
-                if is_one { return replace_all_uses(fg, out, rhs); }
+                if is_one {
+                    return replace_all_uses(fg, out, rhs);
+                }
             }
         }
         FloatBinaryOp::Div => {
@@ -677,7 +868,9 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
                     NodeOutputType::F64 => f64::from_bits(r) == 1.0,
                     _ => false,
                 };
-                if is_one { return replace_all_uses(fg, out, lhs); }
+                if is_one {
+                    return replace_all_uses(fg, out, lhs);
+                }
             }
         }
         _ => {}
@@ -686,50 +879,70 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
     Ok(OptimizationResult::NoChange)
 }
 
-fn try_fold_float_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_float_unary(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::FloatUnaryOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::FloatUnaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
     if let Some(bits) = float_const_val(fg, input)
-        && let Some(folded) = eval_float_unary(op, bits, ty) {
-            let new_out = make_float_const(fg, folded, ty)?;
-            return replace_all_uses(fg, out, new_out);
-        }
+        && let Some(folded) = eval_float_unary(op, bits, ty)
+    {
+        let new_out = make_float_const(fg, folded, ty)?;
+        return replace_all_uses(fg, out, new_out);
+    }
     Ok(OptimizationResult::NoChange)
 }
 
 fn try_fold_float_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::FloatCmpOp(op) = kind else { return Ok(OptimizationResult::NoChange); };
+    let NodeKind::FloatCmpOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
     // Determine the type from the inputs, not the (Bool) output.
     let lhs_out_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_out_kind.as_value().ok_or(Error::ExpectedValueOutput(lhs_out_kind))?;
+    let input_ty = lhs_out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(lhs_out_kind))?;
 
     if let (Some(l), Some(r)) = (float_const_val(fg, lhs), float_const_val(fg, rhs))
-        && let Some(result) = eval_float_cmp(op, l, r, input_ty) {
-            let new_out = make_bool_const(fg, result)?;
-            return replace_all_uses(fg, out, new_out);
-        }
+        && let Some(result) = eval_float_cmp(op, l, r, input_ty)
+    {
+        let new_out = make_bool_const(fg, result)?;
+        return replace_all_uses(fg, out, new_out);
+    }
     Ok(OptimizationResult::NoChange)
 }
 
-fn try_fold_float_is_nan(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::FloatIsNan = *fg.graph.node_kind(node_id) else { return Ok(OptimizationResult::NoChange); };
+fn try_fold_float_is_nan(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let NodeKind::FloatIsNan = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value().ok_or(Error::ExpectedValueOutput(input_kind))?;
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
 
     if let Some(bits) = float_const_val(fg, input) {
         let is_nan = match input_ty {
@@ -745,7 +958,10 @@ fn try_fold_float_is_nan(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
 
 /// Folds `IntBitsToFloat(FloatBitsToInt(x)) → x` and
 /// `FloatBitsToInt(IntBitsToFloat(x)) → x`.
-fn try_fold_bitcast_identity(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_fold_bitcast_identity(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
     match kind {
         NodeKind::IntBitsToFloat => {
@@ -786,18 +1002,25 @@ fn try_fold_bitcast_identity(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Re
 /// - Input is a different float type → lowered to `FloatToFloat`.
 /// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
 /// - Input is any other integer type → lowered to `IntBitsToFloat`.
-fn try_lower_cast_to_float(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
+fn try_lower_cast_to_float(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
     if !matches!(*fg.graph.node_kind(node_id), NodeKind::CastToFloat) {
         return Ok(OptimizationResult::NoChange);
     }
 
-    let [out]   = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
-    let out_kind  = fg.graph.output_kind(out);
-    let in_kind   = fg.graph.output_kind(input);
-    let out_ty    = out_kind .as_value().ok_or(crate::error::Error::ExpectedValueOutput(out_kind))?;
-    let in_ty     = in_kind  .as_value().ok_or(crate::error::Error::ExpectedValueOutput(in_kind))?;
+    let out_kind = fg.graph.output_kind(out);
+    let in_kind = fg.graph.output_kind(input);
+    let out_ty = out_kind
+        .as_value()
+        .ok_or(crate::error::ErrorKind::ExpectedValueOutput(out_kind))?;
+    let in_ty = in_kind
+        .as_value()
+        .ok_or(crate::error::ErrorKind::ExpectedValueOutput(in_kind))?;
 
     // 1. Identity: input already has the target float type.
     if in_ty == out_ty {
@@ -860,8 +1083,11 @@ impl Optimizer for ConstantFold {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::{FunctionBuilder, IntBinaryOp, BoolBinaryOp, IntCmpOp, BoolUnaryOp, FloatBinaryOp, FloatUnaryOp, FloatCmpOp};
     use ir::node::{NodeKind, NodeOutputType};
+    use ir::{
+        BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder,
+        IntBinaryOp, IntCmpOp,
+    };
 
     /// Builds a minimal single-region function whose return value is produced
     /// by `f`.  All nodes built by `f` are reachable from the entry.
@@ -880,19 +1106,19 @@ mod tests {
 
     /// Returns the output id that the Return node receives as its value
     /// argument (input[1]: input[0] is the control edge).
-    fn return_value(fg: &ir::BuiltFunctionGraph) -> ir::Value {
+    fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
         let ret = fg
             .all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-            .expect("no Return node");
-        fg.graph.node_inputs(ret)[1]
+            .ok_or(ErrorKind::NoReturnNode)?;
+        Ok(fg.graph.node_inputs(ret)[1])
     }
 
     /// Returns the `NodeKind` of the node that produces the return value.
-    fn return_kind(fg: &ir::BuiltFunctionGraph) -> NodeKind {
-        let val = return_value(fg);
+    fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
+        let val = return_value(fg)?;
         let node = fg.graph.get_node_from_output(val);
-        *fg.graph.node_kind(node)
+        Ok(*fg.graph.node_kind(node))
     }
 
     // ── integer binary folding ────────────────────────────────────────────────
@@ -905,7 +1131,7 @@ mod tests {
             Ok(b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(7));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
         Ok(())
     }
 
@@ -917,7 +1143,7 @@ mod tests {
             Ok(b.build_int_binary_operation(x, zero, IntBinaryOp::And, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
         Ok(())
     }
 
@@ -928,7 +1154,7 @@ mod tests {
             Ok(b.build_int_binary_operation(x, x, IntBinaryOp::Xor, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
         Ok(())
     }
 
@@ -939,7 +1165,7 @@ mod tests {
             Ok(b.build_int_binary_operation(x, x, IntBinaryOp::Sub, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
         Ok(())
     }
 
@@ -958,7 +1184,7 @@ mod tests {
         while changed {
             changed = ConstantFold.optimize(&mut fg)?.changed();
         }
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(3));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(3));
         Ok(())
     }
 
@@ -970,7 +1196,7 @@ mod tests {
             Ok(b.build_int_binary_operation(c5, one, IntBinaryOp::Mul, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(5));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
         Ok(())
     }
 
@@ -982,7 +1208,8 @@ mod tests {
             let x = b.build_int_const(0xFF, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
             let c7 = b.build_int_const(7, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c4, IntBinaryOp::And, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c4, IntBinaryOp::And, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c7, IntBinaryOp::And, NodeOutputType::U64)?)
         })?;
         // Run to convergence (both-const fold + mask-merge may each fire once).
@@ -991,7 +1218,7 @@ mod tests {
             changed = ConstantFold.optimize(&mut fg)?.changed();
         }
         // 0xFF & 4 = 4, 4 & 7 = 4.
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(4));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(4));
         Ok(())
     }
 
@@ -1001,7 +1228,10 @@ mod tests {
     fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
         rsleigh::Vn {
             size,
-            addr: rsleigh::VnAddr { off, space: rsleigh::VnSpace::REGISTER },
+            addr: rsleigh::VnAddr {
+                off,
+                space: rsleigh::VnSpace::REGISTER,
+            },
         }
     }
 
@@ -1029,18 +1259,24 @@ mod tests {
         expected_base: ir::Value,
         expected_const: u64,
         ty: NodeOutputType,
-    ) {
-        let val = return_value(fg);
+    ) -> Result<()> {
+        let val = return_value(fg)?;
         let node = fg.graph.get_node_from_output(val);
         assert!(
-            matches!(fg.graph.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
-            "expected outer Add, got {:?}", fg.graph.node_kind(node)
+            matches!(
+                fg.graph.node_kind(node),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            ),
+            "expected outer Add, got {:?}",
+            fg.graph.node_kind(node)
         );
         let inputs = fg.graph.node_inputs(node);
         assert_eq!(inputs.len(), 2);
         let l = inputs[0];
         let r = inputs[1];
-        let masked = ty.get_unsigned_int(expected_const).unwrap();
+        let masked = ty
+            .get_unsigned_int(expected_const)
+            .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
         let const_on = |o: ir::Value| -> bool {
             matches!(
                 *fg.graph.node_kind(fg.graph.get_node_from_output(o)),
@@ -1055,6 +1291,7 @@ mod tests {
             fg.graph.node_kind(fg.graph.get_node_from_output(l)),
             fg.graph.node_kind(fg.graph.get_node_from_output(r)),
         );
+        Ok(())
     }
 
     #[test]
@@ -1064,12 +1301,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1080,12 +1320,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 1, NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 1, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1096,12 +1339,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 0xFFFF_FFFF_FFFF_FFFF, NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 0xFFFF_FFFF_FFFF_FFFF, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1112,12 +1358,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 0u64.wrapping_sub(7), NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 0u64.wrapping_sub(7), NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1128,12 +1377,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(c3, x, IntBinaryOp::Add, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(c3, x, IntBinaryOp::Add, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1144,12 +1396,15 @@ mod tests {
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
             let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+            let inner =
+                b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
             Ok(b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 7, NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 7, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1165,8 +1420,10 @@ mod tests {
             Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        assert_add_with_const(&fg, x, 0u64.wrapping_sub(12), NodeOutputType::U64);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        assert_add_with_const(&fg, x, 0u64.wrapping_sub(12), NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1181,9 +1438,13 @@ mod tests {
             Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U32)?)
         })?;
         let mut changed = true;
-        while changed { changed = ConstantFold.optimize(&mut fg)?.changed(); }
-        let masked = NodeOutputType::U32.get_unsigned_int(0u64.wrapping_sub(12)).unwrap();
-        assert_add_with_const(&fg, x, masked, NodeOutputType::U32);
+        while changed {
+            changed = ConstantFold.optimize(&mut fg)?.changed();
+        }
+        let masked = NodeOutputType::U32
+            .get_unsigned_int(0u64.wrapping_sub(12))
+            .ok_or(ErrorKind::ExpectedIntegerType(NodeOutputType::U32))?;
+        assert_add_with_const(&fg, x, masked, NodeOutputType::U32)?;
         Ok(())
     }
 
@@ -1193,9 +1454,7 @@ mod tests {
         let xv = reg_vn(0x1000, 8);
         let yv = reg_vn(0x1008, 8);
         let zv = reg_vn(0x1010, 8);
-        let mut b = FunctionBuilder::new(
-            vec![xv, yv, zv], &[xv, yv, zv], &[], &[],
-        )?;
+        let mut b = FunctionBuilder::new(vec![xv, yv, zv], &[xv, yv, zv], &[], &[])?;
         let r = b.create_region()?;
         b.set_entry_region(r)?;
         b.set_region(r);
@@ -1203,14 +1462,15 @@ mod tests {
         let y = b.read_variable(&yv)?;
         let z = b.read_variable(&zv)?;
         let inner = b.build_int_binary_operation(x, y, IntBinaryOp::Add, NodeOutputType::U64)?;
-        let outer = b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let outer =
+            b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
         b.build_return(Some(outer), &[])?;
         let mut fg = b.build()?;
-        let before = return_value(&fg);
+        let before = return_value(&fg)?;
         // Should not change: no constants anywhere.
         let res = ConstantFold.optimize(&mut fg)?;
         assert!(!res.changed(), "no-const chain should not reassociate");
-        assert_eq!(return_value(&fg), before);
+        assert_eq!(return_value(&fg)?, before);
         Ok(())
     }
 
@@ -1226,13 +1486,14 @@ mod tests {
             let wide = b.build_int_const(0xFF00, NodeOutputType::U16);
             Ok(b.truncate_if_needed(wide, NodeOutputType::U8)?)
         })?;
-        let val = return_value(&fg);
+        let val = return_value(&fg)?;
         // Use int_const_val which masks to the declared type.
         let semantic = crate::utils::int_const_val(&fg, val);
         assert_eq!(semantic, Some(0), "0xFF00 truncated to U8 should be 0");
         // No Truncate nodes should exist.
         assert!(
-            !fg.all_node_ids().any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+            !fg.all_node_ids()
+                .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
             "builder should have folded the truncate"
         );
         Ok(())
@@ -1247,7 +1508,7 @@ mod tests {
             Ok(b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
         Ok(())
     }
 
@@ -1259,7 +1520,7 @@ mod tests {
             Ok(b.build_boolean_operation(t, f, BoolBinaryOp::And)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
         Ok(())
     }
 
@@ -1274,7 +1535,10 @@ mod tests {
         })?;
         // Should not fold (division by zero is undefined).
         assert!(!ConstantFold.optimize(&mut fg)?.changed());
-        assert!(matches!(return_kind(&fg), NodeKind::IntBinaryOp(IntBinaryOp::Div)));
+        assert!(matches!(
+            return_kind(&fg)?,
+            NodeKind::IntBinaryOp(IntBinaryOp::Div)
+        ));
         Ok(())
     }
 
@@ -1286,7 +1550,7 @@ mod tests {
             Ok(b.build_int_cmp_operation(c5, c5b, IntCmpOp::Equal, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
         Ok(())
     }
 
@@ -1298,7 +1562,7 @@ mod tests {
             Ok(b.build_int_cmp_operation(c3, c5, IntCmpOp::Less, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
         Ok(())
     }
 
@@ -1312,7 +1576,7 @@ mod tests {
             Ok(b.build_popcount(v, NodeOutputType::U8)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(5));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
         Ok(())
     }
 
@@ -1323,7 +1587,7 @@ mod tests {
             Ok(b.build_popcount(v, NodeOutputType::U64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
         Ok(())
     }
 
@@ -1335,7 +1599,7 @@ mod tests {
             Ok(b.build_lzcount(v, NodeOutputType::U8)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
         Ok(())
     }
 
@@ -1347,7 +1611,7 @@ mod tests {
             Ok(b.build_lzcount(v, NodeOutputType::U8)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(7));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
         Ok(())
     }
 
@@ -1360,7 +1624,7 @@ mod tests {
             Ok(b.build_piece(hi, lo, NodeOutputType::U16)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xABCD));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xABCD));
         Ok(())
     }
 
@@ -1372,7 +1636,7 @@ mod tests {
             Ok(b.build_extract(v, 4, 8, NodeOutputType::U8)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xBC));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xBC));
         Ok(())
     }
 
@@ -1381,11 +1645,11 @@ mod tests {
         // insert(0xFF00u16, 0x42u16, lsb=0, len=8) = 0xFF42
         let mut fg = make_fn(|b| {
             let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
-            let src  = b.build_int_const(0x42,   NodeOutputType::U16);
+            let src = b.build_int_const(0x42, NodeOutputType::U16);
             Ok(b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::IntConst(0xFF42));
+        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF42));
         Ok(())
     }
 
@@ -1399,7 +1663,10 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F32)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(7.0f32.to_bits() as u64));
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst(7.0f32.to_bits() as u64)
+        );
         Ok(())
     }
 
@@ -1411,7 +1678,10 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F32)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(12.0f32.to_bits() as u64));
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst(12.0f32.to_bits() as u64)
+        );
         Ok(())
     }
 
@@ -1423,7 +1693,10 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F32)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f32.to_bits() as u64));
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst(2.5f32.to_bits() as u64)
+        );
         Ok(())
     }
 
@@ -1435,7 +1708,7 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(7.0f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(7.0f64.to_bits()));
         Ok(())
     }
 
@@ -1447,7 +1720,7 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(12.0f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(12.0f64.to_bits()));
         Ok(())
     }
 
@@ -1459,7 +1732,7 @@ mod tests {
             Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
         Ok(())
     }
 
@@ -1471,7 +1744,7 @@ mod tests {
             Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Less)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
         Ok(())
     }
 
@@ -1483,7 +1756,7 @@ mod tests {
             Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
         Ok(())
     }
 
@@ -1497,7 +1770,7 @@ mod tests {
             Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
         Ok(())
     }
 
@@ -1508,7 +1781,10 @@ mod tests {
             Ok(b.build_float_unary_op(v, FloatUnaryOp::Neg, NodeOutputType::F32)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst((-2.0f32).to_bits() as u64));
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst((-2.0f32).to_bits() as u64)
+        );
         Ok(())
     }
 
@@ -1519,7 +1795,7 @@ mod tests {
             Ok(b.build_float_unary_op(v, FloatUnaryOp::Abs, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.0f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(3.0f64.to_bits()));
         Ok(())
     }
 
@@ -1530,7 +1806,7 @@ mod tests {
             Ok(b.build_float_unary_op(v, FloatUnaryOp::Sqrt, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.0f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.0f64.to_bits()));
         Ok(())
     }
 
@@ -1541,7 +1817,7 @@ mod tests {
             Ok(b.build_float_is_nan(v)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(true));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
         Ok(())
     }
 
@@ -1552,7 +1828,7 @@ mod tests {
             Ok(b.build_float_is_nan(v)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::BoolConst(false));
+        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
         Ok(())
     }
 
@@ -1564,7 +1840,7 @@ mod tests {
             Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
         Ok(())
     }
 
@@ -1576,7 +1852,7 @@ mod tests {
             Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
         Ok(())
     }
 
@@ -1587,17 +1863,17 @@ mod tests {
         // → then,  IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) simplifies to FloatConst(3.0)
         //   via the bitcast-identity: replace uses of IntBitsToFloat with FloatBitsToInt's input.
         let mut fg = make_fn(|b| {
-            let a   = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-            let b2  = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
+            let a = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+            let b2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
             let sum = b.build_float_binary_op(a, b2, FloatBinaryOp::Add, NodeOutputType::F64)?;
-            let as_int       = b.build_float_bits_to_int(sum, NodeOutputType::U64)?;
+            let as_int = b.build_float_bits_to_int(sum, NodeOutputType::U64)?;
             let back_to_float = b.build_int_bits_to_float(as_int, NodeOutputType::F64)?;
             Ok(back_to_float)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         // Float binary fold: sum → FloatConst(3.0).
         // Bitcast identity fold: IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) → FloatConst(3.0).
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.0f64.to_bits()));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(3.0f64.to_bits()));
         Ok(())
     }
 
@@ -1613,7 +1889,7 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         // CastToFloat(IntConst(bits)) → FloatConst(bits)
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(bits));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
         Ok(())
     }
 
@@ -1627,7 +1903,7 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         // CastToFloat(F32 → F32) → identity (FloatConst)
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(bits));
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(bits));
         Ok(())
     }
 
@@ -1637,13 +1913,14 @@ mod tests {
             let int_a = b.build_int_const(1, NodeOutputType::U32);
             let int_b = b.build_int_const(2, NodeOutputType::U32);
             // Non-const int (Add result).
-            let sum = b.build_int_binary_operation(int_a, int_b, IntBinaryOp::Add, NodeOutputType::U32)?;
+            let sum =
+                b.build_int_binary_operation(int_a, int_b, IntBinaryOp::Add, NodeOutputType::U32)?;
             let cast = b.build_cast_to_float(sum, NodeOutputType::F32);
             Ok(cast)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         // Should lower to IntBitsToFloat.
-        assert_eq!(return_kind(&fg), NodeKind::IntBitsToFloat);
+        assert_eq!(return_kind(&fg)?, NodeKind::IntBitsToFloat);
         Ok(())
     }
 
@@ -1656,7 +1933,7 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         // F32 → F64 should lower to FloatToFloat.
-        assert_eq!(return_kind(&fg), NodeKind::FloatToFloat);
+        assert_eq!(return_kind(&fg)?, NodeKind::FloatToFloat);
         Ok(())
     }
 }

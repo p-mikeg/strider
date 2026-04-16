@@ -1,6 +1,6 @@
 use crate::{BoolBinaryOpKind, BoolUnaryOpKind, ExtendOpKind, 
     IntBinaryOpKind, IntCmpKind, IntUnaryOpKind, Var, node::{NodeId, NodeKind, NodeOutputId, NodeOutputType}};
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 
 // this is the readable foramt to work with the nodes 
 pub enum NodeView {
@@ -54,13 +54,13 @@ impl crate::graph::Graph {
 
     fn get_output_type(&self, output: NodeOutputId) -> Result<NodeOutputType> {
         let kind = self.output_kind(output);
-        kind.as_value().ok_or(Error::ExpectedValue(output, kind))
+        kind.as_value().ok_or(ErrorKind::ExpectedValue(output, kind))
     }
 
     fn verify_bool_type(&self, outputs: &[NodeOutputId]) -> Result<()> {
         for &output in outputs {
             if !self.output_kind(output).is_bool() {
-                return Err(Error::ExpectedBool(output));
+                return Err(ErrorKind::ExpectedBool(output).into());
             }
         }
         Ok(())
@@ -70,7 +70,7 @@ impl crate::graph::Graph {
         for &output in outputs {
             let kind = self.output_kind(output);
             if !kind.is_control() {
-                return Err(Error::ExpectedControl(output, kind));
+                return Err(ErrorKind::ExpectedControl(output, kind).into());
             }
         }
         Ok(())
@@ -79,7 +79,7 @@ impl crate::graph::Graph {
     fn verify_int_type(&self, outputs: &[NodeOutputId]) -> Result<()> {
         for &output in outputs {
             if !self.output_kind(output).is_integer() {
-                return Err(Error::ExpectedInteger(output));
+                return Err(ErrorKind::ExpectedInteger(output).into());
             }
         }
         Ok(())
@@ -89,7 +89,7 @@ impl crate::graph::Graph {
         for &output in outputs {
             let kind = self.output_kind(output);
             if !kind.is_memory() {
-                return Err(Error::ExpectedMemory(output, kind));
+                return Err(ErrorKind::ExpectedMemory(output, kind).into());
             }
         }
         Ok(())

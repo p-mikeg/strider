@@ -1,10 +1,9 @@
+use rsleigh::MemReader;
 use std::collections::HashMap;
 use std::io;
-use rsleigh::MemReader;
 
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-
 
 /// Formats a signed SP-relative offset so that the sign is always shown
 /// (e.g. `0` → ` + 0`, `-4` → ` - 4`, `8` → ` + 8`).  Used by the StackStore
@@ -17,41 +16,34 @@ fn signed_offset(o: i64) -> String {
     }
 }
 
-
 // ── node appearance ───────────────────────────────────────────────────────────
 
 fn node_shape(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)       => "Mdiamond",
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "Mdiamond",
 
-        NodeKind::ControlState          => "invhouse",
-        NodeKind::ControlPhi(_)
-        | NodeKind::MemPhi              => "house",
+        NodeKind::ControlState => "invhouse",
+        NodeKind::ControlPhi(_) | NodeKind::MemPhi => "house",
 
-        NodeKind::If                    => "diamond",
-        NodeKind::IfCase(_)             => "trapezium",
+        NodeKind::If => "diamond",
+        NodeKind::IfCase(_) => "trapezium",
 
         NodeKind::Load(_)
         | NodeKind::Store(_)
         | NodeKind::StackStore { .. }
         | NodeKind::StackStorePhi { .. } => "box3d",
 
-        NodeKind::Call                  => "rarrow",
-        NodeKind::CallOther { .. }      => "doubleoctagon",
-        NodeKind::SegmentOp { .. }      => "parallelogram",
-        NodeKind::CPoolRef              => "folder",
-        NodeKind::New                   => "component",
+        NodeKind::Call => "rarrow",
+        NodeKind::CallOther { .. } => "doubleoctagon",
+        NodeKind::SegmentOp { .. } => "parallelogram",
+        NodeKind::CPoolRef => "folder",
+        NodeKind::New => "component",
 
-        NodeKind::PostCallMemState
-        | NodeKind::PostCallVarState(_) => "invtriangle",
+        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => "invtriangle",
 
-        NodeKind::Return                => "doublecircle",
+        NodeKind::Return => "doublecircle",
 
-        NodeKind::IntConst(_)
-        | NodeKind::BoolConst(_)
-        | NodeKind::FloatConst(_)       => "ellipse",
+        NodeKind::IntConst(_) | NodeKind::BoolConst(_) | NodeKind::FloatConst(_) => "ellipse",
 
         _ => "box",
     }
@@ -60,52 +52,44 @@ fn node_shape(kind: &NodeKind) -> &'static str {
 /// Per-kind fill color for the dark theme.
 fn node_fillcolor(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)       => "\"#1a3a5c\"",
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
 
-        NodeKind::ControlState          => "\"#2a1a4a\"",
+        NodeKind::ControlState => "\"#2a1a4a\"",
 
-        NodeKind::ControlPhi(_)
-        | NodeKind::MemPhi              => "\"#163030\"",
+        NodeKind::ControlPhi(_) | NodeKind::MemPhi => "\"#163030\"",
 
-        NodeKind::If
-        | NodeKind::IfCase(_)           => "\"#3a2a10\"",
+        NodeKind::If | NodeKind::IfCase(_) => "\"#3a2a10\"",
 
-        NodeKind::Load(_)
-        | NodeKind::Store(_)            => "\"#102030\"",
+        NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 
-        NodeKind::StackStore { .. }
-        | NodeKind::StackStorePhi { .. } => "\"#20182a\"",   // stack-slot purple
+        NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. } => "\"#20182a\"", // stack-slot purple
 
-        NodeKind::Call                  => "\"#3a1010\"",
-        NodeKind::CallOther { .. }      => "\"#3a2810\"",   // amber — opaque intrinsic
-        NodeKind::SegmentOp { .. }      => "\"#10283a\"",   // teal — address computation
-        NodeKind::CPoolRef              => "\"#2a1a3a\"",   // violet — JVM metadata
-        NodeKind::New                   => "\"#103a2a\"",   // dark green — allocation
+        NodeKind::Call => "\"#3a1010\"",
+        NodeKind::CallOther { .. } => "\"#3a2810\"", // amber — opaque intrinsic
+        NodeKind::SegmentOp { .. } => "\"#10283a\"", // teal — address computation
+        NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet — JVM metadata
+        NodeKind::New => "\"#103a2a\"",              // dark green — allocation
 
-        NodeKind::PostCallMemState
-        | NodeKind::PostCallVarState(_) => "\"#28102a\"",
+        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => "\"#28102a\"",
 
-        NodeKind::Return                => "\"#103a10\"",
+        NodeKind::Return => "\"#103a10\"",
 
         NodeKind::FloatConst(_)
         | NodeKind::FloatBinaryOp(_)
         | NodeKind::FloatUnaryOp(_)
         | NodeKind::FloatCmpOp(_)
-        | NodeKind::FloatIsNan          => "\"#1a3020\"",  // dark green
+        | NodeKind::FloatIsNan => "\"#1a3020\"", // dark green
 
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
         | NodeKind::FloatBitsToInt
-        | NodeKind::CastToFloat         => "\"#302018\"",  // dark amber
+        | NodeKind::CastToFloat => "\"#302018\"", // dark amber
 
         _ => "\"#2d2d2d\"",
     }
 }
-
 
 // ── edge appearance ───────────────────────────────────────────────────────────
 
@@ -121,10 +105,10 @@ fn edge_style<R: MemReader>(
 
     // Non-value output kinds always use the same role regardless of position.
     match out_kind {
-        NodeOutputKind::Control        => return ("ctrl",     "\"#00cccc\""),   // aqua
-        NodeOutputKind::Memory         => return ("mem",      "\"#cc88aa\""),   // pink
-        NodeOutputKind::ControlPhi      => return ("phi",     "\"#dddddd\""),   // white
-        NodeOutputKind::OutputType(_)  => {}                                     // fall through
+        NodeOutputKind::Control => return ("ctrl", "\"#00cccc\""), // aqua
+        NodeOutputKind::Memory => return ("mem", "\"#cc88aa\""),   // pink
+        NodeOutputKind::ControlPhi => return ("phi", "\"#dddddd\""), // white
+        NodeOutputKind::OutputType(_) => {}                        // fall through
     }
 
     // Value edges: colour/label depend on how the consumer uses this slot.
@@ -134,9 +118,9 @@ fn edge_style<R: MemReader>(
         | NodeKind::BoolBinaryOp(_)
         | NodeKind::FloatBinaryOp(_)
         | NodeKind::FloatCmpOp(_) => match input_idx {
-            0 => ("lhs", "\"#4488ff\""),   // blue
-            1 => ("rhs", "\"#ff4444\""),   // red
-            _ => ("",    "\"#cccccc\""),
+            0 => ("lhs", "\"#4488ff\""), // blue
+            1 => ("rhs", "\"#ff4444\""), // red
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::IntUnaryOp(_)
@@ -155,62 +139,62 @@ fn edge_style<R: MemReader>(
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
         | NodeKind::FloatBitsToInt
-        | NodeKind::CastToFloat     => ("val", "\"#88cc88\""),   // green
+        | NodeKind::CastToFloat => ("val", "\"#88cc88\""), // green
 
         NodeKind::Piece | NodeKind::Insert { .. } => match input_idx {
             0 => ("hi/dest", "\"#4488ff\""),
-            1 => ("lo/src",  "\"#ff4444\""),
-            _ => ("",        "\"#cccccc\""),
+            1 => ("lo/src", "\"#ff4444\""),
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::Load(_) => match input_idx {
-            0 => ("mem",  "\"#cc88aa\""),
-            1 => ("addr", "\"#cc88ff\""),  // purple
-            _ => ("",     "\"#cccccc\""),
+            0 => ("mem", "\"#cc88aa\""),
+            1 => ("addr", "\"#cc88ff\""), // purple
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::Store(_) => match input_idx {
-            0 => ("mem",  "\"#cc88aa\""),
-            1 => ("addr", "\"#cc88ff\""),  // purple
-            2 => ("data", "\"#ff8800\""),  // orange
-            _ => ("",     "\"#cccccc\""),
+            0 => ("mem", "\"#cc88aa\""),
+            1 => ("addr", "\"#cc88ff\""), // purple
+            2 => ("data", "\"#ff8800\""), // orange
+            _ => ("", "\"#cccccc\""),
         },
 
         // StackStore inputs = [memory, base, data].
         NodeKind::StackStore { .. } => match input_idx {
-            0 => ("mem",  "\"#cc88aa\""),
-            1 => ("sp",   "\"#cc88ff\""),  // purple — SP base
-            2 => ("data", "\"#ff8800\""),  // orange
-            _ => ("",     "\"#cccccc\""),
+            0 => ("mem", "\"#cc88aa\""),
+            1 => ("sp", "\"#cc88ff\""),   // purple — SP base
+            2 => ("data", "\"#ff8800\""), // orange
+            _ => ("", "\"#cccccc\""),
         },
 
         // StackStorePhi inputs = [phi_token, memory, data].
         NodeKind::StackStorePhi { .. } => match input_idx {
-            0 => ("phi",  "\"#dddddd\""),
-            1 => ("mem",  "\"#cc88aa\""),
-            2 => ("data", "\"#ff8800\""),  // orange
-            _ => ("",     "\"#cccccc\""),
+            0 => ("phi", "\"#dddddd\""),
+            1 => ("mem", "\"#cc88aa\""),
+            2 => ("data", "\"#ff8800\""), // orange
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::Call => match input_idx {
-            0 => ("ctrl",   "\"#00cccc\""),
-            1 => ("mem",    "\"#cc88aa\""),
-            2 => ("target", "\"#ffdd44\""),  // yellow
-            _ => ("arg",    "\"#ff8800\""),  // orange
+            0 => ("ctrl", "\"#00cccc\""),
+            1 => ("mem", "\"#cc88aa\""),
+            2 => ("target", "\"#ffdd44\""), // yellow
+            _ => ("arg", "\"#ff8800\""),    // orange
         },
 
         // CallOther inputs = [ctrl, memory, arg0, arg1, …]
         NodeKind::CallOther { .. } => match input_idx {
             0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem",  "\"#cc88aa\""),
-            _ => ("arg",  "\"#ff8800\""),
+            1 => ("mem", "\"#cc88aa\""),
+            _ => ("arg", "\"#ff8800\""),
         },
 
         // SegmentOp inputs = [segment, offset]
         NodeKind::SegmentOp { .. } => match input_idx {
-            0 => ("seg", "\"#ffdd44\""),   // yellow — segment selector
-            1 => ("off", "\"#cc88ff\""),   // purple — offset
-            _ => ("",    "\"#cccccc\""),
+            0 => ("seg", "\"#ffdd44\""), // yellow — segment selector
+            1 => ("off", "\"#cc88ff\""), // purple — offset
+            _ => ("", "\"#cccccc\""),
         },
 
         // CPoolRef / New inputs are opaque references; label them by index.
@@ -218,15 +202,15 @@ fn edge_style<R: MemReader>(
 
         NodeKind::If => match input_idx {
             0 => ("ctrl", "\"#00cccc\""),
-            1 => ("cond", "\"#ff44ff\""),  // magenta
-            _ => ("",     "\"#cccccc\""),
+            1 => ("cond", "\"#ff44ff\""), // magenta
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::Return => match input_idx {
             0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem",  "\"#cc88aa\""),
-            2 => ("val",  "\"#88cc88\""),
-            _ => ("",     "\"#cccccc\""),
+            1 => ("mem", "\"#cc88aa\""),
+            2 => ("val", "\"#88cc88\""),
+            _ => ("", "\"#cccccc\""),
         },
 
         NodeKind::ControlState => ("ctrl", "\"#00cccc\""),
@@ -237,17 +221,15 @@ fn edge_style<R: MemReader>(
         // so MemPhi never reaches this arm.
         NodeKind::ControlPhi(_) => ("in", "\"#dddddd\""),
 
-        NodeKind::PostCallMemState
-        | NodeKind::PostCallVarState(_) => match input_idx {
-            0 => ("ctrl",  "\"#00cccc\""),
-            1 => ("mem",   "\"#cc88aa\""),
-            _ => ("",      "\"#cccccc\""),
+        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => match input_idx {
+            0 => ("ctrl", "\"#00cccc\""),
+            1 => ("mem", "\"#cc88aa\""),
+            _ => ("", "\"#cccccc\""),
         },
 
         _ => ("", "\"#cccccc\""),
     }
 }
-
 
 // ── dumper ────────────────────────────────────────────────────────────────────
 
@@ -263,16 +245,19 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let offset = vn.addr.off;
         let size = vn.size;
         match vn.addr.space {
-            rsleigh::VnSpace::CONST    => Ok(format!("{offset:#x}:{size}")),
+            rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
             rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs()
+                let regs = self
+                    .sleigh
+                    .regs()
                     .map_err(|e| io::Error::other(e.to_string()))?;
-                let name = regs.vn_to_name(*vn)
+                let name = regs
+                    .vn_to_name(*vn)
                     .ok_or_else(|| io::Error::other(format!("register not found: {vn:?}")))?;
                 Ok(name.to_string())
-            },
-            rsleigh::VnSpace::RAM      => Ok(format!("ram[{offset:#x}]:{size}")),
-            rsleigh::VnSpace::UNIQUE   => Ok(format!("unique[{offset:#x}]:{size}")),
+            }
+            rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
+            rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
             s if s == self.sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
             s => Err(io::Error::other(format!("unsupported VnSpace: {s:?}"))),
         }
@@ -287,25 +272,30 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             return "ram";
         }
         match space {
-            rsleigh::VnSpace::CONST    => "const",
+            rsleigh::VnSpace::CONST => "const",
             rsleigh::VnSpace::REGISTER => "register",
-            rsleigh::VnSpace::UNIQUE   => "unique",
-            rsleigh::VnSpace::RAM      => "ram",
-            _                          => "??",
+            rsleigh::VnSpace::UNIQUE => "unique",
+            rsleigh::VnSpace::RAM => "ram",
+            _ => "??",
         }
     }
 
     /// Returns the [`NodeOutputType`] of the first value output of `node`,
     /// or `None` if it has no value output.
     fn out_type(&self, node: NodeId) -> Option<NodeOutputType> {
-        self.graph.node_outputs(node).into_iter()
+        self.graph
+            .node_outputs(node)
+            .into_iter()
             .find_map(|o| self.graph.output_kind(o).as_value())
     }
 
     /// Returns the [`NodeOutputType`] of the `NodeOutputId` at input index
     /// `idx` of `node`, or `None` if it is not a value output.
     fn input_type(&self, node: NodeId, idx: usize) -> Option<NodeOutputType> {
-        self.graph.node_inputs(node).into_iter().nth(idx)
+        self.graph
+            .node_inputs(node)
+            .into_iter()
+            .nth(idx)
             .and_then(|o| self.graph.output_kind(o).as_value())
     }
 
@@ -314,41 +304,37 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
         let label = match kind {
             // ── entry / structural ────────────────────────────────────────────
-            NodeKind::InitialVar(var) =>
-                format!("init\n{}", self.vn_to_name(var)?),
+            NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
             NodeKind::MemPhi => "φ Mem".to_string(),
-            NodeKind::ControlPhi(var) =>
-                format!("φ {}", self.vn_to_name(var)?),
-            NodeKind::PostCallVarState(var) =>
-                format!("post-call\n{}", self.vn_to_name(var)?),
-            NodeKind::IfCase(b) =>
-                format!("if.{}", if *b { "true" } else { "false" }),
+            NodeKind::ControlPhi(var) => format!("φ {}", self.vn_to_name(var)?),
+            NodeKind::PostCallVarState(var) => format!("post-call\n{}", self.vn_to_name(var)?),
+            NodeKind::IfCase(b) => format!("if.{}", if *b { "true" } else { "false" }),
 
             // ── constants ─────────────────────────────────────────────────────
             NodeKind::BoolConst(v) => format!("const {v}"),
-            NodeKind::IntConst(v)  => {
-                let ty = self.out_type(node)
+            NodeKind::IntConst(v) => {
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("const {v:#x}{ty}")
             }
-            NodeKind::FloatConst(bits) => {
-                match self.out_type(node) {
-                    Some(NodeOutputType::F32) => {
-                        let v = f32::from_bits(*bits as u32);
-                        format!("const {v}:f32")
-                    }
-                    _ => {
-                        let v = f64::from_bits(*bits);
-                        format!("const {v}:f64")
-                    }
+            NodeKind::FloatConst(bits) => match self.out_type(node) {
+                Some(NodeOutputType::F32) => {
+                    let v = f32::from_bits(*bits as u32);
+                    format!("const {v}:f32")
                 }
-            }
+                _ => {
+                    let v = f64::from_bits(*bits);
+                    format!("const {v}:f64")
+                }
+            },
 
             // ── memory operations ─────────────────────────────────────────────
             NodeKind::Load(space) => {
                 let space = self.pretty_vnspace(*space);
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(" {}", t.as_str()))
                     .unwrap_or_default();
                 format!("Load{ty}\n← {space}")
@@ -356,7 +342,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and addr are 0 and 1
-                let ty = self.input_type(node, 2)
+                let ty = self
+                    .input_type(node, 2)
                     .map(|t| format!(" {}", t.as_str()))
                     .unwrap_or_default();
                 format!("Store{ty}\n→ {space}")
@@ -364,14 +351,16 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::StackStore { space, offset } => {
                 let space = self.pretty_vnspace(*space);
                 // data is input 2; memory and base are 0 and 1
-                let ty = self.input_type(node, 2)
+                let ty = self
+                    .input_type(node, 2)
                     .map(|t| format!(" {}", t.as_str()))
                     .unwrap_or_default();
                 format!("StackStore{ty}\n→ {space}[sp{}]", signed_offset(*offset))
             }
             NodeKind::StackStorePhi { space } => {
                 let space = self.pretty_vnspace(*space);
-                let ty = self.input_type(node, 2)
+                let ty = self
+                    .input_type(node, 2)
                     .map(|t| format!(" {}", t.as_str()))
                     .unwrap_or_default();
                 let offsets = self.graph.stack_phi_offsets(node);
@@ -389,50 +378,42 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
-                let from = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Truncate\n{from} → {to}")
             }
             NodeKind::Extend(op) => {
-                let from = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::CastToBool => {
-                let from = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
                 format!("Cast → bool\nfrom {from}")
             }
             NodeKind::CastToInt => {
-                let to = self.out_type(node)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Cast → {to}\nfrom bool")
             }
             NodeKind::Popcount => {
-                let from = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Popcount\n{from} → {to}")
             }
             NodeKind::Lzcount => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Lzcount\n{from} → {to}")
             }
             NodeKind::Piece => {
                 let hi_ty = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
                 let lo_ty = self.input_type(node, 1).map(|t| t.as_str()).unwrap_or("?");
-                let to    = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Piece\n({hi_ty}\u{2016}{lo_ty}) \u{2192} {to}")
             }
             NodeKind::Extract { lsb, len } => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node)     .map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Extract[{lsb}..+{len}]\n{from} \u{2192} {to}")
             }
             NodeKind::Insert { lsb, len } => {
@@ -442,36 +423,35 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
             // ── arithmetic / logical ──────────────────────────────────────────
             NodeKind::IntBinaryOp(op) => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("{op:?}{ty}")
             }
             NodeKind::IntUnaryOp(op) => {
-                let from = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::IntCmpOp(op) => {
-                let operand = self.input_type(node, 0)
-                    .map(|t| t.as_str()).unwrap_or("?");
+                let operand = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
                 format!("{op:?}\n{operand} → bool")
             }
             NodeKind::BoolBinaryOp(op) => format!("{op:?}:bool"),
-            NodeKind::BoolUnaryOp(op)  => format!("{op:?}:bool"),
+            NodeKind::BoolUnaryOp(op) => format!("{op:?}:bool"),
 
             // ── float arithmetic / logical ────────────────────────────────────
             NodeKind::FloatBinaryOp(op) => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("{op:?}{ty}")
             }
             NodeKind::FloatUnaryOp(op) => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("{op:?}\n{from} \u{2192} {to}")
             }
             NodeKind::FloatCmpOp(op) => {
@@ -486,56 +466,60 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             // ── float / integer conversions ───────────────────────────────────
             NodeKind::IntToFloat => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("IntToFloat\n{from} \u{2192} {to}")
             }
             NodeKind::FloatToInt => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("FloatToInt\n{from} \u{2192} {to}")
             }
             NodeKind::FloatToFloat => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("FloatToFloat\n{from} \u{2192} {to}")
             }
             NodeKind::IntBitsToFloat => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("bitcast\n{from} \u{2192} {to}")
             }
             NodeKind::FloatBitsToInt => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("bitcast\n{from} \u{2192} {to}")
             }
             NodeKind::CastToFloat => {
                 let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to   = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("CastToFloat\n{from} \u{2192} {to}")
             }
 
             // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!("\n→ {}", t.as_str()))
                     .unwrap_or_default();
                 format!("CallOther #{user_op_id}{ty}")
             }
             NodeKind::SegmentOp { op_id } => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("SegmentOp #{op_id}{ty}")
             }
             NodeKind::CPoolRef => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("CPoolRef{ty}")
             }
             NodeKind::New => {
-                let ty = self.out_type(node)
+                let ty = self
+                    .out_type(node)
                     .map(|t| format!(":{}", t.as_str()))
                     .unwrap_or_default();
                 format!("New{ty}")
@@ -552,7 +536,9 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let kind = self.graph.node_kind(node);
         let fc = node_fillcolor(kind);
         // Use pretty_label so const nodes get their type annotation too.
-        let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
+        let label = self
+            .pretty_label(node)
+            .unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
@@ -563,7 +549,9 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let kind = self.graph.node_kind(node);
         let shape = node_shape(kind);
         let fc = node_fillcolor(kind);
-        let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
+        let label = self
+            .pretty_label(node)
+            .unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, shape, &[("fillcolor", fc)]);
     }
 
@@ -576,7 +564,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let vn = &self.call_clobbered[i];
         self.vn_to_name(vn)
     }
-
 }
 
 pub struct GraphDotDumperState {
@@ -617,7 +604,7 @@ impl GraphDotDumperState {
 }
 
 impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
-    type Node  = NodeId;
+    type Node = NodeId;
     type Error = std::io::Error;
     type State = GraphDotDumperState;
 
@@ -645,10 +632,15 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
         let kind = self.graph.node_kind(node);
         let cur_id = state.get_dot_id(self.graph, node);
-        let shape  = node_shape(kind);
-        let fc     = node_fillcolor(kind);
+        let shape = node_shape(kind);
+        let fc = node_fillcolor(kind);
 
-        out.node(&cur_id, &self.pretty_label(node)?, shape, &[("fillcolor", fc)]);
+        out.node(
+            &cur_id,
+            &self.pretty_label(node)?,
+            shape,
+            &[("fillcolor", fc)],
+        );
 
         // ── Virtual nodes for structured outputs ──────────────────────────────
 
@@ -657,8 +649,9 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
         if matches!(kind, NodeKind::If) {
             let outputs = self.graph.node_outputs(node);
             let branch_labels = ["if.true", "if.false"];
-            let edge_labels   = ["true",    "false"];
-            for ((out_id, blabel), elabel) in outputs.into_iter()
+            let edge_labels = ["true", "false"];
+            for ((out_id, blabel), elabel) in outputs
+                .into_iter()
                 .zip(branch_labels.iter())
                 .zip(edge_labels.iter())
             {
@@ -669,19 +662,21 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                     Some(existing) => existing,
                     None => {
                         let v = state.alloc_virtual_id();
-                        out.node(&v, blabel, "trapezium", &[
-                            ("fillcolor", "\"#3a2a10\""),
-                        ]);
+                        out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
                         state.virtual_nodes.insert(out_id, v.clone());
                         v
                     }
                 };
-                out.edge(&cur_id, &virt_id, &[
-                    ("color",     "\"#00cccc\""),
-                    ("label",     elabel),
-                    ("fontcolor", "\"#cccccc\""),
-                    ("fontsize",  "9"),
-                ]);
+                out.edge(
+                    &cur_id,
+                    &virt_id,
+                    &[
+                        ("color", "\"#00cccc\""),
+                        ("label", elabel),
+                        ("fontcolor", "\"#cccccc\""),
+                        ("fontsize", "9"),
+                    ],
+                );
             }
         }
 
@@ -695,7 +690,10 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
             // consumer: otherwise every stack store edges back to a single
             // shared node, which turns the graph into a visual hub.
             let inline_initial_var = matches!(parent_kind, NodeKind::InitialVar(_))
-                && matches!(kind, NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. })
+                && matches!(
+                    kind,
+                    NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. }
+                )
                 && idx == 1;
 
             // If the producing output has a virtual node, connect from it.
@@ -716,14 +714,17 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                         let label = format!("Post Call\n{name}");
                         let virt_id = state.alloc_virtual_id();
                         let call_dot_id = state.get_dot_id(self.graph, parent_id);
-                        out.node(&virt_id, &label, "box", &[
-                            ("fillcolor", "\"#28102a\""),
-                            ("style",     "\"filled,dashed\""),
-                        ]);
-                        out.edge(&call_dot_id, &virt_id, &[
-                            ("color", "\"#888888\""),
-                            ("style", "dashed"),
-                        ]);
+                        out.node(
+                            &virt_id,
+                            &label,
+                            "box",
+                            &[("fillcolor", "\"#28102a\""), ("style", "\"filled,dashed\"")],
+                        );
+                        out.edge(
+                            &call_dot_id,
+                            &virt_id,
+                            &[("color", "\"#888888\""), ("style", "dashed")],
+                        );
                         state.virtual_nodes.insert(parent_output, virt_id.clone());
                         virt_id
                     } else {
@@ -735,14 +736,16 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                     // on "if.true"/"if.false" rather than directly on the If
                     // diamond, which would leave the virtual node dangling.
                     let (_, output_index) = self.graph.output_definition(parent_output);
-                    let blabel = if output_index == 0 { "if.true" } else { "if.false" };
+                    let blabel = if output_index == 0 {
+                        "if.true"
+                    } else {
+                        "if.false"
+                    };
                     match state.virtual_nodes.get(&parent_output).cloned() {
                         Some(existing) => existing,
                         None => {
                             let v = state.alloc_virtual_id();
-                            out.node(&v, blabel, "trapezium", &[
-                                ("fillcolor", "\"#3a2a10\""),
-                            ]);
+                            out.node(&v, blabel, "trapezium", &[("fillcolor", "\"#3a2a10\"")]);
                             state.virtual_nodes.insert(parent_output, v.clone());
                             v
                         }
@@ -757,16 +760,15 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
             // Numbered Call arg labels: inputs[0..2] are ctrl/mem/target,
             // so arg N lives at inputs[3 + N].  CallOther has no target, so
             // args start at inputs[2].  CPoolRef / New inputs are all "ref N".
-            let owned_label: Option<String> =
-                if matches!(kind, NodeKind::Call) && idx >= 3 {
-                    Some(format!("arg{}", idx - 3))
-                } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
-                    Some(format!("arg{}", idx - 2))
-                } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
-                    Some(format!("ref{idx}"))
-                } else {
-                    None
-                };
+            let owned_label: Option<String> = if matches!(kind, NodeKind::Call) && idx >= 3 {
+                Some(format!("arg{}", idx - 3))
+            } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
+                Some(format!("arg{}", idx - 2))
+            } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
+                Some(format!("ref{idx}"))
+            } else {
+                None
+            };
             let label_str: &str = owned_label.as_deref().unwrap_or(label);
 
             let mut extra: Vec<(&str, &str)> = vec![("color", color)];
@@ -861,9 +863,12 @@ mod tests {
         let [cs_ctrl, _] = graph.node_outputs_exact::<2>(cs).unwrap();
         graph.create_node(NodeKind::Return, [cs_ctrl], []);
 
-        let first  = render(&graph, entry);
+        let first = render(&graph, entry);
         let second = render(&graph, entry);
-        assert_eq!(first, second, "same graph must render identically on two calls");
+        assert_eq!(
+            first, second,
+            "same graph must render identically on two calls"
+        );
     }
 
     /// A graph with a diamond (If → two branches → merge) must render
@@ -887,10 +892,10 @@ mod tests {
         );
         let [true_ctrl, false_ctrl] = graph.node_outputs_exact::<2>(if_node).unwrap();
 
-        graph.create_node(NodeKind::Return, [true_ctrl],  []);
+        graph.create_node(NodeKind::Return, [true_ctrl], []);
         graph.create_node(NodeKind::Return, [false_ctrl], []);
 
-        let first  = render(&graph, entry);
+        let first = render(&graph, entry);
         let second = render(&graph, entry);
         assert_eq!(first, second);
     }
@@ -903,7 +908,10 @@ mod tests {
         let mut graph = Graph::new();
         let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
         let dot = render(&graph, entry);
-        assert!(dot.trim_start().starts_with("digraph"), "must start with 'digraph':\n{dot}");
+        assert!(
+            dot.trim_start().starts_with("digraph"),
+            "must start with 'digraph':\n{dot}"
+        );
         assert!(dot.trim_end().ends_with('}'), "must end with '}}':\n{dot}");
     }
 
@@ -942,7 +950,9 @@ mod tests {
         // For every edge `"a" -> "b"` check both endpoints are declared.
         for line in dot.lines().filter(|l| l.contains("->")) {
             let parts: Vec<&str> = line.trim().split("->").collect();
-            if parts.len() < 2 { continue; }
+            if parts.len() < 2 {
+                continue;
+            }
             let src = parts[0].trim().trim_matches('"');
             // rhs may have attributes after the id like `"b" [color=…]`
             let dst = parts[1].trim().split('"').nth(1).unwrap_or("").trim();
@@ -973,7 +983,11 @@ mod tests {
         graph.create_node(NodeKind::Return, [cs_ctrl], []);
 
         let dot = render(&graph, entry);
-        assert_eq!(node_decls(&dot).len(), 3, "exactly 3 node declarations:\n{dot}");
+        assert_eq!(
+            node_decls(&dot).len(),
+            3,
+            "exactly 3 node declarations:\n{dot}"
+        );
         assert_eq!(edge_lines(&dot).len(), 2, "exactly 2 edges:\n{dot}");
     }
 
@@ -1001,10 +1015,13 @@ mod tests {
 
         let dot = render(&graph, entry);
 
-        let if_true_count  = count_lines(&dot, |l| l.contains("if.true")  && l.contains("[label="));
+        let if_true_count = count_lines(&dot, |l| l.contains("if.true") && l.contains("[label="));
         let if_false_count = count_lines(&dot, |l| l.contains("if.false") && l.contains("[label="));
-        assert_eq!(if_true_count,  1, "exactly one if.true declaration:\n{dot}");
-        assert_eq!(if_false_count, 1, "exactly one if.false declaration:\n{dot}");
+        assert_eq!(if_true_count, 1, "exactly one if.true declaration:\n{dot}");
+        assert_eq!(
+            if_false_count, 1,
+            "exactly one if.false declaration:\n{dot}"
+        );
     }
 
     // ── label content ─────────────────────────────────────────────────────────
@@ -1046,8 +1063,11 @@ mod tests {
         graph.create_node(NodeKind::Return, [entry_ctrl, c_out], []);
 
         let dot = render(&graph, entry);
-        assert!(dot.contains("0xdeadbeef"), "hex value must be in label:\n{dot}");
-        assert!(dot.contains("u32"),        "type must be in label:\n{dot}");
+        assert!(
+            dot.contains("0xdeadbeef"),
+            "hex value must be in label:\n{dot}"
+        );
+        assert!(dot.contains("u32"), "type must be in label:\n{dot}");
     }
 
     // ── if virtual-node ordering regression ───────────────────────────────────
@@ -1109,8 +1129,12 @@ mod tests {
         let mut state = dumper.create_initial_state();
 
         // Render cs_true *before* if_node to trigger the historical bug.
-        dumper.dump_as_dot(cs_true, &mut emitter, &mut state).unwrap();
-        dumper.dump_as_dot(if_node, &mut emitter, &mut state).unwrap();
+        dumper
+            .dump_as_dot(cs_true, &mut emitter, &mut state)
+            .unwrap();
+        dumper
+            .dump_as_dot(if_node, &mut emitter, &mut state)
+            .unwrap();
 
         let dot = emitter.finish();
 
@@ -1135,7 +1159,13 @@ mod tests {
             .filter(|l| l.split("->").next().is_some_and(|lhs| lhs.contains(&q)))
             .count();
 
-        assert!(edges_into >= 1, "if.true must have ≥1 incoming edge:\n{dot}");
-        assert!(edges_from >= 1, "if.true must have ≥1 outgoing edge:\n{dot}");
+        assert!(
+            edges_into >= 1,
+            "if.true must have ≥1 incoming edge:\n{dot}"
+        );
+        assert!(
+            edges_from >= 1,
+            "if.true must have ≥1 outgoing edge:\n{dot}"
+        );
     }
 }

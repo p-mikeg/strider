@@ -1,3 +1,10 @@
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable
+)]
+
 //! Integration tests for the full analysis pipeline (CFG → IR).
 //!
 //! Each test verifies that:
@@ -168,7 +175,14 @@ macro_rules! analyzer_arch_tests {
 
 // ── per-architecture setup functions ─────────────────────────────────────────
 
-fn setup_x86() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
+fn setup_x86() -> Result<
+    (
+        object::File<'static>,
+        analyzer::Analyzer,
+        analyzer::SleighArch,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let path = binary("x86");
     let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::x86();
@@ -176,7 +190,14 @@ fn setup_x86() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::S
     Ok((obj, ana, arch))
 }
 
-fn setup_x64() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
+fn setup_x64() -> Result<
+    (
+        object::File<'static>,
+        analyzer::Analyzer,
+        analyzer::SleighArch,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let path = binary("x64");
     let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::x86_64();
@@ -184,7 +205,14 @@ fn setup_x64() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::S
     Ok((obj, ana, arch))
 }
 
-fn setup_aarch64() -> Result<(object::File<'static>, analyzer::Analyzer, analyzer::SleighArch), Box<dyn std::error::Error>> {
+fn setup_aarch64() -> Result<
+    (
+        object::File<'static>,
+        analyzer::Analyzer,
+        analyzer::SleighArch,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let path = binary("aarch64");
     let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
     let arch = analyzer::SleighArch::aarch64();

@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 //! Sea-of-nodes intermediate representation for the Strider binary analysis
 //! framework.
 //!
@@ -27,29 +37,29 @@
 //! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`BoolBinaryOp`],
 //!   [`BoolUnaryOp`], [`ExtendOp`] — operation enumerations used in node kinds
 
-mod dot;
-mod graph;
 mod builder;
-pub mod node;
-pub mod walk;
-mod error;
+mod dot;
+pub mod error;
 mod function;
-mod region;
+mod graph;
+pub mod node;
 mod ops;
+mod region;
+pub mod walk;
 // mod node_view;
-mod node_signature;
 mod iterators;
+mod node_signature;
 pub mod validate;
 
-pub use crate::error::{Error, Result};
-pub use validate::{ValidationError, ValidationErrors};
+pub use crate::error::{Error, ErrorKind, Result};
+pub use builder::FunctionBuilder;
 pub use node_signature::ExpectedOutputKind;
-pub use builder::{FunctionBuilder};
-pub use region::{RegionId};
 pub use ops::{
-    BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntUnaryOp, IntCmpOp, ExtendOp,
-    FloatBinaryOp, FloatUnaryOp, FloatCmpOp,
+    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
+    IntCmpOp, IntUnaryOp,
 };
+pub use region::RegionId;
+pub use validate::{ValidationError, ValidationErrors};
 
 pub type Value = node::NodeOutputId;
 pub type ValueType = node::NodeOutputType;

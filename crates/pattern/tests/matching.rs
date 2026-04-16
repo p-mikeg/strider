@@ -1,11 +1,18 @@
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable
+)]
+
 /// Integration tests for the `pattern` crate.
 ///
 /// Each test builds a small `BuiltFunctionGraph` using `FunctionBuilder`,
 /// then runs `Matcher::find_all` and asserts the expected number of matches
 /// and captured bindings.
 use ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
-    FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder,
+    IntBinaryOp, IntCmpOp, IntUnaryOp,
     node::{NodeKind, NodeOutputType},
 };
 use pattern::*;
@@ -18,7 +25,10 @@ use pattern::*;
 fn make_reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
         size,
-        addr: rsleigh::VnAddr { off, space: rsleigh::VnSpace::REGISTER },
+        addr: rsleigh::VnAddr {
+            off,
+            space: rsleigh::VnSpace::REGISTER,
+        },
     }
 }
 
@@ -31,9 +41,9 @@ fn graph_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c5   = b.build_int_const(5, NodeOutputType::U64);
-    let c3   = b.build_int_const(3, NodeOutputType::U64);
-    let sum  = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let c5 = b.build_int_const(5, NodeOutputType::U64);
+    let c3 = b.build_int_const(3, NodeOutputType::U64);
+    let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
     b.build()
 }
@@ -44,11 +54,11 @@ fn graph_and_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c4   = b.build_int_const(4, NodeOutputType::U64);
-    let c7   = b.build_int_const(7, NodeOutputType::U64);
-    let c1   = b.build_int_const(1, NodeOutputType::U64);
+    let c4 = b.build_int_const(4, NodeOutputType::U64);
+    let c7 = b.build_int_const(7, NodeOutputType::U64);
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
     let band = b.build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64)?;
-    let sum  = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let sum = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
     b.build()
 }
@@ -85,7 +95,7 @@ fn graph_two_calls_return() -> ir::Result<ir::BuiltFunctionGraph> {
 fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
     let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
     let entry = b.create_region()?;
-    let true_r  = b.create_region()?;
+    let true_r = b.create_region()?;
     let false_r = b.create_region()?;
 
     b.set_entry_region(entry)?;
@@ -99,8 +109,8 @@ fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
     b.build_return(Some(c20), &[])?;
 
     b.set_region(entry);
-    let c4  = b.build_int_const(4, NodeOutputType::U64);
-    let c1  = b.build_int_const(1, NodeOutputType::U64);
+    let c4 = b.build_int_const(4, NodeOutputType::U64);
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c4, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
     b.build()
@@ -111,8 +121,8 @@ fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
 ///   false branch → return
 fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let entry  = b.create_region()?;
-    let true_r  = b.create_region()?;
+    let entry = b.create_region()?;
+    let true_r = b.create_region()?;
     let false_r = b.create_region()?;
 
     b.set_entry_region(entry)?;
@@ -126,8 +136,8 @@ fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     b.build_return(None, &[])?;
 
     b.set_region(entry);
-    let c5  = b.build_int_const(5, NodeOutputType::U64);
-    let c1  = b.build_int_const(1, NodeOutputType::U64);
+    let c5 = b.build_int_const(5, NodeOutputType::U64);
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
     b.build()
@@ -138,8 +148,8 @@ fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctionGraph> {
 ///   false branch → Call at 0x5678, then return
 fn graph_if_with_call_in_false_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let entry  = b.create_region()?;
-    let true_r  = b.create_region()?;
+    let entry = b.create_region()?;
+    let true_r = b.create_region()?;
     let false_r = b.create_region()?;
 
     b.set_entry_region(entry)?;
@@ -153,8 +163,8 @@ fn graph_if_with_call_in_false_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     b.build_return(None, &[])?;
 
     b.set_region(entry);
-    let c5  = b.build_int_const(5, NodeOutputType::U64);
-    let c1  = b.build_int_const(1, NodeOutputType::U64);
+    let c5 = b.build_int_const(5, NodeOutputType::U64);
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
     b.build()
@@ -166,8 +176,8 @@ fn graph_neg_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c5  = b.build_int_const(5, NodeOutputType::U64);
-    let c3  = b.build_int_const(3, NodeOutputType::U64);
+    let c5 = b.build_int_const(5, NodeOutputType::U64);
+    let c3 = b.build_int_const(3, NodeOutputType::U64);
     let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     let neg = b.build_int_unary_operation(sum, IntUnaryOp::Neg, NodeOutputType::U64)?;
     b.build_return(Some(neg), &[])?;
@@ -180,7 +190,7 @@ fn graph_bool_not_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let t  = b.build_boolean_const(true);
+    let t = b.build_boolean_const(true);
     let nt = b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)?;
     // cast to int so we can return it
     let as_int = b.convert_to_int_if_needed(nt, NodeOutputType::U64)?;
@@ -194,8 +204,8 @@ fn graph_bool_and_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let t  = b.build_boolean_const(true);
-    let f  = b.build_boolean_const(false);
+    let t = b.build_boolean_const(true);
+    let f = b.build_boolean_const(false);
     let ba = b.build_boolean_operation(t, f, BoolBinaryOp::And)?;
     let as_int = b.convert_to_int_if_needed(ba, NodeOutputType::U64)?;
     b.build_return(Some(as_int), &[])?;
@@ -208,8 +218,8 @@ fn graph_zero_extend_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c1  = b.build_int_const(1, NodeOutputType::U32);
-    let c2  = b.build_int_const(2, NodeOutputType::U32);
+    let c1 = b.build_int_const(1, NodeOutputType::U32);
+    let c2 = b.build_int_const(2, NodeOutputType::U32);
     let sum = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U32)?;
     let ext = b.extend_if_needed(sum, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
     b.build_return(Some(ext), &[])?;
@@ -222,10 +232,10 @@ fn graph_truncate_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c1  = b.build_int_const(1, NodeOutputType::U64);
-    let c2  = b.build_int_const(2, NodeOutputType::U64);
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
+    let c2 = b.build_int_const(2, NodeOutputType::U64);
     let sum = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let tr  = b.truncate_if_needed(sum, NodeOutputType::U8)?;
+    let tr = b.truncate_if_needed(sum, NodeOutputType::U8)?;
     b.build_return(Some(tr), &[])?;
     b.build()
 }
@@ -236,10 +246,10 @@ fn graph_nested_add() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let c1   = b.build_int_const(1, NodeOutputType::U64);
-    let c2   = b.build_int_const(2, NodeOutputType::U64);
-    let c3   = b.build_int_const(3, NodeOutputType::U64);
-    let s12  = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let c1 = b.build_int_const(1, NodeOutputType::U64);
+    let c2 = b.build_int_const(2, NodeOutputType::U64);
+    let c3 = b.build_int_const(3, NodeOutputType::U64);
+    let s12 = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
     let s123 = b.build_int_binary_operation(s12, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(s123), &[])?;
     b.build()
@@ -269,7 +279,7 @@ fn graph_load_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let addr   = b.build_uint64_const(0x100);
+    let addr = b.build_uint64_const(0x100);
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
     b.build()
@@ -350,8 +360,8 @@ fn graph_with_two_initial_vars() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh:
 fn graph_if_with_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let flag = make_reg_vn(0, 8);
     let mut b = FunctionBuilder::new(vec![flag], &[], &[], &[])?;
-    let entry  = b.create_region()?;
-    let true_r  = b.create_region()?;
+    let entry = b.create_region()?;
+    let true_r = b.create_region()?;
     let false_r = b.create_region()?;
 
     b.set_entry_region(entry)?;
@@ -386,7 +396,7 @@ fn var_ids_are_unique() -> ir::Result<()> {
 
 #[test]
 fn node_var_ids_are_unique_and_distinct_from_var() -> ir::Result<()> {
-    let v  = Var::new();
+    let v = Var::new();
     let nv = NodeVar::new();
     // Their raw ids come from the same counter so they can't collide.
     // We can only check that two NodeVars differ from each other.
@@ -421,7 +431,11 @@ fn bool_const_matches_true() -> ir::Result<()> {
     let g = graph_bool_and_return()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&bool_const(true));
-    assert_eq!(hits.len(), 1, "bool_const(true) should find exactly one node");
+    assert_eq!(
+        hits.len(),
+        1,
+        "bool_const(true) should find exactly one node"
+    );
     Ok(())
 }
 
@@ -430,7 +444,11 @@ fn bool_const_matches_false() -> ir::Result<()> {
     let g = graph_bool_and_return()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&bool_const(false));
-    assert_eq!(hits.len(), 1, "bool_const(false) should find exactly one node");
+    assert_eq!(
+        hits.len(),
+        1,
+        "bool_const(false) should find exactly one node"
+    );
     Ok(())
 }
 
@@ -460,7 +478,10 @@ fn add_pattern_ordered_wrong_operand_order_no_match() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&add(int_const(3), int_const(5)).ordered().into());
-    assert!(hits.is_empty(), "ordered add must not match reversed operands");
+    assert!(
+        hits.is_empty(),
+        "ordered add must not match reversed operands"
+    );
     Ok(())
 }
 
@@ -537,7 +558,11 @@ fn deeply_nested_add_ordered_wrong_order_no_match() -> ir::Result<()> {
     let g = graph_nested_add()?;
     let m = Matcher::new(&g);
     // add(3, add(1, 2)).ordered() — wrong outer order, ordered matching
-    let hits = m.find_all(&add(int_const(3), add(int_const(1), int_const(2))).ordered().into());
+    let hits = m.find_all(
+        &add(int_const(3), add(int_const(1), int_const(2)))
+            .ordered()
+            .into(),
+    );
     assert!(hits.is_empty());
     Ok(())
 }
@@ -652,7 +677,10 @@ fn int_eq_wrong_order_no_match() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&int_eq(int_const(1), int_const(4)));
-    assert!(hits.is_empty(), "int_eq is not commutative in pattern matching");
+    assert!(
+        hits.is_empty(),
+        "int_eq is not commutative in pattern matching"
+    );
     Ok(())
 }
 
@@ -780,7 +808,8 @@ fn capture_var_binds_to_matched_output() -> ir::Result<()> {
     let node = g.graph.get_node_from_output(bound);
     assert!(
         matches!(g.graph.node_kind(node), NodeKind::IntConst(7)),
-        "x should be bound to const 7, got {:?}", g.graph.node_kind(node)
+        "x should be bound to const 7, got {:?}",
+        g.graph.node_kind(node)
     );
     Ok(())
 }
@@ -851,7 +880,10 @@ fn var_shared_across_nested_subpatterns_enforces_equality() -> ir::Result<()> {
     let x = Var::new();
     // add(x, x) — both leaves must be the same node
     let hits = m.find_all(&add(var(x), var(x)).into());
-    assert!(hits.is_empty(), "add(x,x) must not match add(1,2) or add(add(1,2),3)");
+    assert!(
+        hits.is_empty(),
+        "add(x,x) must not match add(1,2) or add(add(1,2),3)"
+    );
     Ok(())
 }
 
@@ -916,7 +948,10 @@ fn ret_val_distinguishes_branches() -> ir::Result<()> {
     let hits_20 = m.find_all(&ret().ret_val(0, int_const(20)).into());
     assert_eq!(hits_10.len(), 1, "one return with value 10");
     assert_eq!(hits_20.len(), 1, "one return with value 20");
-    assert_ne!(hits_10[0].root, hits_20[0].root, "they must be different nodes");
+    assert_ne!(
+        hits_10[0].root, hits_20[0].root,
+        "they must be different nodes"
+    );
     Ok(())
 }
 
@@ -959,7 +994,11 @@ fn preceded_by_finds_either_call_in_two_call_graph() -> ir::Result<()> {
     let hits_2222 = m.find_all(&ret().preceded_by(call().at(0x2222)).into());
     let hits_1111 = m.find_all(&ret().preceded_by(call().at(0x1111)).into());
     assert_eq!(hits_2222.len(), 1, "return preceded by call at 0x2222");
-    assert_eq!(hits_1111.len(), 1, "return also preceded by earlier call at 0x1111");
+    assert_eq!(
+        hits_1111.len(),
+        1,
+        "return also preceded by earlier call at 0x1111"
+    );
     Ok(())
 }
 
@@ -1137,9 +1176,9 @@ fn both_branches_contain_ret() -> ir::Result<()> {
     // In graph_if_branches both branches end in a return.
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits_true  = m.find_all(&if_node().true_branch(contains(ret())).into());
+    let hits_true = m.find_all(&if_node().true_branch(contains(ret())).into());
     let hits_false = m.find_all(&if_node().false_branch(contains(ret())).into());
-    assert_eq!(hits_true.len(),  1, "true branch has a return");
+    assert_eq!(hits_true.len(), 1, "true branch has a return");
     assert_eq!(hits_false.len(), 1, "false branch has a return");
     Ok(())
 }
@@ -1189,7 +1228,8 @@ fn capture_var_from_call_target_via_preceded_by() -> ir::Result<()> {
     let node = g.graph.get_node_from_output(bound);
     assert!(
         matches!(g.graph.node_kind(node), NodeKind::IntConst(0x1234)),
-        "target should be 0x1234, got {:?}", g.graph.node_kind(node)
+        "target should be 0x1234, got {:?}",
+        g.graph.node_kind(node)
     );
     Ok(())
 }
@@ -1209,7 +1249,8 @@ fn capture_call_target_inside_true_branch() -> ir::Result<()> {
     let node = g.graph.get_node_from_output(bound);
     assert!(
         matches!(g.graph.node_kind(node), NodeKind::IntConst(0x2345)),
-        "call target should be 0x2345, got {:?}", g.graph.node_kind(node)
+        "call target should be 0x2345, got {:?}",
+        g.graph.node_kind(node)
     );
     Ok(())
 }
@@ -1224,7 +1265,11 @@ fn any_pattern_matches_many_nodes() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(&any());
     // 5 const, 3 const, add result all have value outputs → ≥ 3 hits
-    assert!(hits.len() >= 3, "expected at least 3 any() matches, got {}", hits.len());
+    assert!(
+        hits.len() >= 3,
+        "expected at least 3 any() matches, got {}",
+        hits.len()
+    );
     Ok(())
 }
 
@@ -1339,7 +1384,9 @@ fn load_any_matches_load_node() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(&load().into());
     assert_eq!(hits.len(), 1);
-    let _node = g.graph.get_node_from_output(g.graph.node_outputs(hits[0].root)[0]);
+    let _node = g
+        .graph
+        .get_node_from_output(g.graph.node_outputs(hits[0].root)[0]);
     assert!(matches!(g.graph.node_kind(hits[0].root), NodeKind::Load(_)));
     Ok(())
 }
@@ -1384,7 +1431,12 @@ fn load_with_wrong_space_no_match() -> ir::Result<()> {
 fn load_addr_and_space_together_matches() -> ir::Result<()> {
     let g = graph_load_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&load().space(rsleigh::VnSpace::RAM).addr(int_const(0x100)).into());
+    let hits = m.find_all(
+        &load()
+            .space(rsleigh::VnSpace::RAM)
+            .addr(int_const(0x100))
+            .into(),
+    );
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -1396,7 +1448,9 @@ fn load_capture_addr() -> ir::Result<()> {
     let addr_v = Var::new();
     let hits = m.find_all(&load().addr(var(addr_v)).into());
     assert_eq!(hits.len(), 1);
-    let val = hits[0].get_int_const(addr_v, &g).expect("addr must be an int const");
+    let val = hits[0]
+        .get_int_const(addr_v, &g)
+        .expect("addr must be an int const");
     assert_eq!(val, 0x100);
     Ok(())
 }
@@ -1421,7 +1475,10 @@ fn store_any_matches_store_node() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(&store().into());
     assert_eq!(hits.len(), 1);
-    assert!(matches!(g.graph.node_kind(hits[0].root), NodeKind::Store(_)));
+    assert!(matches!(
+        g.graph.node_kind(hits[0].root),
+        NodeKind::Store(_)
+    ));
     Ok(())
 }
 
@@ -1508,7 +1565,11 @@ fn store_reachable_via_call_memory_chain() -> ir::Result<()> {
     let g = graph_store_then_call()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&store().into());
-    assert_eq!(hits.len(), 1, "store is reachable through the call's memory input");
+    assert_eq!(
+        hits.len(),
+        1,
+        "store is reachable through the call's memory input"
+    );
     Ok(())
 }
 
@@ -1586,7 +1647,9 @@ fn call_arg_capture_and_extract() -> ir::Result<()> {
     let hits = m.find_all(&call().arg(0, var(arg_v)).into());
     assert_eq!(hits.len(), 1);
     // get_int_const provides the easy value extraction the user asked for.
-    let val = hits[0].get_int_const(arg_v, &g).expect("arg must be an int const");
+    let val = hits[0]
+        .get_int_const(arg_v, &g)
+        .expect("arg must be an int const");
     assert_eq!(val, 42);
     Ok(())
 }
@@ -1613,8 +1676,11 @@ fn get_int_const_returns_none_for_non_const_binding() -> ir::Result<()> {
     // add(inner_v, 1): inner_v is bound to and(4,7) — not a const node
     let hits = m.find_all(&add(var(inner_v), int_const(1)).into());
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].get_int_const(inner_v, &g), None,
-        "and(4,7) is not an IntConst node");
+    assert_eq!(
+        hits[0].get_int_const(inner_v, &g),
+        None,
+        "and(4,7) is not an IntConst node"
+    );
     Ok(())
 }
 
@@ -1739,7 +1805,11 @@ fn commutative_add_reversed_operands_matches() -> ir::Result<()> {
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&add(int_const(3), int_const(5)).into());
-    assert_eq!(hits.len(), 1, "commutative add should match reversed operands");
+    assert_eq!(
+        hits.len(),
+        1,
+        "commutative add should match reversed operands"
+    );
     Ok(())
 }
 
@@ -1759,7 +1829,10 @@ fn ordered_add_reversed_operands_no_match() -> ir::Result<()> {
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&add(int_const(3), int_const(5)).ordered().into());
-    assert!(hits.is_empty(), "ordered add must not match reversed operands");
+    assert!(
+        hits.is_empty(),
+        "ordered add must not match reversed operands"
+    );
     Ok(())
 }
 
@@ -1769,7 +1842,10 @@ fn non_commutative_sub_no_commutation() -> ir::Result<()> {
     let g = graph_sub_5_3()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&sub(int_const(3), int_const(5)).into());
-    assert!(hits.is_empty(), "sub is not commutative and must not match reversed operands");
+    assert!(
+        hits.is_empty(),
+        "sub is not commutative and must not match reversed operands"
+    );
     Ok(())
 }
 
@@ -1810,7 +1886,11 @@ fn capture_nested_field_via_var() -> ir::Result<()> {
     b.set_entry_region(r)?;
     b.set_region(r);
     let addr_const = b.build_int_const(0x1000, NodeOutputType::U64);
-    let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
+    let loaded = b.build_load(
+        addr_const,
+        rsleigh::VnSpace::RAM,
+        ir::node::NodeOutputType::U64,
+    )?;
     b.build_return(Some(loaded), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
 
@@ -1830,7 +1910,11 @@ fn capture_via_when_on_load_addr() -> ir::Result<()> {
     b.set_entry_region(r)?;
     b.set_region(r);
     let addr_const = b.build_int_const(0x2000, NodeOutputType::U64);
-    let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
+    let loaded = b.build_load(
+        addr_const,
+        rsleigh::VnSpace::RAM,
+        ir::node::NodeOutputType::U64,
+    )?;
     b.build_return(Some(loaded), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
 
@@ -1881,7 +1965,10 @@ fn when_predicate_on_structural_pattern() -> ir::Result<()> {
     let hits = m.find_all(&add(any(), any()).when(|fg, out| {
         // Only match if the add node's output is a U64.
         let kind = fg.graph.output_kind(out);
-        matches!(kind, ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64))
+        matches!(
+            kind,
+            ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64)
+        )
     }));
     assert_eq!(hits.len(), 1);
     Ok(())
@@ -1905,19 +1992,27 @@ fn predicate_in_field_position() -> ir::Result<()> {
     b.set_entry_region(r)?;
     b.set_region(r);
     let addr_const = b.build_int_const(0x3000, NodeOutputType::U64);
-    let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
+    let loaded = b.build_load(
+        addr_const,
+        rsleigh::VnSpace::RAM,
+        ir::node::NodeOutputType::U64,
+    )?;
     b.build_return(Some(loaded), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Match loads where the address is an IntConst >= 0x1000.
-    let hits = m.find_all(&load().addr(predicate(|fg, out| {
-        let node = fg.graph.get_node_from_output(out);
-        match fg.graph.node_kind(node) {
-            NodeKind::IntConst(v) => *v >= 0x1000,
-            _ => false,
-        }
-    })).into());
+    let hits = m.find_all(
+        &load()
+            .addr(predicate(|fg, out| {
+                let node = fg.graph.get_node_from_output(out);
+                match fg.graph.node_kind(node) {
+                    NodeKind::IntConst(v) => *v >= 0x1000,
+                    _ => false,
+                }
+            }))
+            .into(),
+    );
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -2004,7 +2099,7 @@ fn insert_pattern_matches() -> ir::Result<()> {
     b.set_entry_region(r)?;
     b.set_region(r);
     let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
-    let src  = b.build_int_const(0x42,   NodeOutputType::U16);
+    let src = b.build_int_const(0x42, NodeOutputType::U16);
     let ins = b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?;
     b.build_return(Some(ins), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
@@ -2040,17 +2135,13 @@ fn float_add_pattern_matches() -> ir::Result<()> {
     let m = Matcher::new(&g);
 
     // Match float_add with exact constants.
-    let hits = m.find_all(&float_add(
-        float_const(1.0f64.to_bits()),
-        float_const(2.0f64.to_bits()),
-    ).into());
+    let hits =
+        m.find_all(&float_add(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())).into());
     assert_eq!(hits.len(), 1);
 
     // Wrong constant → no match.
-    let miss = m.find_all(&float_add(
-        float_const(3.0f64.to_bits()),
-        float_const(2.0f64.to_bits()),
-    ).into());
+    let miss =
+        m.find_all(&float_add(float_const(3.0f64.to_bits()), float_const(2.0f64.to_bits())).into());
     assert!(miss.is_empty());
     Ok(())
 }
@@ -2074,10 +2165,13 @@ fn float_mul_commutative_pattern() -> ir::Result<()> {
     let v_b = Var::new();
 
     // Pattern states 3 * 7; node stores 7 * 3 — commutative match must succeed.
-    let hits = m.find_all(&float_mul(
-        float_const(3.0f32.to_bits() as u64),
-        float_const(7.0f32.to_bits() as u64),
-    ).into());
+    let hits = m.find_all(
+        &float_mul(
+            float_const(3.0f32.to_bits() as u64),
+            float_const(7.0f32.to_bits() as u64),
+        )
+        .into(),
+    );
     assert_eq!(hits.len(), 1);
 
     // Any-capture version also works.
@@ -2102,9 +2196,16 @@ fn float_sub_not_commutative() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Correct order matches.
-    assert_eq!(m.find_all(&float_sub(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into()).len(), 1);
+    assert_eq!(
+        m.find_all(&float_sub(float_const(5.0f64.to_bits()), float_const(2.0f64.to_bits())).into())
+            .len(),
+        1
+    );
     // Wrong order does NOT match.
-    assert!(m.find_all(&float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into()).is_empty());
+    assert!(
+        m.find_all(&float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())).into())
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -2209,7 +2310,8 @@ fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
     // Force a non-const path so we actually get an IntBitsToFloat node.
     // Add 0 to make the optimizer think it's not constant (int_const 0).
     let zero = b.build_int_const(0, NodeOutputType::U64);
-    let non_const = b.build_int_binary_operation(int_val, zero, IntBinaryOp::Add, NodeOutputType::U64)?;
+    let non_const =
+        b.build_int_binary_operation(int_val, zero, IntBinaryOp::Add, NodeOutputType::U64)?;
     let float_v = b.build_int_bits_to_float(non_const, NodeOutputType::F64)?;
     b.build_return(Some(float_v), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
@@ -2249,9 +2351,9 @@ fn float_conversion_patterns_match() -> ir::Result<()> {
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
-    let int_v  = b.build_int_const(42, NodeOutputType::U64);
-    let f64_v  = b.build_int_to_float(int_v, NodeOutputType::F64)?;
-    let f32_v  = b.build_float_to_float(f64_v, NodeOutputType::F32)?;
+    let int_v = b.build_int_const(42, NodeOutputType::U64);
+    let f64_v = b.build_int_to_float(int_v, NodeOutputType::F64)?;
+    let f32_v = b.build_float_to_float(f64_v, NodeOutputType::F32)?;
     let int_v2 = b.build_float_to_int(f32_v, NodeOutputType::U32)?;
     b.build_return(Some(int_v2), &[])?;
     let g = b.build().expect("build failed: validator rejected graph");
@@ -2278,15 +2380,24 @@ fn float_add_ordered_no_commutative_fallback() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Ordered: correct order matches.
-    assert_eq!(m.find_all(&float_add(
-        float_const(1.0f64.to_bits()),
-        float_const(2.0f64.to_bits()),
-    ).ordered().into()).len(), 1);
+    assert_eq!(
+        m.find_all(
+            &float_add(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits()),)
+                .ordered()
+                .into()
+        )
+        .len(),
+        1
+    );
     // Ordered: wrong order does NOT match even though Add is commutative.
-    assert!(m.find_all(&float_add(
-        float_const(2.0f64.to_bits()),
-        float_const(1.0f64.to_bits()),
-    ).ordered().into()).is_empty());
+    assert!(
+        m.find_all(
+            &float_add(float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits()),)
+                .ordered()
+                .into()
+        )
+        .is_empty()
+    );
     Ok(())
 }
 
@@ -2344,11 +2455,18 @@ fn stack_store_matches_offset_and_data() -> ir::Result<()> {
     let m = Matcher::new(&g);
     // Exact offset + exact data → match.
     let hits = m.find_all(&stack_store().offset(-4).data(int_const(0xAB)).into());
-    assert_eq!(hits.len(), 1, "expected one match for offset=-4 & data=0xAB");
+    assert_eq!(
+        hits.len(),
+        1,
+        "expected one match for offset=-4 & data=0xAB"
+    );
     // Wrong offset → no match.
     assert!(m.find_all(&stack_store().offset(0).into()).is_empty());
     // Wrong data → no match.
-    assert!(m.find_all(&stack_store().data(int_const(0x42)).into()).is_empty());
+    assert!(
+        m.find_all(&stack_store().data(int_const(0x42)).into())
+            .is_empty()
+    );
     // Offset-only, no data constraint → match.
     assert_eq!(m.find_all(&stack_store().offset(-4).into()).len(), 1);
     Ok(())
@@ -2400,10 +2518,21 @@ fn stack_store_phi_matches_offsets() -> ir::Result<()> {
     let (g, _sp) = graph_with_stack_store_phi()?;
     let m = Matcher::new(&g);
     // Exact offsets (order-independent) → match.
-    assert_eq!(m.find_all(&stack_store_phi().offsets([-4, -8]).into()).len(), 1);
-    assert_eq!(m.find_all(&stack_store_phi().offsets([-8, -4]).into()).len(), 1);
+    assert_eq!(
+        m.find_all(&stack_store_phi().offsets([-4, -8]).into())
+            .len(),
+        1
+    );
+    assert_eq!(
+        m.find_all(&stack_store_phi().offsets([-8, -4]).into())
+            .len(),
+        1
+    );
     // Wrong offsets → no match.
-    assert!(m.find_all(&stack_store_phi().offsets([0, -4]).into()).is_empty());
+    assert!(
+        m.find_all(&stack_store_phi().offsets([0, -4]).into())
+            .is_empty()
+    );
     // No offset constraint → still matches.
     assert_eq!(m.find_all(&stack_store_phi().into()).len(), 1);
     Ok(())
@@ -2450,7 +2579,8 @@ fn call_arg_matches_stack_arg_after_collection() -> ir::Result<()> {
     assert_eq!(m.find_all(&call().arg(1, int_const(22)).into()).len(), 1);
     // Both together.
     assert_eq!(
-        m.find_all(&call().arg(0, int_const(11)).arg(1, int_const(22)).into()).len(),
+        m.find_all(&call().arg(0, int_const(11)).arg(1, int_const(22)).into())
+            .len(),
         1
     );
     // Wrong arg → no match.
@@ -2497,12 +2627,14 @@ fn call_other_matches_arg() -> ir::Result<()> {
     let g = graph_two_call_others_return()?;
     let m = Matcher::new(&g);
     assert_eq!(
-        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xAA)).into()).len(),
+        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xAA)).into())
+            .len(),
         1
     );
     // Wrong arg value → no match.
     assert!(
-        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xBB)).into()).is_empty()
+        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xBB)).into())
+            .is_empty()
     );
     Ok(())
 }

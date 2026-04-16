@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 //! IR optimization passes for the Strider binary analysis framework.
 //!
 //! All passes implement the [`Optimizer`] trait and report whether they changed
@@ -18,24 +28,24 @@
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //! | [`LoadReadOnly`] | Folds constant-address loads by reading from a caller-supplied read-only memory region |
 
+pub mod error;
 mod opt;
 mod utils;
-mod error;
-pub use error::{Error, Result};
-mod redundant_phis;
+pub use error::{Error, ErrorKind, Result};
 mod constant_fold;
-mod known_bits;
 mod dead_branch;
+mod known_bits;
 mod load_readonly;
+mod redundant_phis;
 mod stack_store;
 
-pub use opt::{OptimizationResult, OptimizerPipeline, Optimizer};
-pub use redundant_phis::RedundantPhis;
 pub use constant_fold::ConstantFold;
-pub use known_bits::KnownBits;
 pub use dead_branch::DeadBranchElimination;
-pub use load_readonly::{ReadOnlyMemory, LoadReadOnly};
-pub use stack_store::{StackStoreDetect, CallStackArgCollect};
+pub use known_bits::KnownBits;
+pub use load_readonly::{LoadReadOnly, ReadOnlyMemory};
+pub use opt::{OptimizationResult, Optimizer, OptimizerPipeline};
+pub use redundant_phis::RedundantPhis;
+pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 
 /// Builds the default optimizer pipeline containing all built-in passes.
 ///

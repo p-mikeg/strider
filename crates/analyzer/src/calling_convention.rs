@@ -1,4 +1,4 @@
-use crate::{Error, Result};
+use crate::{ErrorKind, Result};
 
 /// Converts a slice of register name strings into their corresponding varnode
 /// representations using the provided Sleigh register map.
@@ -6,16 +6,13 @@ use crate::{Error, Result};
 /// Iterates over each name in `reg_names`, looks it up in `sleigh_regs`, and
 /// returns the list of resolved varnodes in the same order.  Returns an error
 /// the moment any name is not found.
-fn regs_to_vns(
-    reg_names: &[&str],
-    sleigh_regs: &rsleigh::SleighRegs,
-) -> Result<Vec<rsleigh::Vn>> {
+fn regs_to_vns(reg_names: &[&str], sleigh_regs: &rsleigh::SleighRegs) -> Result<Vec<rsleigh::Vn>> {
     reg_names
         .iter()
         .map(|&reg_name| {
             sleigh_regs
                 .name_to_vn(reg_name)
-                .ok_or(Error::UnknownRegName(reg_name.to_string()))
+                .ok_or_else(|| ErrorKind::UnknownRegName(reg_name.to_string()).into())
         })
         .collect()
 }
@@ -28,8 +25,8 @@ fn regs_to_vns(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallingConvention {
     arch: crate::arch::SleighArch,
-    arg_passing_regs:  &'static [&'static str],
-    callee_saved_regs:  &'static [&'static str],
+    arg_passing_regs: &'static [&'static str],
+    callee_saved_regs: &'static [&'static str],
     ret_val_regs: &'static [&'static str],
     /// Byte offsets from the call-time stack pointer for each positional
     /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
@@ -48,7 +45,6 @@ pub struct BuiltCallingConvention {
     pub stack_arg_offsets: Vec<i64>,
 }
 
-
 impl CallingConvention {
     /// Returns the x86-64 System V ABI calling convention.
     ///
@@ -65,7 +61,7 @@ impl CallingConvention {
             // return address, so SP-at-call points to the return address and
             // the first stack-passed arg (arg 7) lives one slot above it.
             stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
-         }
+        }
     }
 
     /// Returns the AArch64 AAPCS64 calling convention.
@@ -76,9 +72,11 @@ impl CallingConvention {
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
             arch: crate::arch::SleighArch::aarch64(),
-            arg_passing_regs:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            callee_saved_regs: &["x19", "x20", "x21", "x22", "x23",
-                                  "x24", "x25", "x26", "x27", "x28", "x29", "x30", "sp"],
+            arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            callee_saved_regs: &[
+                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+                "sp",
+            ],
             ret_val_regs: &["x0", "x1"],
             stack_arg_offsets: &[0, 8, 16, 24],
         }
@@ -97,8 +95,7 @@ impl CallingConvention {
         CallingConvention {
             arch: crate::arch::SleighArch::arm(),
             arg_passing_regs: &["r0", "r1", "r2", "r3"],
-            callee_saved_regs: &["r4", "r5", "r6", "r7", "r8",
-                                 "r9", "r10", "r11", "sp", "lr"],
+            callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "sp", "lr"],
             ret_val_regs: &["r0", "r1"],
             stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
         }
@@ -120,7 +117,7 @@ impl CallingConvention {
             // return address, so SP-at-call points to the return address and
             // arg 0 lives one slot above it.
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
-         }
+        }
     }
 
     /// Resolves all register name strings in this calling convention to their
@@ -138,9 +135,9 @@ impl CallingConvention {
         let stack_ptr_name = self.arch.stack_ptr_reg_name;
         let stack_ptr_vn = sleigh_regs
             .name_to_vn(stack_ptr_name)
-            .ok_or(Error::UnknownRegName(stack_ptr_name.to_string()))?;
+            .ok_or(ErrorKind::UnknownRegName(stack_ptr_name.to_string()))?;
         if !callee_saved_regs.contains(&stack_ptr_vn) {
-            return Err(Error::StackPtrNotCalleeSaved(stack_ptr_name));
+            return Err(ErrorKind::StackPtrNotCalleeSaved(stack_ptr_name).into());
         }
         Ok(BuiltCallingConvention {
             arg_passing_regs,
@@ -166,14 +163,21 @@ mod tests {
             .unwrap()
     }
 
-    fn x86_64_regs() -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::x86_64()) }
-    fn x86_regs()    -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::x86()) }
-    fn arm_regs()    -> rsleigh::SleighRegs { regs_for(crate::arch::SleighArch::arm()) }
+    fn x86_64_regs() -> rsleigh::SleighRegs {
+        regs_for(crate::arch::SleighArch::x86_64())
+    }
+    fn x86_regs() -> rsleigh::SleighRegs {
+        regs_for(crate::arch::SleighArch::x86())
+    }
+    fn arm_regs() -> rsleigh::SleighRegs {
+        regs_for(crate::arch::SleighArch::arm())
+    }
 
     /// Builds `cc` against `regs`, asserts success, and returns the result.
     #[track_caller]
     fn build_ok(cc: CallingConvention, regs: &rsleigh::SleighRegs) -> BuiltCallingConvention {
-        cc.build(regs).expect("build should succeed for valid register names")
+        cc.build(regs)
+            .expect("build should succeed for valid register names")
     }
 
     /// Asserts that all varnodes in `set` are pairwise distinct.
@@ -207,9 +211,21 @@ mod tests {
     #[test]
     fn x86_64_sysv_resolves_correct_number_of_registers() {
         let built = build_ok(CallingConvention::x86_64_systemv_abi(), &x86_64_regs());
-        assert_eq!(built.arg_passing_regs.len(), 6,  "SysV has 6 int arg registers");
-        assert_eq!(built.callee_saved_regs.len(), 7, "SysV has 7 callee-saved registers");
-        assert_eq!(built.ret_val_regs.len(), 2,      "SysV has 2 return-value registers");
+        assert_eq!(
+            built.arg_passing_regs.len(),
+            6,
+            "SysV has 6 int arg registers"
+        );
+        assert_eq!(
+            built.callee_saved_regs.len(),
+            7,
+            "SysV has 7 callee-saved registers"
+        );
+        assert_eq!(
+            built.ret_val_regs.len(),
+            2,
+            "SysV has 2 return-value registers"
+        );
     }
 
     /// Arg-passing and callee-saved sets must be disjoint: a register used to
@@ -217,7 +233,11 @@ mod tests {
     #[test]
     fn x86_64_sysv_arg_and_callee_saved_are_disjoint() {
         let built = build_ok(CallingConvention::x86_64_systemv_abi(), &x86_64_regs());
-        assert_disjoint(&built.arg_passing_regs, &built.callee_saved_regs, "x86-64 SysV arg vs callee-saved");
+        assert_disjoint(
+            &built.arg_passing_regs,
+            &built.callee_saved_regs,
+            "x86-64 SysV arg vs callee-saved",
+        );
     }
 
     /// Every arg-passing register must be distinct from every other.
@@ -231,7 +251,10 @@ mod tests {
     #[test]
     fn x86_64_sysv_all_callee_saved_registers_are_distinct() {
         let built = build_ok(CallingConvention::x86_64_systemv_abi(), &x86_64_regs());
-        assert_all_distinct(&built.callee_saved_regs, "x86-64 SysV callee-saved registers");
+        assert_all_distinct(
+            &built.callee_saved_regs,
+            "x86-64 SysV callee-saved registers",
+        );
     }
 
     /// Return-value registers must be distinct from each other.
@@ -246,10 +269,17 @@ mod tests {
     #[test]
     fn x86_64_sysv_all_resolved_registers_are_8_bytes() {
         let built = build_ok(CallingConvention::x86_64_systemv_abi(), &x86_64_regs());
-        for vn in built.arg_passing_regs.iter()
-                       .chain(&built.callee_saved_regs)
-                       .chain(&built.ret_val_regs) {
-            assert_eq!(vn.size, 8, "expected 8-byte register on x86-64, got {:?}", vn);
+        for vn in built
+            .arg_passing_regs
+            .iter()
+            .chain(&built.callee_saved_regs)
+            .chain(&built.ret_val_regs)
+        {
+            assert_eq!(
+                vn.size, 8,
+                "expected 8-byte register on x86-64, got {:?}",
+                vn
+            );
         }
     }
 
@@ -259,7 +289,10 @@ mod tests {
     #[test]
     fn x86_cdecl_has_no_arg_passing_registers() {
         let built = build_ok(CallingConvention::x86_cdecl(), &x86_regs());
-        assert!(built.arg_passing_regs.is_empty(), "cdecl must have no arg-passing registers");
+        assert!(
+            built.arg_passing_regs.is_empty(),
+            "cdecl must have no arg-passing registers"
+        );
     }
 
     /// cdecl return-value registers must be distinct from each other.
@@ -274,7 +307,11 @@ mod tests {
     fn x86_cdecl_return_registers_are_4_bytes() {
         let built = build_ok(CallingConvention::x86_cdecl(), &x86_regs());
         for vn in &built.ret_val_regs {
-            assert_eq!(vn.size, 4, "expected 4-byte register on x86-32, got {:?}", vn);
+            assert_eq!(
+                vn.size, 4,
+                "expected 4-byte register on x86-32, got {:?}",
+                vn
+            );
         }
     }
 
@@ -285,17 +322,28 @@ mod tests {
     #[test]
     fn arm_aapcs_resolves_correct_number_of_registers() {
         let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
-        assert_eq!(built.arg_passing_regs.len(),  4,  "AAPCS has 4 arg registers (r0–r3)");
-        assert_eq!(built.callee_saved_regs.len(), 10, "AAPCS has 10 callee-saved (r4–r11, sp, lr)");
-        assert_eq!(built.ret_val_regs.len(),      2,  "AAPCS returns in r0/r1");
+        assert_eq!(
+            built.arg_passing_regs.len(),
+            4,
+            "AAPCS has 4 arg registers (r0–r3)"
+        );
+        assert_eq!(
+            built.callee_saved_regs.len(),
+            10,
+            "AAPCS has 10 callee-saved (r4–r11, sp, lr)"
+        );
+        assert_eq!(built.ret_val_regs.len(), 2, "AAPCS returns in r0/r1");
     }
 
     /// Arg-passing and callee-saved sets must be disjoint.
     #[test]
     fn arm_aapcs_arg_and_callee_saved_are_disjoint() {
         let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
-        assert_disjoint(&built.arg_passing_regs, &built.callee_saved_regs,
-                        "ARM AAPCS arg vs callee-saved");
+        assert_disjoint(
+            &built.arg_passing_regs,
+            &built.callee_saved_regs,
+            "ARM AAPCS arg vs callee-saved",
+        );
     }
 
     /// Every arg-passing register must be distinct from every other.
@@ -323,10 +371,17 @@ mod tests {
     #[test]
     fn arm_aapcs_all_resolved_registers_are_4_bytes() {
         let built = build_ok(CallingConvention::arm_aapcs(), &arm_regs());
-        for vn in built.arg_passing_regs.iter()
-                       .chain(&built.callee_saved_regs)
-                       .chain(&built.ret_val_regs) {
-            assert_eq!(vn.size, 4, "expected 4-byte register on ARM-32, got {:?}", vn);
+        for vn in built
+            .arg_passing_regs
+            .iter()
+            .chain(&built.callee_saved_regs)
+            .chain(&built.ret_val_regs)
+        {
+            assert_eq!(
+                vn.size, 4,
+                "expected 4-byte register on ARM-32, got {:?}",
+                vn
+            );
         }
     }
 
@@ -353,21 +408,41 @@ mod tests {
     /// must succeed and produce the expected counts.
     #[test]
     fn build_succeeds_on_every_supported_arch() {
-        struct Case { name: &'static str, cc: CallingConvention, regs: rsleigh::SleighRegs }
+        struct Case {
+            name: &'static str,
+            cc: CallingConvention,
+            regs: rsleigh::SleighRegs,
+        }
         let cases = [
-            Case { name: "x86-64 SysV", cc: CallingConvention::x86_64_systemv_abi(), regs: x86_64_regs() },
-            Case { name: "x86 cdecl",   cc: CallingConvention::x86_cdecl(),           regs: x86_regs() },
-            Case { name: "ARM AAPCS",   cc: CallingConvention::arm_aapcs(),           regs: arm_regs() },
+            Case {
+                name: "x86-64 SysV",
+                cc: CallingConvention::x86_64_systemv_abi(),
+                regs: x86_64_regs(),
+            },
+            Case {
+                name: "x86 cdecl",
+                cc: CallingConvention::x86_cdecl(),
+                regs: x86_regs(),
+            },
+            Case {
+                name: "ARM AAPCS",
+                cc: CallingConvention::arm_aapcs(),
+                regs: arm_regs(),
+            },
         ];
         for Case { name, cc, regs } in cases {
-            let built = cc.build(&regs)
+            let built = cc
+                .build(&regs)
                 .unwrap_or_else(|e| panic!("{name}: build failed: {e:?}"));
             // The total number of unique registers must be positive (or zero for
             // architectures that pass everything on the stack).
             let total = built.arg_passing_regs.len()
                 + built.callee_saved_regs.len()
                 + built.ret_val_regs.len();
-            assert!(total > 0, "{name}: expected at least one register in some category");
+            assert!(
+                total > 0,
+                "{name}: expected at least one register in some category"
+            );
         }
     }
 
@@ -386,7 +461,10 @@ mod tests {
             };
             let result = cc.build(&x86_64_regs());
             assert!(
-                matches!(result, Err(Error::UnknownRegName(ref n)) if n == bad_name),
+                matches!(
+                    result.as_ref().map_err(|e| e.kind()),
+                    Err(ErrorKind::UnknownRegName(n)) if n == bad_name
+                ),
                 "expected UnknownRegName({bad_name:?}), got {result:?}"
             );
         }
@@ -416,8 +494,8 @@ mod tests {
     fn every_preset_has_sp_in_callee_saved() {
         let cases: &[(CallingConvention, rsleigh::SleighRegs)] = &[
             (CallingConvention::x86_64_systemv_abi(), x86_64_regs()),
-            (CallingConvention::x86_cdecl(),           x86_regs()),
-            (CallingConvention::arm_aapcs(),           arm_regs()),
+            (CallingConvention::x86_cdecl(), x86_regs()),
+            (CallingConvention::arm_aapcs(), arm_regs()),
         ];
         for (cc, regs) in cases {
             let built = cc.build(regs).expect("preset must build");
@@ -442,7 +520,9 @@ mod tests {
     #[test]
     fn x86_64_sysv_stack_ptr_is_rsp() {
         let regs = x86_64_regs();
-        let built = CallingConvention::x86_64_systemv_abi().build(&regs).unwrap();
+        let built = CallingConvention::x86_64_systemv_abi()
+            .build(&regs)
+            .unwrap();
         let rsp = regs.name_to_vn("RSP").expect("RSP must resolve");
         assert_eq!(built.stack_ptr_vn, rsp);
     }
@@ -475,7 +555,10 @@ mod tests {
         };
         let result = cc.build(&x86_regs());
         assert!(
-            matches!(result, Err(Error::StackPtrNotCalleeSaved("ESP"))),
+            matches!(
+                result.as_ref().map_err(|e| e.kind()),
+                Err(ErrorKind::StackPtrNotCalleeSaved("ESP")),
+            ),
             "expected StackPtrNotCalleeSaved(\"ESP\"), got {result:?}",
         );
     }

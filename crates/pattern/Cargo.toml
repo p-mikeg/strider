@@ -6,7 +6,11 @@ edition.workspace = true
 [dependencies]
 ir.workspace = true
 rsleigh.workspace = true
+strider-error.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true
 
 [dev-dependencies]
 rsleigh.workspace = true

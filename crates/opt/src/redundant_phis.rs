@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
 use crate::opt::{OptimizationResult, Optimizer};
 use ir::node::NodeId;
 
@@ -23,10 +23,7 @@ fn replace_output_uses(
 /// If every output of `node_id` has no uses and the node still has inputs,
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
-fn cleanup_if_dead(
-    function: &mut ir::BuiltFunctionGraph,
-    node_id: NodeId,
-) -> OptimizationResult {
+fn cleanup_if_dead(function: &mut ir::BuiltFunctionGraph, node_id: NodeId) -> OptimizationResult {
     let all_unused = function
         .graph
         .node_outputs(node_id)
@@ -71,9 +68,7 @@ fn remove_phis(
 
             let reachable_ctrl: HashSet<ir::node::NodeOutputId> = ctrl_inputs
                 .into_iter()
-                .filter(|ctrl_in| {
-                    reachable.contains(&function.graph.output_definition(*ctrl_in).0)
-                })
+                .filter(|ctrl_in| reachable.contains(&function.graph.output_definition(*ctrl_in).0))
                 .collect();
 
             // Values from live predecessors only: positionally, inputs[j + 1]
@@ -81,20 +76,24 @@ fn remove_phis(
             let live_values: HashSet<ir::node::NodeOutputId> = ctrl_inputs
                 .into_iter()
                 .enumerate()
-                .filter(|&(_j, ctrl_in)| reachable
-                        .contains(&function.graph.output_definition(ctrl_in).0)).map(|(j, _ctrl_in)| inputs[j + 1])
+                .filter(|&(_j, ctrl_in)| {
+                    reachable.contains(&function.graph.output_definition(ctrl_in).0)
+                })
+                .map(|(j, _ctrl_in)| inputs[j + 1])
                 .collect();
 
             let simplified = if reachable_ctrl.len() == 1 {
-                let unique_ctrl = *reachable_ctrl.iter().next()
-                    .ok_or(Error::UniqueCtrlNotFound)?;
+                let unique_ctrl = *reachable_ctrl
+                    .iter()
+                    .next()
+                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
                 // Find position j such that ctrl_inputs[j] == unique_ctrl, then
                 // take inputs[j + 1] (skipping the phi_token at inputs[0]).
                 let ctrl_inputs2 = function.graph.node_inputs(control_state_id);
                 let j = ctrl_inputs2
                     .into_iter()
                     .position(|c| c == unique_ctrl)
-                    .ok_or(Error::UniqueCtrlNotFound)?;
+                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
                 let value = function.graph.node_inputs(node_id)[j + 1];
                 let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
                 replace_output_uses(function, output, value)?
@@ -103,7 +102,10 @@ fn remove_phis(
                 // value: the phi is a no-op.  Replace uses with that single
                 // value.  (The ControlState still has multiple real
                 // predecessors, so we don't touch it here.)
-                let value = *live_values.iter().next().ok_or(Error::UniqueCtrlNotFound)?;
+                let value = *live_values
+                    .iter()
+                    .next()
+                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
                 let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
                 replace_output_uses(function, output, value)?
             } else {
@@ -125,8 +127,10 @@ fn remove_phis(
                 .collect();
 
             let simplified = if reachable_inputs.len() == 1 {
-                let input = *reachable_inputs.iter().next()
-                    .ok_or(Error::UniqueCtrlNotFound)?;
+                let input = *reachable_inputs
+                    .iter()
+                    .next()
+                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
                 let [output, _phi_token] = function.graph.node_outputs_exact::<2>(node_id)?;
                 replace_output_uses(function, output, input)?
             } else {
@@ -136,8 +140,7 @@ fn remove_phis(
             // For ControlState we can only detach when BOTH outputs are unused.
             // cleanup_if_dead handles this check.
             if simplified {
-                Ok(cleanup_if_dead(function, node_id)
-                    | OptimizationResult::Changed)
+                Ok(cleanup_if_dead(function, node_id) | OptimizationResult::Changed)
             } else {
                 Ok(cleanup_if_dead(function, node_id))
             }
@@ -152,13 +155,10 @@ fn remove_phis(
 /// severing their inputs is always safe.  This cleans up dead-block residue
 /// left behind by `DeadBranchElimination`.
 fn detach_unreachable_nodes(function: &mut ir::BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: std::collections::HashSet<ir::node::NodeId> =
-        function.preorder().collect();
+    let reachable: std::collections::HashSet<ir::node::NodeId> = function.preorder().collect();
     let mut changed = false;
     for node_id in function.all_node_ids().collect::<Vec<_>>() {
-        if !reachable.contains(&node_id)
-            && !function.graph.node_inputs(node_id).is_empty()
-        {
+        if !reachable.contains(&node_id) && !function.graph.node_inputs(node_id).is_empty() {
             function.graph.detach_node_inputs(node_id);
             changed = true;
         }

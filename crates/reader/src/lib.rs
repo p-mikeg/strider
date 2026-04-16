@@ -1,3 +1,13 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 //! ELF binary memory reader for rsleigh.
 //!
 //! This crate bridges ELF files (parsed by `object`) and rsleigh's
@@ -26,8 +36,8 @@ use std::collections::BTreeMap;
 
 use object::{Object, ObjectSection, ObjectSegment};
 
-mod error;
-pub use error::{Error, Result};
+pub mod error;
+pub use error::{Error, ErrorKind, Result};
 
 // ── MemRegion ─────────────────────────────────────────────────────────────────
 
@@ -151,16 +161,12 @@ impl RegionsMemReader {
 // ── ELF → MemRegion converters ────────────────────────────────────────────────
 
 /// Converts a single ELF segment into a [`MemRegion`].
-pub fn elf_segment_to_mem_region(
-    segment: &object::read::Segment<'_, '_>,
-) -> Result<MemRegion> {
+pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
     Ok(MemRegion::new(segment.address(), segment.data()?.to_vec()))
 }
 
 /// Converts a single ELF section into a [`MemRegion`].
-pub fn elf_section_to_mem_region(
-    section: &object::read::Section<'_, '_>,
-) -> Result<MemRegion> {
+pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
     Ok(MemRegion::new(section.address(), section.data()?.to_vec()))
 }
 
@@ -264,9 +270,7 @@ impl<'a, 'data> ElfFileMemReader<'a, 'data> {
     ///
     /// Segments correspond to the runtime layout (PT_LOAD entries); use this
     /// when the binary is not stripped and segments are available.
-    pub fn from_elf_segments(
-        obj: &'a object::File<'data>,
-    ) -> Result<Self> {
+    pub fn from_elf_segments(obj: &'a object::File<'data>) -> Result<Self> {
         let regions = elf_get_executable_segments_as_mem_regions(obj)?;
         let lookup = MemRegionsLookupTable::new(regions);
         Ok(Self {
@@ -280,9 +284,7 @@ impl<'a, 'data> ElfFileMemReader<'a, 'data> {
     /// Sections provide finer-grained granularity than segments and work even
     /// when PT_LOAD entries are absent.  This is the recommended constructor
     /// for most use-cases.
-    pub fn from_elf_sections(
-        obj: &'a object::File<'data>,
-    ) -> Result<Self> {
+    pub fn from_elf_sections(obj: &'a object::File<'data>) -> Result<Self> {
         let regions = elf_get_executable_sections_as_mem_regions(obj)?;
         let lookup = MemRegionsLookupTable::new(regions);
         Ok(Self {
@@ -298,7 +300,7 @@ impl<'a, 'data> rsleigh::MemReader for ElfFileMemReader<'a, 'data> {
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize> {
         self.regions_mem_reader
             .read(addr.off, out_buf)
-            .ok_or(Error::NotMapped(addr.off))
+            .ok_or_else(|| error::ErrorKind::NotMapped(addr.off).into())
     }
 }
 
@@ -471,10 +473,7 @@ mod tests {
     /// With two non-overlapping regions, each address is found in the correct one.
     #[test]
     fn lookup_table_two_regions_correct_dispatch() {
-        let table = MemRegionsLookupTable::new([
-            make_region(0x1000, 16),
-            make_region(0x2000, 16),
-        ]);
+        let table = MemRegionsLookupTable::new([make_region(0x1000, 16), make_region(0x2000, 16)]);
         let mut buf = [0u8; 1];
 
         // first region
@@ -512,8 +511,8 @@ mod tests {
     #[test]
     fn lookup_table_gap_between_regions_is_none() {
         let table = MemRegionsLookupTable::new([
-            make_region(0x1000, 8),  // 0x1000..0x1008
-            make_region(0x1010, 8),  // 0x1010..0x1018
+            make_region(0x1000, 8), // 0x1000..0x1008
+            make_region(0x1010, 8), // 0x1010..0x1018
         ]);
         let mut buf = [0u8; 1];
         // 0x1008..0x1010 is a gap

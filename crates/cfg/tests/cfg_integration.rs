@@ -1,3 +1,10 @@
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable
+)]
+
 //! CFG integration tests — all architectures in one file.
 //!
 //! A single `arch_tests!` macro generates a dedicated test module for each

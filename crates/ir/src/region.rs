@@ -1,14 +1,13 @@
-use cranelift_entity::{SecondaryMap, entity_impl};
-use crate::node::{NodeId, NodeOutputId};
 use crate::builder::FunctionBuilder;
 use crate::builder::VarId;
-use crate::error::{Error, Result};
+use crate::error::{ErrorKind, Result};
+use crate::node::{NodeId, NodeOutputId};
+use cranelift_entity::{SecondaryMap, entity_impl};
 
 /// A unique identifier for a basic-block region in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegionId(u32);
 entity_impl!(RegionId);
-
 
 /// All state associated with a single basic-block region.
 ///
@@ -50,9 +49,9 @@ impl FunctionBuilder {
     /// Returns the id of the current region, or an error if no region is set
     /// or if the region has already been terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
-        let region_id = self.cur_region.ok_or(Error::NoCurrentRegion)?;
+        let region_id = self.cur_region.ok_or(ErrorKind::NoCurrentRegion)?;
         if self.regions[region_id].terminated {
-            return Err(Error::RegionTerminated(region_id.as_u32()));
+            return Err(ErrorKind::RegionTerminated(region_id.as_u32()).into());
         }
         Ok(region_id)
     }
@@ -71,7 +70,7 @@ impl FunctionBuilder {
     pub(crate) fn advance_cur_region_ctrl(&mut self, ctrl: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(ctrl);
         if !kind.is_control() {
-            return Err(Error::ExpectedControl(ctrl, kind));
+            return Err(ErrorKind::ExpectedControl(ctrl, kind).into());
         }
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_ctrl = ctrl;
@@ -82,7 +81,7 @@ impl FunctionBuilder {
     pub(crate) fn advance_cur_region_memory(&mut self, memory: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(memory);
         if !kind.is_memory() {
-            return Err(Error::ExpectedMemory(memory, kind));
+            return Err(ErrorKind::ExpectedMemory(memory, kind).into());
         }
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
@@ -97,7 +96,9 @@ impl FunctionBuilder {
         let memory = self.regions[region_id].cur_memory;
         self.regions[region_id].terminated = true;
         Ok(TerminatedRegion {
-            control, memory, region_id
+            control,
+            memory,
+            region_id,
         })
     }
 
@@ -109,12 +110,17 @@ impl FunctionBuilder {
 
     /// Adds incoming variable values from `variables` to the `ControlPhi`
     /// nodes of `region`.
-    pub(crate) fn link_region_variables(&mut self, region: RegionId, variables: &SecondaryMap<VarId, NodeOutputId>) -> Result<()> {
-        for var_id in variables.keys(){
+    pub(crate) fn link_region_variables(
+        &mut self,
+        region: RegionId,
+        variables: &SecondaryMap<VarId, NodeOutputId>,
+    ) -> Result<()> {
+        for var_id in variables.keys() {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
             let region_variable_id = self.graph().get_node_from_output(region_variable_output_id);
             let current_variable = variables[var_id];
-            self.graph_mut().add_node_input(region_variable_id, current_variable)?;
+            self.graph_mut()
+                .add_node_input(region_variable_id, current_variable)?;
         }
         Ok(())
     }
@@ -126,27 +132,25 @@ impl FunctionBuilder {
         control_id: NodeOutputId,
         memory_node: NodeId,
         memory_id: NodeOutputId,
-        initial_variables: SecondaryMap<VarId, NodeOutputId>
+        initial_variables: SecondaryMap<VarId, NodeOutputId>,
     ) -> Result<RegionId> {
         let memory_kind = self.graph().output_kind(memory_id);
         if !memory_kind.is_memory() {
-            return Err(Error::ExpectedMemory(memory_id, memory_kind));
+            return Err(ErrorKind::ExpectedMemory(memory_id, memory_kind).into());
         }
         let control_kind = self.graph().output_kind(control_id);
         if !control_kind.is_control() {
-            return Err(Error::ExpectedControl(control_id, control_kind));
+            return Err(ErrorKind::ExpectedControl(control_id, control_kind).into());
         }
-        Ok(self.regions.push(
-            Region {
-                terminated: false,
-                control_node,
-                memory_node,
-                cur_ctrl: control_id,
-                cur_memory: memory_id,
-                variables: initial_variables.clone(),
-                initial_variables
-            }
-        ))
+        Ok(self.regions.push(Region {
+            terminated: false,
+            control_node,
+            memory_node,
+            cur_ctrl: control_id,
+            cur_memory: memory_id,
+            variables: initial_variables.clone(),
+            initial_variables,
+        }))
     }
 
     /// Writes `value` to variable `var_id` in the active region.
@@ -163,35 +167,50 @@ impl FunctionBuilder {
     }
 
     /// Adds `control` as an incoming control edge to `region`'s `ControlState` node.
-    pub(crate) fn link_control_regions(&mut self, region: RegionId, control: NodeOutputId) -> Result<()> {
+    pub(crate) fn link_control_regions(
+        &mut self,
+        region: RegionId,
+        control: NodeOutputId,
+    ) -> Result<()> {
         let kind = self.graph().output_kind(control);
         if !kind.is_control() {
-            return Err(Error::ExpectedControl(control, kind));
+            return Err(ErrorKind::ExpectedControl(control, kind).into());
         }
         let control_node = self.regions[region].control_node;
         self.graph_mut().add_node_input(control_node, control)
     }
 
     /// Adds `memory` as an incoming memory edge to `region`'s `MemPhi` node.
-    pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: NodeOutputId) -> Result<()> {
+    pub(crate) fn link_memory_regions(
+        &mut self,
+        region: RegionId,
+        memory: NodeOutputId,
+    ) -> Result<()> {
         let kind = self.graph().output_kind(memory);
         if !kind.is_memory() {
-            return Err(Error::ExpectedMemory(memory, kind));
+            return Err(ErrorKind::ExpectedMemory(memory, kind).into());
         }
         let memory_node = self.regions[region].memory_node;
         self.graph_mut().add_node_input(memory_node, memory)
     }
 
     /// Links `region` as a successor of `cur_region`.
-    pub(crate) fn link_region(&mut self, region: RegionId, control: NodeOutputId, memory: NodeOutputId, cur_region: RegionId) -> Result<()> {
+    pub(crate) fn link_region(
+        &mut self,
+        region: RegionId,
+        control: NodeOutputId,
+        memory: NodeOutputId,
+        cur_region: RegionId,
+    ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
 
-        for var_id in self.regions[region].variables.keys(){
+        for var_id in self.regions[region].variables.keys() {
             let region_variable_output_id = self.regions[region].initial_variables[var_id];
             let region_variable_id = self.graph().get_node_from_output(region_variable_output_id);
             let current_variable = self.regions[cur_region].variables[var_id];
-            self.graph_mut().add_node_input(region_variable_id, current_variable)?;
+            self.graph_mut()
+                .add_node_input(region_variable_id, current_variable)?;
         }
         Ok(())
     }
@@ -204,5 +223,4 @@ impl FunctionBuilder {
         );
         self.link_region(child_region, ctrl, mem, parent_region)
     }
-
 }
