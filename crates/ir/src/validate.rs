@@ -34,6 +34,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_c_postcall_producer(graph, &mut errs);
 
+    check_layer_c_postcall_uniqueness(graph, &mut errs);
+
     let _ = entry;
 
     if errs.is_empty() {
@@ -315,6 +317,55 @@ fn check_layer_c_postcall_producer(graph: &Graph, errs: &mut Vec<ValidationError
     }
 }
 
+/// Layer C: per Call, there can be at most one `PostCallMemState` consuming
+/// the Call's Control output, and at most one `PostCallVarState(vn)` per
+/// distinct `vn`. Duplicates indicate a construction or optimization bug.
+fn check_layer_c_postcall_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    use std::collections::HashMap;
+
+    let mut mem_states_by_call: HashMap<NodeId, NodeId> = HashMap::new();
+    let mut var_states_by_call: HashMap<(NodeId, rsleigh::Vn), NodeId> = HashMap::new();
+
+    for node in graph.nodes.keys() {
+        let kind = *graph.node_kind(node);
+        let Ok([target]) = graph.node_inputs_exact::<1>(node) else {
+            continue;
+        };
+        let (producer, producer_out_idx) = graph.output_definition(target);
+        if producer_out_idx != 0 || !matches!(graph.node_kind(producer), NodeKind::Call) {
+            continue; // Task 8's producer check already handled this shape error.
+        }
+
+        match kind {
+            NodeKind::PostCallMemState => {
+                if let Some(&first) = mem_states_by_call.get(&producer) {
+                    errs.push(ValidationError::DuplicatePostCallMemState {
+                        call: producer,
+                        first,
+                        second: node,
+                    });
+                } else {
+                    mem_states_by_call.insert(producer, node);
+                }
+            }
+            NodeKind::PostCallVarState(vn) => {
+                let key = (producer, vn);
+                if let Some(&first) = var_states_by_call.get(&key) {
+                    errs.push(ValidationError::DuplicatePostCallVarState {
+                        call: producer,
+                        vn,
+                        first,
+                        second: node,
+                    });
+                } else {
+                    var_states_by_call.insert(key, node);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
@@ -458,6 +509,24 @@ pub enum ValidationError {
         node: NodeId,
         producer: NodeId,
         producer_kind: NodeOutputKind,
+    },
+
+    #[error("call {call:?} has two PostCallMemState consumers: {first:?} and {second:?}")]
+    DuplicatePostCallMemState {
+        call: NodeId,
+        first: NodeId,
+        second: NodeId,
+    },
+
+    #[error(
+        "call {call:?} has two PostCallVarState({vn:?}) consumers: \
+         {first:?} and {second:?}"
+    )]
+    DuplicatePostCallVarState {
+        call: NodeId,
+        vn: rsleigh::Vn,
+        first: NodeId,
+        second: NodeId,
     },
 }
 
@@ -791,6 +860,95 @@ mod tests {
             e,
             ValidationError::PostCallVarStateNotAfterCall { .. }
         )), "got: {errs:?}");
+    }
+
+    // Helpers for constructing a Call node and its outputs.
+    fn make_call(graph: &mut Graph, ctrl: NodeOutputId, mem: NodeOutputId) -> (NodeId, NodeOutputId) {
+        let addr = graph.create_node(
+            NodeKind::IntConst(0x1000),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let addr_out = graph.node_outputs(addr).into_iter().next().unwrap();
+        let call = graph.create_node(
+            NodeKind::Call,
+            [ctrl, mem, addr_out],
+            [NodeOutputKind::Control, NodeOutputKind::Memory],
+        );
+        let call_ctrl = graph.node_outputs(call).into_iter().next().unwrap();
+        (call, call_ctrl)
+    }
+
+    #[test]
+    fn layer_c_two_postcall_mem_states_on_same_call() {
+        // To get two distinct PostCallMemState nodes consuming the same Call
+        // ctrl, we create one PostCallMemState for call1 and one for call2,
+        // then retarget the second node's input to call1's ctrl.  This
+        // corrupts the use-list (Layer B also fires), but the test only checks
+        // that DuplicatePostCallMemState is among the errors.
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem_node = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+        let mem_out = graph.node_outputs(mem_node).into_iter().next().unwrap();
+
+        let (_, call1_ctrl) = make_call(&mut graph, entry_ctrl, mem_out);
+        // call2 needs a different ctrl — reuse entry_ctrl (Layer A may object,
+        // but we just need two distinct Call nodes to get two distinct
+        // PostCallMemState NodeIds).
+        let (_, call2_ctrl) = make_call(&mut graph, entry_ctrl, mem_out);
+
+        let _pcm1 = graph.create_node(NodeKind::PostCallMemState, [call1_ctrl], [NodeOutputKind::Memory]);
+        let pcm2 = graph.create_node(NodeKind::PostCallMemState, [call2_ctrl], [NodeOutputKind::Memory]);
+
+        // Retarget pcm2's input to call1_ctrl so call1 now has two consumers.
+        // (Use test_only_retarget_input so the use-list is not updated — that
+        // corruption is intentional; we want to verify the uniqueness check.)
+        let pcm2_input = graph.node_input_id_at(pcm2, 0);
+        graph.test_only_retarget_input(pcm2_input, call1_ctrl);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::DuplicatePostCallMemState { .. }
+        )), "got: {errs:?}");
+    }
+
+    #[test]
+    fn layer_c_two_postcall_var_states_same_vn() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem_node = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+        let mem_out = graph.node_outputs(mem_node).into_iter().next().unwrap();
+
+        let (_, call1_ctrl) = make_call(&mut graph, entry_ctrl, mem_out);
+        let (_, call2_ctrl) = make_call(&mut graph, entry_ctrl, mem_out);
+
+        let vn = test_vn();
+        let v1 = graph.create_node(
+            NodeKind::PostCallVarState(vn),
+            [call1_ctrl],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let v2 = graph.create_node(
+            NodeKind::PostCallVarState(vn),
+            [call2_ctrl],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        // Retarget v2's input to call1_ctrl — same vn, same call, two nodes.
+        let v2_input = graph.node_input_id_at(v2, 0);
+        graph.test_only_retarget_input(v2_input, call1_ctrl);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::DuplicatePostCallVarState { .. }
+        )), "got: {errs:?}");
+
+        // v1 still consumes call1 ctrl legitimately.
+        let _ = v1;
     }
 
     #[test]
