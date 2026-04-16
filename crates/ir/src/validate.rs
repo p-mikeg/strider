@@ -32,6 +32,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_c_phis(graph, &mut errs);
 
+    check_layer_c_postcall_producer(graph, &mut errs);
+
     let _ = entry;
 
     if errs.is_empty() {
@@ -280,6 +282,41 @@ fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
     }
 }
 
+/// Layer C: a `PostCallMemState` or `PostCallVarState` must consume output[0]
+/// (the Control token) of a `Call` node; nothing else is valid.
+fn check_layer_c_postcall_producer(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    for node in graph.nodes.keys() {
+        let kind = *graph.node_kind(node);
+        let mk_err: fn(NodeId, NodeId, NodeOutputKind) -> ValidationError = match kind {
+            NodeKind::PostCallMemState => |n, p, k| ValidationError::PostCallMemStateNotAfterCall {
+                node: n,
+                producer: p,
+                producer_kind: k,
+            },
+            NodeKind::PostCallVarState(_) => |n, p, k| ValidationError::PostCallVarStateNotAfterCall {
+                node: n,
+                producer: p,
+                producer_kind: k,
+            },
+            _ => continue,
+        };
+
+        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
+        if inputs.is_empty() {
+            continue; // Layer A fires a count mismatch here.
+        }
+        let target = inputs[0];
+        let (producer, producer_out_idx) = graph.output_definition(target);
+        let producer_kind = graph.output_kind(target);
+
+        let is_call_control =
+            matches!(graph.node_kind(producer), NodeKind::Call) && producer_out_idx == 0;
+        if !is_call_control {
+            errs.push(mk_err(node, producer, producer_kind));
+        }
+    }
+}
+
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
@@ -403,6 +440,26 @@ pub enum ValidationError {
         owner_control_state: NodeId,
         expected_predecessors: usize,
         actual_values: usize,
+    },
+
+    #[error(
+        "PostCallMemState {node:?} input producer {producer:?} has kind \
+         {producer_kind:?}; expected Control output of a Call"
+    )]
+    PostCallMemStateNotAfterCall {
+        node: NodeId,
+        producer: NodeId,
+        producer_kind: NodeOutputKind,
+    },
+
+    #[error(
+        "PostCallVarState {node:?} input producer {producer:?} has kind \
+         {producer_kind:?}; expected Control output of a Call"
+    )]
+    PostCallVarStateNotAfterCall {
+        node: NodeId,
+        producer: NodeId,
+        producer_kind: NodeOutputKind,
     },
 }
 
@@ -694,6 +751,26 @@ mod tests {
         assert!(errs.0.iter().any(|e| matches!(
             e,
             ValidationError::PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2, .. }
+        )), "got: {errs:?}");
+    }
+
+    #[test]
+    fn layer_c_postcall_mem_state_from_entry_is_error() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+
+        let _bad = graph.create_node(
+            NodeKind::PostCallMemState,
+            [entry_ctrl],
+            [NodeOutputKind::Memory],
+        );
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PostCallMemStateNotAfterCall { .. }
         )), "got: {errs:?}");
     }
 
