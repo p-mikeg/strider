@@ -43,6 +43,7 @@ pub mod validate;
 
 pub use crate::error::{Error, Result};
 pub use validate::{ValidationError, ValidationErrors};
+pub use node_signature::ExpectedOutputKind;
 pub use builder::{FunctionBuilder};
 pub use region::{RegionId};
 pub use ops::{

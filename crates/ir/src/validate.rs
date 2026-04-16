@@ -10,8 +10,8 @@
 //! callers can see all problems at once rather than only the first.
 
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
-use crate::node_signature::expected_signature;
+use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node_signature::{expected_signature, ExpectedOutputKind};
 
 /// Validates the structural invariants of `graph` starting from `entry`.
 ///
@@ -84,7 +84,7 @@ fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
     let check_len = expected_inputs.len().min(actual_inputs.len());
     for idx in 0..check_len {
         let actual = graph.output_kind(actual_inputs[idx]);
-        if !kinds_compatible(expected_inputs[idx], actual) {
+        if !kind_matches(expected_inputs[idx], actual) {
             errs.push(ValidationError::NodeInputKindMismatch {
                 node,
                 input_idx: idx,
@@ -97,7 +97,7 @@ fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
     // Check the fixed prefix of output kinds.
     let check_len = expected_outputs.len().min(actual_outputs.len());
     for idx in 0..check_len {
-        if !kinds_compatible(expected_outputs[idx], actual_outputs[idx]) {
+        if !kind_matches(expected_outputs[idx], actual_outputs[idx]) {
             errs.push(ValidationError::NodeOutputKindMismatch {
                 node,
                 output_idx: idx,
@@ -160,18 +160,23 @@ fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
     }
 }
 
-/// Two `NodeOutputKind`s are compatible if they are the same variant.
-/// For `OutputType`, any integer width is compatible with any other (width
-/// checks are not part of this layer).
-fn kinds_compatible(expected: NodeOutputKind, actual: NodeOutputKind) -> bool {
-    use NodeOutputKind::*;
-    matches!(
-        (expected, actual),
-        (Control, Control)
-            | (Memory, Memory)
-            | (ControlPhi, ControlPhi)
-            | (OutputType(_), OutputType(_)),
-    )
+/// Returns whether an actual [`NodeOutputKind`] satisfies the
+/// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
+///
+/// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U128, U256);
+/// `AnyFloat` matches F32 or F64; `Bool` matches only `OutputType(Bool)`.
+/// `Control`, `Memory`, and `ControlPhi` match their identically-named
+/// [`NodeOutputKind`] variants.
+fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
+    match (expected, actual) {
+        (ExpectedOutputKind::Control, NodeOutputKind::Control) => true,
+        (ExpectedOutputKind::Memory, NodeOutputKind::Memory) => true,
+        (ExpectedOutputKind::ControlPhi, NodeOutputKind::ControlPhi) => true,
+        (ExpectedOutputKind::Bool, NodeOutputKind::OutputType(NodeOutputType::Bool)) => true,
+        (ExpectedOutputKind::AnyInt, NodeOutputKind::OutputType(t)) if t.is_integer() => true,
+        (ExpectedOutputKind::AnyFloat, NodeOutputKind::OutputType(t)) if t.is_float() => true,
+        _ => false,
+    }
 }
 
 /// A bundle of [`ValidationError`]s produced by a single [`validate`] call.
@@ -191,7 +196,7 @@ pub enum ValidationError {
     NodeInputKindMismatch {
         node: NodeId,
         input_idx: usize,
-        expected: NodeOutputKind,
+        expected: ExpectedOutputKind,
         actual: NodeOutputKind,
     },
 
@@ -206,7 +211,7 @@ pub enum ValidationError {
     NodeOutputKindMismatch {
         node: NodeId,
         output_idx: usize,
-        expected: NodeOutputKind,
+        expected: ExpectedOutputKind,
         actual: NodeOutputKind,
     },
 

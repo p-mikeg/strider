@@ -1,9 +1,16 @@
 //! Expected input/output signatures of every [`NodeKind`] variant.
 //!
-//! This module is the single source of truth for what input and output
-//! [`NodeOutputKind`]s a given [`NodeKind`] is expected to have.  It is used
-//! both by the (planned) `node_view()` reconstruction and by the whole-graph
-//! validator (see `validate` module, to be added).
+//! This module is the single source of truth for what input and output slots
+//! a given [`NodeKind`] is expected to have.  It is used by the whole-graph
+//! validator (see `validate` module) and any future `node_view()`
+//! reconstruction.
+//!
+//! Slots are described by [`ExpectedOutputKind`], a coarser classification
+//! than the concrete [`NodeOutputKind`] stored on actual outputs: integer
+//! slots accept any width (U8..U256) via [`ExpectedOutputKind::AnyInt`], and
+//! float slots accept F32 or F64 via [`ExpectedOutputKind::AnyFloat`].  Bool
+//! remains a distinct kind.  Width-level checks, if ever needed, live
+//! elsewhere.
 //!
 //! Variable-arity nodes ([`NodeKind::ControlState`], [`NodeKind::MemPhi`],
 //! [`NodeKind::ControlPhi`], [`NodeKind::Call`], [`NodeKind::CallOther`],
@@ -11,28 +18,43 @@
 //! only the **minimum fixed prefix** of inputs / outputs.  Callers that need
 //! to validate the variadic tail must do it themselves.
 
-use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use crate::node::NodeKind;
+
+/// The expected kind of an input or output slot of a [`NodeKind`].
+///
+/// This is the type used by [`expected_signature`] and the validator to
+/// describe what a slot should carry, without over-committing to a specific
+/// integer or float width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedOutputKind {
+    /// A `Control` token.
+    Control,
+    /// A `Memory` token.
+    Memory,
+    /// A `ControlPhi` dispatch token.
+    ControlPhi,
+    /// A `Bool` value.
+    Bool,
+    /// Any integer-typed value (U8, U16, U32, U64, U128, U256).
+    AnyInt,
+    /// Any float-typed value (F32, F64).
+    AnyFloat,
+}
 
 /// Expected (input kinds, output kinds) for a given [`NodeKind`].
-///
-/// Integer-typed slots are reported as `OutputType(U64)` as a placeholder —
-/// this helper only distinguishes the coarse [`NodeOutputKind`] (Control /
-/// Memory / ControlPhi / OutputType) and does NOT carry the concrete
-/// integer width.  Width-level checks live elsewhere.
 ///
 /// For variable-arity kinds, the returned vectors describe only the fixed
 /// prefix of the signature; see the module-level docs.
 pub(crate) fn expected_signature(
     kind: &NodeKind,
-) -> (Vec<NodeOutputKind>, Vec<NodeOutputKind>) {
-    use NodeOutputKind::*;
-    use NodeOutputType::*;
+) -> (Vec<ExpectedOutputKind>, Vec<ExpectedOutputKind>) {
+    use ExpectedOutputKind::*;
 
     match kind {
         // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => (vec![], vec![Control]),
         NodeKind::InitialMemory => (vec![], vec![Memory]),
-        NodeKind::InitialVar(_) => (vec![], vec![OutputType(U64)]),
+        NodeKind::InitialVar(_) => (vec![], vec![AnyInt]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // ControlState: one Control input per predecessor (variadic).
@@ -40,136 +62,93 @@ pub(crate) fn expected_signature(
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => (vec![ControlPhi], vec![Memory]),
         // ControlPhi: [phi_token, ...per-predecessor values].
-        NodeKind::ControlPhi(_) => (vec![ControlPhi], vec![OutputType(U64)]),
+        NodeKind::ControlPhi(_) => (vec![ControlPhi], vec![AnyInt]),
 
         // ── Conditional branch ──────────────────────────────────────────────
-        NodeKind::If => (
-            vec![Control, OutputType(Bool)],
-            vec![Control, Control],
-        ),
+        NodeKind::If => (vec![Control, Bool], vec![Control, Control]),
         NodeKind::IfCase(_) => (vec![Control], vec![Control]),
 
         // ── Calls and returns ───────────────────────────────────────────────
         // Call: [control, memory, call_address, ...args].
         // Outputs: [Control, Memory, ...clobbered varnode values].
-        NodeKind::Call => (
-            vec![Control, Memory, OutputType(U64)],
-            vec![Control, Memory],
-        ),
+        NodeKind::Call => (vec![Control, Memory, AnyInt], vec![Control, Memory]),
         NodeKind::PostCallMemState => (vec![Control], vec![Memory]),
-        NodeKind::PostCallVarState(_) => (vec![Control], vec![OutputType(U64)]),
+        NodeKind::PostCallVarState(_) => (vec![Control], vec![AnyInt]),
         // Return: [control, ...return values]. No memory input.
         NodeKind::Return => (vec![Control], vec![]),
 
         // ── Memory operations ───────────────────────────────────────────────
-        NodeKind::Load(_) => (
-            vec![Memory, OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
-        NodeKind::Store(_) => (
-            vec![Memory, OutputType(U64), OutputType(U64)],
-            vec![Memory],
-        ),
+        NodeKind::Load(_) => (vec![Memory, AnyInt], vec![AnyInt]),
+        NodeKind::Store(_) => (vec![Memory, AnyInt, AnyInt], vec![Memory]),
         // StackStore: [memory, base, data].
-        NodeKind::StackStore { .. } => (
-            vec![Memory, OutputType(U64), OutputType(U64)],
-            vec![Memory],
-        ),
+        NodeKind::StackStore { .. } => (vec![Memory, AnyInt, AnyInt], vec![Memory]),
         // StackStorePhi: [phi_token, memory, data].
-        NodeKind::StackStorePhi { .. } => (
-            vec![ControlPhi, Memory, OutputType(U64)],
-            vec![Memory],
-        ),
+        NodeKind::StackStorePhi { .. } => {
+            (vec![ControlPhi, Memory, AnyInt], vec![Memory])
+        }
 
         // ── Integer constants and operations ────────────────────────────────
-        NodeKind::IntConst(_) => (vec![], vec![OutputType(U64)]),
-        NodeKind::IntUnaryOp(_) => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::IntBinaryOp(_) => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
-        NodeKind::IntCmpOp(_) => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(Bool)],
-        ),
-        NodeKind::CastToInt => (vec![OutputType(Bool)], vec![OutputType(U64)]),
-        NodeKind::Truncate => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::Popcount => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::Lzcount => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::Piece => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
-        NodeKind::Extract { .. } => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::Insert { .. } => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
-        NodeKind::Extend(_) => (vec![OutputType(U64)], vec![OutputType(U64)]),
+        NodeKind::IntConst(_) => (vec![], vec![AnyInt]),
+        NodeKind::IntUnaryOp(_) => (vec![AnyInt], vec![AnyInt]),
+        NodeKind::IntBinaryOp(_) => (vec![AnyInt, AnyInt], vec![AnyInt]),
+        NodeKind::IntCmpOp(_) => (vec![AnyInt, AnyInt], vec![Bool]),
+        NodeKind::CastToInt => (vec![Bool], vec![AnyInt]),
+        NodeKind::Truncate => (vec![AnyInt], vec![AnyInt]),
+        NodeKind::Popcount => (vec![AnyInt], vec![AnyInt]),
+        NodeKind::Lzcount => (vec![AnyInt], vec![AnyInt]),
+        NodeKind::Piece => (vec![AnyInt, AnyInt], vec![AnyInt]),
+        NodeKind::Extract { .. } => (vec![AnyInt], vec![AnyInt]),
+        NodeKind::Insert { .. } => (vec![AnyInt, AnyInt], vec![AnyInt]),
+        NodeKind::Extend(_) => (vec![AnyInt], vec![AnyInt]),
 
         // ── Boolean constants and operations ────────────────────────────────
-        NodeKind::BoolConst(_) => (vec![], vec![OutputType(Bool)]),
-        NodeKind::BoolUnaryOp(_) => (vec![OutputType(Bool)], vec![OutputType(Bool)]),
-        NodeKind::BoolBinaryOp(_) => (
-            vec![OutputType(Bool), OutputType(Bool)],
-            vec![OutputType(Bool)],
-        ),
-        NodeKind::CastToBool => (vec![OutputType(U64)], vec![OutputType(Bool)]),
+        NodeKind::BoolConst(_) => (vec![], vec![Bool]),
+        NodeKind::BoolUnaryOp(_) => (vec![Bool], vec![Bool]),
+        NodeKind::BoolBinaryOp(_) => (vec![Bool, Bool], vec![Bool]),
+        NodeKind::CastToBool => (vec![AnyInt], vec![Bool]),
 
         // ── Float constants and operations ──────────────────────────────────
-        NodeKind::FloatConst(_) => (vec![], vec![OutputType(U64)]),
-        NodeKind::FloatBinaryOp(_) => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
-        NodeKind::FloatUnaryOp(_) => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::FloatCmpOp(_) => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(Bool)],
-        ),
-        NodeKind::FloatIsNan => (vec![OutputType(U64)], vec![OutputType(Bool)]),
-        NodeKind::IntToFloat => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::FloatToInt => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::FloatToFloat => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::IntBitsToFloat => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::FloatBitsToInt => (vec![OutputType(U64)], vec![OutputType(U64)]),
-        NodeKind::CastToFloat => (vec![OutputType(U64)], vec![OutputType(U64)]),
+        NodeKind::FloatConst(_) => (vec![], vec![AnyFloat]),
+        NodeKind::FloatBinaryOp(_) => (vec![AnyFloat, AnyFloat], vec![AnyFloat]),
+        NodeKind::FloatUnaryOp(_) => (vec![AnyFloat], vec![AnyFloat]),
+        NodeKind::FloatCmpOp(_) => (vec![AnyFloat, AnyFloat], vec![Bool]),
+        NodeKind::FloatIsNan => (vec![AnyFloat], vec![Bool]),
+        NodeKind::IntToFloat => (vec![AnyInt], vec![AnyFloat]),
+        NodeKind::FloatToInt => (vec![AnyFloat], vec![AnyInt]),
+        NodeKind::FloatToFloat => (vec![AnyFloat], vec![AnyFloat]),
+        NodeKind::IntBitsToFloat => (vec![AnyInt], vec![AnyFloat]),
+        NodeKind::FloatBitsToInt => (vec![AnyFloat], vec![AnyInt]),
+        NodeKind::CastToFloat => (vec![AnyInt], vec![AnyFloat]),
 
         // ── User-defined / opaque opcodes ───────────────────────────────────
         // CallOther: [control, memory, ...args].
         // Outputs: [Control, Memory] or [Control, Memory, OutputType].
-        NodeKind::CallOther { .. } => (
-            vec![Control, Memory],
-            vec![Control, Memory],
-        ),
-        NodeKind::SegmentOp { .. } => (
-            vec![OutputType(U64), OutputType(U64)],
-            vec![OutputType(U64)],
-        ),
+        NodeKind::CallOther { .. } => (vec![Control, Memory], vec![Control, Memory]),
+        NodeKind::SegmentOp { .. } => (vec![AnyInt, AnyInt], vec![AnyInt]),
         // CPoolRef: [...refs] (variadic).
-        NodeKind::CPoolRef => (vec![], vec![OutputType(U64)]),
+        NodeKind::CPoolRef => (vec![], vec![AnyInt]),
         // New: [...args] (variadic, typically a size).
-        NodeKind::New => (vec![], vec![OutputType(U64)]),
+        NodeKind::New => (vec![], vec![AnyInt]),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use crate::node::NodeKind;
 
     #[test]
     fn expected_signature_int_const() {
         let (inputs, outputs) = expected_signature(&NodeKind::IntConst(42));
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
     }
 
     #[test]
     fn expected_signature_entry() {
         let (inputs, outputs) = expected_signature(&NodeKind::Entry);
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![NodeOutputKind::Control]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Control]);
     }
 
     #[test]
@@ -177,14 +156,11 @@ mod tests {
         let (inputs, outputs) = expected_signature(&NodeKind::If);
         assert_eq!(
             inputs,
-            vec![
-                NodeOutputKind::Control,
-                NodeOutputKind::OutputType(NodeOutputType::Bool),
-            ]
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Bool]
         );
         assert_eq!(
             outputs,
-            vec![NodeOutputKind::Control, NodeOutputKind::Control]
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Control]
         );
     }
 
@@ -192,7 +168,7 @@ mod tests {
     fn expected_signature_initial_memory() {
         let (inputs, outputs) = expected_signature(&NodeKind::InitialMemory);
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![NodeOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
     }
 
     #[test]
@@ -201,15 +177,9 @@ mod tests {
         let (inputs, outputs) = expected_signature(&NodeKind::Load(space));
         assert_eq!(
             inputs,
-            vec![
-                NodeOutputKind::Memory,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-            ]
+            vec![ExpectedOutputKind::Memory, ExpectedOutputKind::AnyInt]
         );
-        assert_eq!(
-            outputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::U64)]
-        );
+        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
     }
 
     #[test]
@@ -219,12 +189,12 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                NodeOutputKind::Memory,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-                NodeOutputKind::OutputType(NodeOutputType::U64),
+                ExpectedOutputKind::Memory,
+                ExpectedOutputKind::AnyInt,
+                ExpectedOutputKind::AnyInt,
             ]
         );
-        assert_eq!(outputs, vec![NodeOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
     }
 
     #[test]
@@ -235,12 +205,12 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                NodeOutputKind::Memory,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-                NodeOutputKind::OutputType(NodeOutputType::U64),
+                ExpectedOutputKind::Memory,
+                ExpectedOutputKind::AnyInt,
+                ExpectedOutputKind::AnyInt,
             ]
         );
-        assert_eq!(outputs, vec![NodeOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
     }
 
     #[test]
@@ -250,19 +220,19 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                NodeOutputKind::ControlPhi,
-                NodeOutputKind::Memory,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
+                ExpectedOutputKind::ControlPhi,
+                ExpectedOutputKind::Memory,
+                ExpectedOutputKind::AnyInt,
             ]
         );
-        assert_eq!(outputs, vec![NodeOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
     }
 
     #[test]
     fn expected_signature_return() {
         // Return's fixed prefix is just [Control]; the return values are variadic.
         let (inputs, outputs) = expected_signature(&NodeKind::Return);
-        assert_eq!(inputs, vec![NodeOutputKind::Control]);
+        assert_eq!(inputs, vec![ExpectedOutputKind::Control]);
         assert_eq!(outputs, vec![]);
     }
 
@@ -273,14 +243,14 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                NodeOutputKind::Control,
-                NodeOutputKind::Memory,
-                NodeOutputKind::OutputType(NodeOutputType::U64),
+                ExpectedOutputKind::Control,
+                ExpectedOutputKind::Memory,
+                ExpectedOutputKind::AnyInt,
             ]
         );
         assert_eq!(
             outputs,
-            vec![NodeOutputKind::Control, NodeOutputKind::Memory]
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Memory]
         );
     }
 
@@ -291,15 +261,9 @@ mod tests {
             expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(
             inputs,
-            vec![
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-            ]
+            vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
         );
-        assert_eq!(
-            outputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::U64)]
-        );
+        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
     }
 
     #[test]
@@ -309,38 +273,23 @@ mod tests {
             expected_signature(&NodeKind::IntCmpOp(IntCmpOp::Equal));
         assert_eq!(
             inputs,
-            vec![
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-                NodeOutputKind::OutputType(NodeOutputType::U64),
-            ]
+            vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
         );
-        assert_eq!(
-            outputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::Bool)]
-        );
+        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
     }
 
     #[test]
     fn expected_signature_bool_const() {
         let (inputs, outputs) = expected_signature(&NodeKind::BoolConst(true));
         assert_eq!(inputs, vec![]);
-        assert_eq!(
-            outputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::Bool)]
-        );
+        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
     }
 
     #[test]
     fn expected_signature_cast_to_bool() {
         let (inputs, outputs) = expected_signature(&NodeKind::CastToBool);
-        assert_eq!(
-            inputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::U64)]
-        );
-        assert_eq!(
-            outputs,
-            vec![NodeOutputKind::OutputType(NodeOutputType::Bool)]
-        );
+        assert_eq!(inputs, vec![ExpectedOutputKind::AnyInt]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
     }
 
     #[test]
@@ -351,14 +300,33 @@ mod tests {
         assert_eq!(inputs, vec![]);
         assert_eq!(
             outputs,
-            vec![NodeOutputKind::Control, NodeOutputKind::ControlPhi]
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::ControlPhi]
         );
     }
 
     #[test]
     fn expected_signature_mem_phi() {
         let (inputs, outputs) = expected_signature(&NodeKind::MemPhi);
-        assert_eq!(inputs, vec![NodeOutputKind::ControlPhi]);
-        assert_eq!(outputs, vec![NodeOutputKind::Memory]);
+        assert_eq!(inputs, vec![ExpectedOutputKind::ControlPhi]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
+    }
+
+    #[test]
+    fn expected_signature_float_const() {
+        let (inputs, outputs) = expected_signature(&NodeKind::FloatConst(0));
+        assert_eq!(inputs, vec![]);
+        assert_eq!(outputs, vec![ExpectedOutputKind::AnyFloat]);
+    }
+
+    #[test]
+    fn expected_signature_float_binary_op() {
+        use crate::ops::FloatBinaryOp;
+        let (inputs, outputs) =
+            expected_signature(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
+        assert_eq!(
+            inputs,
+            vec![ExpectedOutputKind::AnyFloat, ExpectedOutputKind::AnyFloat]
+        );
+        assert_eq!(outputs, vec![ExpectedOutputKind::AnyFloat]);
     }
 }
