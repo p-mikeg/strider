@@ -462,7 +462,7 @@ mod tests {
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -503,7 +503,7 @@ mod tests {
         b.build_store(sp_val, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -561,7 +561,7 @@ mod tests {
         b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -623,7 +623,7 @@ mod tests {
         b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -728,7 +728,7 @@ mod tests {
         let target = b.build_int_const(0x1000, NodeOutputType::U32);
         b.build_call(target)?;
         b.build_return(None, &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -766,7 +766,7 @@ mod tests {
         let data = b.build_int_const(0x42, NodeOutputType::U32);
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         StackStoreDetect::new(sp).optimize(&mut fg)?;
 
@@ -821,7 +821,7 @@ mod tests {
         let target = b.build_int_const(0x1000, NodeOutputType::U32);
         b.build_call(target)?;
         b.build_return(None, &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -871,7 +871,7 @@ mod tests {
         let target = b.build_int_const(0x1000, NodeOutputType::U32);
         b.build_call(target)?;
         b.build_return(None, &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);
@@ -900,7 +900,7 @@ mod tests {
         let target = b.build_int_const(0x1000, NodeOutputType::U32);
         b.build_call(target)?;
         b.build_return(None, &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let before_inputs = fg.graph.node_inputs(find_call(&fg)).into_iter().count();
 

@@ -250,7 +250,7 @@ mod tests {
         let sp_c = b.read_variable(&sp)?;
         let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
         b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
 
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold);

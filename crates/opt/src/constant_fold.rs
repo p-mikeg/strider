@@ -875,7 +875,7 @@ mod tests {
         b.set_region(region);
         let val = f(&mut b)?;
         b.build_return(Some(val), &[])?;
-        Ok(b.build())
+        Ok(b.build()?)
     }
 
     /// Returns the output id that the Return node receives as its value
@@ -1019,7 +1019,7 @@ mod tests {
         let x = b.read_variable(&vn)?;
         let val = f(&mut b, x)?;
         b.build_return(Some(val), &[])?;
-        Ok((b.build(), x))
+        Ok((b.build()?, x))
     }
 
     /// Asserts the return-value node is `expected_base + expected_const`
@@ -1205,7 +1205,7 @@ mod tests {
         let inner = b.build_int_binary_operation(x, y, IntBinaryOp::Add, NodeOutputType::U64)?;
         let outer = b.build_int_binary_operation(inner, z, IntBinaryOp::Add, NodeOutputType::U64)?;
         b.build_return(Some(outer), &[])?;
-        let mut fg = b.build();
+        let mut fg = b.build()?;
         let before = return_value(&fg);
         // Should not change: no constants anywhere.
         let res = ConstantFold.optimize(&mut fg)?;

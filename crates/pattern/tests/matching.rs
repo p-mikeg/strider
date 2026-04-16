@@ -35,7 +35,7 @@ fn graph_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let c3   = b.build_int_const(3, NodeOutputType::U64);
     let sum  = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// `and(4, 7)`, `add(and_result, 1)`, return.
@@ -50,7 +50,7 @@ fn graph_and_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let band = b.build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64)?;
     let sum  = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// Call at target `0x1234`, then return.
@@ -62,7 +62,7 @@ fn graph_call_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let tgt = b.build_uint64_const(0x1234);
     b.build_call(tgt)?;
     b.build_return(None, &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// Two calls (`0x1111`, `0x2222`) in sequence, then return.
@@ -76,7 +76,7 @@ fn graph_two_calls_return() -> ir::Result<ir::BuiltFunctionGraph> {
     b.build_call(t1)?;
     b.build_call(t2)?;
     b.build_return(None, &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// If (4 == 1):
@@ -103,7 +103,7 @@ fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
     let c1  = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c4, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
-    Ok(b.build())
+    b.build()
 }
 
 /// If (x == 1):
@@ -130,7 +130,7 @@ fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     let c1  = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
-    Ok(b.build())
+    b.build()
 }
 
 /// If (x == 1):
@@ -157,7 +157,7 @@ fn graph_if_with_call_in_false_branch() -> ir::Result<ir::BuiltFunctionGraph> {
     let c1  = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64)?;
     b.build_if(cond, true_r, false_r)?;
-    Ok(b.build())
+    b.build()
 }
 
 /// neg(add(5, 3)), then return.
@@ -171,7 +171,7 @@ fn graph_neg_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     let neg = b.build_int_unary_operation(sum, IntUnaryOp::Neg, NodeOutputType::U64)?;
     b.build_return(Some(neg), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// not(bool_const(true)), then return.
@@ -185,7 +185,7 @@ fn graph_bool_not_return() -> ir::Result<ir::BuiltFunctionGraph> {
     // cast to int so we can return it
     let as_int = b.convert_to_int_if_needed(nt, NodeOutputType::U64)?;
     b.build_return(Some(as_int), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// bool_and(true, false), then return.
@@ -199,7 +199,7 @@ fn graph_bool_and_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let ba = b.build_boolean_operation(t, f, BoolBinaryOp::And)?;
     let as_int = b.convert_to_int_if_needed(ba, NodeOutputType::U64)?;
     b.build_return(Some(as_int), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// zero_extend(add(1, 2) : U32 → U64), then return.
@@ -213,7 +213,7 @@ fn graph_zero_extend_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let sum = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U32)?;
     let ext = b.extend_if_needed(sum, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
     b.build_return(Some(ext), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// truncate(add(1u64, 2u64) → U8), then return.
@@ -227,7 +227,7 @@ fn graph_truncate_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let sum = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
     let tr  = b.truncate_if_needed(sum, NodeOutputType::U8)?;
     b.build_return(Some(tr), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// add(add(1, 2), 3) nested three levels, return.
@@ -242,7 +242,7 @@ fn graph_nested_add() -> ir::Result<ir::BuiltFunctionGraph> {
     let s12  = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
     let s123 = b.build_int_binary_operation(s12, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(s123), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// store(addr=0x200, data=42) then load from same addr, return the loaded value.
@@ -260,7 +260,7 @@ fn graph_store_then_load() -> ir::Result<ir::BuiltFunctionGraph> {
     // Load consumes the Store's memory output, making the Store reachable.
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// load(addr=0x100) in RAM space, return the loaded value.
@@ -272,7 +272,7 @@ fn graph_load_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let addr   = b.build_uint64_const(0x100);
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// store(addr=0x300, data=7) in RAM, then call(0xCAFE) (which consumes the
@@ -292,7 +292,7 @@ fn graph_store_then_call() -> ir::Result<ir::BuiltFunctionGraph> {
     let tgt = b.build_uint64_const(0xCAFE);
     b.build_call(tgt)?;
     b.build_return(None, &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// Call at 0xABCD with one argument register pre-loaded with the value 42.
@@ -312,7 +312,7 @@ fn graph_call_with_arg() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let tgt = b.build_uint64_const(0xABCD);
     b.build_call(tgt)?;
     b.build_return(None, &[])?;
-    Ok((b.build(), arg_vn))
+    Ok((b.build()?, arg_vn))
 }
 
 /// Graph with one variable (register varnode), returned as the result.
@@ -325,7 +325,7 @@ fn graph_with_initial_var() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)>
     b.set_region(r);
     let val = b.read_variable(&vn)?;
     b.build_return(Some(val), &[])?;
-    Ok((b.build(), vn))
+    Ok((b.build()?, vn))
 }
 
 /// Graph with two variables (different offsets), both returned.
@@ -341,7 +341,7 @@ fn graph_with_two_initial_vars() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh:
     // add them together so both are reachable
     let sum = b.build_int_binary_operation(val_a, val_b, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    Ok((b.build(), vn_a, vn_b))
+    Ok((b.build()?, vn_a, vn_b))
 }
 
 /// Graph: if (cond): return 10; else: return 20.
@@ -368,7 +368,7 @@ fn graph_if_with_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let flag_val = b.read_variable(&flag)?;
     let cond = b.convert_to_bool_if_needed(flag_val)?;
     b.build_if(cond, true_r, false_r)?;
-    Ok((b.build(), flag))
+    Ok((b.build()?, flag))
 }
 
 // ── Var uniqueness ────────────────────────────────────────────────────────────
@@ -809,7 +809,7 @@ fn same_var_twice_matches_when_operands_are_equal() -> ir::Result<()> {
     let c = b.build_int_const(5, NodeOutputType::U64);
     let sum = b.build_int_binary_operation(c, c, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let x = Var::new();
@@ -1289,7 +1289,7 @@ fn deduplicated_constants_yield_single_match() -> ir::Result<()> {
     let _c5b = b.build_int_const(5, NodeOutputType::U64); // same node
     let sum = b.build_int_binary_operation(_c5a, _c5b, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Both const-5 references alias the same node, so int_const(5) finds 1.
@@ -1715,7 +1715,7 @@ fn graph_add_5_3() -> ir::Result<ir::BuiltFunctionGraph> {
     let c3 = b.build_int_const(3, NodeOutputType::U64);
     let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
     b.build_return(Some(sum), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 /// Graph: `sub(5, 3)`.
@@ -1728,7 +1728,7 @@ fn graph_sub_5_3() -> ir::Result<ir::BuiltFunctionGraph> {
     let c3 = b.build_int_const(3, NodeOutputType::U64);
     let diff = b.build_int_binary_operation(c5, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
     b.build_return(Some(diff), &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 // ── commutative matching ──────────────────────────────────────────────────────
@@ -1812,7 +1812,7 @@ fn capture_nested_field_via_var() -> ir::Result<()> {
     let addr_const = b.build_int_const(0x1000, NodeOutputType::U64);
     let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let addr_v = Var::new();
@@ -1832,7 +1832,7 @@ fn capture_via_when_on_load_addr() -> ir::Result<()> {
     let addr_const = b.build_int_const(0x2000, NodeOutputType::U64);
     let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let addr_v = Var::new();
@@ -1907,7 +1907,7 @@ fn predicate_in_field_position() -> ir::Result<()> {
     let addr_const = b.build_int_const(0x3000, NodeOutputType::U64);
     let loaded = b.build_load(addr_const, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)?;
     b.build_return(Some(loaded), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Match loads where the address is an IntConst >= 0x1000.
@@ -1933,7 +1933,7 @@ fn lzcount_pattern_matches() -> ir::Result<()> {
     let v = b.build_int_const(1, NodeOutputType::U8);
     let lz = b.build_lzcount(v, NodeOutputType::U8)?;
     b.build_return(Some(lz), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&lzcount(any()));
@@ -1951,7 +1951,7 @@ fn piece_pattern_matches() -> ir::Result<()> {
     let lo = b.build_int_const(0xCD, NodeOutputType::U8);
     let p = b.build_piece(hi, lo, NodeOutputType::U16)?;
     b.build_return(Some(p), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&piece(any(), any()));
@@ -1968,7 +1968,7 @@ fn extract_pattern_exact_lsb_len() -> ir::Result<()> {
     let v = b.build_int_const(0xABCD, NodeOutputType::U16);
     let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
     b.build_return(Some(ex), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Exact match on lsb=4, len=8 → finds it.
@@ -1989,7 +1989,7 @@ fn extract_pattern_wildcard() -> ir::Result<()> {
     let v = b.build_int_const(0xABCD, NodeOutputType::U16);
     let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
     b.build_return(Some(ex), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&extract(None, None, any()));
@@ -2007,7 +2007,7 @@ fn insert_pattern_matches() -> ir::Result<()> {
     let src  = b.build_int_const(0x42,   NodeOutputType::U16);
     let ins = b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?;
     b.build_return(Some(ins), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Wildcard match.
@@ -2035,7 +2035,7 @@ fn float_add_pattern_matches() -> ir::Result<()> {
     let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
     let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
     b.build_return(Some(sum), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
 
@@ -2067,7 +2067,7 @@ fn float_mul_commutative_pattern() -> ir::Result<()> {
     // Build node as 7 * 3.
     let prod = b.build_float_binary_op(c7, c3, FloatBinaryOp::Mul, NodeOutputType::F32)?;
     b.build_return(Some(prod), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let v_a = Var::new();
@@ -2098,7 +2098,7 @@ fn float_sub_not_commutative() -> ir::Result<()> {
     // 5.0 - 2.0
     let diff = b.build_float_binary_op(c5, c2, FloatBinaryOp::Sub, NodeOutputType::F64)?;
     b.build_return(Some(diff), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Correct order matches.
@@ -2119,7 +2119,7 @@ fn float_eq_pattern_matches() -> ir::Result<()> {
     let c4 = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
     let cmp = b.build_float_cmp_op(c3, c4, FloatCmpOp::Equal)?;
     b.build_return(Some(cmp), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&float_eq(
@@ -2147,7 +2147,7 @@ fn float_is_nan_pattern_matches() -> ir::Result<()> {
     let cv = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
     let is_nan = b.build_float_is_nan(cv)?;
     b.build_return(Some(is_nan), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&float_is_nan(any()));
@@ -2165,7 +2165,7 @@ fn float_unary_pattern_matches() -> ir::Result<()> {
     let cv = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
     let neg_v = b.build_float_unary_op(cv, FloatUnaryOp::Neg, NodeOutputType::F64)?;
     b.build_return(Some(neg_v), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Correct unary op matches.
@@ -2187,7 +2187,7 @@ fn any_float_const_captures_bits() -> ir::Result<()> {
     let bits = 42.5f64.to_bits();
     let cv = b.build_float_const(bits, NodeOutputType::F64);
     b.build_return(Some(cv), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let v = Var::new();
@@ -2212,7 +2212,7 @@ fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
     let non_const = b.build_int_binary_operation(int_val, zero, IntBinaryOp::Add, NodeOutputType::U64)?;
     let float_v = b.build_int_bits_to_float(non_const, NodeOutputType::F64)?;
     b.build_return(Some(float_v), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&int_bits_to_float(any()));
@@ -2234,7 +2234,7 @@ fn float_bits_to_int_pattern_matches() -> ir::Result<()> {
     let neg_v = b.build_float_unary_op(cv, FloatUnaryOp::Neg, NodeOutputType::F32)?;
     let int_v = b.build_float_bits_to_int(neg_v, NodeOutputType::U32)?;
     b.build_return(Some(int_v), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&float_bits_to_int(any()));
@@ -2254,7 +2254,7 @@ fn float_conversion_patterns_match() -> ir::Result<()> {
     let f32_v  = b.build_float_to_float(f64_v, NodeOutputType::F32)?;
     let int_v2 = b.build_float_to_int(f32_v, NodeOutputType::U32)?;
     b.build_return(Some(int_v2), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     assert_eq!(m.find_all(&int_to_float(any())).len(), 1);
@@ -2274,7 +2274,7 @@ fn float_add_ordered_no_commutative_fallback() -> ir::Result<()> {
     let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
     let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
     b.build_return(Some(sum), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Ordered: correct order matches.
@@ -2300,7 +2300,7 @@ fn cast_to_float_pattern_matches() -> ir::Result<()> {
     let int_val = b.build_int_const(0x3F800000, NodeOutputType::U32);
     let cast = b.build_cast_to_float(int_val, NodeOutputType::F32);
     b.build_return(Some(cast), &[])?;
-    let g = b.build();
+    let g = b.build().expect("build failed: validator rejected graph");
 
     let m = Matcher::new(&g);
     // Matches the CastToFloat node.
@@ -2329,7 +2329,7 @@ fn graph_with_stack_store() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)>
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build();
+    let mut fg = b.build().expect("build failed: validator rejected graph");
     let mut pipeline = opt::OptimizerPipeline::new();
     pipeline.add(opt::ConstantFold);
     pipeline.add(opt::RedundantPhis);
@@ -2386,7 +2386,7 @@ fn graph_with_stack_store_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::
     b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build();
+    let mut fg = b.build().expect("build failed: validator rejected graph");
     let mut pipeline = opt::OptimizerPipeline::new();
     pipeline.add(opt::ConstantFold);
     pipeline.add(opt::RedundantPhis);
@@ -2431,7 +2431,7 @@ fn graph_cdecl_call_with_stack_args() -> ir::Result<ir::BuiltFunctionGraph> {
     let target = b.build_int_const(0x1000, NodeOutputType::U32);
     b.build_call(target)?;
     b.build_return(None, &[])?;
-    let mut fg = b.build();
+    let mut fg = b.build().expect("build failed: validator rejected graph");
     let mut pipeline = opt::OptimizerPipeline::new();
     pipeline.add(opt::ConstantFold);
     pipeline.add(opt::RedundantPhis);
@@ -2471,7 +2471,7 @@ fn graph_two_call_others_return() -> ir::Result<ir::BuiltFunctionGraph> {
     let a2 = b.build_int_const(0xBB, NodeOutputType::U64);
     b.build_call_other(2, &[a2], None)?;
     b.build_return(None, &[])?;
-    Ok(b.build())
+    b.build()
 }
 
 #[test]

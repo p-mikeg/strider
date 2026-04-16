@@ -787,6 +787,6 @@ impl Analyzer {
             ir_analyzer.builder.link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
 
-        Ok(ir_analyzer.builder.build())
+        Ok(ir_analyzer.builder.build()?)
     }
 }

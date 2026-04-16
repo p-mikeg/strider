@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::function::{BuiltFunctionGraph, FunctionGraph};
+use crate::function::FunctionGraph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::graph::Graph;
 use crate::region::{Region, RegionId};
@@ -889,14 +889,17 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
 
-    /// Finalises and returns the completed [`BuiltFunctionGraph`].
-    pub fn build(self) -> crate::function::BuiltFunctionGraph {
-        BuiltFunctionGraph {
+    /// Finalises and returns the completed [`BuiltFunctionGraph`], after running
+    /// structural validation on the built graph.
+    pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
+        let built = crate::function::BuiltFunctionGraph {
             graph: self.function.graph,
             entry: self.function.entry,
             variables: self.variables,
             call_clobbered: self.call_cloberred_variables.into_boxed_slice(),
-        }
+        };
+        crate::validate::validate(&built.graph, built.entry)?;
+        Ok(built)
     }
 }
 

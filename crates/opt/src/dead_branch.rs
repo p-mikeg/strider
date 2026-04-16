@@ -164,7 +164,7 @@ mod tests {
         let false_val = b.build_int_const(2, ir::ValueType::U64);
         b.build_return(Some(false_val), &[])?;
 
-        Ok(b.build())
+        Ok(b.build()?)
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
             b.build_return(None, &[])?;
             b.set_region(false_r);
             b.build_return(None, &[])?;
-            b.build()
+            b.build()?
         };
 
         // DeadBranchElimination alone should not fire because the condition

@@ -15,7 +15,7 @@
 ## File Structure
 
 - **Create:** `crates/ir/src/validate.rs` — validator, error types, unit tests.
-- **Modify:** `crates/ir/src/node_view.rs` — extract `expected_signature()` helper; existing `node_view()` calls it.
+- **Create:** `crates/ir/src/node_signature.rs` — standalone `expected_signature()` helper. (Task 1's plan originally targeted `node_view.rs`, but that module is disabled in `lib.rs`; Task 1 implementer created a new `node_signature` module instead, which is the canonical home going forward.)
 - **Modify:** `crates/ir/src/error.rs` — add `ValidationFailed(ValidationErrors)` variant to `ir::Error`.
 - **Modify:** `crates/ir/src/lib.rs` — add `pub mod validate;` and re-export `ValidationError`, `ValidationErrors`.
 - **Modify:** `crates/ir/src/builder.rs` — `FunctionBuilder::build()` returns `ir::Result<BuiltFunctionGraph>`; calls `validate` before returning.
@@ -302,7 +302,7 @@ Add imports at the top of the file:
 
 ```rust
 use crate::node::{NodeId, NodeKind, NodeOutputKind, NodeOutputId};
-use crate::node_view::expected_signature;
+use crate::node_signature::expected_signature;
 ```
 
 (`expected_signature` must be `pub(crate)` in Task 1 — verify and fix if needed.)

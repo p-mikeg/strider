@@ -289,7 +289,7 @@ mod tests {
         b.set_region(region);
         let val = f(&mut b)?;
         b.build_return(Some(val), &[])?;
-        Ok(b.build())
+        Ok(b.build()?)
     }
 
     fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {

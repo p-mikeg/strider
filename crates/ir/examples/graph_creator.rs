@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     builder.build_if(load2, true_region, false_region)?;
 
     // Finalise the graph and dump it.
-    let function = builder.build();
+    let function = builder.build()?;
     let dot = dot::GraphDot::new(function.dot_dumper(&sleigh), dot::DotStyle::dark());
 
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;

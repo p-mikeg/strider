@@ -43,7 +43,7 @@ fn example_arithmetic() {
     let band = b.build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64).expect("build");
     let sum  = b.build_int_binary_operation(band, c1, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
     b.build_return(Some(sum), &[]).expect("build");
-    let graph = b.build();
+    let graph = b.build().expect("build failed");
 
     let m = Matcher::new(&graph);
 
@@ -77,7 +77,7 @@ fn example_arithmetic() {
     let inner = b2.build_int_binary_operation(small, small, IntBinaryOp::Add, NodeOutputType::U32).expect("build");
     let ext   = b2.extend_if_needed(inner, NodeOutputType::U64, ExtendOp::ZeroExtend).expect("build");
     b2.build_return(Some(ext), &[]).expect("build");
-    let g2 = b2.build();
+    let g2 = b2.build().expect("build failed");
     let m2 = Matcher::new(&g2);
 
     println!("zero_extend(_) matches: {}", m2.find_all(&zero_extend(any())).len()); // 1
@@ -101,7 +101,7 @@ fn example_arithmetic() {
     let bor_int     = b3.convert_to_int_if_needed(bor, NodeOutputType::U64).expect("build");
     let res = b3.build_int_binary_operation(not_cmp_int, bor_int, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
     b3.build_return(Some(res), &[]).expect("build");
-    let g3 = b3.build();
+    let g3 = b3.build().expect("build failed");
     let m3 = Matcher::new(&g3);
     println!("bool_not(_) matches: {}", m3.find_all(&bool_not(any())).len()); // 1
     println!("bool_or(_, _) matches: {}", m3.find_all(&bool_or(any(), any()).into()).len()); // 1
@@ -122,7 +122,7 @@ fn example_calls_and_returns() {
     b.build_call(t1).expect("build");
     b.build_call(t2).expect("build");
     b.build_return(None, &[]).expect("build");
-    let graph = b.build();
+    let graph = b.build().expect("build failed");
     let m = Matcher::new(&graph);
 
     // ── Find all calls ────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ fn example_if_branches() {
     let c1   = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64).expect("build");
     b.build_if(cond, true_r, false_r).expect("build");
-    let graph = b.build();
+    let graph = b.build().expect("build failed");
     let m = Matcher::new(&graph);
 
     // ── Match any If node ─────────────────────────────────────────────────────
@@ -250,7 +250,7 @@ fn example_captures() {
     let cy = b.build_int_const(1, NodeOutputType::U64);
     let cond = b.build_int_cmp_operation(cx, cy, IntCmpOp::Equal, NodeOutputType::U64).expect("build");
     b.build_if(cond, true_r, false_r).expect("build");
-    let graph = b.build();
+    let graph = b.build().expect("build failed");
     let m = Matcher::new(&graph);
 
     // ── Capture both operands of the condition ────────────────────────────────
@@ -289,7 +289,7 @@ fn example_captures() {
     let c5   = b2.build_int_const(5, NodeOutputType::U64);
     let self_add = b2.build_int_binary_operation(c5, c5, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
     b2.build_return(Some(self_add), &[]).expect("build");
-    let g2 = b2.build();
+    let g2 = b2.build().expect("build failed");
     let m2 = Matcher::new(&g2);
     println!("add(x, x) on add(5, 5): {}", m2.find_all(&add(var(x), var(x)).into()).len()); // 1
     println!("add(x, x) on add(5, 3): {}", m.find_all(&add(var(x), var(x)).into()).len());  // 0
@@ -309,7 +309,7 @@ fn example_load_store() {
     let addr   = b.build_uint64_const(0x100);
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64).expect("build");
     b.build_return(Some(loaded), &[]).expect("build");
-    let g_load = b.build();
+    let g_load = b.build().expect("build failed");
     let m = Matcher::new(&g_load);
 
     println!("load() matches: {}", m.find_all(&load().into()).len()); // 1
@@ -341,7 +341,7 @@ fn example_load_store() {
     // reachable from Return via the preorder walk.
     let loaded2 = b2.build_load(addr2, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64).expect("build");
     b2.build_return(Some(loaded2), &[]).expect("build");
-    let g_store = b2.build();
+    let g_store = b2.build().expect("build failed");
     let m2 = Matcher::new(&g_store);
 
     println!("store() matches: {}", m2.find_all(&store().into()).len()); // 1
@@ -376,7 +376,7 @@ fn example_load_store() {
     let tgt3 = b3.build_uint64_const(0xABCD);
     b3.build_call(tgt3).expect("build");
     b3.build_return(None, &[]).expect("build");
-    let g_call = b3.build();
+    let g_call = b3.build().expect("build failed");
     let m3 = Matcher::new(&g_call);
 
     println!("call().arg(0, int_const(42)) matches: {}",
@@ -417,7 +417,7 @@ fn example_initial_vars() {
     let rbx_val = b.read_variable(&rbx_vn).expect("build");
     let sum = b.build_int_binary_operation(rax_val, rbx_val, IntBinaryOp::Add, NodeOutputType::U64).expect("build");
     b.build_return(Some(sum), &[]).expect("build");
-    let graph = b.build();
+    let graph = b.build().expect("build failed");
     let m = Matcher::new(&graph);
 
     // ── initial_var() matches any initial-variable node ───────────────────────
