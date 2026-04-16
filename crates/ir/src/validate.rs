@@ -26,6 +26,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_b(graph, &mut errs);
 
+    check_layer_c_uniqueness(graph, &mut errs);
+
     let _ = entry;
 
     if errs.is_empty() {
@@ -160,6 +162,45 @@ fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
     }
 }
 
+/// Layer C (shape check): enforce that the graph has exactly one
+/// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
+///
+/// Emits [`ValidationError::MissingEntryNode`] /
+/// [`ValidationError::MissingInitialMemoryNode`] when a kind is absent, and
+/// [`ValidationError::MultipleEntryNodes`] /
+/// [`ValidationError::MultipleInitialMemoryNodes`] (carrying the first two
+/// offenders) when a kind appears more than once.
+fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    let mut entries: Vec<NodeId> = Vec::new();
+    let mut initial_memories: Vec<NodeId> = Vec::new();
+
+    for node in graph.nodes.keys() {
+        match graph.node_kind(node) {
+            NodeKind::Entry => entries.push(node),
+            NodeKind::InitialMemory => initial_memories.push(node),
+            _ => {}
+        }
+    }
+
+    match entries.as_slice() {
+        [] => errs.push(ValidationError::MissingEntryNode),
+        [_] => {}
+        [first, second, ..] => errs.push(ValidationError::MultipleEntryNodes {
+            first: *first,
+            second: *second,
+        }),
+    }
+
+    match initial_memories.as_slice() {
+        [] => errs.push(ValidationError::MissingInitialMemoryNode),
+        [_] => {}
+        [first, second, ..] => errs.push(ValidationError::MultipleInitialMemoryNodes {
+            first: *first,
+            second: *second,
+        }),
+    }
+}
+
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
@@ -240,6 +281,18 @@ pub enum ValidationError {
         output: NodeOutputId,
         listed_input: NodeInputId,
     },
+
+    #[error("multiple Entry nodes: {first:?} and {second:?}")]
+    MultipleEntryNodes { first: NodeId, second: NodeId },
+
+    #[error("multiple InitialMemory nodes: {first:?} and {second:?}")]
+    MultipleInitialMemoryNodes { first: NodeId, second: NodeId },
+
+    #[error("missing Entry node")]
+    MissingEntryNode,
+
+    #[error("missing InitialMemory node")]
+    MissingInitialMemoryNode,
 }
 
 impl std::fmt::Debug for ValidationErrors {
@@ -395,6 +448,52 @@ mod tests {
                 ValidationError::UseListContainsStaleInput { .. }
             )),
             "expected UseListContainsStaleInput, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn layer_c_missing_initial_memory() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::MissingInitialMemoryNode)),
+            "expected MissingInitialMemoryNode, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn layer_c_duplicate_entry() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _entry2 = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::MultipleEntryNodes { .. })),
+            "expected MultipleEntryNodes, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn layer_c_duplicate_initial_memory() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem1 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let _mem2 = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(
+            errs.0
+                .iter()
+                .any(|e| matches!(e, ValidationError::MultipleInitialMemoryNodes { .. })),
+            "expected MultipleInitialMemoryNodes, got: {errs:?}"
         );
     }
 
