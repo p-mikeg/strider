@@ -243,7 +243,7 @@ fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
 
         let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
         if inputs.is_empty() {
-            continue; // Layer A already flagged this.
+            continue; // Layer A fires a count or kind mismatch for empty-input phis; skip here.
         }
         let token = inputs[0];
         let token_kind = graph.output_kind(token);
@@ -267,7 +267,7 @@ fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
             continue;
         }
 
-        let expected_preds = graph.node_inputs(owner).into_iter().count();
+        let expected_preds = graph.node_inputs(owner).len();
         let actual_values = inputs.len() - 1;
         if expected_preds != actual_values {
             errs.push(ValidationError::PhiValueArityMismatch {
