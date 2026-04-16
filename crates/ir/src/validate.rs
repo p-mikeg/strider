@@ -245,9 +245,14 @@ fn check_layer_c_control_state(graph: &Graph, errs: &mut Vec<ValidationError>) {
 }
 
 /// Layer C: every phi node (`ControlPhi`, `MemPhi`, `StackStorePhi`) must take
-/// its dispatch token (input[0]) from a `ControlState`'s `ControlPhi` output,
-/// and the number of value inputs must match the owning `ControlState`'s
-/// predecessor count.
+/// its dispatch token (input[0]) from a `ControlState`'s `ControlPhi` output.
+///
+/// For `ControlPhi` and `MemPhi` (variadic phis), the number of value inputs
+/// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
+/// has fixed arity `[token, memory, data]` (Layer A enforces this) — its
+/// per-predecessor information lives in the side-table
+/// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
+/// arity rule does not apply to it.
 fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
     for node in graph.nodes.keys() {
         let is_phi = matches!(
@@ -281,6 +286,12 @@ fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
                 producer: owner,
                 producer_kind: token_kind,
             });
+            continue;
+        }
+
+        // StackStorePhi has fixed arity 3 regardless of predecessor count;
+        // skip the per-predecessor arity check for it.
+        if matches!(graph.node_kind(node), NodeKind::StackStorePhi { .. }) {
             continue;
         }
 
@@ -833,6 +844,52 @@ mod tests {
             e,
             ValidationError::PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2, .. }
         )), "got: {errs:?}");
+    }
+
+    #[test]
+    fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
+        // StackStorePhi has fixed arity [token, memory, data] regardless of
+        // how many predecessors the owning ControlState has.  The
+        // per-predecessor arity rule that applies to ControlPhi/MemPhi must
+        // not fire on it.  Here the owning ControlState has 1 predecessor;
+        // before the fix this produced a spurious
+        // PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2 }.
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+        let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [entry_out],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+
+        let data = graph.create_node(
+            NodeKind::IntConst(0),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let data_out = graph.node_outputs(data).into_iter().next().unwrap();
+
+        let _ssp = graph.create_node(
+            NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
+            [cs_phi_out, mem_out, data_out],
+            [NodeOutputKind::Memory],
+        );
+
+        let res = validate(&graph, entry);
+        if let Err(errs) = &res {
+            assert!(
+                !errs.0.iter().any(|e| matches!(
+                    e,
+                    ValidationError::PhiValueArityMismatch { .. }
+                )),
+                "StackStorePhi must not trigger PhiValueArityMismatch; got: {errs:?}"
+            );
+        }
     }
 
     #[test]
