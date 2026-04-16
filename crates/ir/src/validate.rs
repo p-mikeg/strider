@@ -28,6 +28,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_c_uniqueness(graph, &mut errs);
 
+    check_layer_c_control_state(graph, &mut errs);
+
     let _ = entry;
 
     if errs.is_empty() {
@@ -201,6 +203,28 @@ fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationError>) {
     }
 }
 
+/// Layer C: every input of a `ControlState` node must be a `Control`-kinded
+/// output. Emits `ControlStateNonControlPredecessor` per offending input.
+fn check_layer_c_control_state(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    for node in graph.nodes.keys() {
+        if !matches!(graph.node_kind(node), NodeKind::ControlState) {
+            continue;
+        }
+        for (idx, target) in graph.node_inputs(node).into_iter().enumerate() {
+            let kind = graph.output_kind(target);
+            if kind != NodeOutputKind::Control {
+                let (producer, _) = graph.output_definition(target);
+                errs.push(ValidationError::ControlStateNonControlPredecessor {
+                    control_state: node,
+                    input_idx: idx,
+                    producer,
+                    producer_kind: kind,
+                });
+            }
+        }
+    }
+}
+
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
@@ -293,6 +317,17 @@ pub enum ValidationError {
 
     #[error("missing InitialMemory node")]
     MissingInitialMemoryNode,
+
+    #[error(
+        "ControlState {control_state:?} input[{input_idx}] producer {producer:?} \
+         has kind {producer_kind:?}, expected Control"
+    )]
+    ControlStateNonControlPredecessor {
+        control_state: NodeId,
+        input_idx: usize,
+        producer: NodeId,
+        producer_kind: NodeOutputKind,
+    },
 }
 
 impl std::fmt::Debug for ValidationErrors {
@@ -495,6 +530,27 @@ mod tests {
                 .any(|e| matches!(e, ValidationError::MultipleInitialMemoryNodes { .. })),
             "expected MultipleInitialMemoryNodes, got: {errs:?}"
         );
+    }
+
+    #[test]
+    fn layer_c_control_state_bad_predecessor() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+
+        // ControlState with a Memory predecessor instead of Control.
+        let _bad_cs = graph.create_node(
+            NodeKind::ControlState,
+            [mem_out],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::ControlStateNonControlPredecessor { input_idx: 0, .. }
+        )), "got: {errs:?}");
     }
 
     #[test]
