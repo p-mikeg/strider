@@ -10,7 +10,7 @@
 //! callers can see all problems at once rather than only the first.
 
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
 use crate::node_signature::expected_signature;
 
 /// Validates the structural invariants of `graph` starting from `entry`.
@@ -23,6 +23,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     for node in graph.nodes.keys() {
         check_layer_a(graph, node, &mut errs);
     }
+
+    check_layer_b(graph, &mut errs);
 
     let _ = entry;
 
@@ -106,6 +108,58 @@ fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
     }
 }
 
+/// Layer B: use-list consistency.  For every node input, verify that the
+/// output it references still lists that input as one of its consumers
+/// (forward walk).  For every output's use-list, verify that each listed
+/// input still points back to that output (backward walk).
+fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    // Forward walk: every node input must appear in the use-list of the
+    // output it references.
+    //
+    // NOTE: `InputPointsToMissingOutput` is defined in the spec for
+    // completeness but is not checked here — the public `Graph` API only
+    // hands out live `NodeOutputId`s from its `PrimaryMap`, so fabricating
+    // a dangling id via safe code is not possible.  Leaving the variant on
+    // the enum keeps the shape documented for any future API that can
+    // produce such ids (e.g. a raw-FFI or serialization path).
+    // TODO(layer-b): add an `InputPointsToMissingOutput` check once we have
+    // an API that can drop outputs without scrubbing their consumers.
+    for node in graph.nodes.keys() {
+        let input_count = graph.node_inputs(node).len();
+        for idx in 0..input_count {
+            let input_id = graph.node_input_id_at(node, idx);
+            let target = graph.input_output_id(input_id);
+            let idx_u32 = idx as u32;
+            let in_list = graph
+                .output_uses(target)
+                .any(|(n, i)| n == node && i == idx_u32);
+            if !in_list {
+                errs.push(ValidationError::InputMissingFromUseList {
+                    node,
+                    input_idx: idx,
+                    output: target,
+                });
+            }
+        }
+    }
+
+    // Backward walk: every input in an output's use-list must currently
+    // reference that output.
+    for output in graph.outputs.keys() {
+        let mut cur = graph.output_first_use_id(output);
+        while let Some(iid) = cur {
+            let referenced = graph.input_output_id(iid);
+            if referenced != output {
+                errs.push(ValidationError::UseListContainsStaleInput {
+                    output,
+                    listed_input: iid,
+                });
+            }
+            cur = graph.input_next_use(iid);
+        }
+    }
+}
+
 /// Two `NodeOutputKind`s are compatible if they are the same variant.
 /// For `OutputType`, any integer width is compatible with any other (width
 /// checks are not part of this layer).
@@ -154,6 +208,32 @@ pub enum ValidationError {
         output_idx: usize,
         expected: NodeOutputKind,
         actual: NodeOutputKind,
+    },
+
+    #[error("node {node:?} input[{input_idx}] references missing output {output:?}")]
+    InputPointsToMissingOutput {
+        node: NodeId,
+        input_idx: usize,
+        output: NodeOutputId,
+    },
+
+    #[error(
+        "node {node:?} input[{input_idx}] references output {output:?} \
+         but is not in that output's use-list"
+    )]
+    InputMissingFromUseList {
+        node: NodeId,
+        input_idx: usize,
+        output: NodeOutputId,
+    },
+
+    #[error(
+        "output {output:?}'s use-list contains input {listed_input:?} \
+         that no longer references this output"
+    )]
+    UseListContainsStaleInput {
+        output: NodeOutputId,
+        listed_input: NodeInputId,
     },
 }
 
@@ -228,6 +308,88 @@ mod tests {
                 ValidationError::NodeOutputKindMismatch { output_idx: 0, .. }
             )),
             "got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn layer_b_input_missing_from_use_list() {
+        use crate::node::NodeOutputType;
+        use crate::ops::IntUnaryOp;
+
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+        let c = graph.create_node(
+            NodeKind::IntConst(3),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let c_out = graph.node_outputs(c).into_iter().next().unwrap();
+
+        let _neg = graph.create_node(
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+            [c_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        // Corrupt the forward link: clear the IntConst output's head-of-use
+        // pointer.  The op's input is still recorded, but the producer no
+        // longer admits it as a consumer.
+        graph.test_only_clear_first_use(c_out);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(
+            errs.0.iter().any(|e| matches!(
+                e,
+                ValidationError::InputMissingFromUseList { input_idx: 0, .. }
+            )),
+            "expected InputMissingFromUseList, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn layer_b_stale_input_in_use_list() {
+        use crate::node::NodeOutputType;
+        use crate::ops::IntUnaryOp;
+
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+        let a = graph.create_node(
+            NodeKind::IntConst(1),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let a_out = graph.node_outputs(a).into_iter().next().unwrap();
+
+        let b = graph.create_node(
+            NodeKind::IntConst(2),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let b_out = graph.node_outputs(b).into_iter().next().unwrap();
+
+        let neg = graph.create_node(
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+            [a_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        // Retarget the op's input at idx 0 to `b_out` without updating any
+        // use-list.  `a_out`'s use-list still references this input, but the
+        // input itself now points at `b_out` — that's a stale entry.
+        let input_id = graph.node_input_id_at(neg, 0);
+        graph.test_only_retarget_input(input_id, b_out);
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(
+            errs.0.iter().any(|e| matches!(
+                e,
+                ValidationError::UseListContainsStaleInput { .. }
+            )),
+            "expected UseListContainsStaleInput, got: {errs:?}"
         );
     }
 

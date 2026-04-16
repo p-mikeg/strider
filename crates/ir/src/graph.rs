@@ -381,6 +381,55 @@ impl Graph {
         uses.next().is_some() && uses.next().is_none()
     }
 
+    /// Returns the [`NodeInputId`] of the input slot at position `idx` of
+    /// `node`.
+    ///
+    /// Panics if `idx` is out of range; intended for consumers (such as the
+    /// validator) that have already established the slot exists.
+    #[inline]
+    pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> NodeInputId {
+        self.nodes[node].inputs.as_slice(&self.input_pool)[idx]
+    }
+
+    /// Returns the [`NodeOutputId`] that `input` currently references.
+    #[inline]
+    pub fn input_output_id(&self, input: NodeInputId) -> NodeOutputId {
+        self.inputs[input].output_id
+    }
+
+    /// Returns the head of `output`'s use-list as a raw [`NodeInputId`] (not
+    /// wrapped in `OutputUsageIter`).  Intended for the validator to walk the
+    /// list directly for corruption checks.
+    #[inline]
+    pub fn output_first_use_id(&self, output: NodeOutputId) -> Option<NodeInputId> {
+        self.outputs[output].first_use.expand()
+    }
+
+    /// Returns the `next` pointer of `input` in its use-list.  Intended for
+    /// the validator to walk the use-list directly.
+    #[inline]
+    pub fn input_next_use(&self, input: NodeInputId) -> Option<NodeInputId> {
+        self.inputs[input].next.expand()
+    }
+
+    // ── Test-only corruption helpers ───────────────────────────────────────
+
+    /// Test-only: forcibly clears the use-list head of `output`, breaking the
+    /// forward link from the producer to its consumers.  Used to construct
+    /// the corrupted state that Layer B of the validator should detect.
+    #[cfg(test)]
+    pub(crate) fn test_only_clear_first_use(&mut self, output: NodeOutputId) {
+        self.outputs[output].first_use = None.into();
+    }
+
+    /// Test-only: forcibly retargets `input` to reference `new_target`
+    /// without updating either the old or new output's use-list.  Used to
+    /// construct the corrupted state that Layer B of the validator should
+    /// detect.
+    #[cfg(test)]
+    pub(crate) fn test_only_retarget_input(&mut self, input: NodeInputId, new_target: NodeOutputId) {
+        self.inputs[input].output_id = new_target;
+    }
 }
 
 #[cfg(test)]
