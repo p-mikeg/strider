@@ -129,6 +129,7 @@ pub type RegionGraph = StableDiGraph<Region, RegionEdgeKind>;
 ///
 /// Construct via [`OptionsBuilder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub struct Options {
     /// When `Some(n)`, any unconditional branch whose target lies at an
     /// address ≥ `start + n` is treated as a tail call.
@@ -137,11 +138,6 @@ pub struct Options {
     /// address is *below* the function start are treated as tail calls.
     /// When `true`, such branches are followed normally.
     allow_code_before_start_addr: bool
-}
-impl Default for Options {
-    fn default() -> Self {
-        Self { fn_max_size: None, allow_code_before_start_addr: false }
-    }
 }
 
 /// Builder for [`Options`].
@@ -156,6 +152,12 @@ impl Default for Options {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OptionsBuilder {
     lifter_options: Options
+}
+
+impl Default for OptionsBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OptionsBuilder {
@@ -238,7 +240,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// # Errors
     /// Returns [`Error::EmptyRegion`] if `region.insns` is empty.
     fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
-        if region.insns.len() == 0 {
+        if region.insns.is_empty() {
             return Err(Error::EmptyRegion(region))
         }
 
@@ -329,7 +331,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // second region inherits all parents of the original region
         let parent_edges: Vec<_> = self.graph
             .edges_directed(second_region_id, petgraph::Incoming)
-            .map(|e| (e.id(), e.source(), e.weight().clone()))
+            .map(|e| (e.id(), e.source(), *e.weight()))
             .collect();
 
         // Move the parent edges to be in the first region instead of the first one
@@ -470,11 +472,10 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             return true;
         }
 
-        if let Some(fn_max_size) = self.builder.options.fn_max_size {
-            if fn_max_size + self.builder.start_addr.addr <= addr.addr {
+        if let Some(fn_max_size) = self.builder.options.fn_max_size
+            && fn_max_size + self.builder.start_addr.addr <= addr.addr {
                 return true;
             }
-        }
         false
     }
 
@@ -561,7 +562,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// Calls [`Builder::add_region`] and, if there is a parent edge, adds
     /// that edge to the graph.  Returns the new region's [`NodeIndex`].
     fn finish_current_region(&mut self, ends_with_tail_call: bool) -> Result<NodeIndex> {
-        if self.insns.len() == 0 {
+        if self.insns.is_empty() {
             return Err(Error::NoInstructionsRegionBuilder);
         }
         let region = self.builder.add_region(
@@ -714,7 +715,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         match vn.addr.space {
             rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
             rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs().map_err(|e| Error::SleighError(e))?;
+                let regs = self.sleigh.regs().map_err(Error::SleighError)?;
                 Ok(regs.vn_to_name(*vn).ok_or(Error::InvalidRegVn(*vn))?.to_string())
             },
             rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
@@ -726,6 +727,67 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
     pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
         CfgDotDumper(self)
+    }
+}
+
+pub struct CfgDotDumperState;
+pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
+
+impl <'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
+    type Node = NodeIndex;
+    type Error = Error;
+    type State = CfgDotDumperState;
+
+    fn create_initial_state(&self) -> Self::State {
+        Self::State {}
+    }
+
+    fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
+        self.0.graph.node_indices()
+    }
+
+    fn dump_as_dot(&self, node_id: Self::Node, out: &mut dot::DotEmitter, _state: &mut Self::State) -> Result<()> {
+        use std::fmt::Write;
+
+        let dot_id = node_id.index().to_string();
+        let node = self.0.graph.node_weight(node_id).ok_or(Error::InvalidRegion(node_id))?;
+        let first_insn_index = node.insns.front().ok_or(Error::EmptyRegion(node.clone()))?.addr.insn_index;
+        let start_addr = node.start_addr.machine_addr.addr;
+
+        // Build node label once
+        let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
+
+        for insn in node.insns.iter() {
+            let variables: Vec<String> = insn.insn.output.iter().chain(insn.insn.inputs.iter())
+                .map(|vn| self.0.vn_to_name(vn)).collect::<Result<_>>()?;
+            let insn_addr = insn.addr.machine_addr.addr;
+            write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode).map_err(Error::FormatError)?;
+            if !variables.is_empty() {
+                write!(&mut label, ", {}", variables.join(", ")).map_err(Error::FormatError)?;
+            }
+        }
+        write!(&mut label, "\\l").map_err(Error::FormatError)?;
+
+        // Add node
+        out.node(&dot_id, &label, "box", &[]);
+
+        // Incoming edges
+        for edge in self.0.graph.edges_directed(node_id, petgraph::Incoming) {
+            let src_id = edge.source().index().to_string();
+            let edge_label = format!("{:?}", edge.weight());
+            let edge_style = match edge.weight() {
+                RegionEdgeKind::Branch => "bold",
+                RegionEdgeKind::Fallthrough => "solid",
+                RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed"
+            };
+            out.edge(
+                &src_id,
+                &dot_id,
+                &[("label", edge_label.as_str()), ("style", edge_style)],
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -850,8 +912,8 @@ mod tests {
         let a = addr(0x1000, 7);
         let b = addr(0x1000, 7);
         assert_eq!(a, b);
-        assert!(!(a < b));
-        assert!(!(a > b));
+        assert!((a >= b));
+        assert!((a <= b));
     }
 
     // ── OptionsBuilder ────────────────────────────────────────────────────────
@@ -1215,66 +1277,5 @@ mod tests {
         let mut b = make_builder(0x1000);
         let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
         assert!(matches!(rb.is_branch_tail_call(addr(0x1200, 7)), Ok(false)));
-    }
-}
-
-pub struct CfgDotDumperState;
-pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
-
-impl <'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
-    type Node = NodeIndex;
-    type Error = Error;
-    type State = CfgDotDumperState;
-
-    fn create_initial_state(&self) -> Self::State {
-        Self::State {}
-    }
-
-    fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.0.graph.node_indices()
-    }
-
-    fn dump_as_dot(&self, node_id: Self::Node, out: &mut dot::DotEmitter, _state: &mut Self::State) -> Result<()> {
-        use std::fmt::Write;
-
-        let dot_id = node_id.index().to_string();
-        let node = self.0.graph.node_weight(node_id).ok_or(Error::InvalidRegion(node_id))?;
-        let first_insn_index = node.insns.front().ok_or(Error::EmptyRegion(node.clone()))?.addr.insn_index;
-        let start_addr = node.start_addr.machine_addr.addr;
-
-        // Build node label once
-        let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
-
-        for insn in node.insns.iter() {
-            let variables: Vec<String> = insn.insn.output.iter().chain(insn.insn.inputs.iter())
-                .map(|vn| self.0.vn_to_name(vn)).collect::<Result<_>>()?;
-            let insn_addr = insn.addr.machine_addr.addr;
-            write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode).map_err(|e| Error::FormatError(e))?;
-            if variables.len() > 0 {
-                write!(&mut label, ", {}", variables.join(", ")).map_err(|e| Error::FormatError(e))?;
-            }
-        }
-        write!(&mut label, "\\l").map_err(|e| Error::FormatError(e))?;
-
-        // Add node
-        out.node(&dot_id, &label, "box", &[]);
-
-        // Incoming edges
-        for edge in self.0.graph.edges_directed(node_id, petgraph::Incoming) {
-            let src_id = edge.source().index().to_string();
-            let edge_label = format!("{:?}", edge.weight());
-            let edge_style = match edge.weight() {
-                RegionEdgeKind::Branch => "bold",
-                RegionEdgeKind::Fallthrough => "solid",
-                RegionEdgeKind::IfCaseFalse | RegionEdgeKind::IfCaseTrue => "dashed"
-            };
-            out.edge(
-                &src_id,
-                &dot_id,
-                &[("label", edge_label.as_str()), ("style", edge_style)],
-            );
-        }
-
-        Ok(())
     }
 }

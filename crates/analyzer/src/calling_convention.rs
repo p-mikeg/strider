@@ -10,8 +10,6 @@ fn regs_to_vns(
     reg_names: &[&str],
     sleigh_regs: &rsleigh::SleighRegs,
 ) -> Result<Vec<rsleigh::Vn>> {
-    let sleigh_regs = sleigh_regs;
-
     reg_names
         .iter()
         .map(|&reg_name| {

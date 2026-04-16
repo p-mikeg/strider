@@ -417,7 +417,7 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
             Opcode::Return => {
                 let regs: Vec<_> = self.builder.variables().copied()
                     .filter(|vn| vn.addr.space == rsleigh::VnSpace::REGISTER).collect();
-                if insn.inputs.len() > 0 {
+                if !insn.inputs.is_empty() {
                     let ret_val = self.read_vn(&insn.inputs[0])?;
                     self.builder.build_return(Some(ret_val), &regs)?;
                 } else {
@@ -775,7 +775,7 @@ impl Analyzer {
                 .node_weight(node_idx)
                 .ok_or(Error::CfgNoRegion(node_idx))?;
             for wrapped_insn in &region.insns {
-                ir_analyzer.process_insn(node_idx, &wrapped_insn.insn, &ir_region_of)?;
+                ir_analyzer.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
             }
         }
 

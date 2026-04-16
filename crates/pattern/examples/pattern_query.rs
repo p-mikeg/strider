@@ -80,8 +80,8 @@ fn example_arithmetic() {
     let g2 = b2.build();
     let m2 = Matcher::new(&g2);
 
-    println!("zero_extend(_) matches: {}", m2.find_all(&zero_extend(any()).into()).len()); // 1
-    println!("sign_extend(_) matches: {}", m2.find_all(&sign_extend(any()).into()).len()); // 0
+    println!("zero_extend(_) matches: {}", m2.find_all(&zero_extend(any())).len()); // 1
+    println!("sign_extend(_) matches: {}", m2.find_all(&sign_extend(any())).len()); // 0
 
     // ── Query 6: bool operations ──────────────────────────────────────────────
     let mut b3 = FunctionBuilder::new(vec![], &[], &[], &[]).expect("build");
@@ -103,7 +103,7 @@ fn example_arithmetic() {
     b3.build_return(Some(res), &[]).expect("build");
     let g3 = b3.build();
     let m3 = Matcher::new(&g3);
-    println!("bool_not(_) matches: {}", m3.find_all(&bool_not(any()).into()).len()); // 1
+    println!("bool_not(_) matches: {}", m3.find_all(&bool_not(any())).len()); // 1
     println!("bool_or(_, _) matches: {}", m3.find_all(&bool_or(any(), any()).into()).len()); // 1
 }
 
@@ -421,11 +421,11 @@ fn example_initial_vars() {
     let m = Matcher::new(&graph);
 
     // ── initial_var() matches any initial-variable node ───────────────────────
-    println!("initial_var() matches: {}", m.find_all(&initial_var().into()).len()); // 2
+    println!("initial_var() matches: {}", m.find_all(&initial_var()).len()); // 2
 
     // ── initial_var_for(vn) matches only the named varnode ────────────────────
-    println!("initial_var_for(rax): {}", m.find_all(&initial_var_for(rax_vn).into()).len()); // 1
-    println!("initial_var_for(rbx): {}", m.find_all(&initial_var_for(rbx_vn).into()).len()); // 1
+    println!("initial_var_for(rax): {}", m.find_all(&initial_var_for(rax_vn)).len()); // 1
+    println!("initial_var_for(rbx): {}", m.find_all(&initial_var_for(rbx_vn)).len()); // 1
 
     // ── Match an add of two values ────────────────────────────────────────────
     // In a single-region graph, `read_variable` returns a ControlPhi node

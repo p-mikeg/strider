@@ -643,7 +643,7 @@ impl FunctionBuilder {
 
         self.create_node(
             NodeKind::Return,
-            core::iter::once(res.control).chain(ret_inputs.into_iter()),
+            core::iter::once(res.control).chain(ret_inputs),
             [],
         );
         Ok(())
@@ -909,7 +909,7 @@ mod tests {
     /// Build a minimal builder with no variables so tests that do not need
     /// SSA variables remain simple.
     fn empty_builder() -> Result<FunctionBuilder> {
-        Ok(FunctionBuilder::new(vec![], &[], &[], &[])?)
+        FunctionBuilder::new(vec![], &[], &[], &[])
     }
 
     // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -1228,7 +1228,7 @@ mod tests {
     #[test]
     fn get_as_float_bits_returns_bits_for_float_const() -> Result<()> {
         let mut b = empty_builder()?;
-        let bits = 3.14f64.to_bits();
+        let bits = 2.5f64.to_bits();
         let out = b.build_float_const(bits, NodeOutputType::F64);
         assert_eq!(b.get_as_float_bits(out)?, Some(bits));
         Ok(())

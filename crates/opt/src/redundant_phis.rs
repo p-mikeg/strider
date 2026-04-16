@@ -70,7 +70,6 @@ fn remove_phis(
             let ctrl_inputs = function.graph.node_inputs(control_state_id);
 
             let reachable_ctrl: HashSet<ir::node::NodeOutputId> = ctrl_inputs
-                .clone()
                 .into_iter()
                 .filter(|ctrl_in| {
                     reachable.contains(&function.graph.output_definition(*ctrl_in).0)
@@ -82,11 +81,8 @@ fn remove_phis(
             let live_values: HashSet<ir::node::NodeOutputId> = ctrl_inputs
                 .into_iter()
                 .enumerate()
-                .filter_map(|(j, ctrl_in)| {
-                    reachable
-                        .contains(&function.graph.output_definition(ctrl_in).0)
-                        .then(|| inputs[j + 1])
-                })
+                .filter(|&(_j, ctrl_in)| reachable
+                        .contains(&function.graph.output_definition(ctrl_in).0)).map(|(j, _ctrl_in)| inputs[j + 1])
                 .collect();
 
             let simplified = if reachable_ctrl.len() == 1 {

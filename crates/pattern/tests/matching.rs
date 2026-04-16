@@ -402,7 +402,7 @@ fn node_var_ids_are_unique_and_distinct_from_var() -> ir::Result<()> {
 fn int_const_matches_exact_value() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_const(5).into());
+    let hits = m.find_all(&int_const(5));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -411,7 +411,7 @@ fn int_const_matches_exact_value() -> ir::Result<()> {
 fn int_const_no_match_for_wrong_value() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_const(99).into());
+    let hits = m.find_all(&int_const(99));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -420,7 +420,7 @@ fn int_const_no_match_for_wrong_value() -> ir::Result<()> {
 fn bool_const_matches_true() -> ir::Result<()> {
     let g = graph_bool_and_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&bool_const(true).into());
+    let hits = m.find_all(&bool_const(true));
     assert_eq!(hits.len(), 1, "bool_const(true) should find exactly one node");
     Ok(())
 }
@@ -429,7 +429,7 @@ fn bool_const_matches_true() -> ir::Result<()> {
 fn bool_const_matches_false() -> ir::Result<()> {
     let g = graph_bool_and_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&bool_const(false).into());
+    let hits = m.find_all(&bool_const(false));
     assert_eq!(hits.len(), 1, "bool_const(false) should find exactly one node");
     Ok(())
 }
@@ -438,7 +438,7 @@ fn bool_const_matches_false() -> ir::Result<()> {
 fn bool_const_no_match_in_int_only_graph() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&bool_const(true).into());
+    let hits = m.find_all(&bool_const(true));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -558,7 +558,7 @@ fn inner_add_matches_independently() -> ir::Result<()> {
 fn neg_pattern_matches_neg_node() -> ir::Result<()> {
     let g = graph_neg_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&neg(any()).into());
+    let hits = m.find_all(&neg(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -567,7 +567,7 @@ fn neg_pattern_matches_neg_node() -> ir::Result<()> {
 fn neg_of_add_pattern_matches() -> ir::Result<()> {
     let g = graph_neg_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&neg(add(int_const(5), int_const(3))).into());
+    let hits = m.find_all(&neg(add(int_const(5), int_const(3))));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -577,7 +577,7 @@ fn not_pattern_no_match_in_neg_graph() -> ir::Result<()> {
     // `not` is bitwise NOT (IntUnaryOp::Not); the graph only has `neg`.
     let g = graph_neg_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&not(any()).into());
+    let hits = m.find_all(&not(any()));
     assert!(hits.is_empty(), "graph has neg, not not");
     Ok(())
 }
@@ -586,7 +586,7 @@ fn not_pattern_no_match_in_neg_graph() -> ir::Result<()> {
 fn neg_pattern_no_match_in_add_graph() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&neg(any()).into());
+    let hits = m.find_all(&neg(any()));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -597,7 +597,7 @@ fn neg_pattern_no_match_in_add_graph() -> ir::Result<()> {
 fn bool_not_pattern_matches() -> ir::Result<()> {
     let g = graph_bool_not_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&bool_not(any()).into());
+    let hits = m.find_all(&bool_not(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -642,7 +642,7 @@ fn bool_and_pattern_with_wildcard() -> ir::Result<()> {
 fn int_eq_pattern_matches_in_if_graph() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_eq(int_const(4), int_const(1)).into());
+    let hits = m.find_all(&int_eq(int_const(4), int_const(1)));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -651,7 +651,7 @@ fn int_eq_pattern_matches_in_if_graph() -> ir::Result<()> {
 fn int_eq_wrong_order_no_match() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_eq(int_const(1), int_const(4)).into());
+    let hits = m.find_all(&int_eq(int_const(1), int_const(4)));
     assert!(hits.is_empty(), "int_eq is not commutative in pattern matching");
     Ok(())
 }
@@ -660,7 +660,7 @@ fn int_eq_wrong_order_no_match() -> ir::Result<()> {
 fn int_lt_no_match_when_op_is_equal() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_lt(int_const(4), int_const(1)).into());
+    let hits = m.find_all(&int_lt(int_const(4), int_const(1)));
     assert!(hits.is_empty(), "cond is Equal, not Less");
     Ok(())
 }
@@ -669,7 +669,7 @@ fn int_lt_no_match_when_op_is_equal() -> ir::Result<()> {
 fn int_eq_with_wildcard_operands() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_eq(any(), any()).into());
+    let hits = m.find_all(&int_eq(any(), any()));
     assert_eq!(hits.len(), 1, "one Equal comparison node in graph");
     Ok(())
 }
@@ -680,7 +680,7 @@ fn int_eq_with_wildcard_operands() -> ir::Result<()> {
 fn zero_extend_pattern_matches() -> ir::Result<()> {
     let g = graph_zero_extend_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&zero_extend(any()).into());
+    let hits = m.find_all(&zero_extend(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -689,7 +689,7 @@ fn zero_extend_pattern_matches() -> ir::Result<()> {
 fn sign_extend_no_match_in_zero_extend_graph() -> ir::Result<()> {
     let g = graph_zero_extend_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&sign_extend(any()).into());
+    let hits = m.find_all(&sign_extend(any()));
     assert!(hits.is_empty(), "graph uses zero_extend, not sign_extend");
     Ok(())
 }
@@ -698,7 +698,7 @@ fn sign_extend_no_match_in_zero_extend_graph() -> ir::Result<()> {
 fn truncate_pattern_matches() -> ir::Result<()> {
     let g = graph_truncate_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&truncate(any()).into());
+    let hits = m.find_all(&truncate(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -707,7 +707,7 @@ fn truncate_pattern_matches() -> ir::Result<()> {
 fn zero_extend_no_match_in_truncate_graph() -> ir::Result<()> {
     let g = graph_truncate_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&zero_extend(any()).into());
+    let hits = m.find_all(&zero_extend(any()));
     assert!(hits.is_empty(), "graph uses truncate, not extend");
     Ok(())
 }
@@ -718,7 +718,7 @@ fn zero_extend_no_match_in_truncate_graph() -> ir::Result<()> {
 fn initial_var_any_matches_all_initial_vars() -> ir::Result<()> {
     let (g, _vn) = graph_with_initial_var()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&initial_var().into());
+    let hits = m.find_all(&initial_var());
     assert_eq!(hits.len(), 1, "one InitialVar node in graph");
     Ok(())
 }
@@ -727,7 +727,7 @@ fn initial_var_any_matches_all_initial_vars() -> ir::Result<()> {
 fn initial_var_for_matches_correct_vn() -> ir::Result<()> {
     let (g, vn) = graph_with_initial_var()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&initial_var_for(vn).into());
+    let hits = m.find_all(&initial_var_for(vn));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -737,7 +737,7 @@ fn initial_var_for_wrong_vn_no_match() -> ir::Result<()> {
     let (g, _vn) = graph_with_initial_var()?;
     let m = Matcher::new(&g);
     let other_vn = make_reg_vn(999, 8);
-    let hits = m.find_all(&initial_var_for(other_vn).into());
+    let hits = m.find_all(&initial_var_for(other_vn));
     assert!(hits.is_empty(), "wrong vn, no match");
     Ok(())
 }
@@ -746,7 +746,7 @@ fn initial_var_for_wrong_vn_no_match() -> ir::Result<()> {
 fn initial_var_any_finds_two_vars() -> ir::Result<()> {
     let (g, _a, _b) = graph_with_two_initial_vars()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&initial_var().into());
+    let hits = m.find_all(&initial_var());
     assert_eq!(hits.len(), 2, "two distinct InitialVar nodes");
     Ok(())
 }
@@ -755,8 +755,8 @@ fn initial_var_any_finds_two_vars() -> ir::Result<()> {
 fn initial_var_for_specific_in_two_var_graph() -> ir::Result<()> {
     let (g, vn_a, vn_b) = graph_with_two_initial_vars()?;
     let m = Matcher::new(&g);
-    let hits_a = m.find_all(&initial_var_for(vn_a).into());
-    let hits_b = m.find_all(&initial_var_for(vn_b).into());
+    let hits_a = m.find_all(&initial_var_for(vn_a));
+    let hits_b = m.find_all(&initial_var_for(vn_b));
     assert_eq!(hits_a.len(), 1);
     assert_eq!(hits_b.len(), 1);
     // Each should match a different node.
@@ -1222,7 +1222,7 @@ fn any_pattern_matches_many_nodes() -> ir::Result<()> {
     // At minimum the constants and the add node.
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&any().into());
+    let hits = m.find_all(&any());
     // 5 const, 3 const, add result all have value outputs → ≥ 3 hits
     assert!(hits.len() >= 3, "expected at least 3 any() matches, got {}", hits.len());
     Ok(())
@@ -1271,7 +1271,7 @@ fn mul_pattern_no_match_in_add_graph() -> ir::Result<()> {
 fn zero_extend_no_match_in_add_graph() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&zero_extend(any()).into());
+    let hits = m.find_all(&zero_extend(any()));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -1293,7 +1293,7 @@ fn deduplicated_constants_yield_single_match() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Both const-5 references alias the same node, so int_const(5) finds 1.
-    let hits = m.find_all(&int_const(5).into());
+    let hits = m.find_all(&int_const(5));
     assert_eq!(hits.len(), 1, "deduplication means only one const-5 node");
     Ok(())
 }
@@ -1302,8 +1302,8 @@ fn deduplicated_constants_yield_single_match() -> ir::Result<()> {
 fn two_different_constants_both_found() -> ir::Result<()> {
     let g = graph_add_return()?; // has 5 and 3
     let m = Matcher::new(&g);
-    let h5 = m.find_all(&int_const(5).into());
-    let h3 = m.find_all(&int_const(3).into());
+    let h5 = m.find_all(&int_const(5));
+    let h3 = m.find_all(&int_const(3));
     assert_eq!(h5.len(), 1);
     assert_eq!(h3.len(), 1);
     assert_ne!(h5[0].root, h3[0].root);
@@ -1326,7 +1326,7 @@ fn phi_no_match_in_graph_without_variables() -> ir::Result<()> {
 fn initial_var_no_match_in_graph_without_variables() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&initial_var().into());
+    let hits = m.find_all(&initial_var());
     assert!(hits.is_empty());
     Ok(())
 }
@@ -1648,7 +1648,7 @@ fn get_bool_const_returns_value_for_bool_binding() -> ir::Result<()> {
     let g = graph_bool_not_return()?;
     let m = Matcher::new(&g);
     let v = Var::new();
-    let hits = m.find_all(&bool_not(var(v)).into());
+    let hits = m.find_all(&bool_not(var(v)));
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].get_bool_const(v, &g), Some(true));
     Ok(())
@@ -1793,7 +1793,7 @@ fn capture_output_of_add_node() -> ir::Result<()> {
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
     let v = Var::new();
-    let hits = m.find_all(&add(any(), any()).capture(v).into());
+    let hits = m.find_all(&add(any(), any()).capture(v));
     assert_eq!(hits.len(), 1);
     // The captured output should be the add node's output — its kind is IntBinaryOp.
     let out = hits[0].get(v).expect("capture var should be bound");
@@ -1854,7 +1854,7 @@ fn when_predicate_filters_matching_nodes() -> ir::Result<()> {
     let hits = m.find_all(&any().when(|fg, out| {
         let node = fg.graph.get_node_from_output(out);
         matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
-    }).into());
+    }));
     // There are two IntConst nodes (5 and 3).
     assert_eq!(hits.len(), 2);
     Ok(())
@@ -1868,7 +1868,7 @@ fn predicate_fn_matches_same_as_when() -> ir::Result<()> {
     let hits = m.find_all(&predicate(|fg, out| {
         let node = fg.graph.get_node_from_output(out);
         matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
-    }).into());
+    }));
     assert_eq!(hits.len(), 2);
     Ok(())
 }
@@ -1882,7 +1882,7 @@ fn when_predicate_on_structural_pattern() -> ir::Result<()> {
         // Only match if the add node's output is a U64.
         let kind = fg.graph.output_kind(out);
         matches!(kind, ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64))
-    }).into());
+    }));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -1892,7 +1892,7 @@ fn when_predicate_rejection() -> ir::Result<()> {
     // .when(f) that always returns false rejects everything.
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&any().when(|_fg, _out| false).into());
+    let hits = m.find_all(&any().when(|_fg, _out| false));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -1936,7 +1936,7 @@ fn lzcount_pattern_matches() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&lzcount(any()).into());
+    let hits = m.find_all(&lzcount(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -1954,7 +1954,7 @@ fn piece_pattern_matches() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&piece(any(), any()).into());
+    let hits = m.find_all(&piece(any(), any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -1972,10 +1972,10 @@ fn extract_pattern_exact_lsb_len() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Exact match on lsb=4, len=8 → finds it.
-    let hits = m.find_all(&extract(Some(4), Some(8), any()).into());
+    let hits = m.find_all(&extract(Some(4), Some(8), any()));
     assert_eq!(hits.len(), 1);
     // Wrong lsb → no match.
-    let miss = m.find_all(&extract(Some(0), Some(8), any()).into());
+    let miss = m.find_all(&extract(Some(0), Some(8), any()));
     assert!(miss.is_empty());
     Ok(())
 }
@@ -1992,7 +1992,7 @@ fn extract_pattern_wildcard() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&extract(None, None, any()).into());
+    let hits = m.find_all(&extract(None, None, any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -2011,13 +2011,13 @@ fn insert_pattern_matches() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Wildcard match.
-    let hits = m.find_all(&insert(None, None, any(), any()).into());
+    let hits = m.find_all(&insert(None, None, any(), any()));
     assert_eq!(hits.len(), 1);
     // Exact match on lsb=0, len=8.
-    let hits2 = m.find_all(&insert(Some(0), Some(8), any(), any()).into());
+    let hits2 = m.find_all(&insert(Some(0), Some(8), any(), any()));
     assert_eq!(hits2.len(), 1);
     // Wrong lsb → no match.
-    let miss = m.find_all(&insert(Some(4), None, any(), any()).into());
+    let miss = m.find_all(&insert(Some(4), None, any(), any()));
     assert!(miss.is_empty());
     Ok(())
 }
@@ -2125,14 +2125,14 @@ fn float_eq_pattern_matches() -> ir::Result<()> {
     let hits = m.find_all(&float_eq(
         float_const(3.0f64.to_bits()),
         float_const(4.0f64.to_bits()),
-    ).into());
+    ));
     assert_eq!(hits.len(), 1);
 
     // Wrong op kind → no match.
     let miss = m.find_all(&float_lt(
         float_const(3.0f64.to_bits()),
         float_const(4.0f64.to_bits()),
-    ).into());
+    ));
     assert!(miss.is_empty());
     Ok(())
 }
@@ -2150,7 +2150,7 @@ fn float_is_nan_pattern_matches() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&float_is_nan(any()).into());
+    let hits = m.find_all(&float_is_nan(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -2169,10 +2169,10 @@ fn float_unary_pattern_matches() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Correct unary op matches.
-    let hits = m.find_all(&float_neg(float_const(2.0f64.to_bits())).into());
+    let hits = m.find_all(&float_neg(float_const(2.0f64.to_bits())));
     assert_eq!(hits.len(), 1);
     // Different unary op → no match.
-    let miss = m.find_all(&float_abs(float_const(2.0f64.to_bits())).into());
+    let miss = m.find_all(&float_abs(float_const(2.0f64.to_bits())));
     assert!(miss.is_empty());
     Ok(())
 }
@@ -2191,7 +2191,7 @@ fn any_float_const_captures_bits() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     let v = Var::new();
-    let hits = m.find_all(&any_float_const(v).into());
+    let hits = m.find_all(&any_float_const(v));
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].get_float_bits(v, &g), Some(bits));
     Ok(())
@@ -2215,10 +2215,10 @@ fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_bits_to_float(any()).into());
+    let hits = m.find_all(&int_bits_to_float(any()));
     assert_eq!(hits.len(), 1);
     // float_bits_to_int should NOT match.
-    assert!(m.find_all(&float_bits_to_int(any()).into()).is_empty());
+    assert!(m.find_all(&float_bits_to_int(any())).is_empty());
     Ok(())
 }
 
@@ -2237,7 +2237,7 @@ fn float_bits_to_int_pattern_matches() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    let hits = m.find_all(&float_bits_to_int(any()).into());
+    let hits = m.find_all(&float_bits_to_int(any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }
@@ -2257,9 +2257,9 @@ fn float_conversion_patterns_match() -> ir::Result<()> {
     let g = b.build();
 
     let m = Matcher::new(&g);
-    assert_eq!(m.find_all(&int_to_float(any()).into()).len(), 1);
-    assert_eq!(m.find_all(&float_to_float(any()).into()).len(), 1);
-    assert_eq!(m.find_all(&float_to_int(any()).into()).len(), 1);
+    assert_eq!(m.find_all(&int_to_float(any())).len(), 1);
+    assert_eq!(m.find_all(&float_to_float(any())).len(), 1);
+    assert_eq!(m.find_all(&float_to_int(any())).len(), 1);
     Ok(())
 }
 
@@ -2304,10 +2304,10 @@ fn cast_to_float_pattern_matches() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     // Matches the CastToFloat node.
-    let hits = m.find_all(&cast_to_float(any()).into());
+    let hits = m.find_all(&cast_to_float(any()));
     assert_eq!(hits.len(), 1);
     // Other unary patterns do NOT match.
-    assert!(m.find_all(&int_bits_to_float(any()).into()).is_empty());
+    assert!(m.find_all(&int_bits_to_float(any())).is_empty());
     Ok(())
 }
 

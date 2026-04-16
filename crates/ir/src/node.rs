@@ -136,7 +136,7 @@ impl NodeOutputType {
             NodeOutputType::U8   => Some(val as u8 as u64),
             NodeOutputType::U16  => Some(val as u16 as u64),
             NodeOutputType::U32  => Some(val as u32 as u64),
-            NodeOutputType::U64  => Some(val as u64),
+            NodeOutputType::U64  => Some(val),
             NodeOutputType::U128 | NodeOutputType::U256 => None,
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }

@@ -60,6 +60,12 @@ pub struct OptimizerPipeline {
     post_passes: Vec<Box<dyn Optimizer>>,
 }
 
+impl Default for OptimizerPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OptimizerPipeline {
     /// Creates an empty pipeline with no passes registered.
     pub fn new() -> Self {

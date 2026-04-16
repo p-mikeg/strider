@@ -363,9 +363,8 @@ impl<'g> Matcher<'g> {
 
             PatKind::Load { space, addr, output_var, node_var } => {
                 let NodeKind::Load(actual_space) = kind else { return false; };
-                if let Some(s) = space {
-                    if actual_space != s { return false; }
-                }
+                if let Some(s) = space
+                    && actual_space != s { return false; }
                 let snap = bindings.clone();
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 if let Some(addr_pat) = addr {
@@ -375,20 +374,17 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
-                if let Some(v) = output_var {
-                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
-                }
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(v) = output_var
+                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::Store { space, addr, data, output_var, node_var } => {
                 let NodeKind::Store(actual_space) = kind else { return false; };
-                if let Some(s) = space {
-                    if actual_space != s { return false; }
-                }
+                if let Some(s) = space
+                    && actual_space != s { return false; }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 if let Some(addr_pat) = addr {
@@ -405,24 +401,20 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
-                if let Some(v) = output_var {
-                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
-                }
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(v) = output_var
+                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::StackStore { space, offset, data, output_var, node_var } => {
                 let NodeKind::StackStore { space: actual_space, offset: actual_offset } = *kind
                     else { return false; };
-                if let Some(s) = space {
-                    if actual_space != *s { return false; }
-                }
-                if let Some(o) = offset {
-                    if actual_offset != *o { return false; }
-                }
+                if let Some(s) = space
+                    && actual_space != *s { return false; }
+                if let Some(o) = offset
+                    && actual_offset != *o { return false; }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 if let Some(data_pat) = data {
@@ -433,21 +425,18 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
-                if let Some(v) = output_var {
-                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
-                }
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(v) = output_var
+                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::StackStorePhi { space, offsets, data, output_var, node_var } => {
                 let NodeKind::StackStorePhi { space: actual_space } = *kind
                     else { return false; };
-                if let Some(s) = space {
-                    if actual_space != *s { return false; }
-                }
+                if let Some(s) = space
+                    && actual_space != *s { return false; }
                 if let Some(expected) = offsets {
                     let mut actual: Vec<i64> = self.fn_graph.graph.stack_phi_offsets(node).to_vec();
                     actual.sort();
@@ -463,20 +452,17 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
-                if let Some(v) = output_var {
-                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
-                }
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(v) = output_var
+                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::Phi { vn, inputs: slot_pats, output_var, node_var } => {
                 let NodeKind::ControlPhi(actual_vn) = kind else { return false; };
-                if let Some(v) = vn {
-                    if actual_vn != v { return false; }
-                }
+                if let Some(v) = vn
+                    && actual_vn != v { return false; }
                 let inputs = self.fn_graph.graph.node_inputs(node);
                 let snap = bindings.clone();
                 for (idx, slot_pat) in slot_pats {
@@ -486,20 +472,17 @@ impl<'g> Matcher<'g> {
                         return false;
                     }
                 }
-                if let Some(v) = output_var {
-                    if !bindings.bind_var(*v, output) { *bindings = snap; return false; }
-                }
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(v) = output_var
+                    && !bindings.bind_var(*v, output) { *bindings = snap; return false; }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::InitialVar { vn } => {
                 let NodeKind::InitialVar(actual_vn) = kind else { return false; };
-                if let Some(v) = vn {
-                    if actual_vn != v { return false; }
-                }
+                if let Some(v) = vn
+                    && actual_vn != v { return false; }
                 true
             }
 
@@ -659,17 +642,15 @@ impl<'g> Matcher<'g> {
                     }
                 }
 
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
             PatKind::CallOther { user_op_id, args, node_var } => {
                 let NodeKind::CallOther { user_op_id: actual_id } = kind else { return false; };
-                if let Some(id) = user_op_id {
-                    if actual_id != id { return false; }
-                }
+                if let Some(id) = user_op_id
+                    && actual_id != id { return false; }
                 let snap = bindings.clone();
 
                 for (idx, arg_pat) in args {
@@ -681,9 +662,8 @@ impl<'g> Matcher<'g> {
                     }
                 }
 
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
@@ -709,9 +689,8 @@ impl<'g> Matcher<'g> {
                     }
                 }
 
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
@@ -747,9 +726,8 @@ impl<'g> Matcher<'g> {
                     }
                 }
 
-                if let Some(nv) = node_var {
-                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
-                }
+                if let Some(nv) = node_var
+                    && !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
                 true
             }
 
@@ -809,19 +787,17 @@ impl<'g> Matcher<'g> {
             // Continue forward through transparent nodes.
             match self.fn_graph.graph.node_kind(consumer) {
                 NodeKind::ControlState | NodeKind::IfCase(_) => {
-                    if let Some(next_ctrl) = self.first_ctrl_output(consumer) {
-                        if self.match_contains(next_ctrl, inner_pat, bindings, visited) {
+                    if let Some(next_ctrl) = self.first_ctrl_output(consumer)
+                        && self.match_contains(next_ctrl, inner_pat, bindings, visited) {
                             return true;
                         }
-                    }
                 }
                 NodeKind::Call => {
                     // Continue past the call.
-                    if let Some(next_ctrl) = self.first_ctrl_output(consumer) {
-                        if self.match_contains(next_ctrl, inner_pat, bindings, visited) {
+                    if let Some(next_ctrl) = self.first_ctrl_output(consumer)
+                        && self.match_contains(next_ctrl, inner_pat, bindings, visited) {
                             return true;
                         }
-                    }
                 }
                 // If / Return are terminating — don't cross them.
                 _ => {}

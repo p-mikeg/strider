@@ -25,7 +25,7 @@ fn eval_int_binary(op: IntBinaryOp, l: u64, r: u64, ty: NodeOutputType) -> Optio
         IntBinaryOp::ShiftLeft  => l.wrapping_shl(shift(r)),
         IntBinaryOp::ShiftRight => l.wrapping_shr(shift(r)),
         IntBinaryOp::SShiftRight => {
-            let sl = ty.get_signed_int(l)? as i64;
+            let sl = ty.get_signed_int(l)?;
             (sl >> shift(r)) as u64
         }
         IntBinaryOp::Div => {
@@ -179,12 +179,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     };
 
     // Full constant evaluation when both operands are known.
-    if let (Some(l), Some(r)) = (lhs_c, rhs_c) {
-        if let Some(folded) = eval_int_binary(op, l, r, ty) {
+    if let (Some(l), Some(r)) = (lhs_c, rhs_c)
+        && let Some(folded) = eval_int_binary(op, l, r, ty) {
             let new_out = make_int_const(fg, folded, ty)?;
             return replace_all_uses(fg, out, new_out);
         }
-    }
 
     // Algebraic identities and absorbing elements.
     match op {
@@ -643,12 +642,11 @@ fn try_fold_float_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result
     let rhs_c = float_const_val(fg, rhs);
 
     // Full constant evaluation when both operands are known.
-    if let (Some(l), Some(r)) = (lhs_c, rhs_c) {
-        if let Some(folded) = eval_float_binary(op, l, r, ty) {
+    if let (Some(l), Some(r)) = (lhs_c, rhs_c)
+        && let Some(folded) = eval_float_binary(op, l, r, ty) {
             let new_out = make_float_const(fg, folded, ty)?;
             return replace_all_uses(fg, out, new_out);
         }
-    }
 
     // Safe algebraic identities (no -0.0 or NaN corner cases).
     match op {
@@ -697,12 +695,11 @@ fn try_fold_float_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<
     let ty = out_kind.as_value().ok_or(Error::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
-    if let Some(bits) = float_const_val(fg, input) {
-        if let Some(folded) = eval_float_unary(op, bits, ty) {
+    if let Some(bits) = float_const_val(fg, input)
+        && let Some(folded) = eval_float_unary(op, bits, ty) {
             let new_out = make_float_const(fg, folded, ty)?;
             return replace_all_uses(fg, out, new_out);
         }
-    }
     Ok(OptimizationResult::NoChange)
 }
 
@@ -717,12 +714,11 @@ fn try_fold_float_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
     let lhs_out_kind = fg.graph.output_kind(lhs);
     let input_ty = lhs_out_kind.as_value().ok_or(Error::ExpectedValueOutput(lhs_out_kind))?;
 
-    if let (Some(l), Some(r)) = (float_const_val(fg, lhs), float_const_val(fg, rhs)) {
-        if let Some(result) = eval_float_cmp(op, l, r, input_ty) {
+    if let (Some(l), Some(r)) = (float_const_val(fg, lhs), float_const_val(fg, rhs))
+        && let Some(result) = eval_float_cmp(op, l, r, input_ty) {
             let new_out = make_bool_const(fg, result)?;
             return replace_all_uses(fg, out, new_out);
         }
-    }
     Ok(OptimizationResult::NoChange)
 }
 
@@ -1564,11 +1560,11 @@ mod tests {
     fn fold_float_mul_by_one_identity() -> Result<()> {
         let mut fg = make_fn(|b| {
             let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-            let x = b.build_float_const(3.14f64.to_bits(), NodeOutputType::F64);
+            let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
             Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.14f64.to_bits()));
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
         Ok(())
     }
 
@@ -1576,11 +1572,11 @@ mod tests {
     fn fold_float_div_by_one_identity() -> Result<()> {
         let mut fg = make_fn(|b| {
             let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-            let x = b.build_float_const(3.14f64.to_bits(), NodeOutputType::F64);
+            let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
             Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)?)
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg), NodeKind::FloatConst(3.14f64.to_bits()));
+        assert_eq!(return_kind(&fg), NodeKind::FloatConst(2.5f64.to_bits()));
         Ok(())
     }
 

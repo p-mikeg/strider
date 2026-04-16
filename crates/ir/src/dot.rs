@@ -266,15 +266,15 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             rsleigh::VnSpace::CONST    => Ok(format!("{offset:#x}:{size}")),
             rsleigh::VnSpace::REGISTER => {
                 let regs = self.sleigh.regs()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                    .map_err(|e| io::Error::other(e.to_string()))?;
                 let name = regs.vn_to_name(*vn)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::Other, format!("register not found: {vn:?}")))?;
+                    .ok_or_else(|| io::Error::other(format!("register not found: {vn:?}")))?;
                 Ok(name.to_string())
             },
             rsleigh::VnSpace::RAM      => Ok(format!("ram[{offset:#x}]:{size}")),
             rsleigh::VnSpace::UNIQUE   => Ok(format!("unique[{offset:#x}]:{size}")),
             s if s == self.sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
-            s => Err(io::Error::new(io::ErrorKind::Other, format!("unsupported VnSpace: {s:?}"))),
+            s => Err(io::Error::other(format!("unsupported VnSpace: {s:?}"))),
         }
     }
 
@@ -550,7 +550,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
     fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut dot::DotEmitter) {
         let kind = self.graph.node_kind(node);
-        let fc = node_fillcolor(&kind);
+        let fc = node_fillcolor(kind);
         // Use pretty_label so const nodes get their type annotation too.
         let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
@@ -561,8 +561,8 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// identical to the shared `InitialVar` rendering.
     fn emit_initial_var_node(&self, node: NodeId, dot_id: &str, out: &mut dot::DotEmitter) {
         let kind = self.graph.node_kind(node);
-        let shape = node_shape(&kind);
-        let fc = node_fillcolor(&kind);
+        let shape = node_shape(kind);
+        let fc = node_fillcolor(kind);
         let label = self.pretty_label(node).unwrap_or_else(|_| format!("{kind:?}"));
         out.node(dot_id, &label, shape, &[("fillcolor", fc)]);
     }
@@ -645,48 +645,44 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
 
         let kind = self.graph.node_kind(node);
         let cur_id = state.get_dot_id(self.graph, node);
-        let shape  = node_shape(&kind);
-        let fc     = node_fillcolor(&kind);
+        let shape  = node_shape(kind);
+        let fc     = node_fillcolor(kind);
 
         out.node(&cur_id, &self.pretty_label(node)?, shape, &[("fillcolor", fc)]);
 
         // ── Virtual nodes for structured outputs ──────────────────────────────
 
-        match kind {
-            // For the two control outputs of an If node, emit "if.true" and
-            // "if.false" virtual nodes so each branch is clearly labelled.
-            NodeKind::If => {
-                let outputs = self.graph.node_outputs(node);
-                let branch_labels = ["if.true", "if.false"];
-                let edge_labels   = ["true",    "false"];
-                for ((out_id, blabel), elabel) in outputs.into_iter()
-                    .zip(branch_labels.iter())
-                    .zip(edge_labels.iter())
-                {
-                    // A consumer rendered before this If may have already created
-                    // the virtual node eagerly.  Reuse it to avoid a duplicate
-                    // declaration; only emit `node` when creating for the first time.
-                    let virt_id = match state.virtual_nodes.get(&out_id).cloned() {
-                        Some(existing) => existing,
-                        None => {
-                            let v = state.alloc_virtual_id();
-                            out.node(&v, blabel, "trapezium", &[
-                                ("fillcolor", "\"#3a2a10\""),
-                            ]);
-                            state.virtual_nodes.insert(out_id, v.clone());
-                            v
-                        }
-                    };
-                    out.edge(&cur_id, &virt_id, &[
-                        ("color",     "\"#00cccc\""),
-                        ("label",     elabel),
-                        ("fontcolor", "\"#cccccc\""),
-                        ("fontsize",  "9"),
-                    ]);
-                }
+        // For the two control outputs of an If node, emit "if.true" and
+        // "if.false" virtual nodes so each branch is clearly labelled.
+        if matches!(kind, NodeKind::If) {
+            let outputs = self.graph.node_outputs(node);
+            let branch_labels = ["if.true", "if.false"];
+            let edge_labels   = ["true",    "false"];
+            for ((out_id, blabel), elabel) in outputs.into_iter()
+                .zip(branch_labels.iter())
+                .zip(edge_labels.iter())
+            {
+                // A consumer rendered before this If may have already created
+                // the virtual node eagerly.  Reuse it to avoid a duplicate
+                // declaration; only emit `node` when creating for the first time.
+                let virt_id = match state.virtual_nodes.get(&out_id).cloned() {
+                    Some(existing) => existing,
+                    None => {
+                        let v = state.alloc_virtual_id();
+                        out.node(&v, blabel, "trapezium", &[
+                            ("fillcolor", "\"#3a2a10\""),
+                        ]);
+                        state.virtual_nodes.insert(out_id, v.clone());
+                        v
+                    }
+                };
+                out.edge(&cur_id, &virt_id, &[
+                    ("color",     "\"#00cccc\""),
+                    ("label",     elabel),
+                    ("fontcolor", "\"#cccccc\""),
+                    ("fontsize",  "9"),
+                ]);
             }
-
-            _ => {}
         }
 
         // ── Draw edges from this node's inputs to this node ───────────────────
@@ -1132,11 +1128,11 @@ mod tests {
         let q = format!("\"{}\"", if_true_id);
         let edges_into = edge_lines(&dot)
             .into_iter()
-            .filter(|l| l.split("->").nth(1).map_or(false, |rhs| rhs.contains(&q)))
+            .filter(|l| l.split("->").nth(1).is_some_and(|rhs| rhs.contains(&q)))
             .count();
         let edges_from = edge_lines(&dot)
             .into_iter()
-            .filter(|l| l.split("->").next().map_or(false, |lhs| lhs.contains(&q)))
+            .filter(|l| l.split("->").next().is_some_and(|lhs| lhs.contains(&q)))
             .count();
 
         assert!(edges_into >= 1, "if.true must have ≥1 incoming edge:\n{dot}");
