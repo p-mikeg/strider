@@ -740,6 +740,114 @@ impl FunctionBuilder {
         Ok(())
     }
 
+    /// Emits a `CallOther` (user-defined op) node and advances the control
+    /// and memory chain of the active region.
+    ///
+    /// `args` are additional arguments to the intrinsic (may be empty).
+    /// `output_ty` is `Some` when the source instruction has an output varnode
+    /// and `None` when the intrinsic produces no value (e.g. `syscall` without
+    /// an explicit return).  Memory is always treated as clobbered.
+    pub fn build_call_other(
+        &mut self,
+        user_op_id: u64,
+        args: &[NodeOutputId],
+        output_ty: Option<NodeOutputType>,
+    ) -> Result<Option<NodeOutputId>> {
+        let ctrl = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
+
+        for &v in args {
+            let kind = self.graph().output_kind(v);
+            if !kind.is_value() {
+                return Err(Error::ExpectedValue(v, kind));
+            }
+        }
+
+        let mut output_kinds: SmallVec<[NodeOutputKind; 3]> = SmallVec::new();
+        output_kinds.push(NodeOutputKind::Control);
+        output_kinds.push(NodeOutputKind::Memory);
+        if let Some(ty) = output_ty {
+            output_kinds.push(NodeOutputKind::OutputType(ty));
+        }
+
+        let inputs = [ctrl, memory].into_iter().chain(args.iter().copied());
+        let node = self.create_node(NodeKind::CallOther { user_op_id }, inputs, output_kinds);
+        let outputs: SmallVec<[NodeOutputId; 3]> =
+            self.graph().node_outputs(node).into_iter().collect();
+        self.advance_cur_region_ctrl(outputs[0])?;
+        self.advance_cur_region_memory(outputs[1])?;
+        Ok(outputs.get(2).copied())
+    }
+
+    /// Emits a `SegmentOp` node (pure computation: segment + offset → flat
+    /// pointer) and returns its value output.
+    pub fn build_segment_op(
+        &mut self,
+        op_id: u64,
+        segment: NodeOutputId,
+        offset: NodeOutputId,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let seg_kind = self.graph().output_kind(segment);
+        if !seg_kind.is_value() {
+            return Err(Error::ExpectedValue(segment, seg_kind));
+        }
+        let off_kind = self.graph().output_kind(offset);
+        if !off_kind.is_value() {
+            return Err(Error::ExpectedValue(offset, off_kind));
+        }
+        Ok(self.build_single_output_pure(
+            NodeKind::SegmentOp { op_id },
+            [segment, offset],
+            output_type,
+        ))
+    }
+
+    /// Emits a `CPoolRef` node (opaque JVM constant-pool lookup) and returns
+    /// its value output.  `refs` holds the opaque reference inputs as emitted
+    /// by Sleigh.
+    pub fn build_cpool_ref(
+        &mut self,
+        refs: &[NodeOutputId],
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        for &r in refs {
+            let kind = self.graph().output_kind(r);
+            if !kind.is_value() {
+                return Err(Error::ExpectedValue(r, kind));
+            }
+        }
+        let node = self.create_node(
+            NodeKind::CPoolRef,
+            refs.iter().copied(),
+            [NodeOutputKind::OutputType(output_type)],
+        );
+        let [out] = self.graph().node_outputs_exact(node)?;
+        Ok(out)
+    }
+
+    /// Emits a `New` node (opaque JVM allocation) and returns its value
+    /// output.  `args` are the raw Sleigh inputs (typically a size).
+    pub fn build_new(
+        &mut self,
+        args: &[NodeOutputId],
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        for &a in args {
+            let kind = self.graph().output_kind(a);
+            if !kind.is_value() {
+                return Err(Error::ExpectedValue(a, kind));
+            }
+        }
+        let node = self.create_node(
+            NodeKind::New,
+            args.iter().copied(),
+            [NodeOutputKind::OutputType(output_type)],
+        );
+        let [out] = self.graph().node_outputs_exact(node)?;
+        Ok(out)
+    }
+
     /// Emits a `Store` node writing `data` to `addr` in `space` and advances
     /// the region's memory token.
     pub fn build_store(&mut self, addr: NodeOutputId, data: NodeOutputId, space: rsleigh::VnSpace) -> Result<()> {
@@ -1241,6 +1349,123 @@ mod tests {
         let rhs_node = b.graph().get_node_from_output(rhs);
         assert_eq!(*b.graph().node_kind(lhs_node), NodeKind::CastToFloat);
         assert_eq!(*b.graph().node_kind(rhs_node), NodeKind::CastToFloat);
+        Ok(())
+    }
+
+    // ── CallOther / SegmentOp / CPoolRef / New ──────────────────────────────
+
+    /// Helper: build a single-region builder with an active region set.
+    fn builder_with_region() -> Result<FunctionBuilder> {
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        Ok(b)
+    }
+
+    #[test]
+    fn build_call_other_without_output_advances_ctrl_and_memory() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let ctrl_before = b.cur_region_control()?;
+        let mem_before  = b.cur_region_memory()?;
+
+        let result = b.build_call_other(7, &[], None)?;
+        assert!(result.is_none(), "no output varnode → no value output");
+
+        // Ctrl and memory tokens must advance (be different outputs).
+        let ctrl_after = b.cur_region_control()?;
+        let mem_after  = b.cur_region_memory()?;
+        assert_ne!(ctrl_before, ctrl_after);
+        assert_ne!(mem_before,  mem_after);
+
+        // The node must be a CallOther with the given id.
+        let node = b.graph().get_node_from_output(ctrl_after);
+        assert_eq!(b.graph().node_kind(node), &NodeKind::CallOther { user_op_id: 7 });
+        Ok(())
+    }
+
+    #[test]
+    fn build_call_other_with_output_returns_typed_value() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let arg = b.build_int_const(0x42, NodeOutputType::U64);
+        let out = b.build_call_other(3, &[arg], Some(NodeOutputType::U32))?
+            .expect("output_ty = Some → value output");
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::U32));
+        let node = b.graph().get_node_from_output(out);
+        assert_eq!(b.graph().node_kind(node), &NodeKind::CallOther { user_op_id: 3 });
+        Ok(())
+    }
+
+    #[test]
+    fn build_call_other_rejects_non_value_arg() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let mem = b.cur_region_memory()?;
+        let res = b.build_call_other(0, &[mem], None);
+        assert!(matches!(res, Err(Error::ExpectedValue(_, _))));
+        Ok(())
+    }
+
+    #[test]
+    fn build_segment_op_produces_pure_node() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let seg = b.build_int_const(0x10, NodeOutputType::U16);
+        let off = b.build_int_const(0x100, NodeOutputType::U32);
+        let out = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
+        let node = b.graph().get_node_from_output(out);
+        assert_eq!(b.graph().node_kind(node), &NodeKind::SegmentOp { op_id: 1 });
+        assert_eq!(b.graph().output_kind(out), NodeOutputKind::OutputType(NodeOutputType::U64));
+        Ok(())
+    }
+
+    #[test]
+    fn build_segment_op_is_cacheable_across_identical_calls() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let seg = b.build_int_const(0x10, NodeOutputType::U16);
+        let off = b.build_int_const(0x100, NodeOutputType::U32);
+        let a = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
+        let c = b.build_segment_op(1, seg, off, NodeOutputType::U64)?;
+        assert_eq!(a, c, "SegmentOp is pure → identical calls must dedup");
+        Ok(())
+    }
+
+    #[test]
+    fn build_cpool_ref_produces_typed_node() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let r0 = b.build_int_const(0xAA, NodeOutputType::U32);
+        let r1 = b.build_int_const(0xBB, NodeOutputType::U32);
+        let out = b.build_cpool_ref(&[r0, r1], NodeOutputType::U64)?;
+        let node = b.graph().get_node_from_output(out);
+        assert_eq!(b.graph().node_kind(node), &NodeKind::CPoolRef);
+        Ok(())
+    }
+
+    #[test]
+    fn build_cpool_ref_is_not_deduplicated() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let r0 = b.build_int_const(0xAA, NodeOutputType::U32);
+        let a = b.build_cpool_ref(&[r0], NodeOutputType::U64)?;
+        let c = b.build_cpool_ref(&[r0], NodeOutputType::U64)?;
+        assert_ne!(a, c, "CPoolRef is non-cacheable → must yield distinct nodes");
+        Ok(())
+    }
+
+    #[test]
+    fn build_new_produces_typed_node() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let size = b.build_int_const(32, NodeOutputType::U64);
+        let out = b.build_new(&[size], NodeOutputType::U64)?;
+        let node = b.graph().get_node_from_output(out);
+        assert_eq!(b.graph().node_kind(node), &NodeKind::New);
+        Ok(())
+    }
+
+    #[test]
+    fn build_new_is_not_deduplicated() -> Result<()> {
+        let mut b = builder_with_region()?;
+        let size = b.build_int_const(32, NodeOutputType::U64);
+        let a = b.build_new(&[size], NodeOutputType::U64)?;
+        let c = b.build_new(&[size], NodeOutputType::U64)?;
+        assert_ne!(a, c, "each allocation must yield a distinct node");
         Ok(())
     }
 

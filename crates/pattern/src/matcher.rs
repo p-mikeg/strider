@@ -135,11 +135,12 @@ impl Match {
 /// `Matcher::new` pre-indexes all `Call`, `Return`, and `If` nodes in the
 /// graph so that control-level queries can skip the full node list.
 pub struct Matcher<'g> {
-    fn_graph:     &'g BuiltFunctionGraph,
-    call_nodes:   Vec<NodeId>,
-    return_nodes: Vec<NodeId>,
-    if_nodes:     Vec<NodeId>,
-    all_nodes:    Vec<NodeId>,
+    fn_graph:         &'g BuiltFunctionGraph,
+    call_nodes:       Vec<NodeId>,
+    call_other_nodes: Vec<NodeId>,
+    return_nodes:     Vec<NodeId>,
+    if_nodes:         Vec<NodeId>,
+    all_nodes:        Vec<NodeId>,
 }
 
 impl<'g> Matcher<'g> {
@@ -148,22 +149,24 @@ impl<'g> Matcher<'g> {
     /// This does a single preorder traversal over all nodes; subsequent
     /// `find_all` calls pay only the cost of the pattern match itself.
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
-        let mut call_nodes   = Vec::new();
-        let mut return_nodes = Vec::new();
-        let mut if_nodes     = Vec::new();
-        let mut all_nodes    = Vec::new();
+        let mut call_nodes       = Vec::new();
+        let mut call_other_nodes = Vec::new();
+        let mut return_nodes     = Vec::new();
+        let mut if_nodes         = Vec::new();
+        let mut all_nodes        = Vec::new();
 
         for node in fn_graph.preorder() {
             all_nodes.push(node);
             match fn_graph.graph.node_kind(node) {
-                NodeKind::Call    => call_nodes.push(node),
-                NodeKind::Return  => return_nodes.push(node),
-                NodeKind::If      => if_nodes.push(node),
+                NodeKind::Call             => call_nodes.push(node),
+                NodeKind::CallOther { .. } => call_other_nodes.push(node),
+                NodeKind::Return           => return_nodes.push(node),
+                NodeKind::If               => if_nodes.push(node),
                 _ => {}
             }
         }
 
-        Self { fn_graph, call_nodes, return_nodes, if_nodes, all_nodes }
+        Self { fn_graph, call_nodes, call_other_nodes, return_nodes, if_nodes, all_nodes }
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
@@ -174,10 +177,11 @@ impl<'g> Matcher<'g> {
     /// lists and skip the others.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let candidates: &[NodeId] = match pat.inner() {
-            PatKind::Call    { .. } => &self.call_nodes,
-            PatKind::Return  { .. } => &self.return_nodes,
-            PatKind::If      { .. } => &self.if_nodes,
-            _                       => &self.all_nodes,
+            PatKind::Call      { .. } => &self.call_nodes,
+            PatKind::CallOther { .. } => &self.call_other_nodes,
+            PatKind::Return    { .. } => &self.return_nodes,
+            PatKind::If        { .. } => &self.if_nodes,
+            _                         => &self.all_nodes,
         };
 
         candidates.iter().filter_map(|&node| {
@@ -621,7 +625,8 @@ impl<'g> Matcher<'g> {
             }
 
             // Control-level patterns in a data context → no match.
-            PatKind::Call { .. } | PatKind::Return { .. } | PatKind::If { .. }
+            PatKind::Call { .. } | PatKind::CallOther { .. }
+            | PatKind::Return { .. } | PatKind::If { .. }
             | PatKind::Contains(_) => false,
         }
     }
@@ -648,6 +653,28 @@ impl<'g> Matcher<'g> {
 
                 for (idx, arg_pat) in args {
                     let Some(&arg_out) = inputs.get(3 + idx) else { *bindings = snap; return false; };
+                    if !self.match_output(arg_out, arg_pat, bindings) {
+                        *bindings = snap;
+                        return false;
+                    }
+                }
+
+                if let Some(nv) = node_var {
+                    if !bindings.bind_node_var(*nv, node) { *bindings = snap; return false; }
+                }
+                true
+            }
+
+            PatKind::CallOther { user_op_id, args, node_var } => {
+                let NodeKind::CallOther { user_op_id: actual_id } = kind else { return false; };
+                if let Some(id) = user_op_id {
+                    if actual_id != id { return false; }
+                }
+                let snap = bindings.clone();
+
+                for (idx, arg_pat) in args {
+                    // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), …]
+                    let Some(&arg_out) = inputs.get(2 + idx) else { *bindings = snap; return false; };
                     if !self.match_output(arg_out, arg_pat, bindings) {
                         *bindings = snap;
                         return false;

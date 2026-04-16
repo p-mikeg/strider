@@ -2457,3 +2457,67 @@ fn call_arg_matches_stack_arg_after_collection() -> ir::Result<()> {
     assert!(m.find_all(&call().arg(0, int_const(22)).into()).is_empty());
     Ok(())
 }
+
+// ── call_other() pattern ──────────────────────────────────────────────────────
+
+/// Two CallOther sites: op-id 1 with arg 0xAA, op-id 2 with arg 0xBB, then ret.
+fn graph_two_call_others_return() -> ir::Result<ir::BuiltFunctionGraph> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let a1 = b.build_int_const(0xAA, NodeOutputType::U64);
+    b.build_call_other(1, &[a1], None)?;
+    let a2 = b.build_int_const(0xBB, NodeOutputType::U64);
+    b.build_call_other(2, &[a2], None)?;
+    b.build_return(None, &[])?;
+    Ok(b.build())
+}
+
+#[test]
+fn call_other_finds_all_sites() -> ir::Result<()> {
+    let g = graph_two_call_others_return()?;
+    let m = Matcher::new(&g);
+    assert_eq!(m.find_all(&call_other().into()).len(), 2);
+    Ok(())
+}
+
+#[test]
+fn call_other_filters_by_user_op_id() -> ir::Result<()> {
+    let g = graph_two_call_others_return()?;
+    let m = Matcher::new(&g);
+    assert_eq!(m.find_all(&call_other().user_op_id(1).into()).len(), 1);
+    assert_eq!(m.find_all(&call_other().user_op_id(2).into()).len(), 1);
+    assert!(m.find_all(&call_other().user_op_id(99).into()).is_empty());
+    Ok(())
+}
+
+#[test]
+fn call_other_matches_arg() -> ir::Result<()> {
+    let g = graph_two_call_others_return()?;
+    let m = Matcher::new(&g);
+    assert_eq!(
+        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xAA)).into()).len(),
+        1
+    );
+    // Wrong arg value → no match.
+    assert!(
+        m.find_all(&call_other().user_op_id(1).arg(0, int_const(0xBB)).into()).is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn call_other_captures_node_id() -> ir::Result<()> {
+    let g = graph_two_call_others_return()?;
+    let m = Matcher::new(&g);
+    let cv = NodeVar::new();
+    let hits = m.find_all(&call_other().user_op_id(2).capture(cv).into());
+    assert_eq!(hits.len(), 1);
+    let node = hits[0].get_node(cv).expect("NodeVar must bind");
+    assert!(matches!(
+        g.graph.node_kind(node),
+        NodeKind::CallOther { user_op_id: 2 }
+    ));
+    Ok(())
+}

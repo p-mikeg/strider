@@ -62,7 +62,7 @@ pub use var::{Var, NodeVar};
 pub use pat::{
     Pat,
     // Builder types
-    CallPat, RetPat, IfPat, LoadPat, StorePat, StackStorePat, StackStorePhiPat, PhiPat,
+    CallPat, CallOtherPat, RetPat, IfPat, LoadPat, StorePat, StackStorePat, StackStorePhiPat, PhiPat,
     IntBinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat,
     // Free-function constructors
     any, var, int_const, bool_const, any_const, predicate,
@@ -93,7 +93,7 @@ pub use pat::{
     // Entry values
     initial_var, initial_var_for,
     // Control nodes
-    call, ret, if_node,
+    call, call_other, ret, if_node,
     // Region search
     contains,
 };

@@ -446,6 +446,38 @@ pub enum NodeKind {
     /// - Float same type → eliminated (identity)
     /// - Float different size → `FloatToFloat`
     CastToFloat,
+
+    // ── User-defined / opaque opcodes ─────────────────────────────────────────
+    /// User-defined operation (`CallOther` in Sleigh p-code): CPU intrinsics
+    /// such as `cpuid`, `rdtsc`, `syscall`, x87 transcendentals, etc.
+    ///
+    /// Inputs: `[control, memory, arg0, arg1, …]`.
+    /// Outputs: `[Control, Memory]` if the instruction has no output varnode,
+    /// or `[Control, Memory, OutputType]` if it does.  Memory is always
+    /// clobbered — downstream loads must depend on the new memory token.
+    /// Non-cacheable.
+    CallOther { user_op_id: u64 },
+
+    /// Segmented-address lookup (`SegmentOp` in Sleigh p-code).  Resolves a
+    /// (segment, offset) pair to a flat pointer.  Pure computation.
+    ///
+    /// Inputs: `[segment, offset]`.  Outputs: `[OutputType]` (pointer-sized).
+    /// Cacheable.
+    SegmentOp { op_id: u64 },
+
+    /// Java constant-pool reference (`CPoolRef` in Sleigh p-code).  Looks up a
+    /// value in the class's constant pool.  Opaque.
+    ///
+    /// Inputs: `[ref0, ref1, …]`.  Outputs: `[OutputType]`.  Non-cacheable
+    /// because resolution may have observable side effects (class loading).
+    CPoolRef,
+
+    /// Java object allocation (`New` in Sleigh p-code).  Allocates a fresh
+    /// object of the given type.  Opaque.
+    ///
+    /// Inputs: `[size, …]`.  Outputs: `[OutputType]` (pointer-sized).
+    /// Non-cacheable — each allocation yields a distinct object.
+    New,
 }
 
 impl NodeKind {
@@ -478,6 +510,9 @@ impl NodeKind {
                 | Self::ControlPhi(..)
 
                 | Self::Call
+                | Self::CallOther { .. }
+                | Self::CPoolRef
+                | Self::New
                 | Self::StackStorePhi { .. }
         )
     }

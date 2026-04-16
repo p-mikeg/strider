@@ -574,6 +574,87 @@ impl<'a, R: rsleigh::MemReader>IrAnalyzer<'a, R> {
                 self.write_vn(out_vn, int_result)?;
             }
 
+            // ── remaining Sleigh opcodes ──────────────────────────────────────
+
+            // Cast: apply a data-type to the output varnode.  GHIDRA docs:
+            // "semantically equivalent to a COPY operation".
+            Opcode::Cast => {
+                let input = self.read_vn(&insn.inputs[0])?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                self.write_vn(out_vn, input)?;
+            }
+
+            // MultiEqual is a decompiler-internal phi; raw p-code should not
+            // contain it.  Report instead of guessing semantics.
+            Opcode::MultiEqual => {
+                return Err(Error::UnexpectedDecompilerOpcode(insn.opcode));
+            }
+
+            // CallOther: user-defined CPU intrinsic (cpuid, rdtsc, syscall, …).
+            // inputs[0] is a CONST user-op id; remaining inputs are arguments.
+            // Clobbers memory.  The instruction's output varnode, if present,
+            // receives the intrinsic's result value.
+            Opcode::CallOther => {
+                if insn.inputs.is_empty() {
+                    return Err(Error::TooFewInputs(insn.opcode, 1, 0));
+                }
+                let id_vn = &insn.inputs[0];
+                if id_vn.addr.space != rsleigh::VnSpace::CONST {
+                    return Err(Error::ExpectedConstInput(insn.opcode, 0));
+                }
+                let user_op_id = id_vn.addr.off;
+                let args: Vec<ir::Value> = insn.inputs[1..]
+                    .iter()
+                    .map(|vn| self.read_vn(vn))
+                    .collect::<Result<_>>()?;
+                let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
+                    Some(out_vn) => Some(out_vn.size.try_into()?),
+                    None => None,
+                };
+                let result = self.builder.build_call_other(user_op_id, &args, output_ty)?;
+                if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), result) {
+                    self.write_vn(out_vn, val)?;
+                }
+            }
+
+            // SegmentOp: segmented-address lookup.
+            // inputs[0] = CONST op id, inputs[1] = segment, inputs[2] = offset.
+            Opcode::SegmentOp => {
+                if insn.inputs.len() < 3 {
+                    return Err(Error::TooFewInputs(insn.opcode, 3, insn.inputs.len()));
+                }
+                let id_vn = &insn.inputs[0];
+                if id_vn.addr.space != rsleigh::VnSpace::CONST {
+                    return Err(Error::ExpectedConstInput(insn.opcode, 0));
+                }
+                let op_id = id_vn.addr.off;
+                let segment = self.read_vn(&insn.inputs[1])?;
+                let offset  = self.read_vn(&insn.inputs[2])?;
+                let out_vn  = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_segment_op(op_id, segment, offset, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+
+            // CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
+            Opcode::CPoolRef => {
+                let refs: Vec<ir::Value> = insn.inputs.iter()
+                    .map(|vn| self.read_vn(vn))
+                    .collect::<Result<_>>()?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_cpool_ref(&refs, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+
+            // New: JVM object allocation.  Opaque.
+            Opcode::New => {
+                let args: Vec<ir::Value> = insn.inputs.iter()
+                    .map(|vn| self.read_vn(vn))
+                    .collect::<Result<_>>()?;
+                let out_vn = insn.output.as_ref().ok_or(Error::MissingOutputVn(insn.opcode))?;
+                let out = self.builder.build_new(&args, out_vn.size.try_into()?)?;
+                self.write_vn(out_vn, out)?;
+            }
+
             _ => return Err(Error::UnimplementedOpcode(insn.opcode)),
         }
         Ok(())

@@ -39,6 +39,10 @@ fn node_shape(kind: &NodeKind) -> &'static str {
         | NodeKind::StackStorePhi { .. } => "box3d",
 
         NodeKind::Call                  => "rarrow",
+        NodeKind::CallOther { .. }      => "doubleoctagon",
+        NodeKind::SegmentOp { .. }      => "parallelogram",
+        NodeKind::CPoolRef              => "folder",
+        NodeKind::New                   => "component",
 
         NodeKind::PostCallMemState
         | NodeKind::PostCallVarState(_) => "invtriangle",
@@ -75,6 +79,10 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
         | NodeKind::StackStorePhi { .. } => "\"#20182a\"",   // stack-slot purple
 
         NodeKind::Call                  => "\"#3a1010\"",
+        NodeKind::CallOther { .. }      => "\"#3a2810\"",   // amber — opaque intrinsic
+        NodeKind::SegmentOp { .. }      => "\"#10283a\"",   // teal — address computation
+        NodeKind::CPoolRef              => "\"#2a1a3a\"",   // violet — JVM metadata
+        NodeKind::New                   => "\"#103a2a\"",   // dark green — allocation
 
         NodeKind::PostCallMemState
         | NodeKind::PostCallVarState(_) => "\"#28102a\"",
@@ -190,6 +198,23 @@ fn edge_style<R: MemReader>(
             2 => ("target", "\"#ffdd44\""),  // yellow
             _ => ("arg",    "\"#ff8800\""),  // orange
         },
+
+        // CallOther inputs = [ctrl, memory, arg0, arg1, …]
+        NodeKind::CallOther { .. } => match input_idx {
+            0 => ("ctrl", "\"#00cccc\""),
+            1 => ("mem",  "\"#cc88aa\""),
+            _ => ("arg",  "\"#ff8800\""),
+        },
+
+        // SegmentOp inputs = [segment, offset]
+        NodeKind::SegmentOp { .. } => match input_idx {
+            0 => ("seg", "\"#ffdd44\""),   // yellow — segment selector
+            1 => ("off", "\"#cc88ff\""),   // purple — offset
+            _ => ("",    "\"#cccccc\""),
+        },
+
+        // CPoolRef / New inputs are opaque references; label them by index.
+        NodeKind::CPoolRef | NodeKind::New => ("ref", "\"#ff8800\""),
 
         NodeKind::If => match input_idx {
             0 => ("ctrl", "\"#00cccc\""),
@@ -490,6 +515,32 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 format!("CastToFloat\n{from} \u{2192} {to}")
             }
 
+            // ── user-defined / opaque opcodes ────────────────────────────────
+            NodeKind::CallOther { user_op_id } => {
+                let ty = self.out_type(node)
+                    .map(|t| format!("\n→ {}", t.as_str()))
+                    .unwrap_or_default();
+                format!("CallOther #{user_op_id}{ty}")
+            }
+            NodeKind::SegmentOp { op_id } => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("SegmentOp #{op_id}{ty}")
+            }
+            NodeKind::CPoolRef => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("CPoolRef{ty}")
+            }
+            NodeKind::New => {
+                let ty = self.out_type(node)
+                    .map(|t| format!(":{}", t.as_str()))
+                    .unwrap_or_default();
+                format!("New{ty}")
+            }
+
             // ── everything else ───────────────────────────────────────────────
             _ => format!("{kind:?}"),
         };
@@ -708,10 +759,15 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
             let (label, color) = edge_style(self, node, idx, parent_output);
 
             // Numbered Call arg labels: inputs[0..2] are ctrl/mem/target,
-            // so arg N lives at inputs[3 + N].
+            // so arg N lives at inputs[3 + N].  CallOther has no target, so
+            // args start at inputs[2].  CPoolRef / New inputs are all "ref N".
             let owned_label: Option<String> =
                 if matches!(kind, NodeKind::Call) && idx >= 3 {
                     Some(format!("arg{}", idx - 3))
+                } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
+                    Some(format!("arg{}", idx - 2))
+                } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
+                    Some(format!("ref{idx}"))
                 } else {
                     None
                 };

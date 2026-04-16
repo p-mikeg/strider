@@ -49,6 +49,15 @@ pub enum Error {
 
     #[error("stack pointer register {0:?} must be listed in callee_saved_regs")]
     StackPtrNotCalleeSaved(&'static str),
+
+    #[error("opcode {0:?} expects a CONST input at position {1}")]
+    ExpectedConstInput(rsleigh::Opcode, usize),
+
+    #[error("opcode {0:?} is decompiler-internal and should not appear in raw p-code")]
+    UnexpectedDecompilerOpcode(rsleigh::Opcode),
+
+    #[error("opcode {0:?} has too few inputs: expected at least {1}, got {2}")]
+    TooFewInputs(rsleigh::Opcode, usize, usize),
 }
 
 /// the result type using our error.

@@ -197,6 +197,13 @@ pub enum PatKind {
         args:     Vec<(usize, Pat)>,
         node_var: Option<NodeVar>,
     },
+    /// `CallOther`: inputs = [ctrl(0), mem(1), arg0(2), arg1(3)…].
+    /// `user_op_id = None` matches any user-op id.
+    CallOther {
+        user_op_id: Option<u64>,
+        args:       Vec<(usize, Pat)>,
+        node_var:   Option<NodeVar>,
+    },
     /// `Return`: inputs = [ctrl(0), mem(1), retval0(2)…]
     Return {
         preceded_by: Option<Pat>,
@@ -620,6 +627,43 @@ impl From<CallPat> for Pat {
     }
 }
 
+// ── Builder: CallOtherPat ─────────────────────────────────────────────────────
+
+/// Builder for `CallOther` node patterns.  Created by [`call_other`].
+pub struct CallOtherPat {
+    user_op_id: Option<u64>,
+    args:       Vec<(usize, Pat)>,
+    node_var:   Option<NodeVar>,
+}
+
+impl CallOtherPat {
+    pub(crate) fn new() -> Self { Self { user_op_id: None, args: Vec::new(), node_var: None } }
+
+    /// Constrain the matched node to a specific user-op id.
+    pub fn user_op_id(mut self, id: u64) -> Self { self.user_op_id = Some(id); self }
+    /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
+    pub fn arg(mut self, idx: usize, p: impl Into<Pat>) -> Self { self.args.push((idx, p.into())); self }
+    /// Bind the matched `CallOther` node to `nv`.
+    pub fn capture(mut self, nv: NodeVar) -> Self { self.node_var = Some(nv); self }
+    /// After matching, additionally run `f` — fails if it returns `false`.
+    pub fn when<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    {
+        Pat::from(self).when(f)
+    }
+}
+
+impl From<CallOtherPat> for Pat {
+    fn from(b: CallOtherPat) -> Pat {
+        Pat::new(PatKind::CallOther {
+            user_op_id: b.user_op_id,
+            args:       b.args,
+            node_var:   b.node_var,
+        })
+    }
+}
+
 // ── Builder: RetPat ───────────────────────────────────────────────────────────
 
 /// Builder for `Return` node patterns.  Created by [`ret`].
@@ -965,6 +1009,9 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat { Pat::new(PatKind::InitialVar { 
 /// Starts building a `Call` pattern.  Chain `.at()`, `.arg()`, `.target()` to
 /// add constraints.
 pub fn call() -> CallPat    { CallPat::new() }
+/// Starts building a `CallOther` (user-defined op) pattern.  Chain
+/// `.user_op_id()`, `.arg()`, `.capture()` to add constraints.
+pub fn call_other() -> CallOtherPat { CallOtherPat::new() }
 /// Starts building a `Return` pattern.  Chain `.preceded_by()` / `.ret_val()`
 /// to add constraints.
 pub fn ret() -> RetPat      { RetPat::new() }
