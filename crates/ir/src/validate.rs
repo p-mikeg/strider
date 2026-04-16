@@ -30,6 +30,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_c_control_state(graph, &mut errs);
 
+    check_layer_c_phis(graph, &mut errs);
+
     let _ = entry;
 
     if errs.is_empty() {
@@ -225,6 +227,59 @@ fn check_layer_c_control_state(graph: &Graph, errs: &mut Vec<ValidationError>) {
     }
 }
 
+/// Layer C: every phi node (`ControlPhi`, `MemPhi`, `StackStorePhi`) must take
+/// its dispatch token (input[0]) from a `ControlState`'s `ControlPhi` output,
+/// and the number of value inputs must match the owning `ControlState`'s
+/// predecessor count.
+fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
+    for node in graph.nodes.keys() {
+        let is_phi = matches!(
+            graph.node_kind(node),
+            NodeKind::ControlPhi(_) | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
+        );
+        if !is_phi {
+            continue;
+        }
+
+        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
+        if inputs.is_empty() {
+            continue; // Layer A already flagged this.
+        }
+        let token = inputs[0];
+        let token_kind = graph.output_kind(token);
+        if token_kind != NodeOutputKind::ControlPhi {
+            let (producer, _) = graph.output_definition(token);
+            errs.push(ValidationError::PhiTokenNotFromControlState {
+                phi: node,
+                producer,
+                producer_kind: token_kind,
+            });
+            continue;
+        }
+
+        let (owner, _idx) = graph.output_definition(token);
+        if !matches!(graph.node_kind(owner), NodeKind::ControlState) {
+            errs.push(ValidationError::PhiTokenNotFromControlState {
+                phi: node,
+                producer: owner,
+                producer_kind: token_kind,
+            });
+            continue;
+        }
+
+        let expected_preds = graph.node_inputs(owner).into_iter().count();
+        let actual_values = inputs.len() - 1;
+        if expected_preds != actual_values {
+            errs.push(ValidationError::PhiValueArityMismatch {
+                phi: node,
+                owner_control_state: owner,
+                expected_predecessors: expected_preds,
+                actual_values,
+            });
+        }
+    }
+}
+
 /// Returns whether an actual [`NodeOutputKind`] satisfies the
 /// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
 ///
@@ -328,6 +383,27 @@ pub enum ValidationError {
         producer: NodeId,
         producer_kind: NodeOutputKind,
     },
+
+    #[error(
+        "phi node {phi:?} input[0] token producer {producer:?} has kind \
+         {producer_kind:?}; expected ControlPhi from a ControlState"
+    )]
+    PhiTokenNotFromControlState {
+        phi: NodeId,
+        producer: NodeId,
+        producer_kind: NodeOutputKind,
+    },
+
+    #[error(
+        "phi {phi:?} has {actual_values} value inputs but its ControlState \
+         owner {owner_control_state:?} has {expected_predecessors} predecessors"
+    )]
+    PhiValueArityMismatch {
+        phi: NodeId,
+        owner_control_state: NodeId,
+        expected_predecessors: usize,
+        actual_values: usize,
+    },
 }
 
 impl std::fmt::Debug for ValidationErrors {
@@ -350,7 +426,7 @@ impl std::error::Error for ValidationErrors {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{NodeKind, NodeOutputKind};
+    use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
     #[test]
     fn empty_graph_with_entry_only() {
@@ -550,6 +626,74 @@ mod tests {
         assert!(errs.0.iter().any(|e| matches!(
             e,
             ValidationError::ControlStateNonControlPredecessor { input_idx: 0, .. }
+        )), "got: {errs:?}");
+    }
+
+    fn test_vn() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x20,
+            },
+            size: 4,
+        }
+    }
+
+    #[test]
+    fn layer_c_phi_token_from_wrong_node() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [entry_out],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let cs_control_out = graph.node_outputs(cs).into_iter().next().unwrap(); // index 0 = Control
+        let vn = test_vn();
+        let _phi = graph.create_node(
+            NodeKind::ControlPhi(vn),
+            [cs_control_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiTokenNotFromControlState { .. }
+        )), "got: {errs:?}");
+    }
+
+    #[test]
+    fn layer_c_phi_value_arity_mismatch() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+
+        let cs = graph.create_node(
+            NodeKind::ControlState,
+            [entry_out],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+
+        let c1 = graph.create_node(NodeKind::IntConst(1), [], [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c2 = graph.create_node(NodeKind::IntConst(2), [], [NodeOutputKind::OutputType(NodeOutputType::U64)]);
+        let c1_out = graph.node_outputs(c1).into_iter().next().unwrap();
+        let c2_out = graph.node_outputs(c2).into_iter().next().unwrap();
+        let vn = test_vn();
+        let _phi = graph.create_node(
+            NodeKind::ControlPhi(vn),
+            [cs_phi_out, c1_out, c2_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+
+        let errs = validate(&graph, entry).unwrap_err();
+        assert!(errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2, .. }
         )), "got: {errs:?}");
     }
 
