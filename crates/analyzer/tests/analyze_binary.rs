@@ -70,7 +70,8 @@ macro_rules! analyzer_arch_tests {
                     .build();
                 let cfg = cfg::Builder::new(sleigh, addr, cfg_opts).build()?;
 
-                let graph = ana.analyze_cfg(&cfg)?;
+                let mut graph = ana.analyze_cfg(&cfg)?;
+                ana.build_optimizer_pipeline().run(&mut graph)?;
 
                 Ok(graph.preorder().count())
             }
