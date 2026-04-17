@@ -43,48 +43,43 @@ pub enum NodeOutputType {
     F64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NodeOutputTypeCategory {
+    Bool,
+    Int,
+    Float,
+}
+
+struct TypeInfo {
+    name: &'static str,
+    byte_size: u8,
+    category: NodeOutputTypeCategory,
+}
+
+// Order MUST match the `NodeOutputType` enum declaration order
+// (asserted by `type_info_table_matches_variants`).
+const TYPE_INFO: &[TypeInfo] = &[
+    TypeInfo { name: "bool", byte_size: 1,  category: NodeOutputTypeCategory::Bool  },
+    TypeInfo { name: "u8",   byte_size: 1,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u16",  byte_size: 2,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u32",  byte_size: 4,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u64",  byte_size: 8,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u128", byte_size: 16, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u256", byte_size: 32, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "f32",  byte_size: 4,  category: NodeOutputTypeCategory::Float },
+    TypeInfo { name: "f64",  byte_size: 8,  category: NodeOutputTypeCategory::Float },
+];
+
 impl NodeOutputType {
-    /// Returns `true` if this type is one of the unsigned integer variants
-    /// (U8, U16, U32, U64, U128, U256).
     #[inline]
-    pub fn is_integer(self) -> bool {
-        matches!(
-            self,
-            NodeOutputType::U8
-                | NodeOutputType::U16
-                | NodeOutputType::U32
-                | NodeOutputType::U64
-                | NodeOutputType::U128
-                | NodeOutputType::U256
-        )
-    }
-
-    /// Returns `true` if this type is `Bool`.
-    #[inline]
-    pub fn is_bool(self) -> bool {
-        matches!(self, NodeOutputType::Bool)
-    }
-
-    /// Returns `true` if this type is `F32` or `F64`.
-    #[inline]
-    pub fn is_float(self) -> bool {
-        matches!(self, NodeOutputType::F32 | NodeOutputType::F64)
+    fn info(self) -> &'static TypeInfo {
+        &TYPE_INFO[self as usize]
     }
 
     /// Returns the canonical name of this type as a static string.
     #[inline]
     pub fn as_str(self) -> &'static str {
-        match self {
-            NodeOutputType::Bool => "bool",
-            NodeOutputType::U8 => "u8",
-            NodeOutputType::U16 => "u16",
-            NodeOutputType::U32 => "u32",
-            NodeOutputType::U64 => "u64",
-            NodeOutputType::U128 => "u128",
-            NodeOutputType::U256 => "u256",
-            NodeOutputType::F32 => "f32",
-            NodeOutputType::F64 => "f64",
-        }
+        self.info().name
     }
 
     /// Returns the size of this type **in bytes**.
@@ -92,23 +87,32 @@ impl NodeOutputType {
     /// Both `Bool` and `U8` return 1.
     #[inline]
     pub fn byte_size(self) -> usize {
-        match self {
-            NodeOutputType::Bool => 1,
-            NodeOutputType::U8 => 1,
-            NodeOutputType::U16 => 2,
-            NodeOutputType::U32 => 4,
-            NodeOutputType::U64 => 8,
-            NodeOutputType::U128 => 16,
-            NodeOutputType::U256 => 32,
-            NodeOutputType::F32 => 4,
-            NodeOutputType::F64 => 8,
-        }
+        self.info().byte_size as usize
     }
 
     /// Returns the width of this type **in bits** (`byte_size * 8`).
     #[inline]
     pub fn bit_width(self) -> usize {
         self.byte_size() * 8
+    }
+
+    /// Returns `true` if this type is `Bool`.
+    #[inline]
+    pub fn is_bool(self) -> bool {
+        matches!(self.info().category, NodeOutputTypeCategory::Bool)
+    }
+
+    /// Returns `true` if this type is one of the unsigned integer variants
+    /// (U8, U16, U32, U64, U128, U256).
+    #[inline]
+    pub fn is_integer(self) -> bool {
+        matches!(self.info().category, NodeOutputTypeCategory::Int)
+    }
+
+    /// Returns `true` if this type is `F32` or `F64`.
+    #[inline]
+    pub fn is_float(self) -> bool {
+        matches!(self.info().category, NodeOutputTypeCategory::Float)
     }
 
     /// Returns the unsigned integer type with the same byte size.
@@ -915,5 +919,30 @@ mod tests {
         assert!(!NodeKind::Entry.is_phi());
         assert!(!NodeKind::InitialMemory.is_phi());
         assert!(!NodeKind::IntConst(0).is_phi());
+    }
+
+    #[test]
+    fn type_info_table_matches_variants() {
+        // Table indices must match discriminant order. Enumerate every variant
+        // explicitly and check `info().name` / category.
+        let cases: &[(NodeOutputType, &str, usize, bool, bool, bool)] = &[
+            (NodeOutputType::Bool, "bool", 1, false, true, false),
+            (NodeOutputType::U8,   "u8",   1, true,  false, false),
+            (NodeOutputType::U16,  "u16",  2, true,  false, false),
+            (NodeOutputType::U32,  "u32",  4, true,  false, false),
+            (NodeOutputType::U64,  "u64",  8, true,  false, false),
+            (NodeOutputType::U128, "u128", 16, true, false, false),
+            (NodeOutputType::U256, "u256", 32, true, false, false),
+            (NodeOutputType::F32,  "f32",  4, false, false, true),
+            (NodeOutputType::F64,  "f64",  8, false, false, true),
+        ];
+        for (ty, name, size, is_int, is_bool, is_float) in cases {
+            assert_eq!(ty.as_str(), *name);
+            assert_eq!(ty.byte_size(), *size);
+            assert_eq!(ty.bit_width(), *size * 8);
+            assert_eq!(ty.is_integer(), *is_int);
+            assert_eq!(ty.is_bool(), *is_bool);
+            assert_eq!(ty.is_float(), *is_float);
+        }
     }
 }
