@@ -96,6 +96,15 @@ impl NodeOutputType {
         self.byte_size() * 8
     }
 
+    /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
+    ///
+    /// Returns `true` for `Bool`, `U8`, `U16`, `U32`, `U64`, `F32`, and `F64`.
+    /// Returns `false` for `U128` and `U256`.
+    #[inline]
+    pub fn fits_u64(self) -> bool {
+        self.byte_size() <= 8
+    }
+
     /// Returns `true` if this type is `Bool`.
     #[inline]
     pub fn is_bool(self) -> bool {

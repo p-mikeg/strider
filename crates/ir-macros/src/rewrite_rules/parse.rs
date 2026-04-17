@@ -3,7 +3,7 @@
 /// Grammar subset:
 /// ```text
 /// Rules    := Rule (',' Rule)* ','?
-/// Rule     := LhsPat '=>' RhsExpr
+/// Rule     := LhsPat ('where' Expr)? '=>' RhsExpr
 /// LhsPat   := '(' LhsPat BinOpSym LhsPat ')'
 ///           | 'Extend' '::' '<' ExtendKind '>' '(' LhsPat ')'
 ///           | 'IntConst' '(' IntConstPat ')'
@@ -54,15 +54,26 @@ impl Parse for Rules {
 
 pub(super) struct Rule {
     pub lhs: LhsPat,
+    /// Optional `where <Expr>` guard; evaluated after LHS captures are bound.
+    pub where_guard: Option<Expr>,
     pub rhs: RhsExpr,
 }
 
 impl Parse for Rule {
     fn parse(input: ParseStream) -> Result<Self> {
         let lhs = input.parse::<LhsPat>()?;
+        // Optional `where <Expr>` clause before `=>`.
+        let where_guard = if input.peek(Token![where]) {
+            input.parse::<Token![where]>()?;
+            // Parse until `=>` — use `Expr::parse` which stops before `=>`.
+            let guard: Expr = input.parse()?;
+            Some(guard)
+        } else {
+            None
+        };
         input.parse::<Token![=>]>()?;
         let rhs = input.parse::<RhsExpr>()?;
-        Ok(Rule { lhs, rhs })
+        Ok(Rule { lhs, where_guard, rhs })
     }
 }
 
@@ -75,7 +86,7 @@ impl Rule {
         // plain `let` binding in scope; on failure the emitted code diverges
         // via `return Ok(NoChange);`.
         let mut ctx = EmitCtx::new();
-        let lhs_check = self.lhs.emit_check(&caps, &mut ctx)?;
+        let lhs_check = self.lhs.emit_check(&caps, &mut ctx, self.where_guard.as_ref())?;
         // Emit RHS expression (uses captures as live bindings).
         let rhs_ts = self.rhs.emit(&caps)?;
 
@@ -578,10 +589,29 @@ impl LhsPat {
     /// On mismatch, the emitted code diverges via `return Ok(NoChange);`.
     /// On match, all captures in `caps` are bound as live `let` bindings in
     /// the surrounding scope, and control falls through to the RHS.
-    pub fn emit_check(&self, _caps: &CaptureEnv, ctx: &mut EmitCtx) -> Result<TokenStream> {
+    ///
+    /// `guard` is an optional `where <Expr>` guard evaluated after captures are
+    /// bound. For commutative patterns a failed guard `continue`s to try the
+    /// other ordering; for non-commutative / leaf patterns it returns `NoChange`.
+    pub fn emit_check(
+        &self,
+        _caps: &CaptureEnv,
+        ctx: &mut EmitCtx,
+        guard: Option<&Expr>,
+    ) -> Result<TokenStream> {
         let no_change = quote! {
             return ::core::result::Result::Ok(opt::OptimizationResult::NoChange);
         };
+
+        // Helper: emit the guard check that diverges with `fail_ts` on failure.
+        // Returns an empty stream when there is no guard.
+        let guard_check = |fail_ts: &TokenStream| -> TokenStream {
+            match guard {
+                None => quote! {},
+                Some(g) => quote! { if !(#g) { #fail_ts } },
+            }
+        };
+
         match self {
             LhsPat::IntBinaryOp { op, lhs, rhs } if op.is_commutative() => {
                 let variant = op.variant_ident();
@@ -597,6 +627,7 @@ impl LhsPat {
 
                 let lhs_body = lhs.emit_sub(&quote! { __ord_l }, &quote! { continue; }, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __ord_r }, &quote! { continue; }, ctx)?;
+                let guard_ts = guard_check(&quote! { continue; });
 
                 Ok(quote! {
                     {
@@ -614,6 +645,7 @@ impl LhsPat {
                         for (__ord_l, __ord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
                             #lhs_body
                             #rhs_body
+                            #guard_ts
                             break #label #cap_tuple;
                         }
                         // No ordering matched: fall through to fail.
@@ -626,6 +658,7 @@ impl LhsPat {
                 let variant = op.variant_ident();
                 let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                let guard_ts = guard_check(&no_change);
                 Ok(quote! {
                     {
                         use ir::node::NodeKind;
@@ -640,6 +673,7 @@ impl LhsPat {
                     };
                     #lhs_body
                     #rhs_body
+                    #guard_ts
                 })
             }
 
@@ -656,6 +690,7 @@ impl LhsPat {
 
                 let lhs_body = lhs.emit_sub(&quote! { __bord_l }, &quote! { continue; }, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __bord_r }, &quote! { continue; }, ctx)?;
+                let guard_ts = guard_check(&quote! { continue; });
 
                 Ok(quote! {
                     {
@@ -673,6 +708,7 @@ impl LhsPat {
                         for (__bord_l, __bord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
                             #lhs_body
                             #rhs_body
+                            #guard_ts
                             break #label #cap_tuple;
                         }
                         #no_change
@@ -692,6 +728,7 @@ impl LhsPat {
 
                 let lhs_body = lhs.emit_sub(&quote! { __ford_l }, &quote! { continue; }, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __ford_r }, &quote! { continue; }, ctx)?;
+                let guard_ts = guard_check(&quote! { continue; });
 
                 Ok(quote! {
                     {
@@ -709,6 +746,7 @@ impl LhsPat {
                         for (__ford_l, __ford_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
                             #lhs_body
                             #rhs_body
+                            #guard_ts
                             break #label #cap_tuple;
                         }
                         #no_change
@@ -720,6 +758,7 @@ impl LhsPat {
                 let variant = op.variant_ident();
                 let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                let guard_ts = guard_check(&no_change);
                 Ok(quote! {
                     {
                         use ir::node::NodeKind;
@@ -734,6 +773,7 @@ impl LhsPat {
                     };
                     #lhs_body
                     #rhs_body
+                    #guard_ts
                 })
             }
 
@@ -749,6 +789,7 @@ impl LhsPat {
 
                 let lhs_body = lhs.emit_sub(&quote! { __fcord_l }, &quote! { continue; }, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __fcord_r }, &quote! { continue; }, ctx)?;
+                let guard_ts = guard_check(&quote! { continue; });
 
                 Ok(quote! {
                     {
@@ -766,6 +807,7 @@ impl LhsPat {
                         for (__fcord_l, __fcord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
                             #lhs_body
                             #rhs_body
+                            #guard_ts
                             break #label #cap_tuple;
                         }
                         #no_change
@@ -777,6 +819,7 @@ impl LhsPat {
                 let variant = op.variant_ident();
                 let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                let guard_ts = guard_check(&no_change);
                 Ok(quote! {
                     {
                         use ir::node::NodeKind;
@@ -791,6 +834,7 @@ impl LhsPat {
                     };
                     #lhs_body
                     #rhs_body
+                    #guard_ts
                 })
             }
 
@@ -806,6 +850,7 @@ impl LhsPat {
 
                 let lhs_body = lhs.emit_sub(&quote! { __icord_l }, &quote! { continue; }, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __icord_r }, &quote! { continue; }, ctx)?;
+                let guard_ts = guard_check(&quote! { continue; });
 
                 Ok(quote! {
                     {
@@ -823,6 +868,7 @@ impl LhsPat {
                         for (__icord_l, __icord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
                             #lhs_body
                             #rhs_body
+                            #guard_ts
                             break #label #cap_tuple;
                         }
                         #no_change
@@ -834,6 +880,7 @@ impl LhsPat {
                 let variant = op.variant_ident();
                 let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
                 let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                let guard_ts = guard_check(&no_change);
                 Ok(quote! {
                     {
                         use ir::node::NodeKind;
@@ -848,12 +895,14 @@ impl LhsPat {
                     };
                     #lhs_body
                     #rhs_body
+                    #guard_ts
                 })
             }
 
             LhsPat::ExtendOp { kind, inner } => {
                 let variant = kind.variant_ident();
                 let inner_body = inner.emit_sub(&quote! { __ext_inner }, &no_change, ctx)?;
+                let guard_ts = guard_check(&no_change);
                 Ok(quote! {
                     {
                         use ir::node::NodeKind;
@@ -867,16 +916,19 @@ impl LhsPat {
                         Err(_) => { #no_change }
                     };
                     #inner_body
+                    #guard_ts
                 })
             }
 
             other => {
                 // Simple root pattern: get the node's output and delegate.
+                let guard_ts = guard_check(&no_change);
                 let no_change_ref = &no_change;
                 let sub = other.emit_sub(&quote! { __root_val }, no_change_ref, ctx)?;
                 Ok(quote! {
                     let __root_val = fg.graph.node_outputs(node)[0];
                     #sub
+                    #guard_ts
                 })
             }
         }
@@ -1323,6 +1375,16 @@ fn parse_rhs_val(input: ParseStream) -> Result<RhsValExpr> {
         input.parse::<Token![&]>()?;
         let rhs = parse_rhs_val_atom(input)?;
         return Ok(RhsValExpr::BinOp { op: IntBinOpKind::And, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+    }
+    if input.peek(Token![+]) {
+        input.parse::<Token![+]>()?;
+        let rhs = parse_rhs_val_atom(input)?;
+        return Ok(RhsValExpr::BinOp { op: IntBinOpKind::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+    }
+    if input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        let rhs = parse_rhs_val_atom(input)?;
+        return Ok(RhsValExpr::BinOp { op: IntBinOpKind::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) });
     }
     Ok(lhs)
 }
