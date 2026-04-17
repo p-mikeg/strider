@@ -2,7 +2,6 @@ use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
 
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{int_const_val, make_int_const, replace_all_uses};
 
 // ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
 
@@ -48,7 +47,7 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
                 continue;
             }
             let addr_input = inputs[1];
-            let Some(addr) = int_const_val(function, addr_input) else {
+            let Some(addr) = function.int_const_val(addr_input) else {
                 continue;
             };
 
@@ -66,8 +65,8 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
             let Some(masked) = ty.get_unsigned_int(loaded) else {
                 continue;
             };
-            let new_out = make_int_const(function, masked, ty)?;
-            result |= replace_all_uses(function, data_out, new_out)?;
+            let new_out = function.make_int_const(masked, ty)?;
+            result |= OptimizationResult::from_changed(function.replace_all_uses(data_out, new_out)?);
         }
         Ok(result)
     }

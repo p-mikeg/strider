@@ -12,7 +12,6 @@ use ir::{BuiltFunctionGraph, IntBinaryOp};
 
 use crate::error::Result;
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{int_const_val, replace_all_uses};
 
 /// Decomposed stack-pointer expression.
 ///
@@ -48,7 +47,7 @@ impl SpExpr {
 /// constant.  SP arithmetic happens modulo `2^width`, so a constant like
 /// `0xFFFFFFF8` in a U32 slot represents `-8`, not `4294967288`.
 fn int_const_signed(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
-    let c = int_const_val(fg, out)?;
+    let c = fg.int_const_val(out)?;
     let ty = fg.graph.output_kind(out).as_value()?;
     let bits = ty.bit_width() as u32;
     if bits == 0 || bits > 64 {
@@ -230,7 +229,7 @@ fn try_detect_stack_store(
         }
     };
 
-    let replaced = replace_all_uses(fg, old_mem_out, new_mem_out)?;
+    fg.replace_all_uses(old_mem_out, new_mem_out)?;
     // Whether or not the memory output had consumers, the rewrite replaced
     // the node structurally — severing the original Store's inputs keeps the
     // graph tidy (and prevents a future pass from seeing it again).
@@ -238,7 +237,6 @@ fn try_detect_stack_store(
     // Even if `replace_all_uses` found no consumers, the store was still
     // rewritten structurally (the new node exists, the old one is detached),
     // so report the change.
-    let _ = replaced;
     Ok(OptimizationResult::Changed)
 }
 
