@@ -7,10 +7,6 @@ use ir_macros::match_value;
 
 use crate::error::{ErrorKind, Result};
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{
-    bool_const_val, float_const_val, int_const_val, make_bool_const, make_float_const,
-    make_float_to_float_node, make_int_bits_to_float_node, make_int_const, replace_all_uses,
-};
 
 // ── integer constant evaluation ───────────────────────────────────────────────
 
@@ -149,16 +145,16 @@ fn extract_const_offset(
     let (l, r) = (inputs[0], inputs[1]);
     match kind {
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            if let Some(c) = int_const_val(fg, r) {
+            if let Some(c) = fg.int_const_val( r) {
                 return Some((l, c));
             }
-            if let Some(c) = int_const_val(fg, l) {
+            if let Some(c) = fg.int_const_val( l) {
                 return Some((r, c));
             }
             None
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            let c = int_const_val(fg, r)?;
+            let c = fg.int_const_val( r)?;
             let neg = 0u64.wrapping_sub(c);
             ty.get_unsigned_int(neg).map(|n| (l, n))
         }
@@ -190,14 +186,14 @@ fn try_reassociate_add_sub(
     let masked = ty
         .get_unsigned_int(merged)
         .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
-    let merged_c = make_int_const(fg, masked, ty)?;
+    let merged_c = fg.make_int_const( masked, ty)?;
     let new_node = fg.graph.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [base, merged_c],
         [NodeOutputKind::OutputType(ty)],
     );
     let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-    replace_all_uses(fg, out, new_out)
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -213,8 +209,8 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
-    let lhs_c = int_const_val(fg, lhs);
-    let rhs_c = int_const_val(fg, rhs);
+    let lhs_c = fg.int_const_val( lhs);
+    let rhs_c = fg.int_const_val( rhs);
     // Types wider than U64 (U128/U256) aren't representable in the 64-bit
     // IntConst slot — skip algebraic-identity folding for them.
     let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
@@ -225,18 +221,18 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     if let (Some(l), Some(r)) = (lhs_c, rhs_c)
         && let Some(folded) = eval_int_binary(op, l, r, ty)
     {
-        let new_out = make_int_const(fg, folded, ty)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_int_const( folded, ty)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
 
     // Algebraic identities and absorbing elements.
     match op {
         IntBinaryOp::Add => {
             if rhs_c == Some(0) {
-                return replace_all_uses(fg, out, lhs); // x + 0 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x + 0 → x
             }
             if lhs_c == Some(0) {
-                return replace_all_uses(fg, out, rhs); // 0 + x → x
+                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 + x → x
             }
             // (base ± C1) + C2 → base + K
             if let Some(c2) = rhs_c {
@@ -254,11 +250,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         }
         IntBinaryOp::Sub => {
             if rhs_c == Some(0) {
-                return replace_all_uses(fg, out, lhs); // x - 0 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x - 0 → x
             }
             if lhs == rhs {
-                let zero = make_int_const(fg, 0, ty)?;
-                return replace_all_uses(fg, out, zero); // x - x → 0
+                let zero = fg.make_int_const( 0, ty)?;
+                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x - x → 0
             }
             // (base ± C1) - C2 → base + K
             if let Some(c2) = rhs_c {
@@ -270,32 +266,32 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         }
         IntBinaryOp::Mul => {
             if lhs_c == Some(0) || rhs_c == Some(0) {
-                let zero = make_int_const(fg, 0, ty)?;
-                return replace_all_uses(fg, out, zero); // x * 0 → 0
+                let zero = fg.make_int_const( 0, ty)?;
+                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x * 0 → 0
             }
             if lhs_c == Some(1) {
-                return replace_all_uses(fg, out, rhs); // 1 * x → x
+                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 1 * x → x
             }
             if rhs_c == Some(1) {
-                return replace_all_uses(fg, out, lhs); // x * 1 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x * 1 → x
             }
         }
         IntBinaryOp::And => {
             // Absorbing: x & 0 → 0
             if lhs_c == Some(0) || rhs_c == Some(0) {
-                let zero = make_int_const(fg, 0, ty)?;
-                return replace_all_uses(fg, out, zero);
+                let zero = fg.make_int_const( 0, ty)?;
+                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
             // Identity: x & all_ones → x
             if lhs_c == Some(all_ones) {
-                return replace_all_uses(fg, out, rhs);
+                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
             if rhs_c == Some(all_ones) {
-                return replace_all_uses(fg, out, lhs);
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
             // Idempotent: x & x → x
             if lhs == rhs {
-                return replace_all_uses(fg, out, lhs);
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
             // (a & C1) & C2 → a & (C1 & C2)
             if let Some(c2) = rhs_c {
@@ -304,25 +300,25 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                     if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
                         = graph, lhs
                     {
-                        if let Some(c1) = int_const_val(fg, inner_rhs) {
-                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                        if let Some(c1) = fg.int_const_val( inner_rhs) {
+                            let merged = fg.make_int_const( c1 & c2, ty)?;
                             let new_node = fg.graph.create_node(
                                 NodeKind::IntBinaryOp(IntBinaryOp::And),
                                 [inner_lhs, merged],
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return replace_all_uses(fg, out, new_out);
+                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                         }
-                        if let Some(c1) = int_const_val(fg, inner_lhs) {
-                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                        if let Some(c1) = fg.int_const_val( inner_lhs) {
+                            let merged = fg.make_int_const( c1 & c2, ty)?;
                             let new_node = fg.graph.create_node(
                                 NodeKind::IntBinaryOp(IntBinaryOp::And),
                                 [inner_rhs, merged],
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return replace_all_uses(fg, out, new_out);
+                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                         }
                     }
                 }
@@ -334,25 +330,25 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                     if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
                         = graph, rhs
                     {
-                        if let Some(c2) = int_const_val(fg, inner_rhs) {
-                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                        if let Some(c2) = fg.int_const_val( inner_rhs) {
+                            let merged = fg.make_int_const( c1 & c2, ty)?;
                             let new_node = fg.graph.create_node(
                                 NodeKind::IntBinaryOp(IntBinaryOp::And),
                                 [inner_lhs, merged],
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return replace_all_uses(fg, out, new_out);
+                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                         }
-                        if let Some(c2) = int_const_val(fg, inner_lhs) {
-                            let merged = make_int_const(fg, c1 & c2, ty)?;
+                        if let Some(c2) = fg.int_const_val( inner_lhs) {
+                            let merged = fg.make_int_const( c1 & c2, ty)?;
                             let new_node = fg.graph.create_node(
                                 NodeKind::IntBinaryOp(IntBinaryOp::And),
                                 [inner_rhs, merged],
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return replace_all_uses(fg, out, new_out);
+                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                         }
                     }
                 }
@@ -360,30 +356,30 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         }
         IntBinaryOp::Or => {
             if lhs_c == Some(0) {
-                return replace_all_uses(fg, out, rhs); // 0 | x → x
+                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 | x → x
             }
             if rhs_c == Some(0) {
-                return replace_all_uses(fg, out, lhs); // x | 0 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x | 0 → x
             }
             if lhs == rhs {
-                return replace_all_uses(fg, out, lhs); // x | x → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x | x → x
             }
         }
         IntBinaryOp::Xor => {
             if rhs_c == Some(0) {
-                return replace_all_uses(fg, out, lhs); // x ^ 0 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x ^ 0 → x
             }
             if lhs_c == Some(0) {
-                return replace_all_uses(fg, out, rhs); // 0 ^ x → x
+                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 ^ x → x
             }
             if lhs == rhs {
-                let zero = make_int_const(fg, 0, ty)?;
-                return replace_all_uses(fg, out, zero); // x ^ x → 0
+                let zero = fg.make_int_const( 0, ty)?;
+                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x ^ x → 0
             }
         }
         IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight => {
             if rhs_c == Some(0) {
-                return replace_all_uses(fg, out, lhs); // x << 0 → x
+                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x << 0 → x
             }
         }
         _ => {}
@@ -403,7 +399,7 @@ fn try_fold_int_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -414,8 +410,8 @@ fn try_fold_int_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
     let Some(folded) = ty.get_unsigned_int(raw) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, folded, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( folded, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -429,16 +425,16 @@ fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
     let input_ty = lhs_kind
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(lhs_kind))?;
-    let Some(l) = int_const_val(fg, lhs) else {
+    let Some(l) = fg.int_const_val( lhs) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let Some(r) = int_const_val(fg, rhs) else {
+    let Some(r) = fg.int_const_val( rhs) else {
         return Ok(OptimizationResult::NoChange);
     };
 
     let result = eval_int_cmp(op, l, r, input_ty)?;
-    let new_out = make_bool_const(fg, result)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_bool_const( result)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_bool_binary(
@@ -451,10 +447,10 @@ fn try_fold_bool_binary(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(l) = bool_const_val(fg, lhs) else {
+    let Some(l) = fg.bool_const_val( lhs) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let Some(r) = bool_const_val(fg, rhs) else {
+    let Some(r) = fg.bool_const_val( rhs) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -463,8 +459,8 @@ fn try_fold_bool_binary(
         BoolBinaryOp::Or => l || r,
         BoolBinaryOp::Xor => l ^ r,
     };
-    let new_out = make_bool_const(fg, result)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_bool_const( result)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -474,11 +470,11 @@ fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = bool_const_val(fg, input) else {
+    let Some(v) = fg.bool_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_bool_const(fg, !v)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_bool_const( !v)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -492,14 +488,14 @@ fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opt
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let Some(folded) = target_ty.get_unsigned_int(v) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, folded, target_ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( folded, target_ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -517,7 +513,7 @@ fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
     let input_ty = input_kind
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -531,8 +527,8 @@ fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
     let Some(masked) = target_ty.get_unsigned_int(folded) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, masked, target_ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( masked, target_ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_cast_to_bool(
@@ -545,11 +541,11 @@ fn try_fold_cast_to_bool(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_bool_const(fg, v != 0)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_bool_const( v != 0)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_cast_to_int(
@@ -566,11 +562,11 @@ fn try_fold_cast_to_int(
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = bool_const_val(fg, input) else {
+    let Some(v) = fg.bool_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, v as u64, target_ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( v as u64, target_ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -583,7 +579,7 @@ fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opt
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let input_kind = fg.graph.output_kind(input);
@@ -594,8 +590,8 @@ fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opt
         .get_unsigned_int(v)
         .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
     let result = masked.count_ones() as u64;
-    let new_out = make_int_const(fg, result, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( result, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -608,7 +604,7 @@ fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let input_kind = fg.graph.output_kind(input);
@@ -621,8 +617,8 @@ fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
     let bits = input_ty.bit_width() as u32;
     // Shift into the top of a u64 then count leading zeros within the type width.
     let result = (masked << (64 - bits)).leading_zeros() as u64;
-    let new_out = make_int_const(fg, result, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( result, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -635,10 +631,10 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(hi_v) = int_const_val(fg, hi) else {
+    let Some(hi_v) = fg.int_const_val( hi) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let Some(lo_v) = int_const_val(fg, lo) else {
+    let Some(lo_v) = fg.int_const_val( lo) else {
         return Ok(OptimizationResult::NoChange);
     };
     let lo_kind = fg.graph.output_kind(lo);
@@ -651,8 +647,8 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
     let Some(masked) = ty.get_unsigned_int(result) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, masked, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( masked, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -665,7 +661,7 @@ fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = int_const_val(fg, input) else {
+    let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let mask = if len >= 64 {
@@ -677,8 +673,8 @@ fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
     let Some(masked) = ty.get_unsigned_int(result) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, masked, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( masked, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -691,10 +687,10 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(dest_v) = int_const_val(fg, dest) else {
+    let Some(dest_v) = fg.int_const_val( dest) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let Some(src_v) = int_const_val(fg, src) else {
+    let Some(src_v) = fg.int_const_val( src) else {
         return Ok(OptimizationResult::NoChange);
     };
     let mask = if len >= 64 {
@@ -706,8 +702,8 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
     let Some(masked) = ty.get_unsigned_int(result) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let new_out = make_int_const(fg, masked, ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_const( masked, ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 // ── float constant evaluation ─────────────────────────────────────────────────
@@ -824,15 +820,15 @@ fn try_fold_float_binary(
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
-    let lhs_c = float_const_val(fg, lhs);
-    let rhs_c = float_const_val(fg, rhs);
+    let lhs_c = fg.float_const_val( lhs);
+    let rhs_c = fg.float_const_val( rhs);
 
     // Full constant evaluation when both operands are known.
     if let (Some(l), Some(r)) = (lhs_c, rhs_c)
         && let Some(folded) = eval_float_binary(op, l, r, ty)
     {
-        let new_out = make_float_const(fg, folded, ty)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_float_const( folded, ty)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
 
     // Safe algebraic identities (no -0.0 or NaN corner cases).
@@ -846,7 +842,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return replace_all_uses(fg, out, lhs);
+                    return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                 }
             }
             if let Some(l) = lhs_c {
@@ -856,7 +852,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return replace_all_uses(fg, out, rhs);
+                    return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                 }
             }
         }
@@ -869,7 +865,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return replace_all_uses(fg, out, lhs);
+                    return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
                 }
             }
         }
@@ -895,11 +891,11 @@ fn try_fold_float_unary(
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
-    if let Some(bits) = float_const_val(fg, input)
+    if let Some(bits) = fg.float_const_val( input)
         && let Some(folded) = eval_float_unary(op, bits, ty)
     {
-        let new_out = make_float_const(fg, folded, ty)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_float_const( folded, ty)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -919,11 +915,11 @@ fn try_fold_float_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(lhs_out_kind))?;
 
-    if let (Some(l), Some(r)) = (float_const_val(fg, lhs), float_const_val(fg, rhs))
+    if let (Some(l), Some(r)) = (fg.float_const_val( lhs), fg.float_const_val( rhs))
         && let Some(result) = eval_float_cmp(op, l, r, input_ty)
     {
-        let new_out = make_bool_const(fg, result)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_bool_const( result)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -944,14 +940,14 @@ fn try_fold_float_is_nan(
         .as_value()
         .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
 
-    if let Some(bits) = float_const_val(fg, input) {
+    if let Some(bits) = fg.float_const_val( input) {
         let is_nan = match input_ty {
             NodeOutputType::F32 => f32::from_bits(bits as u32).is_nan(),
             NodeOutputType::F64 => f64::from_bits(bits).is_nan(),
             _ => return Ok(OptimizationResult::NoChange),
         };
-        let new_out = make_bool_const(fg, is_nan)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_bool_const( is_nan)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -970,7 +966,7 @@ fn try_fold_bitcast_identity(
             let inner = fg.graph.get_node_from_output(input);
             if matches!(*fg.graph.node_kind(inner), NodeKind::FloatBitsToInt) {
                 let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return replace_all_uses(fg, out, inner_input);
+                return fg.replace_all_uses(out, inner_input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
         }
         NodeKind::FloatBitsToInt => {
@@ -979,7 +975,7 @@ fn try_fold_bitcast_identity(
             let inner = fg.graph.get_node_from_output(input);
             if matches!(*fg.graph.node_kind(inner), NodeKind::IntBitsToFloat) {
                 let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return replace_all_uses(fg, out, inner_input);
+                return fg.replace_all_uses(out, inner_input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
             }
         }
         _ => {}
@@ -1024,26 +1020,26 @@ fn try_lower_cast_to_float(
 
     // 1. Identity: input already has the target float type.
     if in_ty == out_ty {
-        return replace_all_uses(fg, out, input);
+        return fg.replace_all_uses(out, input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
 
     // 2. Float→float precision change.
     if in_ty.is_float() {
-        let new_out = make_float_to_float_node(fg, input, out_ty)?;
-        return replace_all_uses(fg, out, new_out);
+        let new_out = fg.make_float_to_float_node( input, out_ty)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
 
     // Input is integer from here.
 
     // 3. Integer constant → float constant (same bits).
-    if let Some(bits) = int_const_val(fg, input) {
-        let new_out = make_float_const(fg, bits, out_ty)?;
-        return replace_all_uses(fg, out, new_out);
+    if let Some(bits) = fg.int_const_val( input) {
+        let new_out = fg.make_float_const( bits, out_ty)?;
+        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
     }
 
     // 4. Non-constant integer → explicit IntBitsToFloat.
-    let new_out = make_int_bits_to_float_node(fg, input, out_ty)?;
-    replace_all_uses(fg, out, new_out)
+    let new_out = fg.make_int_bits_to_float_node( input, out_ty)?;
+    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
 }
 
 pub struct ConstantFold;
@@ -1488,7 +1484,7 @@ mod tests {
         })?;
         let val = return_value(&fg)?;
         // Use int_const_val which masks to the declared type.
-        let semantic = crate::utils::int_const_val(&fg, val);
+        let semantic = fg.int_const_val(val);
         assert_eq!(semantic, Some(0), "0xFF00 truncated to U8 should be 0");
         // No Truncate nodes should exist.
         assert!(

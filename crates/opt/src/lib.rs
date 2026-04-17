@@ -30,7 +30,6 @@
 
 pub mod error;
 mod opt;
-mod utils;
 pub use error::{Error, ErrorKind, Result};
 mod constant_fold;
 mod dead_branch;
