@@ -12,6 +12,7 @@
 ///           | BoolOpName '(' LhsPat ',' LhsPat ')'
 ///           | FloatBinOpName '(' LhsPat ',' LhsPat ')'
 ///           | FloatCmpOpName '(' LhsPat ',' LhsPat ')'
+///           | IntCmpOpName '(' LhsPat ',' LhsPat ')'
 ///           | Ident
 /// IntConstPat  := IntLit | Ident ':' Ident | Ident
 /// BoolConstPat := 'true' | 'false' | Ident
@@ -19,9 +20,11 @@
 /// BoolOpName      := 'BAnd' | 'BOr' | 'BXor'
 /// FloatBinOpName  := 'FAdd' | 'FSub' | 'FMul' | 'FDiv'
 /// FloatCmpOpName  := 'FEq' | 'FNe' | 'FLt' | 'FLe'
+/// IntCmpOpName    := 'IntEq' | 'IntLt' | 'IntLe' | 'IntSlt' | 'IntSle'
+///                  | 'IntCarry' | 'IntBorrow' | 'IntScarry' | 'IntSborrow'
 /// RhsExpr  := 'int_const' '(' RhsValExpr ',' Ident ')'
 ///           | 'float_const' '(' RhsValExpr ',' RhsTyExpr ')'
-///           | 'bool_const' '(' 'true' | 'false' ')'
+///           | 'bool_const' '(' Expr ')'
 ///           | RhsAtom ('&' RhsAtom)*
 /// ```
 use proc_macro2::{Span, TokenStream};
@@ -284,6 +287,46 @@ impl FloatCmpOpKind {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) enum IntCmpOpKind {
+    Equal, Less, LessEqual, Sless, SlessEqual, Carry, Borrow, Scarry, Sborrow,
+}
+
+impl IntCmpOpKind {
+    pub fn is_commutative(self) -> bool {
+        matches!(self, Self::Equal | Self::Carry | Self::Scarry)
+    }
+    pub fn variant_ident(self) -> Ident {
+        Ident::new(match self {
+            Self::Equal      => "Equal",
+            Self::Less       => "Less",
+            Self::LessEqual  => "LessEqual",
+            Self::Sless      => "Sless",
+            Self::SlessEqual => "SlessEqual",
+            Self::Carry      => "Carry",
+            Self::Borrow     => "Borrow",
+            Self::Scarry     => "Scarry",
+            Self::Sborrow    => "Sborrow",
+        }, Span::call_site())
+    }
+    /// Parse `IntEq` / `IntLt` / `IntLe` / `IntSlt` / `IntSle` /
+    /// `IntCarry` / `IntBorrow` / `IntScarry` / `IntSborrow` head ident.
+    pub fn from_ident(ident: &Ident) -> Option<Self> {
+        match ident.to_string().as_str() {
+            "IntEq"      => Some(Self::Equal),
+            "IntLt"      => Some(Self::Less),
+            "IntLe"      => Some(Self::LessEqual),
+            "IntSlt"     => Some(Self::Sless),
+            "IntSle"     => Some(Self::SlessEqual),
+            "IntCarry"   => Some(Self::Carry),
+            "IntBorrow"  => Some(Self::Borrow),
+            "IntScarry"  => Some(Self::Scarry),
+            "IntSborrow" => Some(Self::Sborrow),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum LhsPat {
     OutputCapture(Ident),
@@ -298,6 +341,7 @@ pub(super) enum LhsPat {
     BoolBinaryOp { op: BoolBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     FloatBinaryOp { op: FloatBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     FloatCmpOp { op: FloatCmpOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
+    IntCmpOp { op: IntCmpOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     ExtendOp { kind: ExtendKind, inner: Box<LhsPat> },
 }
 
@@ -348,6 +392,9 @@ fn parse_lhs_inner(input: ParseStream) -> Result<LhsPat> {
     }
     if let Some(float_cmp) = FloatCmpOpKind::from_ident(&ident) {
         return parse_float_cmp_op(input, float_cmp);
+    }
+    if let Some(int_cmp) = IntCmpOpKind::from_ident(&ident) {
+        return parse_int_cmp_op(input, int_cmp);
     }
     if ident == "Extend" {
         input.parse::<Token![::]>()?;
@@ -450,6 +497,19 @@ fn parse_float_cmp_op(input: ParseStream, op: FloatCmpOpKind) -> Result<LhsPat> 
     Ok(LhsPat::FloatCmpOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
 }
 
+fn parse_int_cmp_op(input: ParseStream, op: IntCmpOpKind) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    let lhs = parse_lhs(&content)?;
+    content.parse::<Token![,]>()?;
+    let rhs = parse_lhs(&content)?;
+    if !content.is_empty() {
+        return Err(content.error(
+            "unexpected tokens inside IntEq/IntLt/IntLe/IntSlt/IntSle/IntCarry/IntBorrow/IntScarry/IntSborrow(...)"
+        ));
+    }
+    Ok(LhsPat::IntCmpOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
+}
+
 fn parse_grouped(input: ParseStream) -> Result<LhsPat> {
     let content; syn::parenthesized!(content in input);
     let lhs = parse_lhs(&content)?;
@@ -502,6 +562,10 @@ impl LhsPat {
                 rhs.collect_captures(caps);
             }
             LhsPat::FloatCmpOp { lhs, rhs, .. } => {
+                lhs.collect_captures(caps);
+                rhs.collect_captures(caps);
+            }
+            LhsPat::IntCmpOp { lhs, rhs, .. } => {
                 lhs.collect_captures(caps);
                 rhs.collect_captures(caps);
             }
@@ -718,6 +782,63 @@ impl LhsPat {
                         use ir::node::NodeKind;
                         use ir::FloatCmpOp;
                         let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    #lhs_body
+                    #rhs_body
+                })
+            }
+
+            LhsPat::IntCmpOp { op, lhs, rhs } if op.is_commutative() => {
+                let variant = op.variant_ident();
+                let (_, label) = ctx.fresh("icord");
+
+                let mut sub_caps = CaptureEnv::new();
+                lhs.collect_captures(&mut sub_caps);
+                rhs.collect_captures(&mut sub_caps);
+                let cap_tuple = cap_tuple_tokens(&sub_caps);
+                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                let lhs_body = lhs.emit_sub(&quote! { __icord_l }, &quote! { continue; }, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __icord_r }, &quote! { continue; }, ctx)?;
+
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::IntCmpOp;
+                        let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    let #cap_tuple: #cap_tuple_ty = #label: loop {
+                        for (__icord_l, __icord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
+                            #lhs_body
+                            #rhs_body
+                            break #label #cap_tuple;
+                        }
+                        #no_change
+                    };
+                })
+            }
+
+            LhsPat::IntCmpOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::IntCmpOp;
+                        let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(node) else {
                             #no_change
                         };
                     }
@@ -1020,6 +1141,61 @@ impl LhsPat {
                 }
             }
 
+            LhsPat::IntCmpOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+
+                if op.is_commutative() {
+                    let (_, label) = ctx.fresh("icnord");
+
+                    let mut sub_caps = CaptureEnv::new();
+                    lhs.collect_captures(&mut sub_caps);
+                    rhs.collect_captures(&mut sub_caps);
+                    let cap_tuple = cap_tuple_tokens(&sub_caps);
+                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                    let lhs_body = lhs.emit_sub(&quote! { __icnested_l }, &quote! { continue; }, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __icnested_r }, &quote! { continue; }, ctx)?;
+
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::IntCmpOp;
+                            let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        let #cap_tuple: #cap_tuple_ty = #label: loop {
+                            for (__icnested_l, __icnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
+                                #lhs_body
+                                #rhs_body
+                                break #label #cap_tuple;
+                            }
+                            #fail_ts
+                        };
+                    })
+                } else {
+                    let lhs_body = lhs.emit_sub(&quote! { __sub_iclhs }, fail_ts, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __sub_icrhs }, fail_ts, ctx)?;
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::IntCmpOp;
+                            let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_iclhs, __sub_icrhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        #lhs_body
+                        #rhs_body
+                    })
+                }
+            }
+
             LhsPat::ExtendOp { kind, inner } => {
                 let variant = kind.variant_ident();
                 let inner_body = inner.emit_sub(&quote! { __sub_ext_inner }, fail_ts, ctx)?;
@@ -1065,8 +1241,9 @@ pub(super) enum RhsExpr {
     IntConstBuilder { val_expr: RhsValExpr, ty_ident: Ident },
     /// `float_const(<val_expr>, <ty_expr>)` — builds a new FloatConst node.
     FloatConstBuilder { val_expr: RhsValExpr, ty_expr: Expr },
-    /// `bool_const(true)` / `bool_const(false)` — builds a BoolConst node.
-    BoolConstBuilder { value: bool },
+    /// `bool_const(<expr>)` — builds a BoolConst node; `<expr>` is any Rust
+    /// expression that evaluates to `bool` (e.g. `true`, `false`, `l == r`).
+    BoolConstBuilder { value: Expr },
     /// `lhs & rhs` — creates a new IntBinaryOp(And) node.
     BinOp { op: IntBinOpKind, lhs: Box<RhsExpr>, rhs: Box<RhsExpr> },
 }
@@ -1129,11 +1306,13 @@ fn parse_rhs_atom(input: ParseStream) -> Result<RhsExpr> {
     if head == "bool_const" && fork.peek(syn::token::Paren) {
         input.parse::<Ident>()?; // consume "bool_const"
         let content; syn::parenthesized!(content in input);
-        let lit: LitBool = content.parse()?;
+        // Accept any Rust expression that evaluates to `bool`
+        // (e.g. `true`, `false`, `l == r`, `a && b`).
+        let expr: Expr = content.parse()?;
         if !content.is_empty() {
             return Err(content.error("unexpected tokens in bool_const(...)"));
         }
-        return Ok(RhsExpr::BoolConstBuilder { value: lit.value });
+        return Ok(RhsExpr::BoolConstBuilder { value: expr });
     }
     input.parse::<Ident>().map(RhsExpr::Ident)
 }
