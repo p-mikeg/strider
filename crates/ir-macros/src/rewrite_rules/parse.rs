@@ -11,7 +11,7 @@
 ///           | 'FloatConst' '(' FloatConstPat ')'
 ///           | BoolOpName '(' LhsPat ',' LhsPat ')'
 ///           | Ident
-/// IntConstPat  := IntLit | Ident
+/// IntConstPat  := IntLit | Ident ':' Ident | Ident
 /// BoolConstPat := 'true' | 'false' | Ident
 /// FloatConstPat := IntLit | Ident
 /// BoolOpName   := 'BAnd' | 'BOr' | 'BXor'

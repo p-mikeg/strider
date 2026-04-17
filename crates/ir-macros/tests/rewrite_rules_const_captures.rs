@@ -101,12 +101,6 @@ fn float_const_capture_binds_bits() -> Result<()> {
     let f_out = fg.make_float_const(bits, NodeOutputType::F32)?;
 
     // Give f_out a user so replace_all_uses has something to redirect.
-    // (Use an Add node consuming it via another float const — that's an
-    // invalid typing but this test only checks the rewrite fires; the
-    // producer is detached after the rewrite and the validator won't see it
-    // because it's not control-reachable.)
-    //
-    // Actually, to stay fully-valid we use a second FloatConst and a FloatBinaryOp.
     let other = fg.make_float_const(0, NodeOutputType::F32)?;
     fg.make_value_node(
         NodeKind::FloatBinaryOp(ir::FloatBinaryOp::Add),
