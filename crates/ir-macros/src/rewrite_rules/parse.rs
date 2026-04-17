@@ -1,21 +1,27 @@
 /// Parsed AST and code-generation for a `rewrite_rules!` rule.
 ///
-/// Grammar subset for the spike (three rules):
+/// Grammar subset:
 /// ```text
 /// Rules    := Rule (',' Rule)* ','?
 /// Rule     := LhsPat '=>' RhsExpr
 /// LhsPat   := '(' LhsPat BinOpSym LhsPat ')'
 ///           | 'Extend' '::' '<' ExtendKind '>' '(' LhsPat ')'
 ///           | 'IntConst' '(' IntConstPat ')'
+///           | 'BoolConst' '(' BoolConstPat ')'
+///           | 'FloatConst' '(' FloatConstPat ')'
+///           | BoolOpName '(' LhsPat ',' LhsPat ')'
 ///           | Ident
-/// IntConstPat := IntLit | Ident ':' Ident | Ident
+/// IntConstPat  := IntLit | Ident
+/// BoolConstPat := 'true' | 'false' | Ident
+/// FloatConstPat := IntLit | Ident
+/// BoolOpName   := 'BAnd' | 'BOr' | 'BXor'
 /// RhsExpr  := 'int_const' '(' RhsValExpr ',' Ident ')'
 ///           | RhsAtom ('&' RhsAtom)*
 /// ```
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
-    Error, Ident, LitInt, Lifetime, Result, Token,
+    Error, Ident, LitBool, LitInt, Lifetime, Result, Token,
     parse::{Parse, ParseStream},
 };
 
@@ -123,6 +129,10 @@ pub(super) enum CaptureKind {
     IntConst,
     /// Bound to `NodeOutputType`.
     InputType,
+    /// Bound to `bool`.
+    BoolConst,
+    /// Bound to `u64` (raw float bits).
+    FloatConst,
 }
 
 pub(super) struct CaptureEnv {
@@ -145,9 +155,11 @@ impl CaptureEnv {
 
 fn kind_type(kind: CaptureKind) -> TokenStream {
     match kind {
-        CaptureKind::Output    => quote! { ir::node::NodeOutputId },
-        CaptureKind::IntConst  => quote! { u64 },
-        CaptureKind::InputType => quote! { ir::node::NodeOutputType },
+        CaptureKind::Output     => quote! { ir::node::NodeOutputId },
+        CaptureKind::IntConst   => quote! { u64 },
+        CaptureKind::InputType  => quote! { ir::node::NodeOutputType },
+        CaptureKind::BoolConst  => quote! { bool },
+        CaptureKind::FloatConst => quote! { u64 },
     }
 }
 
@@ -172,6 +184,31 @@ impl IntBinOpKind {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(super) enum BoolBinOpKind {
+    And, Or, Xor,
+}
+
+impl BoolBinOpKind {
+    pub fn variant_ident(self) -> Ident {
+        Ident::new(match self {
+            Self::And => "And",
+            Self::Or  => "Or",
+            Self::Xor => "Xor",
+        }, Span::call_site())
+    }
+
+    /// Parse a `BAnd` / `BOr` / `BXor` head ident into the corresponding kind.
+    pub fn from_ident(ident: &Ident) -> Option<Self> {
+        match ident.to_string().as_str() {
+            "BAnd" => Some(Self::And),
+            "BOr"  => Some(Self::Or),
+            "BXor" => Some(Self::Xor),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(super) enum ExtendKind { SignExtend, ZeroExtend }
 
 impl ExtendKind {
@@ -189,7 +226,12 @@ pub(super) enum LhsPat {
     IntConstLiteral { value: u64 },
     IntConstCapture { name: Ident },
     IntConstCaptureWithType { value_name: Ident, type_name: Ident },
+    BoolConstLiteral { value: bool },
+    BoolConstCapture { name: Ident },
+    FloatConstLiteral { bits: u64 },
+    FloatConstCapture { name: Ident },
     IntBinaryOp { op: IntBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
+    BoolBinaryOp { op: BoolBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     ExtendOp { kind: ExtendKind, inner: Box<LhsPat> },
 }
 
@@ -229,7 +271,12 @@ fn parse_lhs(input: ParseStream) -> Result<LhsPat> {
 fn parse_lhs_inner(input: ParseStream) -> Result<LhsPat> {
     if input.peek(syn::token::Paren) { return parse_grouped(input); }
     let ident: Ident = input.parse()?;
-    if ident == "IntConst" { return parse_int_const(input); }
+    if ident == "IntConst"   { return parse_int_const(input); }
+    if ident == "BoolConst"  { return parse_bool_const(input); }
+    if ident == "FloatConst" { return parse_float_const(input); }
+    if let Some(bool_op) = BoolBinOpKind::from_ident(&ident) {
+        return parse_bool_bin_op(input, bool_op);
+    }
     if ident == "Extend" {
         input.parse::<Token![::]>()?;
         input.parse::<Token![<]>()?;
@@ -263,6 +310,50 @@ fn parse_int_const(input: ParseStream) -> Result<LhsPat> {
     // Note: `: type_name` is NOT parsed here — it's at the outer level.
     // (The `content` stream is the inside of `IntConst(...)` parentheses.)
     Ok(LhsPat::IntConstCapture { name })
+}
+
+fn parse_bool_const(input: ParseStream) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    if content.peek(LitBool) {
+        let lit: LitBool = content.parse()?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens inside BoolConst(...)"));
+        }
+        return Ok(LhsPat::BoolConstLiteral { value: lit.value });
+    }
+    let name: Ident = content.parse()?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside BoolConst(...)"));
+    }
+    Ok(LhsPat::BoolConstCapture { name })
+}
+
+fn parse_float_const(input: ParseStream) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    if content.peek(LitInt) {
+        let lit: LitInt = content.parse()?;
+        let bits: u64 = lit.base10_parse()?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens inside FloatConst(...)"));
+        }
+        return Ok(LhsPat::FloatConstLiteral { bits });
+    }
+    let name: Ident = content.parse()?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside FloatConst(...)"));
+    }
+    Ok(LhsPat::FloatConstCapture { name })
+}
+
+fn parse_bool_bin_op(input: ParseStream, op: BoolBinOpKind) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    let lhs = parse_lhs(&content)?;
+    content.parse::<Token![,]>()?;
+    let rhs = parse_lhs(&content)?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside BAnd/BOr/BXor(...)"));
+    }
+    Ok(LhsPat::BoolBinaryOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
 }
 
 fn parse_grouped(input: ParseStream) -> Result<LhsPat> {
@@ -300,7 +391,15 @@ impl LhsPat {
                 caps.bind(value_name.clone(), CaptureKind::IntConst);
                 caps.bind(type_name.clone(), CaptureKind::InputType);
             }
+            LhsPat::BoolConstLiteral { .. } => {}
+            LhsPat::BoolConstCapture { name } => caps.bind(name.clone(), CaptureKind::BoolConst),
+            LhsPat::FloatConstLiteral { .. } => {}
+            LhsPat::FloatConstCapture { name } => caps.bind(name.clone(), CaptureKind::FloatConst),
             LhsPat::IntBinaryOp { lhs, rhs, .. } => {
+                lhs.collect_captures(caps);
+                rhs.collect_captures(caps);
+            }
+            LhsPat::BoolBinaryOp { lhs, rhs, .. } => {
                 lhs.collect_captures(caps);
                 rhs.collect_captures(caps);
             }
@@ -378,6 +477,43 @@ impl LhsPat {
                 })
             }
 
+            LhsPat::BoolBinaryOp { op, lhs, rhs } => {
+                // All `BoolBinaryOp` variants (`And`, `Or`, `Xor`) are commutative.
+                let variant = op.variant_ident();
+                let (_, label) = ctx.fresh("bord");
+
+                let mut sub_caps = CaptureEnv::new();
+                lhs.collect_captures(&mut sub_caps);
+                rhs.collect_captures(&mut sub_caps);
+                let cap_tuple = cap_tuple_tokens(&sub_caps);
+                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                let lhs_body = lhs.emit_sub(&quote! { __bord_l }, &quote! { continue; }, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __bord_r }, &quote! { continue; }, ctx)?;
+
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::BoolBinaryOp;
+                        let NodeKind::BoolBinaryOp(BoolBinaryOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    let #cap_tuple: #cap_tuple_ty = #label: loop {
+                        for (__bord_l, __bord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
+                            #lhs_body
+                            #rhs_body
+                            break #label #cap_tuple;
+                        }
+                        #no_change
+                    };
+                })
+            }
+
             LhsPat::ExtendOp { kind, inner } => {
                 let variant = kind.variant_ident();
                 let inner_body = inner.emit_sub(&quote! { __ext_inner }, &no_change, ctx)?;
@@ -444,6 +580,64 @@ impl LhsPat {
                 let Some(#type_name): ::core::option::Option<ir::node::NodeOutputType> =
                     fg.graph.output_kind(#val_ts).as_value() else { #fail_ts };
             }),
+
+            LhsPat::BoolConstLiteral { value } => Ok(quote! {
+                {
+                    let Some(__bcv) = fg.bool_const_val(#val_ts) else { #fail_ts };
+                    if __bcv != #value { #fail_ts }
+                }
+            }),
+
+            LhsPat::BoolConstCapture { name } => Ok(quote! {
+                let Some(#name): ::core::option::Option<bool> = fg.bool_const_val(#val_ts) else { #fail_ts };
+            }),
+
+            LhsPat::FloatConstLiteral { bits } => Ok(quote! {
+                {
+                    let Some(__fcv) = fg.float_const_val(#val_ts) else { #fail_ts };
+                    if __fcv != #bits { #fail_ts }
+                }
+            }),
+
+            LhsPat::FloatConstCapture { name } => Ok(quote! {
+                let Some(#name): ::core::option::Option<u64> = fg.float_const_val(#val_ts) else { #fail_ts };
+            }),
+
+            LhsPat::BoolBinaryOp { op, lhs, rhs } => {
+                // All `BoolBinaryOp` variants (`And`, `Or`, `Xor`) are commutative.
+                let variant = op.variant_ident();
+                let (_, label) = ctx.fresh("bnord");
+
+                let mut sub_caps = CaptureEnv::new();
+                lhs.collect_captures(&mut sub_caps);
+                rhs.collect_captures(&mut sub_caps);
+                let cap_tuple = cap_tuple_tokens(&sub_caps);
+                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                let lhs_body = lhs.emit_sub(&quote! { __bnested_l }, &quote! { continue; }, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __bnested_r }, &quote! { continue; }, ctx)?;
+
+                Ok(quote! {
+                    let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                    {
+                        use ir::node::NodeKind;
+                        use ir::BoolBinaryOp;
+                        let NodeKind::BoolBinaryOp(BoolBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                    }
+                    let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                        Ok(v) => v,
+                        Err(_) => { #fail_ts }
+                    };
+                    let #cap_tuple: #cap_tuple_ty = #label: loop {
+                        for (__bnested_l, __bnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
+                            #lhs_body
+                            #rhs_body
+                            break #label #cap_tuple;
+                        }
+                        #fail_ts
+                    };
+                })
+            }
 
             LhsPat::IntBinaryOp { op, lhs, rhs } => {
                 let variant = op.variant_ident();
