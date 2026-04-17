@@ -16,6 +16,16 @@ impl OptimizationResult {
     pub fn changed(self) -> bool {
         matches!(self, OptimizationResult::Changed)
     }
+
+    /// Maps the boolean return of [`BuiltFunctionGraph::replace_all_uses`] to
+    /// an `OptimizationResult`: `true` → `Changed`, `false` → `NoChange`.
+    pub fn from_changed(changed: bool) -> Self {
+        if changed {
+            OptimizationResult::Changed
+        } else {
+            OptimizationResult::NoChange
+        }
+    }
 }
 
 impl std::ops::BitOr for OptimizationResult {
