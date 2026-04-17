@@ -289,8 +289,11 @@ dependencies = [
 name = "ir-macros"
 version = "0.1.0"
 dependencies = [
+ "ir",
+ "opt",
  "proc-macro2",
  "quote",
+ "rsleigh",
  "syn",
 ]
 

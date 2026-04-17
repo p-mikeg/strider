@@ -165,6 +165,17 @@ impl NodeOutputType {
             NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
+
+    /// Sign-extends `val` from this type's width to 64 bits and returns the
+    /// result as a `u64` bit pattern.
+    ///
+    /// Returns `None` if this type is `Bool`, `U128`, `U256`, or a float type,
+    /// since those widths either are not integer or cannot be represented in 64
+    /// bits.
+    #[inline]
+    pub fn sign_extend(self, val: u64) -> Option<u64> {
+        self.get_signed_int(val).map(|v| v as u64)
+    }
 }
 
 impl TryFrom<u32> for NodeOutputType {
