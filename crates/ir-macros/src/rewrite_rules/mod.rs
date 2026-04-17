@@ -10,9 +10,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-mod lhs;
 mod parse;
-mod rhs;
 
 pub(crate) fn expand(input: TokenStream) -> TokenStream {
     match try_expand(input) {
