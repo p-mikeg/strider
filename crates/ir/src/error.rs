@@ -34,6 +34,13 @@ strider_error::define_error! {
         #[error("output {0:?} is not a value edge (got {1:?})")]
         ExpectedValue(NodeOutputId, NodeOutputKind),
 
+        /// An output was expected to carry a concrete value type but is a
+        /// control/memory/control-phi edge instead. Unlike [`Self::ExpectedValue`],
+        /// this variant carries only the mismatched kind (no output id), used
+        /// by [`crate::node::NodeOutputKind::as_value_or_err`].
+        #[error("expected value output, got {0:?}")]
+        ExpectedValueOutput(NodeOutputKind),
+
         /// An output was expected to carry a `Bool` value.
         #[error("output {0:?} is not a bool value")]
         ExpectedBool(NodeOutputId),
