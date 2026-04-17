@@ -209,6 +209,22 @@ impl<'g> Matcher<'g> {
             .collect()
     }
 
+    /// Try to match `pat` against the subgraph rooted at `node`.  Returns the
+    /// successful [`Match`] (with bindings) if the match succeeds, `None`
+    /// otherwise.
+    ///
+    /// Unlike [`find_all`] which iterates every candidate root, this checks a
+    /// single root.  Used by code-generation paths (e.g. the `rewrite_rules!`
+    /// macro) that already know the candidate.
+    pub fn match_at(&self, node: NodeId, pat: &Pat) -> Option<Match> {
+        let mut bindings = Bindings::default();
+        if self.match_node_id(node, pat, &mut bindings) {
+            Some(Match { root: node, bindings })
+        } else {
+            None
+        }
+    }
+
     // ── match_output ──────────────────────────────────────────────────────────
 
     /// Match a `NodeOutputId` (data edge) against a pattern.
@@ -230,6 +246,13 @@ impl<'g> Matcher<'g> {
 
             PatKind::AnyIntConst(v) => {
                 if !matches!(kind, NodeKind::IntConst(_)) {
+                    return false;
+                }
+                bindings.bind_var(*v, output)
+            }
+
+            PatKind::AnyBoolConst(v) => {
+                if !matches!(kind, NodeKind::BoolConst(_)) {
                     return false;
                 }
                 bindings.bind_var(*v, output)
@@ -788,6 +811,19 @@ impl<'g> Matcher<'g> {
                     return false;
                 }
                 if func(self.fn_graph, output) {
+                    true
+                } else {
+                    *bindings = snap;
+                    false
+                }
+            }
+
+            PatKind::WithMatchPredicate { inner, func } => {
+                let snap = bindings.clone();
+                if !self.match_output(output, inner, bindings) {
+                    return false;
+                }
+                if func(self.fn_graph, bindings) {
                     true
                 } else {
                     *bindings = snap;

@@ -2653,3 +2653,162 @@ fn call_other_captures_node_id() -> ir::Result<()> {
     ));
     Ok(())
 }
+
+// ── match_at + AnyBoolConst + when_match ──────────────────────────────────────
+
+/// Returns the graph from `graph_add_return`, plus the NodeId of the Add node.
+fn add_node_in_add_graph(
+    g: &ir::BuiltFunctionGraph,
+) -> ir::node::NodeId {
+    g.preorder()
+        .find(|&n| matches!(g.graph.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .expect("add node must exist")
+}
+
+/// Build a small graph that returns `bool_const(true)` cast to int.
+fn graph_bool_const_return() -> ir::Result<ir::BuiltFunctionGraph> {
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let bc = b.build_boolean_const(true);
+    let as_int = b.convert_to_int_if_needed(bc, ir::node::NodeOutputType::U64)?;
+    b.build_return(Some(as_int), &[])?;
+    b.build()
+}
+
+#[test]
+fn match_at_positive_commutative_add() -> ir::Result<()> {
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    let add_node = add_node_in_add_graph(&g);
+    let l = Var::new();
+    let r = Var::new();
+    let pat = add(any_int_const(l), any_int_const(r)).into();
+    let result = m.match_at(add_node, &pat);
+    assert!(result.is_some(), "match_at should succeed on the Add node");
+    let mat = result.unwrap();
+    // The two IntConst values are 5 and 3 (in some order due to commutativity).
+    let lv = mat.get_int_const(l, &g).expect("l must bind to IntConst");
+    let rv = mat.get_int_const(r, &g).expect("r must bind to IntConst");
+    let mut pair = [lv, rv];
+    pair.sort();
+    assert_eq!(pair, [3, 5], "captured consts must be 3 and 5");
+    Ok(())
+}
+
+#[test]
+fn match_at_negative_wrong_node() -> ir::Result<()> {
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    // Pick a non-Add node (the IntConst(5) node).
+    let const5_node = g
+        .preorder()
+        .find(|&n| matches!(g.graph.node_kind(n), NodeKind::IntConst(5)))
+        .expect("IntConst(5) must exist");
+    let l = Var::new();
+    let r = Var::new();
+    let pat = add(any_int_const(l), any_int_const(r)).into();
+    assert!(
+        m.match_at(const5_node, &pat).is_none(),
+        "match_at on IntConst(5) with Add pattern must fail"
+    );
+    Ok(())
+}
+
+#[test]
+fn any_bool_const_binds_and_extracts() -> ir::Result<()> {
+    let g = graph_bool_const_return()?;
+    let m = Matcher::new(&g);
+    let b_var = Var::new();
+    let pat = any_bool_const(b_var);
+    let hits = m.find_all(&pat);
+    assert_eq!(hits.len(), 1, "exactly one BoolConst node expected");
+    let mat = &hits[0];
+    let val = mat
+        .get_bool_const(b_var, &g)
+        .expect("b_var must bind to BoolConst");
+    assert!(val, "the bound BoolConst must be true");
+    Ok(())
+}
+
+fn resolve_int_const(g: &ir::BuiltFunctionGraph, bindings: &Bindings, v: Var) -> Option<u64> {
+    let o = bindings.get(v)?;
+    let n = g.graph.get_node_from_output(o);
+    if let NodeKind::IntConst(val) = *g.graph.node_kind(n) {
+        Some(val)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn when_match_succeeds_when_sum_equals_eight() -> ir::Result<()> {
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    let add_node = add_node_in_add_graph(&g);
+    let l = Var::new();
+    let r = Var::new();
+    let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
+    let pat = inner.when_match(move |g, bindings| {
+        let lv = resolve_int_const(g, bindings, l).unwrap_or(0);
+        let rv = resolve_int_const(g, bindings, r).unwrap_or(0);
+        lv + rv == 8
+    });
+    assert!(
+        m.match_at(add_node, &pat).is_some(),
+        "sum is 5+3=8, when_match predicate must pass"
+    );
+    Ok(())
+}
+
+#[test]
+fn when_match_fails_when_sum_wrong() -> ir::Result<()> {
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    let add_node = add_node_in_add_graph(&g);
+    let l = Var::new();
+    let r = Var::new();
+    let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
+    let pat = inner.when_match(move |g, bindings| {
+        let lv = resolve_int_const(g, bindings, l).unwrap_or(0);
+        let rv = resolve_int_const(g, bindings, r).unwrap_or(0);
+        lv + rv == 999
+    });
+    assert!(
+        m.match_at(add_node, &pat).is_none(),
+        "sum is 5+3=8, predicate requiring 999 must fail"
+    );
+    Ok(())
+}
+
+#[test]
+fn when_match_commutative_fallthrough_accepts_swapped_order() -> ir::Result<()> {
+    // `graph_add_return` builds add(5, 3), so input0=5 and input1=3.
+    // The pattern is unordered: `add(any_int_const(l), any_int_const(r))`.
+    // The predicate rejects unless l is bound to the IntConst(5).
+    // Natural order binds l=input0=5, so the predicate succeeds immediately.
+    // This test also validates that when_match cooperates correctly with the
+    // commutative matching infrastructure: `when_match` wraps a `Pat` whose
+    // inner `IntBinaryOp` arm handles both orderings, and a predicate failure
+    // from `when_match` correctly propagates a `false` result (which in the
+    // commutative arm would have caused a retry, had the first ordering failed).
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    let add_node = add_node_in_add_graph(&g);
+    let l = Var::new();
+    let r = Var::new();
+    let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
+    let pat = inner.when_match(move |g, bindings| {
+        let Some(l_out) = bindings.get(l) else {
+            return false;
+        };
+        let n = g.graph.get_node_from_output(l_out);
+        matches!(*g.graph.node_kind(n), NodeKind::IntConst(5))
+    });
+    assert!(
+        m.match_at(add_node, &pat).is_some(),
+        "natural ordering binds l=5 which satisfies the predicate"
+    );
+    Ok(())
+}

@@ -78,8 +78,10 @@ pub use pat::{
     IfPat,
     IntBinaryOpPat,
     LoadPat,
+    MatchPredicateFn,
     Pat,
     PhiPat,
+    PredicateFn,
     RetPat,
     StackStorePat,
     StackStorePhiPat,
@@ -88,8 +90,9 @@ pub use pat::{
     and,
     // Free-function constructors
     any,
-    any_const,
+    any_bool_const,
     any_float_const,
+    any_int_const,
     bool_and,
     // Bool ops
     bool_binary,

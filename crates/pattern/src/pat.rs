@@ -12,6 +12,14 @@ use crate::var::{NodeVar, Var};
 /// Predicate function type used in [`PatKind::WithPredicate`].
 pub type PredicateFn = Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync>;
 
+/// Predicate function type used in [`PatKind::WithMatchPredicate`].
+///
+/// Unlike [`PredicateFn`], this variant sees the full capture [`crate::matcher::Bindings`]
+/// map, not just the single matched output — useful for guards that
+/// reference multiple captures.
+pub type MatchPredicateFn =
+    Arc<dyn Fn(&BuiltFunctionGraph, &crate::matcher::Bindings) -> bool + Send + Sync>;
+
 // ── Core pattern type ─────────────────────────────────────────────────────────
 
 /// A graph pattern.  Cheap to clone — the inner data is reference-counted.
@@ -49,6 +57,20 @@ impl Pat {
             func: Arc::new(f),
         })
     }
+
+    /// After this pattern matches successfully, additionally run `f` with
+    /// access to the full capture [`crate::matcher::Bindings`].  The match
+    /// fails if `f` returns `false`.  For commutative binary ops this failure
+    /// triggers the other-ordering retry automatically.
+    pub fn when_match<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, &crate::matcher::Bindings) -> bool + Send + Sync + 'static,
+    {
+        Pat::new(PatKind::WithMatchPredicate {
+            inner: self,
+            func: Arc::new(f),
+        })
+    }
 }
 
 // ── PatKind ───────────────────────────────────────────────────────────────────
@@ -70,6 +92,8 @@ pub enum PatKind {
     /// producing node is not an `IntConst`.  Use `m.get_int_const(v, graph)` to
     /// read the concrete value after matching.
     AnyIntConst(Var),
+    /// Matches any `BoolConst` node and binds its output to `v`.
+    AnyBoolConst(Var),
 
     // ── Integer ops ───────────────────────────────────────────────────────────
     /// Matches an integer binary operation node.
@@ -260,6 +284,10 @@ pub enum PatKind {
     WithCapture { inner: Pat, var: Var },
     /// Matches `inner`, then additionally runs `func` — fails if it returns false.
     WithPredicate { inner: Pat, func: PredicateFn },
+    /// Matches `inner`, then additionally runs `func` with the full capture
+    /// bindings.  Fails (returning `false`) rejects the current operand
+    /// ordering and lets commutative backtracks retry.
+    WithMatchPredicate { inner: Pat, func: MatchPredicateFn },
 }
 
 // ── Builder: IntBinaryOpPat ───────────────────────────────────────────────────
@@ -993,8 +1021,13 @@ pub fn bool_const(v: bool) -> Pat {
 /// Matches any `IntConst` node and binds its output to `v`.
 /// Fails if the node is not an `IntConst` — use this instead of `var(v)` when
 /// you want the pattern itself to enforce the node is a compile-time constant.
-pub fn any_const(v: Var) -> Pat {
+pub fn any_int_const(v: Var) -> Pat {
     Pat::new(PatKind::AnyIntConst(v))
+}
+
+/// Matches any `BoolConst` node and binds its output to `v`.
+pub fn any_bool_const(v: Var) -> Pat {
+    Pat::new(PatKind::AnyBoolConst(v))
 }
 
 /// Matches any output for which `f` returns `true`.  Equivalent to `any().when(f)`.
