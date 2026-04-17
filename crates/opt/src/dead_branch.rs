@@ -3,7 +3,6 @@ use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{bool_const_val, replace_all_uses};
 
 // ── Dead-branch elimination ───────────────────────────────────────────────────
 
@@ -38,7 +37,7 @@ fn try_eliminate_dead_branch(
     let ctrl_in = inputs[0];
     let cond_out = inputs[1];
 
-    let Some(cond_val) = bool_const_val(fg, cond_out) else {
+    let Some(cond_val) = fg.bool_const_val(cond_out) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -56,7 +55,7 @@ fn try_eliminate_dead_branch(
     let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
 
     // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
-    replace_all_uses(fg, live_ctrl, ctrl_in)?;
+    fg.replace_all_uses(live_ctrl, ctrl_in)?;
 
     if dead_uses.is_empty() {
         // No successor for the dead branch — still report Changed if we

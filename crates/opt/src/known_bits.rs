@@ -5,7 +5,6 @@ use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::{ErrorKind, Result};
 use crate::opt::{OptimizationResult, Optimizer};
-use crate::utils::{make_int_const, replace_all_uses};
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -319,8 +318,8 @@ impl Optimizer for KnownBits {
                 if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
                     continue;
                 }
-                let new_out = make_int_const(function, kb.ones, ty)?;
-                result |= replace_all_uses(function, out, new_out)?;
+                let new_out = function.make_int_const(kb.ones, ty)?;
+                result |= OptimizationResult::from_changed(function.replace_all_uses(out, new_out)?);
             }
         }
         Ok(result)
