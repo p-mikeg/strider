@@ -218,6 +218,40 @@ impl NodeOutputKind {
         }
     }
 
+    /// Returns the value type, or an error whose payload is `self` if this
+    /// kind is not a value edge.
+    #[track_caller]
+    pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
+        self.as_value()
+            .ok_or_else(|| crate::ErrorKind::ExpectedValueOutput(self).into())
+    }
+
+    /// Returns the value type, asserting it is integer. Errors as
+    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
+    /// [`crate::ErrorKind::ExpectedIntegerType`] for bool/float value kinds.
+    #[track_caller]
+    pub fn as_integer_or_err(self) -> crate::Result<NodeOutputType> {
+        let ty = self.as_value_or_err()?;
+        if ty.is_integer() {
+            Ok(ty)
+        } else {
+            Err(crate::ErrorKind::ExpectedIntegerType(ty).into())
+        }
+    }
+
+    /// Returns the value type, asserting it is float. Errors as
+    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
+    /// [`crate::ErrorKind::ExpectedFloatType`] for bool/int value kinds.
+    #[track_caller]
+    pub fn as_float_or_err(self) -> crate::Result<NodeOutputType> {
+        let ty = self.as_value_or_err()?;
+        if ty.is_float() {
+            Ok(ty)
+        } else {
+            Err(crate::ErrorKind::ExpectedFloatType(ty).into())
+        }
+    }
+
     /// Returns `true` if this is a control-flow edge.
     #[inline]
     pub fn is_control(self) -> bool {
@@ -806,5 +840,46 @@ mod tests {
         assert!(NodeKind::FloatToFloat.is_cacheable());
         assert!(NodeKind::IntBitsToFloat.is_cacheable());
         assert!(NodeKind::FloatBitsToInt.is_cacheable());
+    }
+
+    // ── as_value_or_err / as_integer_or_err / as_float_or_err ──────────────
+
+    #[test]
+    fn as_value_or_err_value_case() {
+        let kind = NodeOutputKind::OutputType(NodeOutputType::U32);
+        assert_eq!(kind.as_value_or_err().unwrap(), NodeOutputType::U32);
+    }
+
+    #[test]
+    fn as_value_or_err_control_case() {
+        let kind = NodeOutputKind::Control;
+        let err = kind.as_value_or_err().unwrap_err();
+        assert!(matches!(err.kind(), crate::ErrorKind::ExpectedValueOutput(_)));
+    }
+
+    #[test]
+    fn as_integer_or_err_int_case() {
+        let kind = NodeOutputKind::OutputType(NodeOutputType::U64);
+        assert_eq!(kind.as_integer_or_err().unwrap(), NodeOutputType::U64);
+    }
+
+    #[test]
+    fn as_integer_or_err_float_case() {
+        let kind = NodeOutputKind::OutputType(NodeOutputType::F32);
+        let err = kind.as_integer_or_err().unwrap_err();
+        assert!(matches!(err.kind(), crate::ErrorKind::ExpectedIntegerType(_)));
+    }
+
+    #[test]
+    fn as_float_or_err_float_case() {
+        let kind = NodeOutputKind::OutputType(NodeOutputType::F64);
+        assert_eq!(kind.as_float_or_err().unwrap(), NodeOutputType::F64);
+    }
+
+    #[test]
+    fn as_float_or_err_int_case() {
+        let kind = NodeOutputKind::OutputType(NodeOutputType::U32);
+        let err = kind.as_float_or_err().unwrap_err();
+        assert!(matches!(err.kind(), crate::ErrorKind::ExpectedFloatType(_)));
     }
 }
