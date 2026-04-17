@@ -193,7 +193,7 @@ fn try_reassociate_add_sub(
         [NodeOutputKind::OutputType(ty)],
     );
     let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -222,17 +222,17 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         && let Some(folded) = eval_int_binary(op, l, r, ty)
     {
         let new_out = fg.make_int_const( folded, ty)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // Algebraic identities and absorbing elements.
     match op {
         IntBinaryOp::Add => {
             if rhs_c == Some(0) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x + 0 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x + 0 → x
             }
             if lhs_c == Some(0) {
-                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 + x → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 + x → x
             }
             // (base ± C1) + C2 → base + K
             if let Some(c2) = rhs_c {
@@ -250,11 +250,11 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         }
         IntBinaryOp::Sub => {
             if rhs_c == Some(0) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x - 0 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x - 0 → x
             }
             if lhs == rhs {
                 let zero = fg.make_int_const( 0, ty)?;
-                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x - x → 0
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x - x → 0
             }
             // (base ± C1) - C2 → base + K
             if let Some(c2) = rhs_c {
@@ -267,31 +267,31 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         IntBinaryOp::Mul => {
             if lhs_c == Some(0) || rhs_c == Some(0) {
                 let zero = fg.make_int_const( 0, ty)?;
-                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x * 0 → 0
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x * 0 → 0
             }
             if lhs_c == Some(1) {
-                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 1 * x → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 1 * x → x
             }
             if rhs_c == Some(1) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x * 1 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x * 1 → x
             }
         }
         IntBinaryOp::And => {
             // Absorbing: x & 0 → 0
             if lhs_c == Some(0) || rhs_c == Some(0) {
                 let zero = fg.make_int_const( 0, ty)?;
-                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?));
             }
             // Identity: x & all_ones → x
             if lhs_c == Some(all_ones) {
-                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
             }
             if rhs_c == Some(all_ones) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
             }
             // Idempotent: x & x → x
             if lhs == rhs {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
             }
             // (a & C1) & C2 → a & (C1 & C2)
             if let Some(c2) = rhs_c {
@@ -308,7 +308,7 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
                         }
                         if let Some(c1) = fg.int_const_val( inner_lhs) {
                             let merged = fg.make_int_const( c1 & c2, ty)?;
@@ -318,7 +318,7 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
                         }
                     }
                 }
@@ -338,7 +338,7 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
                         }
                         if let Some(c2) = fg.int_const_val( inner_lhs) {
                             let merged = fg.make_int_const( c1 & c2, ty)?;
@@ -348,7 +348,7 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                                 [NodeOutputKind::OutputType(ty)],
                             );
                             let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
                         }
                     }
                 }
@@ -356,30 +356,30 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         }
         IntBinaryOp::Or => {
             if lhs_c == Some(0) {
-                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 | x → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 | x → x
             }
             if rhs_c == Some(0) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x | 0 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x | 0 → x
             }
             if lhs == rhs {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x | x → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x | x → x
             }
         }
         IntBinaryOp::Xor => {
             if rhs_c == Some(0) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x ^ 0 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x ^ 0 → x
             }
             if lhs_c == Some(0) {
-                return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // 0 ^ x → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 ^ x → x
             }
             if lhs == rhs {
                 let zero = fg.make_int_const( 0, ty)?;
-                return fg.replace_all_uses(out, zero).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x ^ x → 0
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x ^ x → 0
             }
         }
         IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight => {
             if rhs_c == Some(0) {
-                return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange }); // x << 0 → x
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x << 0 → x
             }
         }
         _ => {}
@@ -411,7 +411,7 @@ fn try_fold_int_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( folded, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -434,7 +434,7 @@ fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
 
     let result = eval_int_cmp(op, l, r, input_ty)?;
     let new_out = fg.make_bool_const( result)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_bool_binary(
@@ -460,7 +460,7 @@ fn try_fold_bool_binary(
         BoolBinaryOp::Xor => l ^ r,
     };
     let new_out = fg.make_bool_const( result)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -474,7 +474,7 @@ fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_bool_const( !v)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -495,7 +495,7 @@ fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opt
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( folded, target_ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -528,7 +528,7 @@ fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( masked, target_ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_cast_to_bool(
@@ -545,7 +545,7 @@ fn try_fold_cast_to_bool(
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_bool_const( v != 0)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_cast_to_int(
@@ -566,7 +566,7 @@ fn try_fold_cast_to_int(
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( v as u64, target_ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -591,7 +591,7 @@ fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opt
         .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
     let result = masked.count_ones() as u64;
     let new_out = fg.make_int_const( result, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -618,7 +618,7 @@ fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
     // Shift into the top of a u64 then count leading zeros within the type width.
     let result = (masked << (64 - bits)).leading_zeros() as u64;
     let new_out = fg.make_int_const( result, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -648,7 +648,7 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( masked, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -674,7 +674,7 @@ fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( masked, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
@@ -703,7 +703,7 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_int_const( masked, ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 // ── float constant evaluation ─────────────────────────────────────────────────
@@ -828,7 +828,7 @@ fn try_fold_float_binary(
         && let Some(folded) = eval_float_binary(op, l, r, ty)
     {
         let new_out = fg.make_float_const( folded, ty)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // Safe algebraic identities (no -0.0 or NaN corner cases).
@@ -842,7 +842,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                    return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
                 }
             }
             if let Some(l) = lhs_c {
@@ -852,7 +852,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return fg.replace_all_uses(out, rhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                    return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
                 }
             }
         }
@@ -865,7 +865,7 @@ fn try_fold_float_binary(
                     _ => false,
                 };
                 if is_one {
-                    return fg.replace_all_uses(out, lhs).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                    return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
                 }
             }
         }
@@ -895,7 +895,7 @@ fn try_fold_float_unary(
         && let Some(folded) = eval_float_unary(op, bits, ty)
     {
         let new_out = fg.make_float_const( folded, ty)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -919,7 +919,7 @@ fn try_fold_float_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Op
         && let Some(result) = eval_float_cmp(op, l, r, input_ty)
     {
         let new_out = fg.make_bool_const( result)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -947,7 +947,7 @@ fn try_fold_float_is_nan(
             _ => return Ok(OptimizationResult::NoChange),
         };
         let new_out = fg.make_bool_const( is_nan)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
     Ok(OptimizationResult::NoChange)
 }
@@ -966,7 +966,7 @@ fn try_fold_bitcast_identity(
             let inner = fg.graph.get_node_from_output(input);
             if matches!(*fg.graph.node_kind(inner), NodeKind::FloatBitsToInt) {
                 let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return fg.replace_all_uses(out, inner_input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, inner_input)?));
             }
         }
         NodeKind::FloatBitsToInt => {
@@ -975,7 +975,7 @@ fn try_fold_bitcast_identity(
             let inner = fg.graph.get_node_from_output(input);
             if matches!(*fg.graph.node_kind(inner), NodeKind::IntBitsToFloat) {
                 let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return fg.replace_all_uses(out, inner_input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, inner_input)?));
             }
         }
         _ => {}
@@ -1020,13 +1020,13 @@ fn try_lower_cast_to_float(
 
     // 1. Identity: input already has the target float type.
     if in_ty == out_ty {
-        return fg.replace_all_uses(out, input).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, input)?));
     }
 
     // 2. Float→float precision change.
     if in_ty.is_float() {
         let new_out = fg.make_float_to_float_node( input, out_ty)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // Input is integer from here.
@@ -1034,12 +1034,12 @@ fn try_lower_cast_to_float(
     // 3. Integer constant → float constant (same bits).
     if let Some(bits) = fg.int_const_val( input) {
         let new_out = fg.make_float_const( bits, out_ty)?;
-        return fg.replace_all_uses(out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange });
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // 4. Non-constant integer → explicit IntBitsToFloat.
     let new_out = fg.make_int_bits_to_float_node( input, out_ty)?;
-    fg.replace_all_uses( out, new_out).map_err(|e| e.into()).map(|changed| if changed { OptimizationResult::Changed } else { OptimizationResult::NoChange })
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
 pub struct ConstantFold;
