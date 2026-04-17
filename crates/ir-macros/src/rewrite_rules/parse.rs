@@ -10,18 +10,24 @@
 ///           | 'BoolConst' '(' BoolConstPat ')'
 ///           | 'FloatConst' '(' FloatConstPat ')'
 ///           | BoolOpName '(' LhsPat ',' LhsPat ')'
+///           | FloatBinOpName '(' LhsPat ',' LhsPat ')'
+///           | FloatCmpOpName '(' LhsPat ',' LhsPat ')'
 ///           | Ident
 /// IntConstPat  := IntLit | Ident ':' Ident | Ident
 /// BoolConstPat := 'true' | 'false' | Ident
 /// FloatConstPat := IntLit | Ident
-/// BoolOpName   := 'BAnd' | 'BOr' | 'BXor'
+/// BoolOpName      := 'BAnd' | 'BOr' | 'BXor'
+/// FloatBinOpName  := 'FAdd' | 'FSub' | 'FMul' | 'FDiv'
+/// FloatCmpOpName  := 'FEq' | 'FNe' | 'FLt' | 'FLe'
 /// RhsExpr  := 'int_const' '(' RhsValExpr ',' Ident ')'
+///           | 'float_const' '(' RhsValExpr ',' RhsTyExpr ')'
+///           | 'bool_const' '(' 'true' | 'false' ')'
 ///           | RhsAtom ('&' RhsAtom)*
 /// ```
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
-    Error, Ident, LitBool, LitInt, Lifetime, Result, Token,
+    Error, Expr, Ident, LitBool, LitInt, Lifetime, Result, Token,
     parse::{Parse, ParseStream},
 };
 
@@ -220,6 +226,64 @@ impl ExtendKind {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) enum FloatBinOpKind {
+    Add, Sub, Mul, Div,
+}
+
+impl FloatBinOpKind {
+    pub fn is_commutative(self) -> bool {
+        matches!(self, Self::Add | Self::Mul)
+    }
+    pub fn variant_ident(self) -> Ident {
+        Ident::new(match self {
+            Self::Add => "Add",
+            Self::Sub => "Sub",
+            Self::Mul => "Mul",
+            Self::Div => "Div",
+        }, Span::call_site())
+    }
+    /// Parse `FAdd` / `FSub` / `FMul` / `FDiv` head ident.
+    pub fn from_ident(ident: &Ident) -> Option<Self> {
+        match ident.to_string().as_str() {
+            "FAdd" => Some(Self::Add),
+            "FSub" => Some(Self::Sub),
+            "FMul" => Some(Self::Mul),
+            "FDiv" => Some(Self::Div),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum FloatCmpOpKind {
+    Equal, NotEqual, Less, LessEqual,
+}
+
+impl FloatCmpOpKind {
+    pub fn is_commutative(self) -> bool {
+        matches!(self, Self::Equal | Self::NotEqual)
+    }
+    pub fn variant_ident(self) -> Ident {
+        Ident::new(match self {
+            Self::Equal    => "Equal",
+            Self::NotEqual => "NotEqual",
+            Self::Less     => "Less",
+            Self::LessEqual => "LessEqual",
+        }, Span::call_site())
+    }
+    /// Parse `FEq` / `FNe` / `FLt` / `FLe` head ident.
+    pub fn from_ident(ident: &Ident) -> Option<Self> {
+        match ident.to_string().as_str() {
+            "FEq" => Some(Self::Equal),
+            "FNe" => Some(Self::NotEqual),
+            "FLt" => Some(Self::Less),
+            "FLe" => Some(Self::LessEqual),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum LhsPat {
     OutputCapture(Ident),
@@ -232,6 +296,8 @@ pub(super) enum LhsPat {
     FloatConstCapture { name: Ident },
     IntBinaryOp { op: IntBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     BoolBinaryOp { op: BoolBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
+    FloatBinaryOp { op: FloatBinOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
+    FloatCmpOp { op: FloatCmpOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     ExtendOp { kind: ExtendKind, inner: Box<LhsPat> },
 }
 
@@ -276,6 +342,12 @@ fn parse_lhs_inner(input: ParseStream) -> Result<LhsPat> {
     if ident == "FloatConst" { return parse_float_const(input); }
     if let Some(bool_op) = BoolBinOpKind::from_ident(&ident) {
         return parse_bool_bin_op(input, bool_op);
+    }
+    if let Some(float_op) = FloatBinOpKind::from_ident(&ident) {
+        return parse_float_bin_op(input, float_op);
+    }
+    if let Some(float_cmp) = FloatCmpOpKind::from_ident(&ident) {
+        return parse_float_cmp_op(input, float_cmp);
     }
     if ident == "Extend" {
         input.parse::<Token![::]>()?;
@@ -356,6 +428,28 @@ fn parse_bool_bin_op(input: ParseStream, op: BoolBinOpKind) -> Result<LhsPat> {
     Ok(LhsPat::BoolBinaryOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
 }
 
+fn parse_float_bin_op(input: ParseStream, op: FloatBinOpKind) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    let lhs = parse_lhs(&content)?;
+    content.parse::<Token![,]>()?;
+    let rhs = parse_lhs(&content)?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside FAdd/FSub/FMul/FDiv(...)"));
+    }
+    Ok(LhsPat::FloatBinaryOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
+}
+
+fn parse_float_cmp_op(input: ParseStream, op: FloatCmpOpKind) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    let lhs = parse_lhs(&content)?;
+    content.parse::<Token![,]>()?;
+    let rhs = parse_lhs(&content)?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside FEq/FNe/FLt/FLe(...)"));
+    }
+    Ok(LhsPat::FloatCmpOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
+}
+
 fn parse_grouped(input: ParseStream) -> Result<LhsPat> {
     let content; syn::parenthesized!(content in input);
     let lhs = parse_lhs(&content)?;
@@ -400,6 +494,14 @@ impl LhsPat {
                 rhs.collect_captures(caps);
             }
             LhsPat::BoolBinaryOp { lhs, rhs, .. } => {
+                lhs.collect_captures(caps);
+                rhs.collect_captures(caps);
+            }
+            LhsPat::FloatBinaryOp { lhs, rhs, .. } => {
+                lhs.collect_captures(caps);
+                rhs.collect_captures(caps);
+            }
+            LhsPat::FloatCmpOp { lhs, rhs, .. } => {
                 lhs.collect_captures(caps);
                 rhs.collect_captures(caps);
             }
@@ -511,6 +613,120 @@ impl LhsPat {
                         }
                         #no_change
                     };
+                })
+            }
+
+            LhsPat::FloatBinaryOp { op, lhs, rhs } if op.is_commutative() => {
+                let variant = op.variant_ident();
+                let (_, label) = ctx.fresh("ford");
+
+                let mut sub_caps = CaptureEnv::new();
+                lhs.collect_captures(&mut sub_caps);
+                rhs.collect_captures(&mut sub_caps);
+                let cap_tuple = cap_tuple_tokens(&sub_caps);
+                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                let lhs_body = lhs.emit_sub(&quote! { __ford_l }, &quote! { continue; }, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __ford_r }, &quote! { continue; }, ctx)?;
+
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::FloatBinaryOp;
+                        let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    let #cap_tuple: #cap_tuple_ty = #label: loop {
+                        for (__ford_l, __ford_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
+                            #lhs_body
+                            #rhs_body
+                            break #label #cap_tuple;
+                        }
+                        #no_change
+                    };
+                })
+            }
+
+            LhsPat::FloatBinaryOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::FloatBinaryOp;
+                        let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    #lhs_body
+                    #rhs_body
+                })
+            }
+
+            LhsPat::FloatCmpOp { op, lhs, rhs } if op.is_commutative() => {
+                let variant = op.variant_ident();
+                let (_, label) = ctx.fresh("fcord");
+
+                let mut sub_caps = CaptureEnv::new();
+                lhs.collect_captures(&mut sub_caps);
+                rhs.collect_captures(&mut sub_caps);
+                let cap_tuple = cap_tuple_tokens(&sub_caps);
+                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                let lhs_body = lhs.emit_sub(&quote! { __fcord_l }, &quote! { continue; }, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __fcord_r }, &quote! { continue; }, ctx)?;
+
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::FloatCmpOp;
+                        let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    let #cap_tuple: #cap_tuple_ty = #label: loop {
+                        for (__fcord_l, __fcord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
+                            #lhs_body
+                            #rhs_body
+                            break #label #cap_tuple;
+                        }
+                        #no_change
+                    };
+                })
+            }
+
+            LhsPat::FloatCmpOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
+                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
+                Ok(quote! {
+                    {
+                        use ir::node::NodeKind;
+                        use ir::FloatCmpOp;
+                        let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(node) else {
+                            #no_change
+                        };
+                    }
+                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
+                        Ok(v) => v,
+                        Err(_) => { #no_change }
+                    };
+                    #lhs_body
+                    #rhs_body
                 })
             }
 
@@ -694,6 +910,116 @@ impl LhsPat {
                 }
             }
 
+            LhsPat::FloatBinaryOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+
+                if op.is_commutative() {
+                    let (_, label) = ctx.fresh("fnord");
+
+                    let mut sub_caps = CaptureEnv::new();
+                    lhs.collect_captures(&mut sub_caps);
+                    rhs.collect_captures(&mut sub_caps);
+                    let cap_tuple = cap_tuple_tokens(&sub_caps);
+                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                    let lhs_body = lhs.emit_sub(&quote! { __fnested_l }, &quote! { continue; }, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __fnested_r }, &quote! { continue; }, ctx)?;
+
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::FloatBinaryOp;
+                            let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        let #cap_tuple: #cap_tuple_ty = #label: loop {
+                            for (__fnested_l, __fnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
+                                #lhs_body
+                                #rhs_body
+                                break #label #cap_tuple;
+                            }
+                            #fail_ts
+                        };
+                    })
+                } else {
+                    let lhs_body = lhs.emit_sub(&quote! { __sub_flhs }, fail_ts, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __sub_frhs }, fail_ts, ctx)?;
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::FloatBinaryOp;
+                            let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_flhs, __sub_frhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        #lhs_body
+                        #rhs_body
+                    })
+                }
+            }
+
+            LhsPat::FloatCmpOp { op, lhs, rhs } => {
+                let variant = op.variant_ident();
+
+                if op.is_commutative() {
+                    let (_, label) = ctx.fresh("fcnord");
+
+                    let mut sub_caps = CaptureEnv::new();
+                    lhs.collect_captures(&mut sub_caps);
+                    rhs.collect_captures(&mut sub_caps);
+                    let cap_tuple = cap_tuple_tokens(&sub_caps);
+                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
+
+                    let lhs_body = lhs.emit_sub(&quote! { __fcnested_l }, &quote! { continue; }, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __fcnested_r }, &quote! { continue; }, ctx)?;
+
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::FloatCmpOp;
+                            let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        let #cap_tuple: #cap_tuple_ty = #label: loop {
+                            for (__fcnested_l, __fcnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
+                                #lhs_body
+                                #rhs_body
+                                break #label #cap_tuple;
+                            }
+                            #fail_ts
+                        };
+                    })
+                } else {
+                    let lhs_body = lhs.emit_sub(&quote! { __sub_fclhs }, fail_ts, ctx)?;
+                    let rhs_body = rhs.emit_sub(&quote! { __sub_fcrhs }, fail_ts, ctx)?;
+                    Ok(quote! {
+                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
+                        {
+                            use ir::node::NodeKind;
+                            use ir::FloatCmpOp;
+                            let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
+                        }
+                        let [__sub_fclhs, __sub_fcrhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
+                            Ok(v) => v,
+                            Err(_) => { #fail_ts }
+                        };
+                        #lhs_body
+                        #rhs_body
+                    })
+                }
+            }
+
             LhsPat::ExtendOp { kind, inner } => {
                 let variant = kind.variant_ident();
                 let inner_body = inner.emit_sub(&quote! { __sub_ext_inner }, fail_ts, ctx)?;
@@ -737,6 +1063,10 @@ pub(super) enum RhsExpr {
     Ident(Ident),
     /// `int_const(<val_expr>, <ty>)` — builds a new IntConst node.
     IntConstBuilder { val_expr: RhsValExpr, ty_ident: Ident },
+    /// `float_const(<val_expr>, <ty_expr>)` — builds a new FloatConst node.
+    FloatConstBuilder { val_expr: RhsValExpr, ty_expr: Expr },
+    /// `bool_const(true)` / `bool_const(false)` — builds a BoolConst node.
+    BoolConstBuilder { value: bool },
     /// `lhs & rhs` — creates a new IntBinaryOp(And) node.
     BinOp { op: IntBinOpKind, lhs: Box<RhsExpr>, rhs: Box<RhsExpr> },
 }
@@ -745,6 +1075,8 @@ pub(super) enum RhsExpr {
 #[derive(Clone)]
 pub(super) enum RhsValExpr {
     Ident(Ident),
+    /// An integer literal such as `0u64`.
+    Lit(LitInt),
     /// `receiver.method(arg)` — e.g. `in_ty.sign_extend(v)`.
     MethodCall { receiver: Ident, method: Ident, arg: Ident },
     /// `lhs & rhs` — plain Rust `&`.
@@ -767,7 +1099,7 @@ fn parse_rhs(input: ParseStream) -> Result<RhsExpr> {
 
 fn parse_rhs_atom(input: ParseStream) -> Result<RhsExpr> {
     if !input.peek(Ident) {
-        return Err(input.error("expected identifier or `int_const(...)` in RHS expression"));
+        return Err(input.error("expected identifier or `int_const(...)`/`float_const(...)`/`bool_const(...)` in RHS expression"));
     }
     // Fork to peek without consuming.
     let fork = input.fork();
@@ -783,6 +1115,26 @@ fn parse_rhs_atom(input: ParseStream) -> Result<RhsExpr> {
         }
         return Ok(RhsExpr::IntConstBuilder { val_expr, ty_ident });
     }
+    if head == "float_const" && fork.peek(syn::token::Paren) {
+        input.parse::<Ident>()?; // consume "float_const"
+        let content; syn::parenthesized!(content in input);
+        let val_expr = parse_rhs_val(&content)?;
+        content.parse::<Token![,]>()?;
+        let ty_expr: Expr = content.parse()?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens in float_const(...)"));
+        }
+        return Ok(RhsExpr::FloatConstBuilder { val_expr, ty_expr });
+    }
+    if head == "bool_const" && fork.peek(syn::token::Paren) {
+        input.parse::<Ident>()?; // consume "bool_const"
+        let content; syn::parenthesized!(content in input);
+        let lit: LitBool = content.parse()?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens in bool_const(...)"));
+        }
+        return Ok(RhsExpr::BoolConstBuilder { value: lit.value });
+    }
     input.parse::<Ident>().map(RhsExpr::Ident)
 }
 
@@ -797,6 +1149,11 @@ fn parse_rhs_val(input: ParseStream) -> Result<RhsValExpr> {
 }
 
 fn parse_rhs_val_atom(input: ParseStream) -> Result<RhsValExpr> {
+    // Accept integer literals (e.g. `0u64`) as plain value expressions.
+    if input.peek(LitInt) {
+        let lit: LitInt = input.parse()?;
+        return Ok(RhsValExpr::Lit(lit));
+    }
     let ident: Ident = input.parse()?;
     if input.peek(Token![.]) {
         input.parse::<Token![.]>()?;
@@ -812,6 +1169,7 @@ impl RhsValExpr {
     pub fn emit(&self) -> TokenStream {
         match self {
             RhsValExpr::Ident(n) => quote! { #n },
+            RhsValExpr::Lit(lit) => quote! { #lit },
             RhsValExpr::MethodCall { receiver, method, arg } => {
                 // `sign_extend` returns `Option<u64>` because the underlying
                 // `NodeOutputType` covers widths (`Bool`, `U128`, `U256`, floats)
@@ -848,6 +1206,8 @@ impl RhsExpr {
         match self {
             RhsExpr::Ident(n) => matches!(caps.kind_of(n), Some(CaptureKind::Output)),
             RhsExpr::IntConstBuilder { .. } => true,
+            RhsExpr::FloatConstBuilder { .. } => true,
+            RhsExpr::BoolConstBuilder { .. } => true,
             RhsExpr::BinOp { lhs, rhs, .. } => lhs.is_output(caps) || rhs.is_output(caps),
         }
     }
@@ -858,6 +1218,13 @@ impl RhsExpr {
             RhsExpr::IntConstBuilder { val_expr, ty_ident } => {
                 let v = val_expr.emit();
                 Ok(quote! { fg.make_int_const(#v, #ty_ident)? })
+            }
+            RhsExpr::FloatConstBuilder { val_expr, ty_expr } => {
+                let v = val_expr.emit();
+                Ok(quote! { fg.make_float_const(#v, #ty_expr)? })
+            }
+            RhsExpr::BoolConstBuilder { value } => {
+                Ok(quote! { fg.make_bool_const(#value)? })
             }
             RhsExpr::BinOp { op, lhs, rhs } => {
                 if lhs.is_output(caps) || rhs.is_output(caps) {
