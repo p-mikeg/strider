@@ -564,6 +564,16 @@ impl NodeKind {
                 | Self::StackStorePhi { .. }
         )
     }
+
+    /// Returns `true` for any phi node kind: [`NodeKind::ControlPhi`],
+    /// [`NodeKind::MemPhi`], or [`NodeKind::StackStorePhi`].
+    #[inline]
+    pub fn is_phi(&self) -> bool {
+        matches!(
+            self,
+            Self::ControlPhi(_) | Self::MemPhi | Self::StackStorePhi { .. }
+        )
+    }
 }
 
 /// A node in the IR graph.
@@ -881,5 +891,29 @@ mod tests {
         let kind = NodeOutputKind::OutputType(NodeOutputType::U32);
         let err = kind.as_float_or_err().unwrap_err();
         assert!(matches!(err.kind(), crate::ErrorKind::ExpectedFloatType(_)));
+    }
+
+    // ── is_phi ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn is_phi_true_cases() {
+        let phi_vn = rsleigh::Vn {
+            size: 8,
+            addr: rsleigh::VnAddr {
+                off: 0,
+                space: rsleigh::VnSpace::REGISTER,
+            },
+        };
+        assert!(NodeKind::ControlPhi(phi_vn).is_phi());
+        assert!(NodeKind::MemPhi.is_phi());
+        let space = rsleigh::VnSpace::RAM;
+        assert!(NodeKind::StackStorePhi { space }.is_phi());
+    }
+
+    #[test]
+    fn is_phi_false_cases() {
+        assert!(!NodeKind::Entry.is_phi());
+        assert!(!NodeKind::InitialMemory.is_phi());
+        assert!(!NodeKind::IntConst(0).is_phi());
     }
 }
