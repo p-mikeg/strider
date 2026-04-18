@@ -21,6 +21,7 @@ use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 use ir_macros::rewrite_rules;
 use opt::OptimizationResult;
+use pattern::IntoPat;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

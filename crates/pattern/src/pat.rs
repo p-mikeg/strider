@@ -39,7 +39,7 @@ impl Pat {
     /// After this pattern matches successfully, additionally bind the matched
     /// output to `v`.  If `v` is already bound the output must equal the
     /// stored binding, otherwise the match fails.
-    pub fn capture(self, v: Var) -> Pat {
+    fn capture_impl(self, v: Var) -> Pat {
         Pat::new(PatKind::WithCapture {
             inner: self,
             var: v,
@@ -48,7 +48,7 @@ impl Pat {
 
     /// After this pattern matches successfully, additionally run `f` against
     /// the matched output.  The match fails if `f` returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
+    fn when_impl<F>(self, f: F) -> Pat
     where
         F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
     {
@@ -72,6 +72,31 @@ impl Pat {
         })
     }
 }
+
+// ── IntoPat blanket trait ─────────────────────────────────────────────────────
+
+/// Blanket trait that lets every builder struct (`IntBinaryOpPat`, `LoadPat`, …)
+/// participate in the common `capture` / `when` suffix operations without
+/// each builder re-implementing them.
+///
+/// Every type that implements `Into<Pat>` automatically gets `capture` and `when`
+/// for free.  Import this trait to call `.capture(v)` / `.when(f)` on builder
+/// types.
+pub trait IntoPat: Into<Pat> + Sized {
+    /// After matching, bind the matched output to `v`.
+    fn capture(self, v: Var) -> Pat {
+        self.into().capture_impl(v)
+    }
+    /// After matching, additionally run `f` — fails if it returns `false`.
+    fn when<F>(self, f: F) -> Pat
+    where
+        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    {
+        self.into().when_impl(f)
+    }
+}
+
+impl<T: Into<Pat>> IntoPat for T {}
 
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
@@ -314,19 +339,6 @@ impl IntBinaryOpPat {
         self.ordered = true;
         self
     }
-
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
-    }
 }
 
 impl From<IntBinaryOpPat> for Pat {
@@ -359,19 +371,6 @@ impl BoolBinaryOpPat {
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
-    }
-
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -407,19 +406,6 @@ impl FloatBinaryOpPat {
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
-    }
-
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -473,17 +459,6 @@ impl LoadPat {
     pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
-    }
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -544,17 +519,6 @@ impl StorePat {
     pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
-    }
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -617,17 +581,6 @@ impl StackStorePat {
         self.node_var = Some(nv);
         self
     }
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
-    }
 }
 
 impl From<StackStorePat> for Pat {
@@ -688,15 +641,6 @@ impl StackStorePhiPat {
         self.node_var = Some(nv);
         self
     }
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
-    }
 }
 
 impl From<StackStorePhiPat> for Pat {
@@ -751,17 +695,6 @@ impl PhiPat {
         self.node_var = Some(nv);
         self
     }
-    /// After matching, bind the matched output to `v`.
-    pub fn capture(self, v: Var) -> Pat {
-        Pat::from(self).capture(v)
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
-    }
 }
 
 impl From<PhiPat> for Pat {
@@ -812,13 +745,6 @@ impl CallPat {
         self.node_var = Some(nv);
         self
     }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
-    }
 }
 
 impl From<CallPat> for Pat {
@@ -863,13 +789,6 @@ impl CallOtherPat {
     pub fn capture(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -916,13 +835,6 @@ impl RetPat {
     pub fn capture(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 
@@ -975,13 +887,6 @@ impl IfPat {
     pub fn capture(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
-    }
-    /// After matching, additionally run `f` — fails if it returns `false`.
-    pub fn when<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from(self).when(f)
     }
 }
 

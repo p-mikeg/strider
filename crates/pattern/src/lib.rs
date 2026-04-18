@@ -77,6 +77,8 @@ pub use pat::{
     FloatBinaryOpPat,
     IfPat,
     IntBinaryOpPat,
+    // Blanket trait
+    IntoPat,
     LoadPat,
     MatchPredicateFn,
     Pat,
