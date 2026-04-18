@@ -387,6 +387,16 @@ impl Match {
         self.bindings.get_float_cmp_op(v)
     }
 
+    /// Returns an owned copy of the full [`Bindings`] captured by this match.
+    ///
+    /// Useful when a caller needs to keep the bindings alive past the match —
+    /// e.g. the rewrite-rule engine drops the [`Matcher`] borrow before
+    /// constructing fresh graph nodes, so it needs an owned snapshot of the
+    /// captures to consult while mutating the graph.
+    pub fn bindings_clone(&self) -> Bindings {
+        self.bindings.clone()
+    }
+
     /// If the output bound to `v` was produced by an `IntConst` node, returns
     /// the stored constant value.  Returns `None` for unbound vars or non-const
     /// outputs.

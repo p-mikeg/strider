@@ -59,12 +59,15 @@
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
 //! operand orderings.  Call `.ordered()` on the returned builder to opt out.
 
+pub mod build;
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
 
 mod matcher;
 mod pat;
 mod var;
+
+pub use build::{Build, BuildCtx, BuildValue, RewriteOutcome, apply_rules_in_order, rewrite_rule};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

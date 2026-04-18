@@ -8,6 +8,48 @@ strider_error::define_error! {
         /// instead of using `panic!`.
         #[error("assertion failed: {0}")]
         AssertionFailed(String),
+
+        /// Propagated from the underlying IR layer — raised by `make_value_node`,
+        /// `replace_all_uses`, and similar graph-mutation helpers used by the
+        /// rewrite engine.
+        #[error(transparent)]
+        IrError(ir::ErrorKind),
+
+        /// A user-supplied closure inside a [`crate::build::Build`] tree (e.g.
+        /// the body passed to `int_const_fn`, `bool_const_fn`, or
+        /// `float_const_fn`) returned an error.  Carries the original error as
+        /// a boxed trait object so rule authors can surface arbitrary error
+        /// types without having to shoehorn them into a dedicated variant.
+        #[error("rewrite-rule closure failed: {0}")]
+        RewriteClosure(Box<dyn std::error::Error + Send + Sync>),
+    }
+}
+
+impl Error {
+    /// Wraps an arbitrary closure error into a [`Error`] via
+    /// [`ErrorKind::RewriteClosure`].  Use inside rewrite-rule RHS closures to
+    /// forward custom error types (e.g. per-crate error enums) through the
+    /// rewrite engine.
+    #[track_caller]
+    pub fn rewrite_closure<E>(e: E) -> Self
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        ErrorKind::RewriteClosure(Box::new(e)).into()
+    }
+}
+
+/// Hand-rolled bridge so `?` across the `ir` → `pattern` boundary preserves the
+/// origin backtrace + location chain captured by `ir`.  Decomposes the inner
+/// wrapper, moves its `ErrorFields`, and appends the outer caller's site.
+impl From<ir::Error> for Error {
+    #[track_caller]
+    fn from(e: ir::Error) -> Self {
+        let (kind, fields) = e.decompose();
+        Error {
+            kind: Box::new(ErrorKind::IrError(*kind)),
+            fields: fields.push_caller(),
+        }
     }
 }
 
