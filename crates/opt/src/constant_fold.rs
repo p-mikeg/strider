@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::{
     BuiltFunctionGraph, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
@@ -126,22 +128,14 @@ fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool
 
 // ── per-node folding ──────────────────────────────────────────────────────────
 
-/// Applies add/sub reassociation and AND-mask merging rules.
+/// Builds the rule vec for [`apply_reassoc_and_mask_rules`].
 ///
-/// Rules:
-/// - `(x + C1) + C2 → x + (C1 + C2)`
-/// - `(x - C1) - C2 → x - (C1 + C2)`
-/// - `(x + C1) - C2 → x + (C1 - C2)`
-/// - `(a & C1) & C2 → a & (C1 & C2)`
-/// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
-fn apply_reassoc_and_mask_rules(
-    fg: &mut BuiltFunctionGraph,
-    node: NodeId,
-) -> Result<OptimizationResult> {
+/// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
+fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
     use pattern::build::{self, cap};
     use pattern::{
-        BoxedRule, IntVar, Var, add, and, any_int_const, apply_rules_in_order, boxed_rule,
-        int_const_with, or, rewrite_rule, sub, var,
+        BoxedRule, IntVar, Var, add, and, any_int_const, boxed_rule, int_const_with, or,
+        rewrite_rule, sub, var,
     };
 
     // (x + C1) + C2 → x + (C1 + C2)
@@ -201,21 +195,34 @@ fn apply_reassoc_and_mask_rules(
         rule_and_merge,
         rule_and_dist,
     ];
-    let changed = apply_rules_in_order(rules)(fg, node)?;
-    Ok(OptimizationResult::from_changed(changed))
+    rules
 }
 
-/// Applies bitcast identity rules:
-/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
-/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
-fn apply_bitcast_extend_rules(
+static REASSOC_AND_MASK_RULES: LazyLock<Vec<pattern::BoxedRule>> =
+    LazyLock::new(build_reassoc_and_mask_rules);
+
+/// Applies add/sub reassociation and AND-mask merging rules.
+///
+/// Rules:
+/// - `(x + C1) + C2 → x + (C1 + C2)`
+/// - `(x - C1) - C2 → x - (C1 + C2)`
+/// - `(x + C1) - C2 → x + (C1 - C2)`
+/// - `(a & C1) & C2 → a & (C1 & C2)`
+/// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
+fn apply_reassoc_and_mask_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
+    use pattern::apply_rules_in_order;
+    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
+}
+
+/// Builds the rule vec for [`apply_bitcast_extend_rules`].
+fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     use pattern::build::cap;
     use pattern::{
-        BoxedRule, Var, apply_rules_in_order, boxed_rule, float_bits_to_int, int_bits_to_float,
-        rewrite_rule, var,
+        BoxedRule, Var, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule, var,
     };
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
@@ -233,27 +240,30 @@ fn apply_bitcast_extend_rules(
     ));
 
     let rules: Vec<BoxedRule> = vec![rule_int_float, rule_float_int];
-    let changed = apply_rules_in_order(rules)(fg, node)?;
-    Ok(OptimizationResult::from_changed(changed))
+    rules
 }
 
-/// Applies single-operand algebraic identities to integer binary operations.
-///
-/// Rules ported from hand-written arms:
-/// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
-/// - `x ^ x → 0`, `x ^ 0 → x`
-/// - `x * 0 → 0`, `x * 1 → x`
-/// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
-/// - `x | 0 → x`, `x | x → x`
-/// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
-fn apply_identity_rules(
+static BITCAST_EXTEND_RULES: LazyLock<Vec<pattern::BoxedRule>> =
+    LazyLock::new(build_bitcast_extend_rules);
+
+/// Applies bitcast identity rules:
+/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
+/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
+fn apply_bitcast_extend_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
+    use pattern::apply_rules_in_order;
+    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
+}
+
+/// Builds the rule vec for [`apply_identity_rules`].
+fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::build::{cap, int_const_lit};
     use pattern::{
-        BoxedRule, Var, add, and, apply_rules_in_order, boxed_rule, int_const, mul, or,
-        rewrite_rule, shl, shr, sshr, sub, var, xor,
+        BoxedRule, Var, add, and, boxed_rule, int_const, mul, or, rewrite_rule, shl, shr, sshr,
+        sub, var, xor,
     };
 
     let x = Var::new();
@@ -310,23 +320,36 @@ fn apply_identity_rules(
             Ok(false)
         }),
     ];
-
-    let changed = apply_rules_in_order(rules)(fg, node)?;
-    Ok(OptimizationResult::from_changed(changed))
+    rules
 }
 
-/// Applies full constant evaluation for integer binary ops, integer unary ops,
-/// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
-/// cast_to_bool, and cast_to_int.
-fn apply_const_eval_rules(
+static IDENTITY_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_identity_rules);
+
+/// Applies single-operand algebraic identities to integer binary operations.
+///
+/// Rules ported from hand-written arms:
+/// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
+/// - `x ^ x → 0`, `x ^ 0 → x`
+/// - `x * 0 → 0`, `x * 1 → x`
+/// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
+/// - `x | 0 → x`, `x | x → x`
+/// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
+fn apply_identity_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
+    use pattern::apply_rules_in_order;
+    let changed = apply_rules_in_order(&IDENTITY_RULES)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
+}
+
+/// Builds the rule vec for [`apply_const_eval_rules`].
+fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
         BoolVar, BoxedRule, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, any_bool_const,
-        any_int_const, apply_rules_in_order, bool_const_with, boxed_rule, cast_to_bool,
-        cast_to_int, int_binary_any, int_cmp_any, int_const_with, int_unary_any, lzcount,
-        popcount, rewrite_rule, sign_extend, truncate, zero_extend,
+        any_int_const, bool_const_with, boxed_rule, cast_to_bool, cast_to_int, int_binary_any,
+        int_cmp_any, int_const_with, int_unary_any, lzcount, popcount, rewrite_rule, sign_extend,
+        truncate, zero_extend,
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -477,22 +500,29 @@ fn apply_const_eval_rules(
             ))
         },
     ];
-
-    let changed = apply_rules_in_order(rules)(fg, node)?;
-    Ok(OptimizationResult::from_changed(changed))
+    rules
 }
 
-/// Applies constant evaluation and absorbing-element rules for bool binary ops,
-/// bool unary ops, and all float ops.
-fn apply_bool_float_rules(
+static CONST_EVAL_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_const_eval_rules);
+
+/// Applies full constant evaluation for integer binary ops, integer unary ops,
+/// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
+/// cast_to_bool, and cast_to_int.
+fn apply_const_eval_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
+    use pattern::apply_rules_in_order;
+    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
+}
+
+/// Builds the rule vec for [`apply_bool_float_rules`].
+fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
         BoolUnaryOpVar, BoolVar, BoxedRule, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-        FloatVar, any_bool_const, any_float_const, apply_rules_in_order, bool_and, bool_or,
-        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any,
-        rewrite_rule,
+        FloatVar, any_bool_const, any_float_const, bool_and, bool_or, bool_unary_any, bool_xor,
+        boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule,
     };
     use pattern::{bool_const_with, float_const_with};
 
@@ -607,8 +637,19 @@ fn apply_bool_float_rules(
             ))
         },
     ];
+    rules
+}
 
-    let changed = apply_rules_in_order(rules)(fg, node)?;
+static BOOL_FLOAT_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);
+
+/// Applies constant evaluation and absorbing-element rules for bool binary ops,
+/// bool unary ops, and all float ops.
+fn apply_bool_float_rules(
+    fg: &mut BuiltFunctionGraph,
+    node: NodeId,
+) -> Result<OptimizationResult> {
+    use pattern::apply_rules_in_order;
+    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(fg, node)?;
     // CastToFloat lowering is too stateful for a rule (it does graph surgery);
     // handle it separately after the rule sweep.
     let cast_changed = try_lower_cast_to_float(fg, node)?;

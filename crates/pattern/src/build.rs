@@ -485,18 +485,18 @@ pub fn rewrite_rule(
 /// may or may not still apply; this mirrors the "run every rule, once" policy
 /// of the pre-rewrite `apply_identity_rules` fold in `constant_fold.rs`.
 ///
-/// Takes `rules` by value (`Vec<R>`) and moves them into the closure; this
-/// composes naturally with the common consumer pattern of building a fresh
-/// `Vec<rewrite_rule(...)>` at pass-configuration time.
-pub fn apply_rules_in_order<R>(
-    rules: Vec<R>,
-) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static
+/// Borrows `rules` as a slice and returns a closure bound to that borrow's
+/// lifetime, so callers can hoist the rule vec into a `LazyLock` (or any
+/// other long-lived storage) and compose the per-call closure cheaply.
+pub fn apply_rules_in_order<'a, R>(
+    rules: &'a [R],
+) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'a
 where
-    R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static,
+    R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync,
 {
     move |fg, node| {
         let mut any = false;
-        for r in &rules {
+        for r in rules {
             if r(fg, node)? {
                 any = true;
             }
@@ -1280,7 +1280,8 @@ mod tests {
         let rule_hit =
             rewrite_rule(pat_add(pat_var(x2), pat_int_const(0)), cap(x2));
 
-        let combined = apply_rules_in_order(vec![rule_no_match, rule_hit]);
+        let rules = vec![rule_no_match, rule_hit];
+        let combined = apply_rules_in_order(&rules);
         let changed = combined(&mut fg, add_node)?;
         assert!(changed, "at least one rule fired");
         Ok(())
