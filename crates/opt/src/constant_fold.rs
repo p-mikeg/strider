@@ -667,6 +667,9 @@ fn apply_bool_float_rules(
 
         // ── FloatIsNan (via escape-hatch) ─────────────────────────────────────
         float_isnan @ try_fold_float_is_nan_const,
+
+        // ── CastToFloat lowering (via escape-hatch) ───────────────────────────
+        cast_to_float @ try_lower_cast_to_float,
     };
     rules(fg, node)
 }
@@ -928,7 +931,6 @@ impl Optimizer for ConstantFold {
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
-            result |= try_lower_cast_to_float(function, node_id)?;
         }
         Ok(result)
     }
