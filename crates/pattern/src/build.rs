@@ -462,8 +462,15 @@ pub fn rewrite_rule(
         let [root_out] = fg.graph.node_outputs_exact::<1>(node)?;
         let root_ty = fg.graph.output_kind(root_out).as_value_or_err()?;
 
-        // 3. Evaluate RHS.
-        let outcome = eval(&rhs, fg, &bindings, node, root_ty)?;
+        // 3. Evaluate RHS.  A closure inside the tree may opt out of the
+        //    rewrite by returning `Err(pattern::Error::skip())`; catch that
+        //    sentinel here and convert it to "no change" instead of a hard
+        //    error.  All other errors propagate.
+        let outcome = match eval(&rhs, fg, &bindings, node, root_ty) {
+            Ok(o) => o,
+            Err(e) if e.is_skip() => return Ok(false),
+            Err(e) => return Err(e),
+        };
 
         match outcome {
             RewriteOutcome::Skip => Ok(false),
@@ -991,24 +998,27 @@ impl FromCtx for FloatCmpOpVar {
 
 // ── first_value_input_type helper ─────────────────────────────────────────────
 
-/// Returns the [`NodeOutputType`] of the root node's **single** value input,
-/// if the root has exactly one input and it is a value-typed output.
+/// Returns the [`NodeOutputType`] of the root node's **first** value input
+/// (input index 0), if that input is a value-typed output.
 ///
 /// Used by the `int_const_with!` / `bool_const_with!` / `float_const_with!`
 /// macros to auto-bind an `in_ty` identifier so rewrite-rule closures can
-/// refer to the producing-type of unary ops like `Popcount`, `Lzcount`,
-/// `Truncate`, `SignExtend`, etc. — where the input type differs from the
-/// root's output type.
+/// refer to the producing-type of the root's first operand — useful for
+/// unary ops like `Popcount`, `Lzcount`, `Truncate`, `SignExtend`, and also
+/// for `IntCmpOp(lhs, rhs)` where the comparison's *input* type (needed by
+/// `eval_int_cmp` for signed/carry/borrow handling) differs from the
+/// root's *output* type (always `Bool`).
 ///
 /// Returns `None` if:
-/// * the root has zero or multiple inputs, or
-/// * the single input isn't a value edge (e.g. a control-typed input on a
-///   hypothetical unary control op — the generic helper shouldn't assume).
+/// * the root has zero inputs, or
+/// * the first input isn't a value edge (e.g. a control-typed input on a
+///   hypothetical control-first op — the generic helper shouldn't assume).
 ///
 /// Rule bodies that need the type should propagate a missing-type failure
 /// with `in_ty.ok_or(...)?`.
 pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
-    let [inp] = ctx.graph.graph.node_inputs_exact::<1>(ctx.root).ok()?;
+    let inputs = ctx.graph.graph.node_inputs(ctx.root);
+    let inp = inputs.into_iter().next()?;
     match ctx.graph.graph.output_kind(inp) {
         NodeOutputKind::OutputType(t) => Some(t),
         _ => None,
@@ -1578,5 +1588,71 @@ mod tests {
             "error should mention the closure failure, got: {msg}"
         );
         Ok(())
+    }
+
+    /// A closure that returns `Err(pattern::Error::skip())` must be treated
+    /// as "rule doesn't apply" by the `rewrite_rule` interpreter, not as a
+    /// hard error.  The return value is `Ok(false)` and the graph is left
+    /// untouched.
+    #[test]
+    fn int_const_with_skip_returns_ok_false() -> Result<()> {
+        use crate::pat::{any_int_const, popcount};
+        use crate::var::IntVar;
+
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let c = b.build_int_const(0, NodeOutputType::U32);
+        let pc_out = b.build_popcount(c, NodeOutputType::U32)?;
+        b.build_return(Some(pc_out), &[])?;
+        let mut fg = b.build()?;
+        let pc_node = fg.graph.get_node_from_output(pc_out);
+
+        let v = IntVar::new();
+        let rule = rewrite_rule(
+            popcount(any_int_const(v)),
+            int_const_with!([v] => {
+                let _ = v;
+                // Partial oracle decided the rule doesn't apply.
+                None::<u64>.ok_or_else(Error::skip)?
+            }),
+        );
+        let changed = rule(&mut fg, pc_node)?;
+        assert!(
+            !changed,
+            "Error::skip() inside a closure should map to Ok(false)"
+        );
+        // Return should still point at the original popcount node.
+        let ret_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
+        let ret_inputs: Vec<NodeOutputId> =
+            fg.graph.node_inputs(ret_node).into_iter().collect();
+        let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+            ErrorKind::AssertionFailed("Return node missing retval".into())
+        })?;
+        let producer = fg.graph.get_node_from_output(retval);
+        assert!(
+            matches!(fg.graph.node_kind(producer), NodeKind::Popcount),
+            "graph should be untouched after a skip"
+        );
+        Ok(())
+    }
+
+    /// `Error::skip()` is distinguishable from other error kinds via
+    /// `is_skip()`, so the `rewrite_rule` interpreter can safely demultiplex
+    /// them.
+    #[test]
+    fn error_skip_is_detectable() {
+        let e = Error::skip();
+        assert!(e.is_skip(), "Error::skip() should report is_skip() == true");
+
+        let other = Error::from(ErrorKind::AssertionFailed("nope".into()));
+        assert!(
+            !other.is_skip(),
+            "non-skip errors should report is_skip() == false"
+        );
     }
 }

@@ -32,6 +32,15 @@ strider_error::define_error! {
         /// error message.
         #[error("missing binding for capture of kind {0}")]
         MissingBinding(&'static str),
+
+        /// Signal from a rewrite-rule RHS closure that the rule doesn't apply
+        /// after all.  Used by partial-oracle helpers (e.g. `eval_int_binary`
+        /// on divide-by-zero) that need to opt out without surfacing a hard
+        /// error.  The [`crate::build::rewrite_rule`] interpreter converts
+        /// this error back to [`crate::build::RewriteOutcome::Skip`]; every
+        /// other error variant propagates as a real failure.
+        #[error("rewrite rule opted to skip")]
+        RewriteSkip,
     }
 }
 
@@ -46,6 +55,28 @@ impl Error {
         E: std::error::Error + Send + Sync + 'static,
     {
         ErrorKind::RewriteClosure(Box::new(e)).into()
+    }
+
+    /// Returns an [`Error`] carrying [`ErrorKind::RewriteSkip`], the sentinel
+    /// the `rewrite_rule` interpreter converts back to "no change" rather than
+    /// treating as a hard failure.
+    ///
+    /// Typical use inside a `*_const_with!` closure body:
+    ///
+    /// ```rust,ignore
+    /// int_const_with!([op, l, r, ty] =>
+    ///     eval_int_binary(op, l, r, ty).ok_or_else(pattern::Error::skip)?
+    /// )
+    /// ```
+    #[track_caller]
+    pub fn skip() -> Self {
+        ErrorKind::RewriteSkip.into()
+    }
+
+    /// Returns `true` if this error is the `RewriteSkip` sentinel used to
+    /// opt out of a rewrite rule without surfacing a hard error.
+    pub fn is_skip(&self) -> bool {
+        matches!(self.kind(), ErrorKind::RewriteSkip)
     }
 }
 

@@ -1,7 +1,7 @@
 use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::{
-    BoolUnaryOp, BuiltFunctionGraph, ExtendOp, FloatBinaryOp, FloatCmpOp,
-    FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    BoolUnaryOp, BuiltFunctionGraph, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
+    IntCmpOp, IntUnaryOp,
 };
 use ir_macros::rewrite_rules;
 
@@ -224,88 +224,6 @@ fn apply_identity_rules(
     Ok(OptimizationResult::from_changed(changed))
 }
 
-/// Escape-hatch for constant-folding all `IntBinaryOp` nodes when both operands
-/// are `IntConst`.  Delegates to `eval_int_binary` which handles masking,
-/// division-by-zero, signed overflow, and shift amount clamping correctly.
-fn try_fold_int_binary_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntBinaryOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(l) = fg.int_const_val(lhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(r) = fg.int_const_val(rhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(folded) = eval_int_binary(op, l, r, ty) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const(folded, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding `IntUnaryOp` (Neg, Not) nodes when the
-/// operand is an `IntConst`.
-fn try_fold_int_unary_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntUnaryOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let raw = match op {
-        IntUnaryOp::Neg => v.wrapping_neg(),
-        IntUnaryOp::Not => !v,
-    };
-    let Some(folded) = ty.get_unsigned_int(raw) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const(folded, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding all `IntCmpOp` nodes when both operands
-/// are `IntConst`.  Delegates to `eval_int_cmp` which handles sign-extension
-/// for signed comparisons, carry, borrow, scarry, and sborrow correctly.
-fn try_fold_int_cmp_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntCmpOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let lhs_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_kind.as_value_or_err()?;
-    let Some(l) = fg.int_const_val(lhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(r) = fg.int_const_val(rhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let result = eval_int_cmp(op, l, r, input_ty)?;
-    let new_out = fg.make_bool_const(result)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
 /// Applies full constant evaluation for integer binary ops, integer unary ops,
 /// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
 /// cast_to_bool, and cast_to_int.
@@ -313,150 +231,164 @@ fn apply_const_eval_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    let rules = rewrite_rules! {
-        // ── Integer binary: full constant eval (via escape-hatch) ─────────────
-        int_bin @ try_fold_int_binary_const,
-
-        // ── Integer unary: Neg / Not (via escape-hatch; macro has no IntUnaryOp LHS) ──
-        int_un @ try_fold_int_unary_const,
-
-        // ── Integer comparisons (via escape-hatch; handles signed/carry/borrow) ──
-        int_cmp @ try_fold_int_cmp_const,
-
-        // ── Truncate ──────────────────────────────────────────────────────────
-        // `ty` is the narrower output type; `int_const(v, ty)` masks via make_int_const
-        // The existing try_fold_truncate does `target_ty.get_unsigned_int(v)` which
-        // masks high bits.  `int_const(v, ty)` stores the raw value; the
-        // dedup-key includes the raw bits so we also store unmasked here —
-        // but `int_const_val` re-masks when reading back, so semantics are
-        // identical and the stored value should be already masked (v came from
-        // int_const_val which already masks).
-        Truncate(IntConst(v)) => int_const(v, ty),
-
-        // ── Zero-extend / Sign-extend ─────────────────────────────────────────
-        // ZeroExtend: the constant value is already an unsigned (masked) value
-        // at the narrower type — just widen it.
-        Extend::<ZeroExtend>(IntConst(v)) => int_const(v, ty),
-
-        // SignExtend: must sign-extend from the capture's input type (in_ty)
-        // to the output type (ty).  Use escape hatch to call get_signed_int.
-        sign_ext @ try_fold_sign_extend_const,
-
-        // ── Popcount / Lzcount ────────────────────────────────────────────────
-        // The macro RHS cannot call methods on captured values, so delegate
-        // to escape-hatch helpers that use the oracle helpers directly.
-        popcount_esc @ try_fold_popcount_const,
-        lzcount_esc  @ try_fold_lzcount_const,
-
-        // ── CastToBool ────────────────────────────────────────────────────────
-        CastToBool(IntConst(v)) => bool_const(v != 0),
-
-        // ── CastToInt ────────────────────────────────────────────────────────
-        // Macro RHS cannot use `as` casts, so delegate to escape hatch.
-        cast_to_int_esc @ try_fold_cast_to_int_const,
+    use pattern::{
+        BoolVar, BoxedRule, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, any_bool_const,
+        any_int_const, apply_rules_in_order, bool_const_with, boxed_rule, cast_to_bool,
+        cast_to_int, int_binary_any, int_cmp_any, int_const_with, int_unary_any, lzcount,
+        popcount, rewrite_rule, sign_extend, truncate, zero_extend,
     };
-    rules(fg, node)
-}
 
-/// Escape-hatch for sign-extend of a constant: reads the input type's width
-/// to correctly sign-extend before widening.
-fn try_fold_sign_extend_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::Extend(ExtendOp::SignExtend) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value_or_err()?;
-    let Some(v) = fg.int_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let folded = input_ty
-        .get_signed_int(v)
-        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?
-        as u64;
-    let Some(masked) = target_ty.get_unsigned_int(folded) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const(masked, target_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
+    let rules: Vec<BoxedRule> = vec![
+        // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
+        //        int_const(eval_int_binary(op, l, r, ty)?, ty)
+        //    `eval_int_binary` returns `None` for div-by-zero / signed
+        //    overflow / U128+ masking failures; the closure opts out of the
+        //    rewrite in that case via `pattern::Error::skip()`.
+        {
+            let op = IntBinaryOpVar::new();
+            let l = IntVar::new();
+            let r = IntVar::new();
+            boxed_rule(rewrite_rule(
+                int_binary_any(op, any_int_const(l), any_int_const(r)),
+                int_const_with!([op, l, r, ty] =>
+                    eval_int_binary(op, l, r, ty)
+                        .ok_or_else(pattern::Error::skip)?
+                ),
+            ))
+        },
+        // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
+        //    Skips when masking fails (U128/U256 — not representable in u64).
+        {
+            let op = IntUnaryOpVar::new();
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                int_unary_any(op, any_int_const(v)),
+                int_const_with!([op, v, ty] => {
+                    let raw = match op {
+                        IntUnaryOp::Neg => v.wrapping_neg(),
+                        IntUnaryOp::Not => !v,
+                    };
+                    ty.get_unsigned_int(raw).ok_or_else(pattern::Error::skip)?
+                }),
+            ))
+        },
+        // 3. IntCmpOp(op)(IntConst(l), IntConst(r)) =>
+        //        bool_const(eval_int_cmp(op, l, r, in_ty)?)
+        //    `in_ty` = root's first-value-input type, which on an IntCmp is
+        //    the LHS operand type — exactly what `eval_int_cmp` expects.
+        //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; bridge
+        //    that failure through `pattern::Error::rewrite_closure(...)`.
+        {
+            let op = IntCmpOpVar::new();
+            let l = IntVar::new();
+            let r = IntVar::new();
+            boxed_rule(rewrite_rule(
+                int_cmp_any(op, any_int_const(l), any_int_const(r)),
+                bool_const_with!([op, l, r, in_ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    eval_int_cmp(op, l, r, input_ty)
+                        .map_err(pattern::Error::rewrite_closure)?
+                }),
+            ))
+        },
+        // 4. Truncate(IntConst(v)) => int_const(v, ty)
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                truncate(any_int_const(v)),
+                int_const_with!([v] => v),
+            ))
+        },
+        // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                zero_extend(any_int_const(v)),
+                int_const_with!([v] => v),
+            ))
+        },
+        // 6. SignExtend(IntConst(v)) =>
+        //        int_const(sign_extend(v, in_ty) masked to ty, ty)
+        //    `in_ty` is the narrower input type; `get_signed_int` produces
+        //    the sign-extended i64 value, which `get_unsigned_int` then
+        //    masks to the wider output width.
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                sign_extend(any_int_const(v)),
+                int_const_with!([v, in_ty, ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let signed = input_ty
+                        .get_signed_int(v)
+                        .ok_or_else(|| {
+                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
+                                input_ty,
+                            ))
+                        })?
+                        as u64;
+                    ty.get_unsigned_int(signed).ok_or_else(pattern::Error::skip)?
+                }),
+            ))
+        },
+        // 7. Popcount(IntConst(v)) =>
+        //        int_const(masked(v, in_ty).count_ones(), ty)
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                popcount(any_int_const(v)),
+                int_const_with!([v, in_ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let masked = input_ty
+                        .get_unsigned_int(v)
+                        .ok_or_else(|| {
+                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
+                                input_ty,
+                            ))
+                        })?;
+                    masked.count_ones() as u64
+                }),
+            ))
+        },
+        // 8. Lzcount(IntConst(v)) =>
+        //        int_const((masked(v, in_ty) << (64 - in_ty.bit_width())).leading_zeros(), ty)
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                lzcount(any_int_const(v)),
+                int_const_with!([v, in_ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let masked = input_ty
+                        .get_unsigned_int(v)
+                        .ok_or_else(|| {
+                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
+                                input_ty,
+                            ))
+                        })?;
+                    let bits = input_ty.bit_width() as u32;
+                    (masked << (64 - bits)).leading_zeros() as u64
+                }),
+            ))
+        },
+        // 9. CastToBool(IntConst(v)) => bool_const(v != 0)
+        {
+            let v = IntVar::new();
+            boxed_rule(rewrite_rule(
+                cast_to_bool(any_int_const(v)),
+                bool_const_with!([v] => v != 0),
+            ))
+        },
+        // 10. CastToInt(BoolConst(b)) => int_const(b as u64, ty)
+        {
+            let b = BoolVar::new();
+            boxed_rule(rewrite_rule(
+                cast_to_int(any_bool_const(b)),
+                int_const_with!([b] => b as u64),
+            ))
+        },
+    ];
 
-/// Escape-hatch for popcount of a constant: masks to the input type's width
-/// (already done by int_const_val, but re-masked for safety) then counts ones.
-fn try_fold_popcount_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value_or_err()?;
-    let masked = input_ty
-        .get_unsigned_int(v)
-        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
-    let result = masked.count_ones() as u64;
-    let new_out = fg.make_int_const(result, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for lzcount of a constant: shifts the value to the top of a u64
-/// then counts leading zeros within the actual type width.
-fn try_fold_lzcount_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value_or_err()?;
-    let masked = input_ty
-        .get_unsigned_int(v)
-        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
-    let bits = input_ty.bit_width() as u32;
-    let result = (masked << (64 - bits)).leading_zeros() as u64;
-    let new_out = fg.make_int_const(result, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for `CastToInt` of a `BoolConst`: converts `false→0`, `true→1`.
-fn try_fold_cast_to_int_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::CastToInt = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.bool_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const(v as u64, target_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+    let changed = apply_rules_in_order(rules)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
 }
 
 /// Handles the `x & all_ones → x` identity, which depends on the type width
