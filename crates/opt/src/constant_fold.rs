@@ -155,6 +155,20 @@ fn apply_reassoc_and_mask_rules(
     rules(fg, node)
 }
 
+/// Applies bitcast identity rules:
+/// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
+/// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
+fn apply_bitcast_extend_rules(
+    fg: &mut BuiltFunctionGraph,
+    node: NodeId,
+) -> Result<OptimizationResult> {
+    let rules = rewrite_rules! {
+        IntBitsToFloat(FloatBitsToInt(x)) => x,
+        FloatBitsToInt(IntBitsToFloat(x)) => x,
+    };
+    rules(fg, node)
+}
+
 /// Applies single-operand algebraic identities to integer binary operations.
 ///
 /// Rules ported from hand-written arms:
@@ -839,37 +853,6 @@ fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u
 }
 
 
-/// Folds `IntBitsToFloat(FloatBitsToInt(x)) → x` and
-/// `FloatBitsToInt(IntBitsToFloat(x)) → x`.
-fn try_fold_bitcast_identity(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    match kind {
-        NodeKind::IntBitsToFloat => {
-            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let inner = fg.graph.get_node_from_output(input);
-            if matches!(*fg.graph.node_kind(inner), NodeKind::FloatBitsToInt) {
-                let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, inner_input)?));
-            }
-        }
-        NodeKind::FloatBitsToInt => {
-            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let inner = fg.graph.get_node_from_output(input);
-            if matches!(*fg.graph.node_kind(inner), NodeKind::IntBitsToFloat) {
-                let [inner_input] = fg.graph.node_inputs_exact::<1>(inner)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, inner_input)?));
-            }
-        }
-        _ => {}
-    }
-    Ok(OptimizationResult::NoChange)
-}
-
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
 /// Folds constant expressions and applies algebraic identities.
@@ -940,11 +923,11 @@ impl Optimizer for ConstantFold {
             result |= apply_const_eval_rules(function, node_id)?;
             result |= apply_bool_float_rules(function, node_id)?;
             result |= apply_reassoc_and_mask_rules(function, node_id)?;
+            result |= apply_bitcast_extend_rules(function, node_id)?;
             result |= try_fold_int_binary(function, node_id)?;
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
-            result |= try_fold_bitcast_identity(function, node_id)?;
             result |= try_lower_cast_to_float(function, node_id)?;
         }
         Ok(result)
