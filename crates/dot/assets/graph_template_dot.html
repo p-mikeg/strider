@@ -94,8 +94,12 @@
     /* neighbor edges */
     .gv-ne path{stroke:var(--hl-neighbor)!important;stroke-width:2px!important}
     .gv-ne polygon{stroke:var(--hl-neighbor)!important;fill:var(--hl-neighbor)!important}
-    /* dimmed */
-    .gv-dim{opacity:.08;transition:opacity .1s}
+    /* dimmed: CSS-driven — avoids per-element classList mutations at scale.
+       When the root <svg> has .gv-has-sel, every node/edge that isn't part
+       of the highlighted subset (.gv-sn/.gv-nn for nodes, .gv-se/.gv-ne for
+       edges) is faded out. */
+    svg.gv-has-sel g.node:not(.gv-sn):not(.gv-nn),
+    svg.gv-has-sel g.edge:not(.gv-se):not(.gv-ne){opacity:.08;transition:opacity .1s}
     /* search hit */
     .gv-sh ellipse,.gv-sh polygon,.gv-sh rect,.gv-sh path{stroke:var(--hl-search)!important;stroke-width:2.5px!important;filter:drop-shadow(0 0 8px rgba(250,204,21,.4))}
 
@@ -136,8 +140,8 @@
         <div class="sec-hd open" data-s="search"><span class="chev">▶</span><span class="sec-lbl">Search</span></div>
         <div class="sec-bd open" id="s-search">
           <input id="sq" type="text" placeholder="Label or node id…" />
-          <div class="row"><button class="f ac" id="sfind">Find</button><button class="f" id="sclear">Clear</button></div>
-          <div class="hint"><code>Enter</code> search · <code>Esc</code> deselect</div>
+          <div class="row"><button class="f ac" id="sfind">Find</button><button class="f" id="sPrev" disabled>◀</button><button class="f" id="sNext" disabled>▶</button><button class="f" id="sclear">Clear</button></div>
+          <div class="hint"><code>Enter</code> next hit · <code>Shift+Enter</code> previous · <code>Esc</code> deselect · <span id="sCount" style="color:var(--text);font-weight:600">—</span></div>
         </div>
       </div>
 
@@ -179,7 +183,7 @@
             <button class="f" id="bHistBack" disabled>◀ Back</button>
             <button class="f" id="bHistFwd"  disabled>Forward ▶</button>
           </div>
-          <div class="hint"><code>Space</code> drag · <code>Alt+←/→</code> history</div>
+          <div class="hint"><code>Space</code> drag · <code>↑↓←→</code> pan · <code>Shift+↑↓←→</code> hop to neighbour · <code>Alt+←/→</code> history</div>
           <div class="row" style="margin-top:6px">
             <select id="engSel" style="flex:1;padding:6px 8px;border-radius:var(--r2);border:1px solid var(--border2);background:#111115;color:var(--text);font-size:12px;outline:none;cursor:pointer">
               <option value="dot">Engine: dot (hierarchical)</option>
@@ -272,9 +276,22 @@ function classify(txt){for(const[re,cls]of KINDS)if(re.test(txt))return cls;retu
 
 // ── state ─────────────────────────────────────────────────────────────────────
 let viz=null,pz=null;
+// nIdx: nodeId -> <g.node>. eIdx: edgeKey "a->b" -> one representative <g.edge>
+// (multi-edges share a key so eIdx stores only the first).
+// eEp: <g.edge> -> {tail, head, key}. nE: nodeId -> {out, in, nb} adjacency.
+// allNodes / allEdges: complete sets of every <g.node>/<g.edge> in the SVG —
+// needed for correct dim/highlight iteration even when multi-edges collapse
+// keys in eIdx. nLabel: cached text label per nodeId (avoid re-walking <text>).
 const nIdx=new Map(),eIdx=new Map(),eEp=new Map(),nE=new Map();
+const allNodes=new Set(),allEdges=new Set();
+const nLabel=new Map();
+// curHl: elements currently carrying a highlight class (.gv-sn/.gv-se/.gv-nn/
+// .gv-ne). Lets clearDim strip classes without a global querySelectorAll.
+let curHl=new Set();
 let sel={type:null,name:null,ekey:null,tail:null,head:null,el:null};
-let dimActive=false,drag=false;
+let drag=false;
+// searchHits: results of the latest search, cycled by Enter / Shift+Enter.
+let searchHits=[],searchIdx=-1;
 const hist=[];let hIdx=-1,applyH=false;
 
 // Saved original viewBox of the current SVG (before svg-pan-zoom transforms)
@@ -310,7 +327,14 @@ function updHist(){
   document.getElementById("bHistBack").disabled=!(hIdx>0);
   document.getElementById("bHistFwd").disabled=!(hIdx>=0&&hIdx<hist.length-1);
 }
-setInterval(()=>{if(pz)document.getElementById("zv").textContent=(pz.getZoom()*100|0)+"%";},500);
+function updZoomDisplay(){if(pz)document.getElementById("zv").textContent=(pz.getZoom()*100|0)+"%";}
+// True when the user is typing into a form field — used to suppress global
+// keybindings (Space, arrow keys) while editing the search box / DOT source.
+function isEditingText(){
+  const a=document.activeElement;if(!a)return false;
+  const t=a.tagName;
+  return t==="INPUT"||t==="TEXTAREA"||t==="SELECT"||a.isContentEditable;
+}
 function showLoading(msg="Rendering graph…"){
   document.getElementById("loadMsg").textContent=msg;
   document.getElementById("loading").classList.add("show");
@@ -320,10 +344,20 @@ function hideLoading(){document.getElementById("loading").classList.remove("show
 // ── index SVG ─────────────────────────────────────────────────────────────────
 function indexSvg(svg){
   nIdx.clear();eIdx.clear();eEp.clear();nE.clear();
-  for(const g of svg.querySelectorAll("g.node")){const n=titleOf(g);if(n)nIdx.set(n,g);}
+  allNodes.clear();allEdges.clear();nLabel.clear();
+  for(const g of svg.querySelectorAll("g.node")){
+    allNodes.add(g);
+    const n=titleOf(g);if(!n)continue;
+    nIdx.set(n,g);
+    nLabel.set(n,labelOf(g));
+  }
   for(const g of svg.querySelectorAll("g.edge")){
+    allEdges.add(g);
     const t=g.querySelector("title");if(!t)continue;
-    const key=t.textContent.trim();eIdx.set(key,g);
+    const key=t.textContent.trim();
+    // Keep only one representative per key — multi-edges share "tail->head"
+    // titles; the full set lives in allEdges / nE for correct iteration.
+    if(!eIdx.has(key))eIdx.set(key,g);
     const i=key.indexOf("->");
     if(i>=0){
       const tl=key.slice(0,i).trim(),hd=key.slice(i+2).trim();
@@ -333,97 +367,177 @@ function indexSvg(svg){
       nE.get(tl).nb.add(hd);nE.get(hd).nb.add(tl);
     }
   }
-  document.getElementById("stats").textContent=`${nIdx.size}N · ${eIdx.size}E`;
+  document.getElementById("stats").textContent=`${allNodes.size}N · ${allEdges.size}E`;
 }
 
 // ── node kinds ─────────────────────────────────────────────────────────────────
-function applyKinds(){for(const[,g]of nIdx.entries()){const c=classify(labelOf(g));if(c)g.classList.add(c);}}
+function applyKinds(){for(const[n,g]of nIdx.entries()){const c=classify(nLabel.get(n)||"");if(c)g.classList.add(c);}}
 
 // ── dimming ────────────────────────────────────────────────────────────────────
+// CSS handles the actual fade-out (see .gv-has-sel rule). JS only needs to
+// tag the highlighted subset and toggle the root class. Constant work per
+// selection change — no N+E DOM iteration.
 function clearDim(svg){
-  if(!dimActive)return;
-  svg.querySelectorAll(".gv-dim,.gv-nn,.gv-ne").forEach(e=>e.classList.remove("gv-dim","gv-nn","gv-ne"));
-  dimActive=false;
+  if(!svg)return;
+  svg.classList.remove("gv-has-sel");
+  for(const el of curHl)el.classList.remove("gv-sn","gv-se","gv-nn","gv-ne");
+  curHl.clear();
 }
 function applyDim(svg,focN,focE){
   clearDim(svg);
-  const hl=new Set(),hlN=new Set(),hlE=new Set();
+  const addHl=(el,cls)=>{if(!el)return;el.classList.add(cls);curHl.add(el);};
   if(focN){
-    const g=nIdx.get(focN);if(g)hl.add(g);
+    addHl(nIdx.get(focN),"gv-sn");
     const ne=nE.get(focN);
     if(ne){
-      for(const eg of ne.out){hl.add(eg);hlE.add(eg);}
-      for(const eg of ne.in){hl.add(eg);hlE.add(eg);}
-      for(const nb of ne.nb){const ng=nIdx.get(nb);if(ng){hl.add(ng);hlN.add(ng);}}
+      for(const eg of ne.out)addHl(eg,"gv-ne");
+      for(const eg of ne.in)addHl(eg,"gv-ne");
+      for(const nb of ne.nb)addHl(nIdx.get(nb),"gv-nn");
     }
   }else if(focE){
     const eg=eIdx.get(focE);
     if(eg){
-      hl.add(eg);
+      addHl(eg,"gv-se");
       const ep=eEp.get(eg);
-      if(ep){for(const nd of[ep.tail,ep.head]){const ng=nIdx.get(nd);if(ng){hl.add(ng);hlN.add(ng);}}}
+      if(ep)for(const nd of[ep.tail,ep.head])addHl(nIdx.get(nd),"gv-nn");
     }
   }
-  for(const[,g]of nIdx.entries())if(!hl.has(g))g.classList.add("gv-dim");else if(hlN.has(g))g.classList.add("gv-nn");
-  for(const[,g]of eIdx.entries())if(!hl.has(g))g.classList.add("gv-dim");else if(hlE.has(g))g.classList.add("gv-ne");
-  dimActive=true;
+  svg.classList.add("gv-has-sel");
 }
 
 // ── selection ──────────────────────────────────────────────────────────────────
-function clrHl(){
-  if(sel.el){sel.el.classList.remove("gv-sn","gv-se");}
-  // also sweep for any leftover classes in case sel.el got stale
-  const svg=gw.querySelector("svg");
-  if(svg)svg.querySelectorAll(".gv-sn,.gv-se").forEach(e=>e.classList.remove("gv-sn","gv-se"));
-}
+// `center`: if truthy, zoom+pan to fit the node and its 1-hop neighborhood.
 function clrSel(doH=true){
   const svg=gw.querySelector("svg");
-  clrHl();if(svg)clearDim(svg);
+  if(svg)clearDim(svg);
   sel={type:null,name:null,ekey:null,tail:null,head:null,el:null};
   updSelUI();
   document.getElementById("bTail").disabled=true;
   document.getElementById("bHead").disabled=true;
   if(doH)pushH({kind:"none"});
 }
-function selN(name,g,center=false,z=null){
-  const svg=gw.querySelector("svg");clrHl();
+function selN(name,g,center=false){
+  const svg=gw.querySelector("svg");
   sel={type:"node",name,ekey:null,tail:null,head:null,el:g};
-  g.classList.add("gv-sn");if(svg)applyDim(svg,name,null);
+  if(svg)applyDim(svg,name,null);
   updSelUI();document.getElementById("bTail").disabled=true;document.getElementById("bHead").disabled=true;
-  pushH({kind:"node",name});if(center)centerOn(g,z);
+  pushH({kind:"node",name});
+  if(center)centerOnNeighborhood(name);
 }
-function selE(key,g,ep,center=false,z=null){
-  const svg=gw.querySelector("svg");clrHl();
+function selE(key,g,ep,center=false){
+  const svg=gw.querySelector("svg");
   sel={type:"edge",name:null,ekey:key,tail:ep?.tail??null,head:ep?.head??null,el:g};
-  g.classList.add("gv-se");if(svg)applyDim(svg,null,key);
+  if(svg)applyDim(svg,null,key);
   updSelUI();
   document.getElementById("bTail").disabled=!sel.tail;
   document.getElementById("bHead").disabled=!sel.head;
   pushH({kind:"edge",key,tail:sel.tail,head:sel.head});
-  if(center)centerOn(g,z);
+  if(center)centerOnEdgeNeighborhood(sel.tail,sel.head);
 }
 
 // ── pan/zoom ──────────────────────────────────────────────────────────────────
+const PZ_MIN=.01,PZ_MAX=80;
 function getBB(el){try{return el.getBBox();}catch{return null;}}
-function centerOn(el,z=null){
-  if(!pz||!el)return;const b=getBB(el);if(!b)return;
-  const cx=b.x+b.width/2,cy=b.y+b.height/2;
-  if(z!=null)pz.zoom(z);
-  // pan so (cx,cy) in SVG coords lands at the container centre
-  const svg=gw.querySelector("svg");if(!svg)return;
+// Union of SCREEN-space client rects for `els`. Returns null if none valid.
+// Using getBoundingClientRect avoids the svg coord-system tangle (nodes are
+// inside Graphviz's `g#graph0` which carries its own translate, so getBBox
+// returns a bbox in a frame that doesn't match vp.getScreenCTM()).
+function unionScreenRect(els){
+  let l=Infinity,t=Infinity,r=-Infinity,b=-Infinity;
+  for(const el of els){
+    if(!el)continue;
+    const R=el.getBoundingClientRect();
+    if(!R||R.width<=0||R.height<=0)continue;
+    if(R.left<l)l=R.left;if(R.top<t)t=R.top;
+    if(R.right>r)r=R.right;if(R.bottom>b)b=R.bottom;
+  }
+  if(!isFinite(l))return null;
+  return{left:l,top:t,right:r,bottom:b,width:r-l,height:b-t,cx:(l+r)/2,cy:(t+b)/2};
+}
+// Scale factor from outer-SVG user units (viewBox) to screen pixels.
+// pz.panBy expects its delta in outer-SVG user units, so we divide our
+// screen-pixel deltas by this to get the right values.
+function svgRootScale(svg){
+  const m=svg.getScreenCTM();
+  return{sx:(m&&m.a)||1,sy:(m&&m.d)||1};
+}
+// Pan the main view so SVG-space point (sx,sy) in *viewport-local* coords
+// lands at the container centre. Used by the minimap click handler, where
+// the click produces a viewBox coord that (with viewport transform reset in
+// the clone) coincides with the main view's viewport-local space.
+function panToSvgPoint(svg,sx,sy){
+  if(!pz||!svg)return;
   const vp=svg.querySelector(".svg-pan-zoom_viewport");if(!vp)return;
-  const m=vp.getCTM();if(!m)return;
-  const pt=new DOMPoint(cx,cy).matrixTransform(m);
+  const vpScreen=vp.getScreenCTM();if(!vpScreen)return;
+  const pt=new DOMPoint(sx,sy).matrixTransform(vpScreen);
+  const {sx:sa,sy:sd}=svgRootScale(svg);
   const r=gw.getBoundingClientRect();
-  pz.panBy({x:r.left+r.width/2-pt.x,y:r.top+r.height/2-pt.y});
+  pz.panBy({x:(r.left+r.width/2-pt.x)/sa,y:(r.top+r.height/2-pt.y)/sd});
+}
+// Pan so the screen-space point (cx, cy) ends up at the container centre.
+function panScreenTo(svg,cx,cy){
+  if(!pz||!svg)return;
+  const {sx:sa,sy:sd}=svgRootScale(svg);
+  const r=gw.getBoundingClientRect();
+  pz.panBy({x:(r.left+r.width/2-cx)/sa,y:(r.top+r.height/2-cy)/sd});
+}
+// Fit a list of elements (by screen-space bbox) in the viewport.
+// `pad` multiplies the bbox on each axis (1.3 = 30% slack on each side).
+// Two-step: pan the bbox centre to the container centre, then zoom around
+// that centre (svg-pan-zoom's pz.zoom zooms about the viewport centre).
+function fitElements(els,pad=1.3){
+  if(!pz||!els||!els.length)return;
+  const svg=gw.querySelector("svg");if(!svg)return;
+  const bb=unionScreenRect(els);
+  if(!bb||bb.width<1||bb.height<1)return;
+  panScreenTo(svg,bb.cx,bb.cy);
+  const r=gw.getBoundingClientRect();
+  const factor=Math.min(r.width/(bb.width*pad),r.height/(bb.height*pad));
+  if(!isFinite(factor)||factor<=0)return;
+  const newZoom=Math.max(PZ_MIN,Math.min(PZ_MAX,pz.getZoom()*factor));
+  pz.zoom(newZoom);
+}
+// Zoom/pan so `el` alone is centred. Zoom kept if `z` null; else absolute.
+function centerOn(el,z=null){
+  if(!pz||!el)return;
+  const svg=gw.querySelector("svg");if(!svg)return;
+  const R=el.getBoundingClientRect();
+  if(R&&R.width>0&&R.height>0)panScreenTo(svg,R.left+R.width/2,R.top+R.height/2);
+  if(z!=null){z=Math.max(PZ_MIN,Math.min(PZ_MAX,z));pz.zoom(z);}
+}
+// Fit `nodeId` + its 1-hop neighborhood.
+function centerOnNeighborhood(nodeId){
+  const g=nIdx.get(nodeId);if(!g)return;
+  const els=[g];
+  const ne=nE.get(nodeId);
+  if(ne)for(const nb of ne.nb){const ng=nIdx.get(nb);if(ng)els.push(ng);}
+  fitElements(els);
+}
+// Neighbourhood fit for an edge: both endpoints plus their neighbours.
+function centerOnEdgeNeighborhood(tail,head){
+  const els=[];
+  const seen=new Set();
+  const addNode=n=>{
+    if(!n||seen.has(n))return;seen.add(n);
+    const g=nIdx.get(n);if(g)els.push(g);
+  };
+  addNode(tail);addNode(head);
+  for(const end of[tail,head]){
+    const ne=end?nE.get(end):null;
+    if(ne)for(const nb of ne.nb)addNode(nb);
+  }
+  if(!els.length)return;
+  fitElements(els);
 }
 function initPZ(svg){
   pz=window.svgPanZoom(svg,{
     zoomEnabled:true,controlIconsEnabled:false,fit:true,center:true,
-    minZoom:.01,maxZoom:80,zoomScaleSensitivity:.2,
+    minZoom:PZ_MIN,maxZoom:PZ_MAX,zoomScaleSensitivity:.2,
     dblClickZoomEnabled:true,mouseWheelZoomEnabled:true,
-    preventMouseEventsDefault:true
+    preventMouseEventsDefault:true,
+    onZoom:updZoomDisplay,onPan:updZoomDisplay
   });
+  updZoomDisplay();
 }
 
 // ── minimap ───────────────────────────────────────────────────────────────────
@@ -455,16 +569,7 @@ function getVisibleSvgRect(svg){
   return{x:tl.x,y:tl.y,w:br.x-tl.x,h:br.y-tl.y};
 }
 
-// Pan the main view so that SVG coordinate (sx, sy) is at the centre of the
-// visible area.
-function panToSvgPoint(svg,sx,sy){
-  if(!pz||!svg)return;
-  const vp=svg.querySelector(".svg-pan-zoom_viewport");if(!vp)return;
-  const m=vp.getCTM();if(!m)return;
-  const pt=new DOMPoint(sx,sy).matrixTransform(m);
-  const r=gw.getBoundingClientRect();
-  pz.panBy({x:r.left+r.width/2-pt.x,y:r.top+r.height/2-pt.y});
-}
+// panToSvgPoint is defined in the pan/zoom section above; reused here.
 
 // Single persistent minimap click handler — uses mainSvgRef/mm at call time
 // so it never accumulates across re-renders.
@@ -531,26 +636,66 @@ function applyHAt(i){
   if(i<0||i>=hist.length)return;applyH=true;
   try{hIdx=i;updHist();const e=hist[i];
       if(!e||e.kind==="none"){clrSel(false);return;}
-      if(e.kind==="node"){const g=nIdx.get(e.name);if(g)selN(e.name,g,true,null);}
-      else if(e.kind==="edge"){const g=eIdx.get(e.key);if(g)selE(e.key,g,eEp.get(g),true,null);}
+      if(e.kind==="node"){const g=nIdx.get(e.name);if(g)selN(e.name,g,true);}
+      else if(e.kind==="edge"){const g=eIdx.get(e.key);if(g)selE(e.key,g,eEp.get(g),true);}
   }finally{applyH=false;}
 }
 
 // ── search ────────────────────────────────────────────────────────────────────
-function clrSearch(){const svg=gw.querySelector("svg");if(svg)svg.querySelectorAll(".gv-sh").forEach(e=>e.classList.remove("gv-sh"));}
+function updSearchCounter(){
+  const el=document.getElementById("sCount");
+  if(el){
+    if(!searchHits.length)el.textContent="—";
+    else el.textContent=`${searchIdx+1}/${searchHits.length}`;
+  }
+  const disabled=searchHits.length<2;
+  document.getElementById("sPrev").disabled=disabled;
+  document.getElementById("sNext").disabled=disabled;
+}
+function clrSearch(){
+  const svg=gw.querySelector("svg");
+  if(svg)svg.querySelectorAll(".gv-sh").forEach(e=>e.classList.remove("gv-sh"));
+  searchHits=[];searchIdx=-1;updSearchCounter();
+}
 function runSearch(){
   const q=document.getElementById("sq").value.trim().toLowerCase();clrSearch();if(!q)return;
-  const hits=[];for(const[n,g]of nIdx.entries())if(n.toLowerCase().includes(q)||labelOf(g).toLowerCase().includes(q))hits.push({n,g});
+  const hits=[];
+  for(const[n,g]of nIdx.entries()){
+    const lbl=nLabel.get(n)||"";
+    if(n.toLowerCase().includes(q)||lbl.toLowerCase().includes(q))hits.push({n,g});
+  }
   hits.forEach(h=>h.g.classList.add("gv-sh"));
-  if(hits.length)selN(hits[0].n,hits[0].g,true,1.8);
+  searchHits=hits;searchIdx=hits.length?0:-1;updSearchCounter();
+  if(hits.length)selN(hits[0].n,hits[0].g,true);
+}
+// Step through cached search hits. dir = +1 next, -1 previous. If no hits
+// are cached yet, fall back to runSearch so Enter always does something.
+function stepSearch(dir){
+  if(!searchHits.length){runSearch();return;}
+  searchIdx=(searchIdx+dir+searchHits.length)%searchHits.length;
+  const h=searchHits[searchIdx];
+  updSearchCounter();
+  selN(h.n,h.g,true);
 }
 
 // ── interactivity ─────────────────────────────────────────────────────────────
+// Pick the <g.node> or <g.edge> under the pointer, preferring nodes when both
+// overlap (edges often route over nodes so closest() alone picks the edge).
+function pickHit(ev){
+  const stack=document.elementsFromPoint(ev.clientX,ev.clientY);
+  let edgeHit=null;
+  for(const el of stack){
+    const node=el.closest&&el.closest("g.node");
+    if(node)return node;
+    if(!edgeHit){const eg=el.closest&&el.closest("g.edge");if(eg)edgeHit=eg;}
+  }
+  return edgeHit;
+}
 function installEvents(svg){
   svg.querySelectorAll("g.node,g.edge").forEach(g=>{g.style.cursor="pointer";});
   svg.addEventListener("click",ev=>{
     if(drag)return;
-    const g=ev.target.closest("g.node,g.edge");
+    const g=pickHit(ev);
     if(!g){clrSel();return;}
     if(g.classList.contains("node")){const n=titleOf(g);if(n)selN(n,g);}
     else if(g.classList.contains("edge")){const t=g.querySelector("title");selE(t?t.textContent.trim():"?",g,eEp.get(g));}
@@ -558,24 +703,78 @@ function installEvents(svg){
   svg.addEventListener("mousedown",()=>{if(drag)svg.style.cursor="grabbing";});
   svg.addEventListener("mouseup",  ()=>{if(drag)svg.style.cursor="grab";});
 }
+// Pan step for plain-arrow keys, in container pixels.
+const ARROW_PAN_PX=80;
+// Direction pick for Shift+Arrow neighbour navigation.
+// Chooses the neighbour whose screen-space direction aligns best with the
+// arrow (cosine similarity) above a small threshold. Distance breaks ties.
+function neighborInDirection(nodeId,dx,dy){
+  const ne=nE.get(nodeId);if(!ne||!ne.nb.size)return null;
+  const g=nIdx.get(nodeId);if(!g)return null;
+  const origin=getBB(g);if(!origin)return null;
+  const svg=gw.querySelector("svg");
+  const vp=svg&&svg.querySelector(".svg-pan-zoom_viewport");
+  const m=vp&&vp.getCTM();
+  // Map SVG-space centres to screen so "up" is visually up regardless of zoom.
+  const toScreen=(sx,sy)=>m?new DOMPoint(sx,sy).matrixTransform(m):{x:sx,y:sy};
+  const o=toScreen(origin.x+origin.width/2,origin.y+origin.height/2);
+  let best=null,bestScore=-Infinity;
+  for(const nb of ne.nb){
+    const ng=nIdx.get(nb);if(!ng)continue;
+    const b=getBB(ng);if(!b)continue;
+    const p=toScreen(b.x+b.width/2,b.y+b.height/2);
+    const vx=p.x-o.x,vy=p.y-o.y;
+    const len=Math.hypot(vx,vy);if(len<1e-6)continue;
+    const cos=(vx*dx+vy*dy)/len;  // dx/dy are unit vectors
+    if(cos<0.3)continue;  // require at least ~70° alignment with the arrow
+    // Prefer tighter alignment, then closer distance.
+    const score=cos*1000-len;
+    if(score>bestScore){bestScore=score;best={n:nb,g:ng};}
+  }
+  return best;
+}
 window.addEventListener("keydown",e=>{
-  if(e.key===" "&&document.activeElement!==document.getElementById("sq")){e.preventDefault();setDrag(!drag);return;}
-  if(e.key==="Escape")clrSel();
-  if(e.key==="Enter"&&document.activeElement===document.getElementById("sq"))runSearch();
-  if(e.key==="["&&sel.type==="edge"&&sel.tail){const g=nIdx.get(sel.tail);if(g)selN(sel.tail,g,true,1.8);}
-  if(e.key==="]"&&sel.type==="edge"&&sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true,1.8);}
-  if(e.altKey&&e.key==="ArrowLeft")applyHAt(hIdx-1);
-  if(e.altKey&&e.key==="ArrowRight")applyHAt(hIdx+1);
+  const sq=document.getElementById("sq");
+  const inSearch=document.activeElement===sq;
+  // Global Space toggles drag — but not while editing any text field.
+  if(e.key===" "&&!isEditingText()){e.preventDefault();setDrag(!drag);return;}
+  if(e.key==="Escape"){clrSel();return;}
+  if(e.key==="Enter"&&inSearch){
+    e.preventDefault();
+    if(e.shiftKey)stepSearch(-1);
+    else if(searchHits.length)stepSearch(+1);
+    else runSearch();
+    return;
+  }
+  if(e.key==="["&&sel.type==="edge"&&sel.tail){const g=nIdx.get(sel.tail);if(g)selN(sel.tail,g,true);return;}
+  if(e.key==="]"&&sel.type==="edge"&&sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true);return;}
+  if(e.altKey&&e.key==="ArrowLeft"){e.preventDefault();applyHAt(hIdx-1);return;}
+  if(e.altKey&&e.key==="ArrowRight"){e.preventDefault();applyHAt(hIdx+1);return;}
+  // Arrow keys — pan the view, or (with Shift) walk to a neighbouring node.
+  if(e.key==="ArrowUp"||e.key==="ArrowDown"||e.key==="ArrowLeft"||e.key==="ArrowRight"){
+    if(isEditingText())return;
+    e.preventDefault();
+    const dx=e.key==="ArrowLeft"?-1:e.key==="ArrowRight"?1:0;
+    const dy=e.key==="ArrowUp"?-1:e.key==="ArrowDown"?1:0;
+    if(e.shiftKey&&sel.type==="node"&&sel.name){
+      const hit=neighborInDirection(sel.name,dx,dy);
+      if(hit)selN(hit.n,hit.g,true);
+      return;
+    }
+    if(pz)pz.panBy({x:-dx*ARROW_PAN_PX,y:-dy*ARROW_PAN_PX});
+  }
 });
 
 // ── render ────────────────────────────────────────────────────────────────────
 function clrGraph(){
   gw.innerHTML="";mm.innerHTML="";
   nIdx.clear();eIdx.clear();eEp.clear();nE.clear();
+  allNodes.clear();allEdges.clear();nLabel.clear();curHl.clear();
+  searchHits=[];searchIdx=-1;updSearchCounter();
   sel={type:null,name:null,ekey:null,tail:null,head:null,el:null};updSelUI();
   document.getElementById("bTail").disabled=true;document.getElementById("bHead").disabled=true;
   if(pz){try{pz.destroy();}catch{}pz=null;}
-  dimActive=false;miniVR=null;mainSvgRef=null;origVB=null;
+  miniVR=null;mainSvgRef=null;origVB=null;
 }
 
 async function render(dot,engine){
@@ -622,14 +821,21 @@ async function render(dot,engine){
 // ── wire buttons ──────────────────────────────────────────────────────────────
 document.getElementById("sfind").addEventListener("click",runSearch);
 document.getElementById("sclear").addEventListener("click",clrSearch);
+document.getElementById("sPrev").addEventListener("click",()=>stepSearch(-1));
+document.getElementById("sNext").addEventListener("click",()=>stepSearch(+1));
 document.getElementById("bClearSel").addEventListener("click",()=>clrSel());
-document.getElementById("bZoomSel").addEventListener("click",()=>{if(sel.el)centerOn(sel.el,pz?pz.getZoom()*1.5:1.8);});
-document.getElementById("bTail").addEventListener("click",()=>{if(sel.tail){const g=nIdx.get(sel.tail);if(g)selN(sel.tail,g,true,1.8);}});
-document.getElementById("bHead").addEventListener("click",()=>{if(sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true,1.8);}});
+document.getElementById("bZoomSel").addEventListener("click",()=>{
+  if(sel.type==="node"&&sel.name)centerOnNeighborhood(sel.name);
+  else if(sel.type==="edge")centerOnEdgeNeighborhood(sel.tail,sel.head);
+});
+document.getElementById("bTail").addEventListener("click",()=>{if(sel.tail){const g=nIdx.get(sel.tail);if(g)selN(sel.tail,g,true);}});
+document.getElementById("bHead").addEventListener("click",()=>{if(sel.head){const g=nIdx.get(sel.head);if(g)selN(sel.head,g,true);}});
 document.getElementById("bDrag").addEventListener("click",()=>setDrag(!drag));
-document.getElementById("bFit").addEventListener("click",()=>{if(pz){pz.fit();pz.center();}});
-document.getElementById("bCenter").addEventListener("click",()=>{if(pz)pz.center();});
-document.getElementById("bReset").addEventListener("click",()=>{if(pz){pz.resetZoom();pz.center();}});
+// Fit/Center/Reset imply "show me everything again" — drop the current
+// selection so the dim-everything-but-highlight CSS doesn't fight the reset.
+document.getElementById("bFit").addEventListener("click",()=>{clrSel();if(pz){pz.fit();pz.center();}});
+document.getElementById("bCenter").addEventListener("click",()=>{clrSel();if(pz)pz.center();});
+document.getElementById("bReset").addEventListener("click",()=>{clrSel();if(pz){pz.resetZoom();pz.center();}});
 document.getElementById("bZoomIn").addEventListener("click",()=>{if(pz)pz.zoomBy(1.25);});
 document.getElementById("bZoomOut").addEventListener("click",()=>{if(pz)pz.zoomBy(0.8);});
 document.getElementById("bHistBack").addEventListener("click",()=>applyHAt(hIdx-1));
