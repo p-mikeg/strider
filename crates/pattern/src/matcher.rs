@@ -518,8 +518,8 @@ impl<'g> Matcher<'g> {
     /// otherwise.
     ///
     /// Unlike [`find_all`] which iterates every candidate root, this checks a
-    /// single root.  Used by code-generation paths (e.g. the `rewrite_rules!`
-    /// macro) that already know the candidate.
+    /// single root.  Used by [`crate::build::rewrite_rule`] and other callers
+    /// that already know the candidate.
     pub fn match_at(&self, node: NodeId, pat: &Pat) -> Option<Match> {
         let mut bindings = Bindings::default();
         if self.match_node_id(node, pat, &mut bindings) {

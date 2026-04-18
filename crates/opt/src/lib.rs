@@ -28,8 +28,6 @@
     )
 )]
 
-// Allow `rewrite_rules!` to reference `opt::Error` / `opt::OptimizationResult`
-// when the macro is invoked from within this crate.
 extern crate self as opt;
 
 pub mod error;
