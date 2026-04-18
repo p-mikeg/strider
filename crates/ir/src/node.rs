@@ -456,9 +456,6 @@ pub enum NodeKind {
     Popcount,
     /// Count the number of leading zero bits in an integer value.
     Lzcount,
-    /// Insert `len` bits from `src` into `dest` starting at bit `lsb`.
-    /// inputs[0] = dest, inputs[1] = src.  Output has the same type as dest.
-    Insert { lsb: u8, len: u8 },
     /// Widen an integer value by zero- or sign-extending it.
     Extend(crate::ops::ExtendOp),
 

@@ -155,7 +155,6 @@ pub use pat::{
     // Entry values
     initial_var,
     initial_var_for,
-    insert,
     // Int binary ops
     int_binary,
     // Variant-agnostic op constructors

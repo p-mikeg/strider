@@ -309,13 +309,6 @@ pub enum PatKind {
     Popcount { operand: Pat },
     /// Matches a `Lzcount` node (counts leading zero bits).
     Lzcount { operand: Pat },
-    /// Matches an `Insert` node.  `None` for `lsb`/`len` matches any value.
-    Insert {
-        lsb: Option<u8>,
-        len: Option<u8>,
-        dest: Pat,
-        src: Pat,
-    },
 
     // ── Float ops ─────────────────────────────────────────────────────────────
     /// Matches a `FloatConst` node whose raw bit representation equals `v`.
@@ -1301,16 +1294,6 @@ pub fn lzcount(operand: impl Into<Pat>) -> Pat {
         operand: operand.into(),
     })
 }
-/// Matches an insert node.  Pass `None` for `lsb`/`len` to match any value.
-pub fn insert(lsb: Option<u8>, len: Option<u8>, dest: impl Into<Pat>, src: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::Insert {
-        lsb,
-        len,
-        dest: dest.into(),
-        src: src.into(),
-    })
-}
-
 // Float ops
 
 /// Matches a float binary operation with the given `op`.

@@ -205,22 +205,6 @@ fn node_known_bits(
             }
         }
 
-        NodeKind::Insert { lsb, len } => {
-            let mask = if len >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << len) - 1
-            };
-            let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
-            let dest_kb = known.get(&dest).copied().unwrap_or_default();
-            let src_kb = known.get(&src).copied().unwrap_or_default();
-            Kb {
-                ones: ((dest_kb.ones & !(mask << lsb)) | ((src_kb.ones & mask) << lsb)) & type_mask,
-                zeros: ((dest_kb.zeros & !(mask << lsb)) | ((src_kb.zeros & mask) << lsb))
-                    & type_mask,
-            }
-        }
-
         _ => return Ok(None),
     };
 

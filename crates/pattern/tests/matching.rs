@@ -2018,7 +2018,7 @@ fn predicate_in_field_position() -> ir::Result<()> {
     Ok(())
 }
 
-// ── Lzcount / Insert pattern tests ──────────────────────────────────────────
+// ── Lzcount pattern tests ───────────────────────────────────────────────────
 
 #[test]
 fn lzcount_pattern_matches() -> ir::Result<()> {
@@ -2034,31 +2034,6 @@ fn lzcount_pattern_matches() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(&lzcount(any()));
     assert_eq!(hits.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn insert_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
-    let src = b.build_int_const(0x42, NodeOutputType::U16);
-    let ins = b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?;
-    b.build_return(Some(ins), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    // Wildcard match.
-    let hits = m.find_all(&insert(None, None, any(), any()));
-    assert_eq!(hits.len(), 1);
-    // Exact match on lsb=0, len=8.
-    let hits2 = m.find_all(&insert(Some(0), Some(8), any(), any()));
-    assert_eq!(hits2.len(), 1);
-    // Wrong lsb → no match.
-    let miss = m.find_all(&insert(Some(4), None, any(), any()));
-    assert!(miss.is_empty());
     Ok(())
 }
 

@@ -615,33 +615,6 @@ fn apply_bool_float_rules(
     Ok(OptimizationResult::from_changed(changed) | cast_changed)
 }
 
-fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(dest_v) = fg.int_const_val( dest) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(src_v) = fg.int_const_val( src) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let mask = if len >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << len) - 1
-    };
-    let result = (dest_v & !(mask << lsb)) | ((src_v & mask) << lsb);
-    let Some(masked) = ty.get_unsigned_int(result) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( masked, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
 // ── float constant evaluation ─────────────────────────────────────────────────
 
 /// Evaluates a float binary op on raw bit patterns.  Returns the result as a
@@ -806,7 +779,6 @@ impl Optimizer for ConstantFold {
             result |= apply_bool_float_rules(function, node_id)?;
             result |= apply_reassoc_and_mask_rules(function, node_id)?;
             result |= apply_bitcast_extend_rules(function, node_id)?;
-            result |= try_fold_insert(function, node_id)?;
         }
         Ok(result)
     }
@@ -1367,7 +1339,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Popcount / Lzcount / Insert ───────────────────────────────────────────
+    // ── Popcount / Lzcount ────────────────────────────────────────────────────
 
     #[test]
     fn fold_popcount_const() -> Result<()> {
@@ -1413,19 +1385,6 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
-        Ok(())
-    }
-
-    #[test]
-    fn fold_insert_const() -> Result<()> {
-        // insert(0xFF00u16, 0x42u16, lsb=0, len=8) = 0xFF42
-        let mut fg = make_fn(|b| {
-            let dest = b.build_int_const(0xFF00, NodeOutputType::U16);
-            let src = b.build_int_const(0x42, NodeOutputType::U16);
-            Ok(b.build_insert(dest, src, 0, 8, NodeOutputType::U16)?)
-        })?;
-        assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF42));
         Ok(())
     }
 

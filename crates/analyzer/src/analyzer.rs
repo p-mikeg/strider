@@ -679,7 +679,8 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
                 self.write_vn(out_vn, out)?;
             }
             Opcode::Insert => {
-                // inputs[0] = dest, inputs[1] = src, inputs[2] = lsb (CONST), inputs[3] = bit_count (CONST)
+                // inputs[0] = dest, inputs[1] = src, inputs[2] = lsb (CONST), inputs[3] = bit_count (CONST).
+                // Lowered to: Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb)).
                 let dest = self.read_vn(&insn.inputs[0])?;
                 let src = self.read_vn(&insn.inputs[1])?;
                 let lsb = insn.inputs[2].addr.off as u8;
@@ -688,9 +689,58 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
                     .output
                     .as_ref()
                     .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
-                let out =
-                    self.builder
-                        .build_insert(dest, src, lsb, len, out_vn.size.try_into()?)?;
+                let out_ty: NodeOutputType = out_vn.size.try_into()?;
+
+                let dest_ty = self.builder.get_output_type(dest)?.to_natural_int_type();
+                let dest_int = self.builder.convert_to_int_if_needed(dest, dest_ty)?;
+                let src_ty = self.builder.get_output_type(src)?.to_natural_int_type();
+                let src_int = self.builder.convert_to_int_if_needed(src, src_ty)?;
+
+                let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
+                let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
+
+                let mask_raw = if len >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << len) - 1
+                };
+                let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
+                let not_mask_shifted = !mask_shifted;
+
+                let not_m_const = self.builder.build_int_const(not_mask_shifted, out_ty);
+                let cleared = self.builder.build_int_binary_operation(
+                    dest_wide,
+                    not_m_const,
+                    IntBinaryOp::And,
+                    out_ty,
+                )?;
+
+                let mask_const = self.builder.build_int_const(mask_raw, out_ty);
+                let src_masked = self.builder.build_int_binary_operation(
+                    src_wide,
+                    mask_const,
+                    IntBinaryOp::And,
+                    out_ty,
+                )?;
+
+                let src_positioned = if lsb == 0 {
+                    src_masked
+                } else {
+                    let lsb_const = self.builder.build_int_const(lsb as u64, out_ty);
+                    self.builder.build_int_binary_operation(
+                        src_masked,
+                        lsb_const,
+                        IntBinaryOp::ShiftLeft,
+                        out_ty,
+                    )?
+                };
+
+                let out = self.builder.build_int_binary_operation(
+                    cleared,
+                    src_positioned,
+                    IntBinaryOp::Or,
+                    out_ty,
+                )?;
                 self.write_vn(out_vn, out)?;
             }
             // PtrAdd: out = base + index * elem_size  (elem_size is a CONST input)

@@ -983,33 +983,6 @@ impl<'g> Matcher<'g> {
             PatKind::Lzcount { operand } =>
                 self.match_unary_op(node, operand, bindings, |k| matches!(k, NodeKind::Lzcount)),
 
-            PatKind::Insert {
-                lsb: pat_lsb,
-                len: pat_len,
-                dest,
-                src,
-            } => {
-                let NodeKind::Insert { lsb, len } = kind else {
-                    return false;
-                };
-                if pat_lsb.is_some_and(|pl| pl != *lsb) {
-                    return false;
-                }
-                if pat_len.is_some_and(|pl| pl != *len) {
-                    return false;
-                }
-                let Ok([d, s]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
-                    return false;
-                };
-                let snap = bindings.clone();
-                if self.match_output(d, dest, bindings) && self.match_output(s, src, bindings) {
-                    true
-                } else {
-                    *bindings = snap;
-                    false
-                }
-            }
-
             PatKind::Extend { op, operand } =>
                 self.match_unary_op(node, operand, bindings,
                     |k| matches!(k, NodeKind::Extend(actual) if actual == op)),

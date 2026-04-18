@@ -138,12 +138,6 @@ fn edge_style<R: MemReader>(
         | NodeKind::FloatBitsToInt
         | NodeKind::CastToFloat => ("val", "\"#88cc88\""), // green
 
-        NodeKind::Insert { .. } => match input_idx {
-            0 => ("hi/dest", "\"#4488ff\""),
-            1 => ("lo/src", "\"#ff4444\""),
-            _ => ("", "\"#cccccc\""),
-        },
-
         NodeKind::Load(_) => match input_idx {
             0 => ("mem", "\"#cc88aa\""),
             1 => ("addr", "\"#cc88ff\""), // purple
@@ -402,11 +396,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Lzcount\n{from} → {to}")
             }
-            NodeKind::Insert { lsb, len } => {
-                let dest_ty = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                format!("Insert[{lsb}..+{len}]\ninto {dest_ty}")
-            }
-
             // ── arithmetic / logical ──────────────────────────────────────────
             NodeKind::IntBinaryOp(op) => {
                 let ty = self

@@ -399,25 +399,6 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
     }
 
-    /// Emits an `Insert` node: inserts `len` bits from `src` into `dest` at bit `lsb`.
-    /// inputs[0] = dest, inputs[1] = src.
-    ///
-    /// Non-integer inputs are automatically coerced to integers.
-    pub fn build_insert(
-        &mut self,
-        dest: NodeOutputId,
-        src: NodeOutputId,
-        lsb: u8,
-        len: u8,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        let dest_ty = self.get_output_type(dest)?.to_natural_int_type();
-        let dest = self.convert_to_int_if_needed(dest, dest_ty)?;
-        let src_ty = self.get_output_type(src)?.to_natural_int_type();
-        let src = self.convert_to_int_if_needed(src, src_ty)?;
-        Ok(self.build_single_output_pure(NodeKind::Insert { lsb, len }, [dest, src], output_type))
-    }
-
     /// Emits an integer comparison node.
     pub fn build_int_cmp_operation(
         &mut self,
