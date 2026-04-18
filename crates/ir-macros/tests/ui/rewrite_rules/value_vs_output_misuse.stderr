@@ -1,9 +1,0 @@
-error[E0308]: mismatched types
- --> tests/ui/rewrite_rules/value_vs_output_misuse.rs:8:31
-  |
-7 |       let _ = rewrite_rules! {
-  |  _____________-
-8 | |         (IntConst(c1) + x) => c1 & x,
-  | |                               ^^ expected `NodeOutputId`, found `u64`
-9 | |     };
-  | |_____- expected due to this

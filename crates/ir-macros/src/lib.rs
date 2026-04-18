@@ -8,8 +8,6 @@
     )
 )]
 
-mod rewrite_rules;
-
 use proc_macro::TokenStream;
 use proc_macro2::{Literal, Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote};
@@ -315,22 +313,3 @@ pub fn match_value(input: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Pattern-rewrite DSL for IR optimization passes.
-///
-/// Emits a closure `|fg: &mut BuiltFunctionGraph, node: NodeId| -> Result<OptimizationResult>`
-/// that applies a list of pattern-rewrite rules in declaration order.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let apply = rewrite_rules! {
-///     (x + IntConst(0)) => x,
-///     ((a & IntConst(c1)) & IntConst(c2)) => a & int_const(c1 & c2, ty),
-///     Extend::<SignExtend>(IntConst(v) : in_ty) => int_const(in_ty.sign_extend(v), ty),
-/// };
-/// apply(&mut fg, node)?;
-/// ```
-#[proc_macro]
-pub fn rewrite_rules(input: TokenStream) -> TokenStream {
-    rewrite_rules::expand(input.into()).into()
-}
