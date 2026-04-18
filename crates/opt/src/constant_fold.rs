@@ -3,10 +3,10 @@ use ir::{
     BoolBinaryOp, BoolUnaryOp, BuiltFunctionGraph, ExtendOp, FloatBinaryOp, FloatCmpOp,
     FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
-use ir_macros::match_value;
+use ir_macros::{match_value, rewrite_rules};
 
 use crate::error::{ErrorKind, Result};
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 // ── integer constant evaluation ───────────────────────────────────────────────
 
@@ -196,6 +196,60 @@ fn try_reassociate_add_sub(
     Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
+/// Applies single-operand algebraic identities to integer binary operations.
+///
+/// Rules ported from hand-written arms:
+/// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
+/// - `x ^ x → 0`, `x ^ 0 → x`
+/// - `x * 0 → 0`, `x * 1 → x`
+/// - `x & 0 → 0`, `x & x → x`
+/// - `x | 0 → x`, `x | x → x`
+/// - `x << 0 → x`, `x >> 0 → x` (both shift directions)
+fn apply_identity_rules(
+    fg: &mut BuiltFunctionGraph,
+    node: NodeId,
+) -> Result<OptimizationResult> {
+    let rules = rewrite_rules! {
+        (x + IntConst(0)) => x,
+        (x - IntConst(0)) => x,
+        (x - x)           => int_const(0, ty),
+        (x ^ x)           => int_const(0, ty),
+        (x ^ IntConst(0)) => x,
+        (x * IntConst(0)) => int_const(0, ty),
+        (x * IntConst(1)) => x,
+        (x & IntConst(0)) => int_const(0, ty),
+        (x & x)           => x,
+        (x | IntConst(0)) => x,
+        (x | x)           => x,
+        nop @ try_fold_shift_zero,
+    };
+    rules(fg, node)
+}
+
+/// Helper dispatched from `apply_identity_rules` via the escape hatch: handles
+/// `x << 0 → x`, `x >> 0 → x`, and `x >>> 0 → x`.
+fn try_fold_shift_zero(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::IntBinaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    if !matches!(
+        op,
+        IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight
+    ) {
+        return Ok(OptimizationResult::NoChange);
+    }
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [lhs, _rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+    if fg.int_const_val(_rhs) == Some(0) {
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
+    }
+    Ok(OptimizationResult::NoChange)
+}
+
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
     let NodeKind::IntBinaryOp(op) = kind else {
@@ -225,15 +279,9 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
-    // Algebraic identities and absorbing elements.
+    // Reassociation and remaining structural rewrites.
     match op {
         IntBinaryOp::Add => {
-            if rhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x + 0 → x
-            }
-            if lhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 + x → x
-            }
             // (base ± C1) + C2 → base + K
             if let Some(c2) = rhs_c {
                 let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, false)?;
@@ -249,13 +297,6 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
             }
         }
         IntBinaryOp::Sub => {
-            if rhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x - 0 → x
-            }
-            if lhs == rhs {
-                let zero = fg.make_int_const( 0, ty)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x - x → 0
-            }
             // (base ± C1) - C2 → base + K
             if let Some(c2) = rhs_c {
                 let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, true)?;
@@ -264,33 +305,12 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                 }
             }
         }
-        IntBinaryOp::Mul => {
-            if lhs_c == Some(0) || rhs_c == Some(0) {
-                let zero = fg.make_int_const( 0, ty)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x * 0 → 0
-            }
-            if lhs_c == Some(1) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 1 * x → x
-            }
-            if rhs_c == Some(1) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x * 1 → x
-            }
-        }
         IntBinaryOp::And => {
-            // Absorbing: x & 0 → 0
-            if lhs_c == Some(0) || rhs_c == Some(0) {
-                let zero = fg.make_int_const( 0, ty)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?));
-            }
             // Identity: x & all_ones → x
             if lhs_c == Some(all_ones) {
                 return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
             }
             if rhs_c == Some(all_ones) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
-            }
-            // Idempotent: x & x → x
-            if lhs == rhs {
                 return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
             }
             // (a & C1) & C2 → a & (C1 & C2)
@@ -352,34 +372,6 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
                         }
                     }
                 }
-            }
-        }
-        IntBinaryOp::Or => {
-            if lhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 | x → x
-            }
-            if rhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x | 0 → x
-            }
-            if lhs == rhs {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x | x → x
-            }
-        }
-        IntBinaryOp::Xor => {
-            if rhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x ^ 0 → x
-            }
-            if lhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?)); // 0 ^ x → x
-            }
-            if lhs == rhs {
-                let zero = fg.make_int_const( 0, ty)?;
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, zero)?)); // x ^ x → 0
-            }
-        }
-        IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight => {
-            if rhs_c == Some(0) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?)); // x << 0 → x
             }
         }
         _ => {}
@@ -1049,6 +1041,7 @@ impl Optimizer for ConstantFold {
         let nodes: Vec<_> = function.preorder().collect();
         let mut result = OptimizationResult::NoChange;
         for node_id in nodes {
+            result |= apply_identity_rules(function, node_id)?;
             result |= try_fold_int_binary(function, node_id)?;
             result |= try_fold_int_unary(function, node_id)?;
             result |= try_fold_int_cmp(function, node_id)?;

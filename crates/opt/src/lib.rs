@@ -1,13 +1,3 @@
-#![cfg_attr(
-    test,
-    allow(
-        clippy::panic,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::unreachable
-    )
-)]
-
 //! IR optimization passes for the Strider binary analysis framework.
 //!
 //! All passes implement the [`Optimizer`] trait and report whether they changed
@@ -28,8 +18,22 @@
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //! | [`LoadReadOnly`] | Folds constant-address loads by reading from a caller-supplied read-only memory region |
 
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
+// Allow `rewrite_rules!` to reference `opt::Error` / `opt::OptimizationResult`
+// when the macro is invoked from within this crate.
+extern crate self as opt;
+
 pub mod error;
-mod opt;
+mod pipeline;
 pub use error::{Error, ErrorKind, Result};
 mod constant_fold;
 mod dead_branch;
@@ -42,7 +46,7 @@ pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use known_bits::KnownBits;
 pub use load_readonly::{LoadReadOnly, ReadOnlyMemory};
-pub use opt::{OptimizationResult, Optimizer, OptimizerPipeline};
+pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 

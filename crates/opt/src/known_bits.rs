@@ -4,7 +4,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::{ErrorKind, Result};
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 

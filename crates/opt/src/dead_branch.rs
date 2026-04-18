@@ -2,7 +2,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 // ── Dead-branch elimination ───────────────────────────────────────────────────
 

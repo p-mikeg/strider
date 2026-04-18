@@ -11,7 +11,7 @@ use ir::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
 use ir::{BuiltFunctionGraph, IntBinaryOp};
 
 use crate::error::Result;
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 /// Decomposed stack-pointer expression.
 ///

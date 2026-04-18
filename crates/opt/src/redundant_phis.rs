@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::error::{ErrorKind, Result};
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use ir::node::NodeId;
 
 /// Replaces all uses of `output` with `value`.  Returns `true` if at least one

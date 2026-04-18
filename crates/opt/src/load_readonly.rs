@@ -1,7 +1,7 @@
 use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
 
-use crate::opt::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 // ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
 
