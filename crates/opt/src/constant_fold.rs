@@ -1,7 +1,7 @@
 use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::{
-    BoolUnaryOp, BuiltFunctionGraph, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp,
+    BuiltFunctionGraph, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+    IntUnaryOp,
 };
 use ir_macros::rewrite_rules;
 
@@ -422,159 +422,157 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     Ok(OptimizationResult::NoChange)
 }
 
-/// Escape-hatch for constant-folding `BoolUnaryOp::Neg` (logical Not) when the
-/// operand is a `BoolConst`.
-fn try_fold_bool_unary_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::BoolUnaryOp(BoolUnaryOp::Neg) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.bool_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_bool_const(!v)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding all `FloatBinaryOp` nodes when both operands
-/// are `FloatConst`.  Delegates to `eval_float_binary`.
-fn try_fold_float_binary_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::FloatBinaryOp(op) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(l) = fg.float_const_val(lhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(r) = fg.float_const_val(rhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(folded) = eval_float_binary(op, l, r, ty) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_float_const(folded, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding all `FloatUnaryOp` nodes when the operand
-/// is a `FloatConst`.  Delegates to `eval_float_unary`.
-fn try_fold_float_unary_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::FloatUnaryOp(op) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(bits) = fg.float_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(folded) = eval_float_unary(op, bits, ty) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_float_const(folded, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding all `FloatCmpOp` nodes when both operands
-/// are `FloatConst`.  Delegates to `eval_float_cmp`.
-fn try_fold_float_cmp_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::FloatCmpOp(op) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let lhs_out_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_out_kind.as_value_or_err()?;
-    let Some(l) = fg.float_const_val(lhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(r) = fg.float_const_val(rhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(result) = eval_float_cmp(op, l, r, input_ty) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_bool_const(result)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
-/// Escape-hatch for constant-folding `FloatIsNan` when the operand is a
-/// `FloatConst`.
-fn try_fold_float_is_nan_const(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let NodeKind::FloatIsNan = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind.as_value_or_err()?;
-    let Some(bits) = fg.float_const_val(input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let is_nan = match input_ty {
-        NodeOutputType::F32 => f32::from_bits(bits as u32).is_nan(),
-        NodeOutputType::F64 => f64::from_bits(bits).is_nan(),
-        _ => return Ok(OptimizationResult::NoChange),
-    };
-    let new_out = fg.make_bool_const(is_nan)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
-}
-
 /// Applies constant evaluation and absorbing-element rules for bool binary ops,
 /// bool unary ops, and all float ops.
 fn apply_bool_float_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    let rules = rewrite_rules! {
-        // ── Bool binary: full constant eval ──────────────────────────────────
-        BAnd(BoolConst(l), BoolConst(r)) => bool_const(l && r),
-        BOr(BoolConst(l), BoolConst(r))  => bool_const(l || r),
-        BXor(BoolConst(l), BoolConst(r)) => bool_const(l ^ r),
-
-        // ── Bool binary: absorbing elements ─────────────────────────────────
-        BAnd(BoolConst(false), x) => bool_const(false),
-        BOr(BoolConst(true), x)   => bool_const(true),
-
-        // ── Bool unary: Not (via escape-hatch; no BoolNot LHS in macro grammar) ──
-        bool_un @ try_fold_bool_unary_const,
-
-        // ── Float binary: full constant eval (via escape-hatch) ──────────────
-        float_bin @ try_fold_float_binary_const,
-
-        // ── Float unary: full constant eval (via escape-hatch) ───────────────
-        float_un @ try_fold_float_unary_const,
-
-        // ── Float comparisons (via escape-hatch) ─────────────────────────────
-        float_cmp @ try_fold_float_cmp_const,
-
-        // ── FloatIsNan (via escape-hatch) ─────────────────────────────────────
-        float_isnan @ try_fold_float_is_nan_const,
-
-        // ── CastToFloat lowering (via escape-hatch) ───────────────────────────
-        cast_to_float @ try_lower_cast_to_float,
+    use pattern::{
+        BoolUnaryOpVar, BoolVar, BoxedRule, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
+        FloatVar, any_bool_const, any_float_const, apply_rules_in_order, bool_and, bool_or,
+        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_is_nan,
+        float_unary_any, rewrite_rule,
     };
-    rules(fg, node)
+    use pattern::{bool_const_with, float_const_with};
+
+    let rules: Vec<BoxedRule> = vec![
+        // BAnd(BoolConst(l), BoolConst(r)) => bool_const(l && r)
+        {
+            let l = BoolVar::new();
+            let r = BoolVar::new();
+            boxed_rule(rewrite_rule(
+                bool_and(any_bool_const(l), any_bool_const(r)),
+                bool_const_with!([l, r] => l && r),
+            ))
+        },
+        // BOr(BoolConst(l), BoolConst(r)) => bool_const(l || r)
+        {
+            let l = BoolVar::new();
+            let r = BoolVar::new();
+            boxed_rule(rewrite_rule(
+                bool_or(any_bool_const(l), any_bool_const(r)),
+                bool_const_with!([l, r] => l || r),
+            ))
+        },
+        // BXor(BoolConst(l), BoolConst(r)) => bool_const(l ^ r)
+        {
+            let l = BoolVar::new();
+            let r = BoolVar::new();
+            boxed_rule(rewrite_rule(
+                bool_xor(any_bool_const(l), any_bool_const(r)),
+                bool_const_with!([l, r] => l ^ r),
+            ))
+        },
+        // BAnd(BoolConst(false), x) => bool_const(false)  (absorbing element)
+        {
+            let l = BoolVar::new();
+            let x = pattern::Var::new();
+            boxed_rule(rewrite_rule(
+                bool_and(any_bool_const(l), pattern::var(x)),
+                bool_const_with!([l] => {
+                    if !l { false } else {
+                        return Err(pattern::Error::skip());
+                    }
+                }),
+            ))
+        },
+        // BOr(BoolConst(true), x) => bool_const(true)  (absorbing element)
+        {
+            let l = BoolVar::new();
+            let x = pattern::Var::new();
+            boxed_rule(rewrite_rule(
+                bool_or(any_bool_const(l), pattern::var(x)),
+                bool_const_with!([l] => {
+                    if l { true } else {
+                        return Err(pattern::Error::skip());
+                    }
+                }),
+            ))
+        },
+        // BoolUnaryOp(op)(BoolConst(v)) => bool_const(!v)
+        {
+            let op = BoolUnaryOpVar::new();
+            let v = BoolVar::new();
+            boxed_rule(rewrite_rule(
+                bool_unary_any(op, any_bool_const(v)),
+                bool_const_with!([op, v] => {
+                    use ir::BoolUnaryOp;
+                    match op {
+                        BoolUnaryOp::Neg => !v,
+                    }
+                }),
+            ))
+        },
+        // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
+        //     float_const(eval_float_binary(op, l, r, ty)?)
+        {
+            let op = FloatBinaryOpVar::new();
+            let l = FloatVar::new();
+            let r = FloatVar::new();
+            boxed_rule(rewrite_rule(
+                float_binary_any(op, any_float_const(l), any_float_const(r)),
+                float_const_with!([op, l, r, ty] =>
+                    eval_float_binary(op, l, r, ty)
+                        .ok_or_else(pattern::Error::skip)?
+                ),
+            ))
+        },
+        // FloatUnaryOp(op)(FloatConst(v)) => float_const(eval_float_unary(op, v, ty)?)
+        {
+            let op = FloatUnaryOpVar::new();
+            let v = FloatVar::new();
+            boxed_rule(rewrite_rule(
+                float_unary_any(op, any_float_const(v)),
+                float_const_with!([op, v, ty] =>
+                    eval_float_unary(op, v, ty)
+                        .ok_or_else(pattern::Error::skip)?
+                ),
+            ))
+        },
+        // FloatCmpOp(op)(FloatConst(l), FloatConst(r)) =>
+        //     bool_const(eval_float_cmp(op, l, r, in_ty)?)
+        //   `in_ty` = root's first-value-input type (the float operand type).
+        {
+            let op = FloatCmpOpVar::new();
+            let l = FloatVar::new();
+            let r = FloatVar::new();
+            boxed_rule(rewrite_rule(
+                float_cmp_any(op, any_float_const(l), any_float_const(r)),
+                bool_const_with!([op, l, r, in_ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    eval_float_cmp(op, l, r, input_ty)
+                        .ok_or_else(pattern::Error::skip)?
+                }),
+            ))
+        },
+        // FloatIsNan(FloatConst(v)) => bool_const(v.is_nan())
+        //   `in_ty` = root's first-value-input type (F32 or F64).
+        {
+            let v = FloatVar::new();
+            boxed_rule(rewrite_rule(
+                float_is_nan(any_float_const(v)),
+                bool_const_with!([v, in_ty] => {
+                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    match input_ty {
+                        ir::node::NodeOutputType::F32 => {
+                            f32::from_bits(v as u32).is_nan()
+                        }
+                        ir::node::NodeOutputType::F64 => {
+                            f64::from_bits(v).is_nan()
+                        }
+                        _ => return Err(pattern::Error::skip()),
+                    }
+                }),
+            ))
+        },
+    ];
+
+    let changed = apply_rules_in_order(rules)(fg, node)?;
+    // CastToFloat lowering is too stateful for a rule (it does graph surgery);
+    // handle it separately after the rule sweep.
+    let cast_changed = try_lower_cast_to_float(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed) | cast_changed)
 }
 
 fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
