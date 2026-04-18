@@ -436,12 +436,12 @@ impl Match {
 
 // ── Matcher ───────────────────────────────────────────────────────────────────
 
-/// Executes pattern queries against a [`BuiltFunctionGraph`].
+/// Precomputed per-kind `NodeId` lists used by [`Matcher::find_all`] to skip
+/// the full-graph scan when the pattern root is `Call`, `CallOther`, `Return`,
+/// or `If`.
 ///
-/// `Matcher::new` pre-indexes all `Call`, `Return`, and `If` nodes in the
-/// graph so that control-level queries can skip the full node list.
-pub struct Matcher<'g> {
-    fn_graph: &'g BuiltFunctionGraph,
+/// Built lazily on the first `find_all` call; `match_at` never needs it.
+struct NodeIndex {
     call_nodes: Vec<NodeId>,
     call_other_nodes: Vec<NodeId>,
     return_nodes: Vec<NodeId>,
@@ -449,37 +449,55 @@ pub struct Matcher<'g> {
     all_nodes: Vec<NodeId>,
 }
 
+/// Executes pattern queries against a [`BuiltFunctionGraph`].
+///
+/// Construction is O(1): the per-kind node indices used by
+/// [`Matcher::find_all`] are populated lazily on first use.  Consumers that
+/// only call [`Matcher::match_at`] (e.g. `rewrite_rule`) never pay the
+/// indexing cost.
+pub struct Matcher<'g> {
+    fn_graph: &'g BuiltFunctionGraph,
+    index: std::cell::OnceCell<NodeIndex>,
+}
+
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` and pre-indexes the graph.
-    ///
-    /// This does a single preorder traversal over all nodes; subsequent
-    /// `find_all` calls pay only the cost of the pattern match itself.
+    /// Creates a new `Matcher`.  O(1); index construction is deferred until
+    /// the first [`Matcher::find_all`] call.
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
-        let mut call_nodes = Vec::new();
-        let mut call_other_nodes = Vec::new();
-        let mut return_nodes = Vec::new();
-        let mut if_nodes = Vec::new();
-        let mut all_nodes = Vec::new();
-
-        for node in fn_graph.preorder() {
-            all_nodes.push(node);
-            match fn_graph.graph.node_kind(node) {
-                NodeKind::Call => call_nodes.push(node),
-                NodeKind::CallOther { .. } => call_other_nodes.push(node),
-                NodeKind::Return => return_nodes.push(node),
-                NodeKind::If => if_nodes.push(node),
-                _ => {}
-            }
-        }
-
         Self {
             fn_graph,
-            call_nodes,
-            call_other_nodes,
-            return_nodes,
-            if_nodes,
-            all_nodes,
+            index: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Returns the lazily-built node index, constructing it on first access.
+    fn index(&self) -> &NodeIndex {
+        self.index.get_or_init(|| {
+            let mut call_nodes = Vec::new();
+            let mut call_other_nodes = Vec::new();
+            let mut return_nodes = Vec::new();
+            let mut if_nodes = Vec::new();
+            let mut all_nodes = Vec::new();
+
+            for node in self.fn_graph.preorder() {
+                all_nodes.push(node);
+                match self.fn_graph.graph.node_kind(node) {
+                    NodeKind::Call => call_nodes.push(node),
+                    NodeKind::CallOther { .. } => call_other_nodes.push(node),
+                    NodeKind::Return => return_nodes.push(node),
+                    NodeKind::If => if_nodes.push(node),
+                    _ => {}
+                }
+            }
+
+            NodeIndex {
+                call_nodes,
+                call_other_nodes,
+                return_nodes,
+                if_nodes,
+                all_nodes,
+            }
+        })
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
@@ -487,14 +505,15 @@ impl<'g> Matcher<'g> {
     ///
     /// The search is exhaustive: every node is tried as a potential root.
     /// Top-level `Call`, `Return`, and `If` patterns use the pre-indexed node
-    /// lists and skip the others.
+    /// lists (built lazily on first call) and skip the others.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
+        let idx = self.index();
         let candidates: &[NodeId] = match pat.inner() {
-            PatKind::Call { .. } => &self.call_nodes,
-            PatKind::CallOther { .. } => &self.call_other_nodes,
-            PatKind::Return { .. } => &self.return_nodes,
-            PatKind::If { .. } => &self.if_nodes,
-            _ => &self.all_nodes,
+            PatKind::Call { .. } => &idx.call_nodes,
+            PatKind::CallOther { .. } => &idx.call_other_nodes,
+            PatKind::Return { .. } => &idx.return_nodes,
+            PatKind::If { .. } => &idx.if_nodes,
+            _ => &idx.all_nodes,
         };
 
         candidates
