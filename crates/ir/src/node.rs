@@ -489,8 +489,6 @@ pub enum NodeKind {
     FloatUnaryOp(crate::ops::FloatUnaryOp),
     /// Floating-point comparison; produces a `Bool` output.
     FloatCmpOp(crate::ops::FloatCmpOp),
-    /// Test whether a floating-point value is NaN; produces a `Bool` output.
-    FloatIsNan,
 
     // ── Float / integer conversions ───────────────────────────────────────────
     /// Convert an integer value to the nearest representable float
@@ -868,7 +866,6 @@ mod tests {
         assert!(NodeKind::FloatBinaryOp(crate::ops::FloatBinaryOp::Add).is_cacheable());
         assert!(NodeKind::FloatUnaryOp(crate::ops::FloatUnaryOp::Neg).is_cacheable());
         assert!(NodeKind::FloatCmpOp(crate::ops::FloatCmpOp::Equal).is_cacheable());
-        assert!(NodeKind::FloatIsNan.is_cacheable());
         assert!(NodeKind::IntToFloat.is_cacheable());
         assert!(NodeKind::FloatToInt.is_cacheable());
         assert!(NodeKind::FloatToFloat.is_cacheable());

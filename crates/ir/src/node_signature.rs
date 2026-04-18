@@ -113,7 +113,6 @@ pub(crate) fn expected_signature(
         NodeKind::FloatBinaryOp(_) => (vec![AnyFloat, AnyFloat], vec![AnyFloat]),
         NodeKind::FloatUnaryOp(_) => (vec![AnyFloat], vec![AnyFloat]),
         NodeKind::FloatCmpOp(_) => (vec![AnyFloat, AnyFloat], vec![Bool]),
-        NodeKind::FloatIsNan => (vec![AnyFloat], vec![Bool]),
         NodeKind::IntToFloat => (vec![AnyInt], vec![AnyFloat]),
         NodeKind::FloatToInt => (vec![AnyFloat], vec![AnyInt]),
         NodeKind::FloatToFloat => (vec![AnyFloat], vec![AnyFloat]),

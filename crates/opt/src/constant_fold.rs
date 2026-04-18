@@ -491,8 +491,8 @@ fn apply_bool_float_rules(
     use pattern::{
         BoolUnaryOpVar, BoolVar, BoxedRule, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
         FloatVar, any_bool_const, any_float_const, apply_rules_in_order, bool_and, bool_or,
-        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_is_nan,
-        float_unary_any, rewrite_rule,
+        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any,
+        rewrite_rule,
     };
     use pattern::{bool_const_with, float_const_with};
 
@@ -603,26 +603,6 @@ fn apply_bool_float_rules(
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     eval_float_cmp(op, l, r, input_ty)
                         .ok_or_else(pattern::Error::skip)?
-                }),
-            ))
-        },
-        // FloatIsNan(FloatConst(v)) => bool_const(v.is_nan())
-        //   `in_ty` = root's first-value-input type (F32 or F64).
-        {
-            let v = FloatVar::new();
-            boxed_rule(rewrite_rule(
-                float_is_nan(any_float_const(v)),
-                bool_const_with!([v, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
-                    match input_ty {
-                        ir::node::NodeOutputType::F32 => {
-                            f32::from_bits(v as u32).is_nan()
-                        }
-                        ir::node::NodeOutputType::F64 => {
-                            f64::from_bits(v).is_nan()
-                        }
-                        _ => return Err(pattern::Error::skip()),
-                    }
                 }),
             ))
         },
@@ -1680,28 +1660,6 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.0f64.to_bits()));
-        Ok(())
-    }
-
-    #[test]
-    fn fold_float_is_nan_true() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let v = b.build_float_const(f32::NAN.to_bits() as u64, NodeOutputType::F32);
-            Ok(b.build_float_is_nan(v)?)
-        })?;
-        assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
-        Ok(())
-    }
-
-    #[test]
-    fn fold_float_is_nan_false() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let v = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-            Ok(b.build_float_is_nan(v)?)
-        })?;
-        assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
         Ok(())
     }
 

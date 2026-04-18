@@ -140,7 +140,6 @@ pub use pat::{
     float_div,
     float_eq,
     float_floor,
-    float_is_nan,
     float_le,
     float_lt,
     float_mul,

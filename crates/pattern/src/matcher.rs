@@ -1394,9 +1394,6 @@ impl<'g> Matcher<'g> {
                 self.match_binary_op(node, lhs, rhs, bindings,
                     |k| matches!(k, NodeKind::FloatCmpOp(actual) if actual == op)),
 
-            PatKind::FloatIsNan { operand } =>
-                self.match_unary_op(node, operand, bindings, |k| matches!(k, NodeKind::FloatIsNan)),
-
             PatKind::IntToFloat { operand } =>
                 self.match_unary_op(node, operand, bindings, |k| matches!(k, NodeKind::IntToFloat)),
 

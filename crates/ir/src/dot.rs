@@ -77,8 +77,7 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::FloatConst(_)
         | NodeKind::FloatBinaryOp(_)
         | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatCmpOp(_)
-        | NodeKind::FloatIsNan => "\"#1a3020\"", // dark green
+        | NodeKind::FloatCmpOp(_) => "\"#1a3020\"", // dark green
 
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
@@ -133,7 +132,6 @@ fn edge_style<R: MemReader>(
         | NodeKind::Lzcount
         | NodeKind::Extract { .. }
         | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatIsNan
         | NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
@@ -457,10 +455,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::FloatCmpOp(op) => {
                 let operand = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
                 format!("{op:?}\n{operand} \u{2192} bool")
-            }
-            NodeKind::FloatIsNan => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                format!("IsNaN\n{from} \u{2192} bool")
             }
 
             // ── float / integer conversions ───────────────────────────────────

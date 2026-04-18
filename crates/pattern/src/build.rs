@@ -23,7 +23,7 @@
 //! root's output type ([`BuildCtx::root_ty`]) for every node **unless** the
 //! node kind dictates its own type:
 //!
-//! * `BoolConst`, `BoolBinary`, `BoolUnary`, `IntCmp`, `FloatCmp`, `FloatIsNan`
+//! * `BoolConst`, `BoolBinary`, `BoolUnary`, `IntCmp`, `FloatCmp`
 //!   — always produce [`NodeOutputType::Bool`].
 //! * Every other arithmetic, bitwise, or constant node inherits `root_ty`.
 //!
@@ -142,8 +142,6 @@ pub enum Build {
     FloatUnary(FloatUnaryOp, Arc<Build>),
     /// Build a fresh `FloatCmpOp` node.  Always produces `NodeOutputType::Bool`.
     FloatCmp(FloatCmpOp, Arc<Build>, Arc<Build>),
-    /// Build a fresh `FloatIsNan` node.  Always produces `NodeOutputType::Bool`.
-    FloatIsNan(Arc<Build>),
 
     // Variant-pass-through: the operator variant is resolved from a captured
     // `*OpVar` at evaluation time.  Fails if the variable is unbound.
@@ -285,9 +283,6 @@ fn eval_subtree(state: &mut EvalState<'_>, build: &Build) -> Result<InnerOutcome
             NodeKind::FloatCmpOp(*op),
             NodeOutputType::Bool,
         ),
-        Build::FloatIsNan(x) => {
-            build_unary(state, x, NodeKind::FloatIsNan, NodeOutputType::Bool)
-        }
 
         Build::IntBinaryFromVar(v, l, r) => {
             let op = state.bindings.get_int_binary_op(*v).ok_or_else(|| {
@@ -792,11 +787,6 @@ pub fn float_le(l: Build, r: Build) -> Build {
 /// Build float `l != r`.
 pub fn float_ne(l: Build, r: Build) -> Build {
     float_cmp(FloatCmpOp::NotEqual, l, r)
-}
-
-/// Build `float_is_nan(x)`.
-pub fn float_is_nan(x: Build) -> Build {
-    Build::FloatIsNan(Arc::new(x))
 }
 
 // Variant-from-var helpers

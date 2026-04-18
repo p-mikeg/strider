@@ -703,14 +703,18 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             Opcode::FloatLess => self.process_float_cmp_op(insn, FloatCmpOp::Less)?,
             Opcode::FloatLessEqual => self.process_float_cmp_op(insn, FloatCmpOp::LessEqual)?,
 
-            // FloatNan: tests whether input is NaN (unary, → bool)
+            // FloatNan: tests whether input is NaN (unary, → bool).
+            // Emitted as FloatCmpOp::NotEqual(x, x) since IEEE 754 guarantees
+            // NaN != NaN == true (and x != x is false for all non-NaN x).
             Opcode::FloatNan => {
                 let input = self.read_vn(&insn.inputs[0])?;
                 let out_vn = insn
                     .output
                     .as_ref()
                     .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
-                let result = self.builder.build_float_is_nan(input)?;
+                let result = self
+                    .builder
+                    .build_float_cmp_op(input, input, FloatCmpOp::NotEqual)?;
                 self.write_vn(out_vn, result)?;
             }
 

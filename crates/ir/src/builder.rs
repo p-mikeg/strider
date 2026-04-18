@@ -579,15 +579,6 @@ impl FunctionBuilder {
         ))
     }
 
-    /// Emits a `FloatIsNan` node; produces a `Bool` output.
-    ///
-    /// If `input` is not already a float, it is wrapped in a `CastToFloat`.
-    pub fn build_float_is_nan(&mut self, input: NodeOutputId) -> Result<NodeOutputId> {
-        let float_ty = self.infer_float_type(input)?;
-        let input = self.cast_to_float_if_needed(input, float_ty)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatIsNan, [input], NodeOutputType::Bool))
-    }
-
     /// Emits an `IntToFloat` node: converts an integer value to the nearest
     /// representable float (like C's `(float)n`).
     pub fn build_int_to_float(
@@ -1519,18 +1510,6 @@ mod tests {
         let lhs = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
         let rhs = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
         let out = b.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
-        assert_eq!(
-            b.graph().output_kind(out),
-            NodeOutputKind::OutputType(NodeOutputType::Bool)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn build_float_is_nan_produces_bool_output() -> Result<()> {
-        let mut b = empty_builder()?;
-        let val = b.build_float_const(f32::NAN.to_bits() as u64, NodeOutputType::F32);
-        let out = b.build_float_is_nan(val)?;
         assert_eq!(
             b.graph().output_kind(out),
             NodeOutputKind::OutputType(NodeOutputType::Bool)

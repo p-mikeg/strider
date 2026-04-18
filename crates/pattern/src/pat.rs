@@ -343,8 +343,6 @@ pub enum PatKind {
     FloatUnaryOp { op: FloatUnaryOp, operand: Pat },
     /// Matches a float comparison node (produces a `Bool` output).
     FloatCmpOp { op: FloatCmpOp, lhs: Pat, rhs: Pat },
-    /// Matches a `FloatIsNan` node (unary, produces `Bool`).
-    FloatIsNan { operand: Pat },
     /// Matches an `IntToFloat` value-conversion node.
     IntToFloat { operand: Pat },
     /// Matches a `FloatToInt` value-conversion node.
@@ -1426,13 +1424,6 @@ pub fn float_lt(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
 /// Matches a float less-or-equal comparison.
 pub fn float_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     float_cmp(FloatCmpOp::LessEqual, lhs, rhs)
-}
-
-/// Matches a `FloatIsNan` node.
-pub fn float_is_nan(operand: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::FloatIsNan {
-        operand: operand.into(),
-    })
 }
 
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.

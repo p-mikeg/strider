@@ -2239,24 +2239,6 @@ fn float_eq_pattern_matches() -> ir::Result<()> {
     Ok(())
 }
 
-/// `FloatIsNan` pattern match.
-#[test]
-fn float_is_nan_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let cv = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-    let is_nan = b.build_float_is_nan(cv)?;
-    b.build_return(Some(is_nan), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&float_is_nan(any()));
-    assert_eq!(hits.len(), 1);
-    Ok(())
-}
-
 /// `float_neg` unary pattern match.
 #[test]
 fn float_unary_pattern_matches() -> ir::Result<()> {
