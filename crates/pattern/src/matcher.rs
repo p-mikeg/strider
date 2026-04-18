@@ -1256,7 +1256,11 @@ impl<'g> Matcher<'g> {
                 if !self.match_output(output, inner, bindings) {
                     return false;
                 }
-                if func(self.fn_graph, output) {
+                let Some(out_ty) = self.fn_graph.graph.output_kind(output).as_value() else {
+                    *bindings = snap;
+                    return false;
+                };
+                if func(self.fn_graph, out_ty, output) {
                     true
                 } else {
                     *bindings = snap;
@@ -1269,7 +1273,11 @@ impl<'g> Matcher<'g> {
                 if !self.match_output(output, inner, bindings) {
                     return false;
                 }
-                if func(self.fn_graph, bindings) {
+                let Some(out_ty) = self.fn_graph.graph.output_kind(output).as_value() else {
+                    *bindings = snap;
+                    return false;
+                };
+                if func(self.fn_graph, out_ty, bindings) {
                     true
                 } else {
                     *bindings = snap;

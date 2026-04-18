@@ -1936,7 +1936,7 @@ fn when_predicate_filters_matching_nodes() -> ir::Result<()> {
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
     // Predicate: only match IntConst nodes.
-    let hits = m.find_all(&any().when(|fg, out| {
+    let hits = m.find_all(&any().when(|fg, _ty, out| {
         let node = fg.graph.get_node_from_output(out);
         matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
     }));
@@ -1950,7 +1950,7 @@ fn predicate_fn_matches_same_as_when() -> ir::Result<()> {
     // predicate(f) is equivalent to any().when(f).
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&predicate(|fg, out| {
+    let hits = m.find_all(&predicate(|fg, _ty, out| {
         let node = fg.graph.get_node_from_output(out);
         matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
     }));
@@ -1963,13 +1963,9 @@ fn when_predicate_on_structural_pattern() -> ir::Result<()> {
     // add(_, _).when(f) — structural match first, then predicate.
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&add(any(), any()).when(|fg, out| {
+    let hits = m.find_all(&add(any(), any()).when(|_fg, ty, _out| {
         // Only match if the add node's output is a U64.
-        let kind = fg.graph.output_kind(out);
-        matches!(
-            kind,
-            ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64)
-        )
+        ty == ir::node::NodeOutputType::U64
     }));
     assert_eq!(hits.len(), 1);
     Ok(())
@@ -1980,7 +1976,7 @@ fn when_predicate_rejection() -> ir::Result<()> {
     // .when(f) that always returns false rejects everything.
     let g = graph_add_5_3()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&any().when(|_fg, _out| false));
+    let hits = m.find_all(&any().when(|_fg, _ty, _out| false));
     assert!(hits.is_empty());
     Ok(())
 }
@@ -2005,7 +2001,7 @@ fn predicate_in_field_position() -> ir::Result<()> {
     // Match loads where the address is an IntConst >= 0x1000.
     let hits = m.find_all(
         &load()
-            .addr(predicate(|fg, out| {
+            .addr(predicate(|fg, _ty, out| {
                 let node = fg.graph.get_node_from_output(out);
                 match fg.graph.node_kind(node) {
                     NodeKind::IntConst(v) => *v >= 0x1000,
@@ -2652,7 +2648,7 @@ fn when_match_succeeds_when_sum_equals_eight() -> ir::Result<()> {
     let l = Var::new();
     let r = Var::new();
     let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
-    let pat = inner.when_match(move |g, bindings| {
+    let pat = inner.when_match(move |g, _ty, bindings| {
         let lv = resolve_int_const(g, bindings, l).unwrap_or(0);
         let rv = resolve_int_const(g, bindings, r).unwrap_or(0);
         lv + rv == 8
@@ -2672,7 +2668,7 @@ fn when_match_fails_when_sum_wrong() -> ir::Result<()> {
     let l = Var::new();
     let r = Var::new();
     let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
-    let pat = inner.when_match(move |g, bindings| {
+    let pat = inner.when_match(move |g, _ty, bindings| {
         let lv = resolve_int_const(g, bindings, l).unwrap_or(0);
         let rv = resolve_int_const(g, bindings, r).unwrap_or(0);
         lv + rv == 999
@@ -2701,7 +2697,7 @@ fn when_match_commutative_fallthrough_accepts_swapped_order() -> ir::Result<()> 
     let l = Var::new();
     let r = Var::new();
     let inner: Pat = add(any_int_const(l), any_int_const(r)).into();
-    let pat = inner.when_match(move |g, bindings| {
+    let pat = inner.when_match(move |g, _ty, bindings| {
         let Some(l_out) = bindings.get(l) else {
             return false;
         };

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
-use ir::node::NodeOutputId;
+use ir::node::{NodeOutputId, NodeOutputType};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
@@ -13,15 +13,17 @@ use crate::var::{
 };
 
 /// Predicate function type used in [`PatKind::WithPredicate`].
-pub type PredicateFn = Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync>;
+pub type PredicateFn =
+    Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
 
 /// Predicate function type used in [`PatKind::WithMatchPredicate`].
 ///
 /// Unlike [`PredicateFn`], this variant sees the full capture [`crate::matcher::Bindings`]
 /// map, not just the single matched output — useful for guards that
 /// reference multiple captures.
-pub type MatchPredicateFn =
-    Arc<dyn Fn(&BuiltFunctionGraph, &crate::matcher::Bindings) -> bool + Send + Sync>;
+pub type MatchPredicateFn = Arc<
+    dyn Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool + Send + Sync,
+>;
 
 // ── Const-capture overloading traits ──────────────────────────────────────────
 
@@ -129,7 +131,7 @@ impl Pat {
     /// the matched output.  The match fails if `f` returns `false`.
     fn when_impl<F>(self, f: F) -> Pat
     where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+        F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
         Pat::new(PatKind::WithPredicate {
             inner: self,
@@ -143,7 +145,10 @@ impl Pat {
     /// triggers the other-ordering retry automatically.
     pub fn when_match<F>(self, f: F) -> Pat
     where
-        F: Fn(&BuiltFunctionGraph, &crate::matcher::Bindings) -> bool + Send + Sync + 'static,
+        F: Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool
+            + Send
+            + Sync
+            + 'static,
     {
         Pat::new(PatKind::WithMatchPredicate {
             inner: self,
@@ -169,7 +174,7 @@ pub trait IntoPat: Into<Pat> + Sized {
     /// After matching, additionally run `f` — fails if it returns `false`.
     fn when<F>(self, f: F) -> Pat
     where
-        F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+        F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
         self.into().when_impl(f)
     }
@@ -1073,7 +1078,7 @@ pub fn any_bool_const<C: IntoAnyBoolConst>(v: C) -> Pat {
 /// Matches any output for which `f` returns `true`.  Equivalent to `any().when(f)`.
 pub fn predicate<F>(f: F) -> Pat
 where
-    F: Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + Send + Sync + 'static,
+    F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
 {
     any().when(f)
 }
