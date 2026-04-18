@@ -243,7 +243,7 @@ fn apply_bitcast_extend_rules(
 /// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
 /// - `x ^ x → 0`, `x ^ 0 → x`
 /// - `x * 0 → 0`, `x * 1 → x`
-/// - `x & 0 → 0`, `x & x → x`
+/// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
 /// - `x | 0 → x`, `x | x → x`
 /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
 fn apply_identity_rules(
@@ -286,6 +286,29 @@ fn apply_identity_rules(
         boxed_rule(rewrite_rule(shr(var(x), int_const(0)), cap(x))),
         // x >>> 0 → x  (arithmetic / signed shift right)
         boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), cap(x))),
+        // x & all_ones → x  (and commutative: all_ones & x → x)
+        // The all-ones mask is type-width-dependent so we use a hand-written closure.
+        // Returns pattern::Result<bool> to match BoxedRule's signature.
+        Box::new(|fg: &mut BuiltFunctionGraph, node_id: NodeId| -> pattern::Result<bool> {
+            let NodeKind::IntBinaryOp(IntBinaryOp::And) = *fg.graph.node_kind(node_id) else {
+                return Ok(false);
+            };
+            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+            let ty = fg.graph.output_kind(out).as_value_or_err()?;
+            let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
+                return Ok(false);
+            };
+            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+            let lhs_c = fg.int_const_val(lhs);
+            let rhs_c = fg.int_const_val(rhs);
+            if lhs_c == Some(all_ones) {
+                return fg.replace_all_uses(out, rhs).map_err(pattern::Error::from);
+            }
+            if rhs_c == Some(all_ones) {
+                return fg.replace_all_uses(out, lhs).map_err(pattern::Error::from);
+            }
+            Ok(false)
+        }),
     ];
 
     let changed = apply_rules_in_order(rules)(fg, node)?;
@@ -457,37 +480,6 @@ fn apply_const_eval_rules(
 
     let changed = apply_rules_in_order(rules)(fg, node)?;
     Ok(OptimizationResult::from_changed(changed))
-}
-
-/// Handles the `x & all_ones → x` identity, which depends on the type width
-/// and cannot be expressed as a static `rewrite_rules!` pattern.
-fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::IntBinaryOp(IntBinaryOp::And) = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-
-    // Types wider than U64 (U128/U256) aren't representable in the 64-bit
-    // IntConst slot — skip this folding for them.
-    let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
-    // Identity: x & all_ones → x
-    let lhs_c = fg.int_const_val(lhs);
-    let rhs_c = fg.int_const_val(rhs);
-    if lhs_c == Some(all_ones) {
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
-    }
-    if rhs_c == Some(all_ones) {
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
-    }
-
-    Ok(OptimizationResult::NoChange)
 }
 
 /// Applies constant evaluation and absorbing-element rules for bool binary ops,
@@ -884,7 +876,6 @@ impl Optimizer for ConstantFold {
             result |= apply_bool_float_rules(function, node_id)?;
             result |= apply_reassoc_and_mask_rules(function, node_id)?;
             result |= apply_bitcast_extend_rules(function, node_id)?;
-            result |= try_fold_int_binary(function, node_id)?;
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
