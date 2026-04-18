@@ -250,6 +250,261 @@ fn try_fold_shift_zero(
     Ok(OptimizationResult::NoChange)
 }
 
+/// Escape-hatch for constant-folding all `IntBinaryOp` nodes when both operands
+/// are `IntConst`.  Delegates to `eval_int_binary` which handles masking,
+/// division-by-zero, signed overflow, and shift amount clamping correctly.
+fn try_fold_int_binary_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::IntBinaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+    let Some(l) = fg.int_const_val(lhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(r) = fg.int_const_val(rhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(folded) = eval_int_binary(op, l, r, ty) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let new_out = fg.make_int_const(folded, ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Escape-hatch for constant-folding `IntUnaryOp` (Neg, Not) nodes when the
+/// operand is an `IntConst`.
+fn try_fold_int_unary_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::IntUnaryOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = fg.int_const_val(input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let raw = match op {
+        IntUnaryOp::Neg => v.wrapping_neg(),
+        IntUnaryOp::Not => !v,
+    };
+    let Some(folded) = ty.get_unsigned_int(raw) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let new_out = fg.make_int_const(folded, ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Escape-hatch for constant-folding all `IntCmpOp` nodes when both operands
+/// are `IntConst`.  Delegates to `eval_int_cmp` which handles sign-extension
+/// for signed comparisons, carry, borrow, scarry, and sborrow correctly.
+fn try_fold_int_cmp_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let kind = *fg.graph.node_kind(node_id);
+    let NodeKind::IntCmpOp(op) = kind else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+    let lhs_kind = fg.graph.output_kind(lhs);
+    let input_ty = lhs_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(lhs_kind))?;
+    let Some(l) = fg.int_const_val(lhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let Some(r) = fg.int_const_val(rhs) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let result = eval_int_cmp(op, l, r, input_ty)?;
+    let new_out = fg.make_bool_const(result)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Applies full constant evaluation for integer binary ops, integer unary ops,
+/// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
+/// cast_to_bool, and cast_to_int.
+fn apply_const_eval_rules(
+    fg: &mut BuiltFunctionGraph,
+    node: NodeId,
+) -> Result<OptimizationResult> {
+    let rules = rewrite_rules! {
+        // ── Integer binary: full constant eval (via escape-hatch) ─────────────
+        int_bin @ try_fold_int_binary_const,
+
+        // ── Integer unary: Neg / Not (via escape-hatch; macro has no IntUnaryOp LHS) ──
+        int_un @ try_fold_int_unary_const,
+
+        // ── Integer comparisons (via escape-hatch; handles signed/carry/borrow) ──
+        int_cmp @ try_fold_int_cmp_const,
+
+        // ── Truncate ──────────────────────────────────────────────────────────
+        // `ty` is the narrower output type; `int_const(v, ty)` masks via make_int_const
+        // The existing try_fold_truncate does `target_ty.get_unsigned_int(v)` which
+        // masks high bits.  `int_const(v, ty)` stores the raw value; the
+        // dedup-key includes the raw bits so we also store unmasked here —
+        // but `int_const_val` re-masks when reading back, so semantics are
+        // identical and the stored value should be already masked (v came from
+        // int_const_val which already masks).
+        Truncate(IntConst(v)) => int_const(v, ty),
+
+        // ── Zero-extend / Sign-extend ─────────────────────────────────────────
+        // ZeroExtend: the constant value is already an unsigned (masked) value
+        // at the narrower type — just widen it.
+        Extend::<ZeroExtend>(IntConst(v)) => int_const(v, ty),
+
+        // SignExtend: must sign-extend from the capture's input type (in_ty)
+        // to the output type (ty).  Use escape hatch to call get_signed_int.
+        sign_ext @ try_fold_sign_extend_const,
+
+        // ── Popcount / Lzcount ────────────────────────────────────────────────
+        // The macro RHS cannot call methods on captured values, so delegate
+        // to escape-hatch helpers that use the oracle helpers directly.
+        popcount_esc @ try_fold_popcount_const,
+        lzcount_esc  @ try_fold_lzcount_const,
+
+        // ── CastToBool ────────────────────────────────────────────────────────
+        CastToBool(IntConst(v)) => bool_const(v != 0),
+
+        // ── CastToInt ────────────────────────────────────────────────────────
+        // Macro RHS cannot use `as` casts, so delegate to escape hatch.
+        cast_to_int_esc @ try_fold_cast_to_int_const,
+    };
+    rules(fg, node)
+}
+
+/// Escape-hatch for sign-extend of a constant: reads the input type's width
+/// to correctly sign-extend before widening.
+fn try_fold_sign_extend_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let NodeKind::Extend(ExtendOp::SignExtend) = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let target_ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let Some(v) = fg.int_const_val(input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let folded = input_ty
+        .get_signed_int(v)
+        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?
+        as u64;
+    let Some(masked) = target_ty.get_unsigned_int(folded) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let new_out = fg.make_int_const(masked, target_ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Escape-hatch for popcount of a constant: masks to the input type's width
+/// (already done by int_const_val, but re-masked for safety) then counts ones.
+fn try_fold_popcount_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = fg.int_const_val(input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty
+        .get_unsigned_int(v)
+        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
+    let result = masked.count_ones() as u64;
+    let new_out = fg.make_int_const(result, ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Escape-hatch for lzcount of a constant: shifts the value to the top of a u64
+/// then counts leading zeros within the actual type width.
+fn try_fold_lzcount_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = fg.int_const_val(input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let input_kind = fg.graph.output_kind(input);
+    let input_ty = input_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let masked = input_ty
+        .get_unsigned_int(v)
+        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
+    let bits = input_ty.bit_width() as u32;
+    let result = (masked << (64 - bits)).leading_zeros() as u64;
+    let new_out = fg.make_int_const(result, ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
+/// Escape-hatch for `CastToInt` of a `BoolConst`: converts `false→0`, `true→1`.
+fn try_fold_cast_to_int_const(
+    fg: &mut BuiltFunctionGraph,
+    node_id: NodeId,
+) -> Result<OptimizationResult> {
+    let NodeKind::CastToInt = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+    let out_kind = fg.graph.output_kind(out);
+    let target_ty = out_kind
+        .as_value()
+        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let Some(v) = fg.bool_const_val(input) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let new_out = fg.make_int_const(v as u64, target_ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+}
+
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let kind = *fg.graph.node_kind(node_id);
     let NodeKind::IntBinaryOp(op) = kind else {
@@ -270,14 +525,6 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
         return Ok(OptimizationResult::NoChange);
     };
-
-    // Full constant evaluation when both operands are known.
-    if let (Some(l), Some(r)) = (lhs_c, rhs_c)
-        && let Some(folded) = eval_int_binary(op, l, r, ty)
-    {
-        let new_out = fg.make_int_const( folded, ty)?;
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-    }
 
     // Reassociation and remaining structural rewrites.
     match op {
@@ -380,55 +627,6 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
     Ok(OptimizationResult::NoChange)
 }
 
-fn try_fold_int_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntUnaryOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
-    let raw = match op {
-        IntUnaryOp::Neg => v.wrapping_neg(),
-        IntUnaryOp::Not => !v,
-    };
-    let Some(folded) = ty.get_unsigned_int(raw) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( folded, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_int_cmp(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntCmpOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let lhs_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(lhs_kind))?;
-    let Some(l) = fg.int_const_val( lhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(r) = fg.int_const_val( rhs) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
-    let result = eval_int_cmp(op, l, r, input_ty)?;
-    let new_out = fg.make_bool_const( result)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
 fn try_fold_bool_binary(
     fg: &mut BuiltFunctionGraph,
     node_id: NodeId,
@@ -466,150 +664,6 @@ fn try_fold_bool_unary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         return Ok(OptimizationResult::NoChange);
     };
     let new_out = fg.make_bool_const( !v)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_truncate(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::Truncate = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(folded) = target_ty.get_unsigned_int(v) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( folded, target_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_extend(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::Extend(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-
-    let folded = match op {
-        ExtendOp::ZeroExtend => v, // already an unsigned value, just reinterpret at wider type
-        ExtendOp::SignExtend => input_ty
-            .get_signed_int(v)
-            .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?
-            as u64,
-    };
-    let Some(masked) = target_ty.get_unsigned_int(folded) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( masked, target_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_cast_to_bool(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::CastToBool = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_bool_const( v != 0)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_cast_to_int(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::CastToInt = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.bool_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( v as u64, target_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_popcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Popcount = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
-    let masked = input_ty
-        .get_unsigned_int(v)
-        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
-    let result = masked.count_ones() as u64;
-    let new_out = fg.make_int_const( result, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
-fn try_fold_lzcount(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Lzcount = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
-    let masked = input_ty
-        .get_unsigned_int(v)
-        .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
-    let bits = input_ty.bit_width() as u32;
-    // Shift into the top of a u64 then count leading zeros within the type width.
-    let result = (masked << (64 - bits)).leading_zeros() as u64;
-    let new_out = fg.make_int_const( result, ty)?;
     Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
@@ -1042,17 +1096,10 @@ impl Optimizer for ConstantFold {
         let mut result = OptimizationResult::NoChange;
         for node_id in nodes {
             result |= apply_identity_rules(function, node_id)?;
+            result |= apply_const_eval_rules(function, node_id)?;
             result |= try_fold_int_binary(function, node_id)?;
-            result |= try_fold_int_unary(function, node_id)?;
-            result |= try_fold_int_cmp(function, node_id)?;
             result |= try_fold_bool_binary(function, node_id)?;
             result |= try_fold_bool_unary(function, node_id)?;
-            result |= try_fold_truncate(function, node_id)?;
-            result |= try_fold_extend(function, node_id)?;
-            result |= try_fold_cast_to_bool(function, node_id)?;
-            result |= try_fold_cast_to_int(function, node_id)?;
-            result |= try_fold_popcount(function, node_id)?;
-            result |= try_fold_lzcount(function, node_id)?;
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
