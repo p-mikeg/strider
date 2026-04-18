@@ -262,11 +262,24 @@ fn apply_bitcast_extend_rules(
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::build::{cap, int_const_lit};
     use pattern::{
-        BoxedRule, Var, add, and, boxed_rule, int_const, mul, or, rewrite_rule, shl, shr, sshr,
-        sub, var, xor,
+        BoxedRule, IntVar, Pat, Var, add, and, any_int_const, boxed_rule, int_const, mul, or,
+        rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
     let x = Var::new();
+    // x & all_ones → x  (commutative). The all-ones mask depends on the
+    // output width, so we use `.when_match()` to compare the captured
+    // constant against the node's output-type all-ones value.
+    let all_ones_rule = {
+        let x = Var::new();
+        let c = IntVar::new();
+        let pat: Pat = and(var(x), any_int_const(c)).into();
+        let pat = pat.when_match(move |_fg, ty, b| {
+            b.get_int(c) == ty.get_unsigned_int(u64::MAX)
+        });
+        boxed_rule(rewrite_rule(pat, cap(x)))
+    };
+
     let rules: Vec<BoxedRule> = vec![
         // x + 0 → x  (commutative: also covers 0 + x)
         boxed_rule(rewrite_rule(add(var(x), int_const(0)), cap(x))),
@@ -296,29 +309,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         boxed_rule(rewrite_rule(shr(var(x), int_const(0)), cap(x))),
         // x >>> 0 → x  (arithmetic / signed shift right)
         boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), cap(x))),
-        // x & all_ones → x  (and commutative: all_ones & x → x)
-        // The all-ones mask is type-width-dependent so we use a hand-written closure.
-        // Returns pattern::Result<bool> to match BoxedRule's signature.
-        Box::new(|fg: &mut BuiltFunctionGraph, node_id: NodeId| -> pattern::Result<bool> {
-            let NodeKind::IntBinaryOp(IntBinaryOp::And) = *fg.graph.node_kind(node_id) else {
-                return Ok(false);
-            };
-            let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-            let ty = fg.graph.output_kind(out).as_value_or_err()?;
-            let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
-                return Ok(false);
-            };
-            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-            let lhs_c = fg.int_const_val(lhs);
-            let rhs_c = fg.int_const_val(rhs);
-            if lhs_c == Some(all_ones) {
-                return fg.replace_all_uses(out, rhs).map_err(pattern::Error::from);
-            }
-            if rhs_c == Some(all_ones) {
-                return fg.replace_all_uses(out, lhs).map_err(pattern::Error::from);
-            }
-            Ok(false)
-        }),
+        all_ones_rule,
     ];
     rules
 }
