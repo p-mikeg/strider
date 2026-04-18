@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 
 // ── Known-bits representation ─────────────────────────────────────────────────
@@ -72,9 +72,7 @@ fn node_known_bits(
         None => return Ok(None),
     };
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
     let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
@@ -175,9 +173,7 @@ fn node_known_bits(
             // Upper bits are explicitly zeroed by the extension.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.graph.output_kind(input);
-            let input_ty = input_kind
-                .as_value()
-                .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+            let input_ty = input_kind.as_value_or_err()?;
             let input_mask = input_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
@@ -190,9 +186,7 @@ fn node_known_bits(
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.graph.output_kind(input);
-            let input_ty = input_kind
-                .as_value()
-                .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+            let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {
                 1
@@ -233,9 +227,7 @@ fn node_known_bits(
         NodeKind::Piece => {
             let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
             let lo_kind = fg.graph.output_kind(lo);
-            let lo_ty = lo_kind
-                .as_value()
-                .ok_or(ErrorKind::ExpectedValueOutput(lo_kind))?;
+            let lo_ty = lo_kind.as_value_or_err()?;
             let lo_bits = lo_ty.bit_width() as u32;
             let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
             let hi_kb = known.get(&hi).copied().unwrap_or_default();
@@ -331,6 +323,7 @@ impl Optimizer for KnownBits {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
     use ir::node::{NodeKind, NodeOutputType};
     use ir::{FunctionBuilder, IntBinaryOp};
 

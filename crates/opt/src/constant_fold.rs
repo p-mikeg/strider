@@ -236,9 +236,7 @@ fn try_fold_int_binary_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let Some(l) = fg.int_const_val(lhs) else {
         return Ok(OptimizationResult::NoChange);
@@ -265,9 +263,7 @@ fn try_fold_int_unary_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(v) = fg.int_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
@@ -297,9 +293,7 @@ fn try_fold_int_cmp_const(
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let lhs_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(lhs_kind))?;
+    let input_ty = lhs_kind.as_value_or_err()?;
     let Some(l) = fg.int_const_val(lhs) else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -374,14 +368,10 @@ fn try_fold_sign_extend_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let target_ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let input_ty = input_kind.as_value_or_err()?;
     let Some(v) = fg.int_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -407,17 +397,13 @@ fn try_fold_popcount_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(v) = fg.int_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let input_ty = input_kind.as_value_or_err()?;
     let masked = input_ty
         .get_unsigned_int(v)
         .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
@@ -437,17 +423,13 @@ fn try_fold_lzcount_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(v) = fg.int_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
     };
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let input_ty = input_kind.as_value_or_err()?;
     let masked = input_ty
         .get_unsigned_int(v)
         .ok_or(ErrorKind::ExpectedIntegerType(input_ty))?;
@@ -467,9 +449,7 @@ fn try_fold_cast_to_int_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let target_ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let target_ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(v) = fg.bool_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
@@ -487,9 +467,7 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
 
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
     // Types wider than U64 (U128/U256) aren't representable in the 64-bit
@@ -540,9 +518,7 @@ fn try_fold_float_binary_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let Some(l) = fg.float_const_val(lhs) else {
         return Ok(OptimizationResult::NoChange);
@@ -568,9 +544,7 @@ fn try_fold_float_unary_const(
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(bits) = fg.float_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
@@ -594,9 +568,7 @@ fn try_fold_float_cmp_const(
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let lhs_out_kind = fg.graph.output_kind(lhs);
-    let input_ty = lhs_out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(lhs_out_kind))?;
+    let input_ty = lhs_out_kind.as_value_or_err()?;
     let Some(l) = fg.float_const_val(lhs) else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -622,9 +594,7 @@ fn try_fold_float_is_nan_const(
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let input_kind = fg.graph.output_kind(input);
-    let input_ty = input_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(input_kind))?;
+    let input_ty = input_kind.as_value_or_err()?;
     let Some(bits) = fg.float_const_val(input) else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -680,9 +650,7 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let Some(hi_v) = fg.int_const_val( hi) else {
         return Ok(OptimizationResult::NoChange);
@@ -691,9 +659,7 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
         return Ok(OptimizationResult::NoChange);
     };
     let lo_kind = fg.graph.output_kind(lo);
-    let lo_ty = lo_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(lo_kind))?;
+    let lo_ty = lo_kind.as_value_or_err()?;
     let lo_bits = lo_ty.bit_width() as u32;
     let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(u64::MAX);
     let result = (hi_v << lo_bits) | (lo_v & lo_mask);
@@ -710,9 +676,7 @@ fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Opti
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
     let Some(v) = fg.int_const_val( input) else {
         return Ok(OptimizationResult::NoChange);
@@ -736,9 +700,7 @@ fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optim
     };
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind
-        .as_value()
-        .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
+    let ty = out_kind.as_value_or_err()?;
     let [dest, src] = fg.graph.node_inputs_exact::<2>(node_id)?;
     let Some(dest_v) = fg.int_const_val( dest) else {
         return Ok(OptimizationResult::NoChange);
@@ -884,12 +846,8 @@ fn try_lower_cast_to_float(
 
     let out_kind = fg.graph.output_kind(out);
     let in_kind = fg.graph.output_kind(input);
-    let out_ty = out_kind
-        .as_value()
-        .ok_or(crate::error::ErrorKind::ExpectedValueOutput(out_kind))?;
-    let in_ty = in_kind
-        .as_value()
-        .ok_or(crate::error::ErrorKind::ExpectedValueOutput(in_kind))?;
+    let out_ty = out_kind.as_value_or_err()?;
+    let in_ty = in_kind.as_value_or_err()?;
 
     // 1. Identity: input already has the target float type.
     if in_ty == out_ty {
