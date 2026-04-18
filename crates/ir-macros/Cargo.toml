@@ -16,6 +16,7 @@ ir.workspace = true
 opt.workspace = true
 pattern.workspace = true
 rsleigh.workspace = true
+trybuild = "1"
 
 [lints]
 workspace = true

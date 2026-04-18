@@ -1,0 +1,5 @@
+error[E0425]: cannot find value `y` in this scope
+ --> tests/ui/rewrite_rules/undeclared_rhs_ident.rs:5:30
+  |
+5 |         (x + IntConst(0)) => y,
+  |                              ^ help: a local variable with a similar name exists: `ty`

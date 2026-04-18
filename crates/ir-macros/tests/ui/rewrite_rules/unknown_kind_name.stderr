@@ -1,0 +1,5 @@
+error: expected `=>`
+ --> tests/ui/rewrite_rules/unknown_kind_name.rs:7:15
+  |
+7 |         FooBar(x) => x,
+  |               ^
