@@ -983,9 +983,6 @@ impl<'g> Matcher<'g> {
             PatKind::Lzcount { operand } =>
                 self.match_unary_op(node, operand, bindings, |k| matches!(k, NodeKind::Lzcount)),
 
-            PatKind::Piece { hi, lo } =>
-                self.match_binary_op(node, hi, lo, bindings, |k| matches!(k, NodeKind::Piece)),
-
             PatKind::Insert {
                 lsb: pat_lsb,
                 len: pat_len,

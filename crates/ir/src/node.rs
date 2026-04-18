@@ -456,10 +456,6 @@ pub enum NodeKind {
     Popcount,
     /// Count the number of leading zero bits in an integer value.
     Lzcount,
-    /// Concatenate two integers: result = (hi << bit_width(lo)) | lo.
-    /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
-    /// Output width = bit_width(hi) + bit_width(lo).
-    Piece,
     /// Insert `len` bits from `src` into `dest` starting at bit `lsb`.
     /// inputs[0] = dest, inputs[1] = src.  Output has the same type as dest.
     Insert { lsb: u8, len: u8 },

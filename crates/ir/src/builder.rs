@@ -399,23 +399,6 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
     }
 
-    /// Emits a `Piece` node: `result = (hi << bit_width(lo)) | lo`.
-    /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
-    ///
-    /// Non-integer inputs (bool, float) are automatically coerced to integers.
-    pub fn build_piece(
-        &mut self,
-        hi: NodeOutputId,
-        lo: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        let hi_ty = self.get_output_type(hi)?.to_natural_int_type();
-        let hi = self.convert_to_int_if_needed(hi, hi_ty)?;
-        let lo_ty = self.get_output_type(lo)?.to_natural_int_type();
-        let lo = self.convert_to_int_if_needed(lo, lo_ty)?;
-        Ok(self.build_single_output_pure(NodeKind::Piece, [hi, lo], output_type))
-    }
-
     /// Emits an `Insert` node: inserts `len` bits from `src` into `dest` at bit `lsb`.
     /// inputs[0] = dest, inputs[1] = src.
     ///
@@ -1700,17 +1683,48 @@ mod tests {
         Ok(())
     }
 
+    /// The analyzer lowers `Piece(hi, lo)` to
+    /// `Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo))`.  When `hi` is
+    /// a float, the first `convert_to_int_if_needed` call must insert a
+    /// `CastToInt` so the subsequent integer operations are well-typed.  This
+    /// test replicates that lowering manually and verifies the `CastToInt`
+    /// appears on the path from the float input.
     #[test]
-    fn build_piece_with_float_input_auto_casts() -> Result<()> {
+    fn piece_composition_auto_casts_float_input() -> Result<()> {
         let mut b = empty_builder()?;
-        // Create a float value to pass into piece.
         let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
         let int_lo = b.build_int_const(0, NodeOutputType::U32);
-        // Piece should succeed and insert a CastToInt for the float hi.
-        let result = b.build_piece(float_val, int_lo, NodeOutputType::U64)?;
-        // Result must be a Piece node.
-        let kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
-        assert_eq!(kind, NodeKind::Piece);
+
+        // Replicate the analyzer's Piece composition.
+        let out_ty = NodeOutputType::U64;
+        let hi_ty = b.get_output_type(float_val)?.to_natural_int_type();
+        let hi_int = b.convert_to_int_if_needed(float_val, hi_ty)?;
+        let lo_ty = b.get_output_type(int_lo)?.to_natural_int_type();
+        let lo_int = b.convert_to_int_if_needed(int_lo, lo_ty)?;
+        let lo_bits = lo_ty.bit_width() as u64;
+        let hi_wide = b.convert_to_int_if_needed(hi_int, out_ty)?;
+        let lo_wide = b.convert_to_int_if_needed(lo_int, out_ty)?;
+        let shift_amt = b.build_int_const(lo_bits, out_ty);
+        let hi_shifted = b.build_int_binary_operation(
+            hi_wide,
+            shift_amt,
+            IntBinaryOp::ShiftLeft,
+            out_ty,
+        )?;
+        let result = b.build_int_binary_operation(
+            hi_shifted,
+            lo_wide,
+            IntBinaryOp::Or,
+            out_ty,
+        )?;
+
+        // The root must be the Or.
+        let root_kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
+        assert_eq!(root_kind, NodeKind::IntBinaryOp(IntBinaryOp::Or));
+
+        // `hi_int` consumes the float, so it must be a CastToInt node.
+        let hi_int_node = b.graph().get_node_from_output(hi_int);
+        assert_eq!(*b.graph().node_kind(hi_int_node), NodeKind::CastToInt);
         Ok(())
     }
 }

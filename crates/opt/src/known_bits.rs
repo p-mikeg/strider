@@ -205,20 +205,6 @@ fn node_known_bits(
             }
         }
 
-        NodeKind::Piece => {
-            let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
-            let lo_kind = fg.graph.output_kind(lo);
-            let lo_ty = lo_kind.as_value_or_err()?;
-            let lo_bits = lo_ty.bit_width() as u32;
-            let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
-            let hi_kb = known.get(&hi).copied().unwrap_or_default();
-            let lo_kb = known.get(&lo).copied().unwrap_or_default();
-            Kb {
-                ones: ((hi_kb.ones << lo_bits) | (lo_kb.ones & lo_mask)) & type_mask,
-                zeros: ((hi_kb.zeros << lo_bits) | (lo_kb.zeros & lo_mask)) & type_mask,
-            }
-        }
-
         NodeKind::Insert { lsb, len } => {
             let mask = if len >= 64 {
                 u64::MAX
@@ -382,7 +368,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Popcount / Piece known-bits ───────────────────────────────────────────
+    // ── Popcount known-bits ───────────────────────────────────────────────────
 
     /// `popcount(U8)` fits in 4 bits (max = 8), so bits 4..7 are known zero.
     /// `and(popcount(x), 0xF0)` should fold to 0.
@@ -402,20 +388,4 @@ mod tests {
         Ok(())
     }
 
-    /// `piece(IntConst(0xAB), IntConst(0xCD))` → all bits are fully determined
-    /// → KnownBits resolves it to `IntConst(0xABCD)`.
-    #[test]
-    fn known_bits_piece_propagation() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let hi = b.build_int_const(0xAB, NodeOutputType::U8);
-            let lo = b.build_int_const(0xCD, NodeOutputType::U8);
-            Ok(b.build_piece(hi, lo, NodeOutputType::U16)?)
-        })?;
-        let mut changed = true;
-        while changed {
-            changed = KnownBits.optimize(&mut fg)?.changed();
-        }
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xABCD));
-        Ok(())
-    }
 }

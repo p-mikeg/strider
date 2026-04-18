@@ -615,32 +615,6 @@ fn apply_bool_float_rules(
     Ok(OptimizationResult::from_changed(changed) | cast_changed)
 }
 
-fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Piece = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    let Some(hi_v) = fg.int_const_val( hi) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let Some(lo_v) = fg.int_const_val( lo) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let lo_kind = fg.graph.output_kind(lo);
-    let lo_ty = lo_kind.as_value_or_err()?;
-    let lo_bits = lo_ty.bit_width() as u32;
-    let lo_mask = lo_ty.get_unsigned_int(u64::MAX).unwrap_or(u64::MAX);
-    let result = (hi_v << lo_bits) | (lo_v & lo_mask);
-    let Some(masked) = ty.get_unsigned_int(result) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( masked, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
 fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else {
         return Ok(OptimizationResult::NoChange);
@@ -832,7 +806,6 @@ impl Optimizer for ConstantFold {
             result |= apply_bool_float_rules(function, node_id)?;
             result |= apply_reassoc_and_mask_rules(function, node_id)?;
             result |= apply_bitcast_extend_rules(function, node_id)?;
-            result |= try_fold_piece(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
         }
         Ok(result)
@@ -1394,7 +1367,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Popcount / Lzcount / Piece / Insert ───────────────────────────────────
+    // ── Popcount / Lzcount / Insert ───────────────────────────────────────────
 
     #[test]
     fn fold_popcount_const() -> Result<()> {
@@ -1440,19 +1413,6 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
-        Ok(())
-    }
-
-    #[test]
-    fn fold_piece_consts() -> Result<()> {
-        // piece(0xABu8, 0xCDu8) → U16 = 0xABCD
-        let mut fg = make_fn(|b| {
-            let hi = b.build_int_const(0xAB, NodeOutputType::U8);
-            let lo = b.build_int_const(0xCD, NodeOutputType::U8);
-            Ok(b.build_piece(hi, lo, NodeOutputType::U16)?)
-        })?;
-        assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xABCD));
         Ok(())
     }
 

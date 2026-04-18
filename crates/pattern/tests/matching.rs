@@ -2018,7 +2018,7 @@ fn predicate_in_field_position() -> ir::Result<()> {
     Ok(())
 }
 
-// ── Lzcount / Piece / Insert pattern tests ──────────────────────────────────
+// ── Lzcount / Insert pattern tests ──────────────────────────────────────────
 
 #[test]
 fn lzcount_pattern_matches() -> ir::Result<()> {
@@ -2033,24 +2033,6 @@ fn lzcount_pattern_matches() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&lzcount(any()));
-    assert_eq!(hits.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn piece_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let hi = b.build_int_const(0xAB, NodeOutputType::U8);
-    let lo = b.build_int_const(0xCD, NodeOutputType::U8);
-    let p = b.build_piece(hi, lo, NodeOutputType::U16)?;
-    b.build_return(Some(p), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&piece(any(), any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }

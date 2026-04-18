@@ -309,8 +309,6 @@ pub enum PatKind {
     Popcount { operand: Pat },
     /// Matches a `Lzcount` node (counts leading zero bits).
     Lzcount { operand: Pat },
-    /// Matches a `Piece` node (concatenates hi and lo: `(hi << bits(lo)) | lo`).
-    Piece { hi: Pat, lo: Pat },
     /// Matches an `Insert` node.  `None` for `lsb`/`len` matches any value.
     Insert {
         lsb: Option<u8>,
@@ -1301,13 +1299,6 @@ pub fn popcount(operand: impl Into<Pat>) -> Pat {
 pub fn lzcount(operand: impl Into<Pat>) -> Pat {
     Pat::new(PatKind::Lzcount {
         operand: operand.into(),
-    })
-}
-/// Matches a piece (concatenation) node: `(hi << bits(lo)) | lo`.
-pub fn piece(hi: impl Into<Pat>, lo: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::Piece {
-        hi: hi.into(),
-        lo: lo.into(),
     })
 }
 /// Matches an insert node.  Pass `None` for `lsb`/`len` to match any value.

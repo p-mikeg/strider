@@ -187,7 +187,6 @@ pub use pat::{
     // Phi nodes
     phi,
     phi_for,
-    piece,
     popcount,
     predicate,
     rem,

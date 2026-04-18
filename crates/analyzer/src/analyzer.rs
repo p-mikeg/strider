@@ -603,14 +603,35 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
                 self.write_vn(out_vn, out)?;
             }
             Opcode::Piece => {
-                // inputs[0] = hi (most significant), inputs[1] = lo (least significant)
+                // inputs[0] = hi (most significant), inputs[1] = lo (least significant).
+                // Lowered to: Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo)).
                 let hi = self.read_vn(&insn.inputs[0])?;
                 let lo = self.read_vn(&insn.inputs[1])?;
                 let out_vn = insn
                     .output
                     .as_ref()
                     .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
-                let out = self.builder.build_piece(hi, lo, out_vn.size.try_into()?)?;
+                let out_ty: NodeOutputType = out_vn.size.try_into()?;
+                let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
+                let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
+                let lo_ty = self.builder.get_output_type(lo)?.to_natural_int_type();
+                let lo_int = self.builder.convert_to_int_if_needed(lo, lo_ty)?;
+                let lo_bits = lo_ty.bit_width() as u64;
+                let hi_wide = self.builder.convert_to_int_if_needed(hi_int, out_ty)?;
+                let lo_wide = self.builder.convert_to_int_if_needed(lo_int, out_ty)?;
+                let shift_amt = self.builder.build_int_const(lo_bits, out_ty);
+                let hi_shifted = self.builder.build_int_binary_operation(
+                    hi_wide,
+                    shift_amt,
+                    IntBinaryOp::ShiftLeft,
+                    out_ty,
+                )?;
+                let out = self.builder.build_int_binary_operation(
+                    hi_shifted,
+                    lo_wide,
+                    IntBinaryOp::Or,
+                    out_ty,
+                )?;
                 self.write_vn(out_vn, out)?;
             }
             Opcode::Extract => {
