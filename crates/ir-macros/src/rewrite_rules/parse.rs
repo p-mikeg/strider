@@ -7,6 +7,10 @@
 ///           | Ident '@' Ident                         -- escape rule
 /// LhsPat   := '(' LhsPat BinOpSym LhsPat ')'
 ///           | 'Extend' '::' '<' ExtendKind '>' '(' LhsPat ')'
+///           | UnaryOpName '(' LhsPat ')'
+///           | 'Piece' '(' LhsPat ',' LhsPat ')'
+///           | 'Extract' '::' '<' IntLit ',' IntLit '>' '(' LhsPat ')'
+///           | 'Insert' '::' '<' IntLit ',' IntLit '>' '(' LhsPat ',' LhsPat ')'
 ///           | 'IntConst' '(' IntConstPat ')'
 ///           | 'BoolConst' '(' BoolConstPat ')'
 ///           | 'FloatConst' '(' FloatConstPat ')'
@@ -15,6 +19,9 @@
 ///           | FloatCmpOpName '(' LhsPat ',' LhsPat ')'
 ///           | IntCmpOpName '(' LhsPat ',' LhsPat ')'
 ///           | Ident
+/// UnaryOpName := 'Truncate' | 'Popcount' | 'Lzcount' | 'CastToBool' | 'CastToInt'
+///             | 'IntToFloat' | 'FloatToInt' | 'FloatToFloat'
+///             | 'IntBitsToFloat' | 'FloatBitsToInt' | 'CastToFloat'
 /// IntConstPat  := IntLit | Ident ':' Ident | Ident
 /// BoolConstPat := 'true' | 'false' | Ident
 /// FloatConstPat := IntLit | Ident
@@ -451,6 +458,41 @@ impl BoolBinOpKind {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ExtendKind { SignExtend, ZeroExtend }
 
+/// Unary node kinds that take a single value input and produce a single value output.
+/// Each maps to a `::pattern::*` free constructor of the same semantic meaning.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum UnaryKind {
+    Truncate,
+    Popcount,
+    Lzcount,
+    CastToBool,
+    CastToInt,
+    IntToFloat,
+    FloatToInt,
+    FloatToFloat,
+    IntBitsToFloat,
+    FloatBitsToInt,
+    CastToFloat,
+}
+
+impl UnaryKind {
+    pub fn from_ident(ident: &Ident) -> Option<Self> {
+        match ident.to_string().as_str() {
+            "Truncate"       => Some(Self::Truncate),
+            "Popcount"       => Some(Self::Popcount),
+            "Lzcount"        => Some(Self::Lzcount),
+            "CastToBool"     => Some(Self::CastToBool),
+            "CastToInt"      => Some(Self::CastToInt),
+            "IntToFloat"     => Some(Self::IntToFloat),
+            "FloatToInt"     => Some(Self::FloatToInt),
+            "FloatToFloat"   => Some(Self::FloatToFloat),
+            "IntBitsToFloat" => Some(Self::IntBitsToFloat),
+            "FloatBitsToInt" => Some(Self::FloatBitsToInt),
+            "CastToFloat"    => Some(Self::CastToFloat),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum FloatBinOpKind {
@@ -528,6 +570,14 @@ pub(super) enum LhsPat {
     FloatCmpOp { op: FloatCmpOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     IntCmpOp { op: IntCmpOpKind, lhs: Box<LhsPat>, rhs: Box<LhsPat> },
     ExtendOp { kind: ExtendKind, inner: Box<LhsPat> },
+    /// Any of the 11 unary value→value node kinds (Truncate, Popcount, etc.).
+    UnaryOp { kind: UnaryKind, operand: Box<LhsPat> },
+    /// `Piece(hi, lo)` — concatenation of two integers (non-commutative).
+    Piece { hi: Box<LhsPat>, lo: Box<LhsPat> },
+    /// `Extract::<lsb, len>(x)` — extract `len` bits starting at bit `lsb`.
+    Extract { lsb: u8, len: u8, operand: Box<LhsPat> },
+    /// `Insert::<lsb, len>(dest, src)` — insert `len` bits from `src` into `dest`.
+    Insert { lsb: u8, len: u8, dest: Box<LhsPat>, src: Box<LhsPat> },
 }
 
 impl Parse for LhsPat {
@@ -599,6 +649,53 @@ fn parse_lhs_inner(input: ParseStream) -> Result<LhsPat> {
             return Err(content.error("unexpected tokens inside Extend(...)"));
         }
         return Ok(LhsPat::ExtendOp { kind, inner: Box::new(inner) });
+    }
+    if ident == "Piece" {
+        let content; syn::parenthesized!(content in input);
+        let hi = parse_lhs(&content)?;
+        content.parse::<Token![,]>()?;
+        let lo = parse_lhs(&content)?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens inside Piece(...)"));
+        }
+        return Ok(LhsPat::Piece { hi: Box::new(hi), lo: Box::new(lo) });
+    }
+    if ident == "Extract" {
+        input.parse::<Token![::]>()?;
+        input.parse::<Token![<]>()?;
+        let lsb_lit: LitInt = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let len_lit: LitInt = input.parse()?;
+        input.parse::<Token![>]>()?;
+        let lsb: u8 = lsb_lit.base10_parse()?;
+        let len: u8 = len_lit.base10_parse()?;
+        let content; syn::parenthesized!(content in input);
+        let operand = parse_lhs(&content)?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens inside Extract::<...>(...)"));
+        }
+        return Ok(LhsPat::Extract { lsb, len, operand: Box::new(operand) });
+    }
+    if ident == "Insert" {
+        input.parse::<Token![::]>()?;
+        input.parse::<Token![<]>()?;
+        let lsb_lit: LitInt = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let len_lit: LitInt = input.parse()?;
+        input.parse::<Token![>]>()?;
+        let lsb: u8 = lsb_lit.base10_parse()?;
+        let len: u8 = len_lit.base10_parse()?;
+        let content; syn::parenthesized!(content in input);
+        let dest = parse_lhs(&content)?;
+        content.parse::<Token![,]>()?;
+        let src = parse_lhs(&content)?;
+        if !content.is_empty() {
+            return Err(content.error("unexpected tokens inside Insert::<...>(...)"));
+        }
+        return Ok(LhsPat::Insert { lsb, len, dest: Box::new(dest), src: Box::new(src) });
+    }
+    if let Some(unary_kind) = UnaryKind::from_ident(&ident) {
+        return parse_unary_op(input, unary_kind);
     }
     Ok(LhsPat::OutputCapture(ident))
 }
@@ -695,6 +792,15 @@ fn parse_int_cmp_op(input: ParseStream, op: IntCmpOpKind) -> Result<LhsPat> {
     Ok(LhsPat::IntCmpOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) })
 }
 
+fn parse_unary_op(input: ParseStream, kind: UnaryKind) -> Result<LhsPat> {
+    let content; syn::parenthesized!(content in input);
+    let operand = parse_lhs(&content)?;
+    if !content.is_empty() {
+        return Err(content.error("unexpected tokens inside unary op pattern"));
+    }
+    Ok(LhsPat::UnaryOp { kind, operand: Box::new(operand) })
+}
+
 fn parse_grouped(input: ParseStream) -> Result<LhsPat> {
     let content; syn::parenthesized!(content in input);
     let lhs = parse_lhs(&content)?;
@@ -755,6 +861,16 @@ impl LhsPat {
                 rhs.collect_captures(caps);
             }
             LhsPat::ExtendOp { inner, .. } => inner.collect_captures(caps),
+            LhsPat::UnaryOp { operand, .. } => operand.collect_captures(caps),
+            LhsPat::Piece { hi, lo } => {
+                hi.collect_captures(caps);
+                lo.collect_captures(caps);
+            }
+            LhsPat::Extract { operand, .. } => operand.collect_captures(caps),
+            LhsPat::Insert { dest, src, .. } => {
+                dest.collect_captures(caps);
+                src.collect_captures(caps);
+            }
         }
     }
 
@@ -956,6 +1072,44 @@ fn emit_pat_builder(
                 ExtendKind::SignExtend  => quote! { ::pattern::sign_extend(#i) },
                 ExtendKind::ZeroExtend => quote! { ::pattern::zero_extend(#i) },
             }
+        }
+
+        LhsPat::UnaryOp { kind, operand } => {
+            let i = emit_pat_builder(operand, type_to_value, false);
+            match kind {
+                UnaryKind::Truncate       => quote! { ::pattern::truncate(#i) },
+                UnaryKind::Popcount       => quote! { ::pattern::popcount(#i) },
+                UnaryKind::Lzcount        => quote! { ::pattern::lzcount(#i) },
+                UnaryKind::CastToBool     => quote! { ::pattern::cast_to_bool(#i) },
+                UnaryKind::CastToInt      => quote! { ::pattern::cast_to_int(#i) },
+                UnaryKind::IntToFloat     => quote! { ::pattern::int_to_float(#i) },
+                UnaryKind::FloatToInt     => quote! { ::pattern::float_to_int(#i) },
+                UnaryKind::FloatToFloat   => quote! { ::pattern::float_to_float(#i) },
+                UnaryKind::IntBitsToFloat => quote! { ::pattern::int_bits_to_float(#i) },
+                UnaryKind::FloatBitsToInt => quote! { ::pattern::float_bits_to_int(#i) },
+                UnaryKind::CastToFloat    => quote! { ::pattern::cast_to_float(#i) },
+            }
+        }
+
+        LhsPat::Piece { hi, lo } => {
+            let h = emit_pat_builder(hi, type_to_value, false);
+            let l = emit_pat_builder(lo, type_to_value, false);
+            quote! { ::pattern::piece(#h, #l) }
+        }
+
+        LhsPat::Extract { lsb, len, operand } => {
+            let i = emit_pat_builder(operand, type_to_value, false);
+            let lsb_val = *lsb;
+            let len_val = *len;
+            quote! { ::pattern::extract(::core::option::Option::Some(#lsb_val), ::core::option::Option::Some(#len_val), #i) }
+        }
+
+        LhsPat::Insert { lsb, len, dest, src } => {
+            let d = emit_pat_builder(dest, type_to_value, false);
+            let s = emit_pat_builder(src, type_to_value, false);
+            let lsb_val = *lsb;
+            let len_val = *len;
+            quote! { ::pattern::insert(::core::option::Option::Some(#lsb_val), ::core::option::Option::Some(#len_val), #d, #s) }
         }
     }
 }
