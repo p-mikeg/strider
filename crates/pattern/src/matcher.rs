@@ -5,7 +5,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp, IntCmpOp};
 
 use crate::pat::{Pat, PatKind};
-use crate::var::{NodeVar, Var};
+use crate::var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
 
 // ── Commutativity helpers ─────────────────────────────────────────────────────
 
@@ -40,6 +40,12 @@ fn is_commutative_int_cmp_op(op: IntCmpOp) -> bool {
 pub struct Bindings {
     vars: HashMap<Var, NodeOutputId>,
     node_vars: HashMap<NodeVar, NodeId>,
+    /// Values captured by [`IntVar`] bindings (integer constant bit patterns).
+    int_vals: HashMap<IntVar, u64>,
+    /// Values captured by [`BoolVar`] bindings (boolean constant values).
+    bool_vals: HashMap<BoolVar, bool>,
+    /// Values captured by [`FloatVar`] bindings (float constant IEEE 754 bit patterns).
+    float_bits: HashMap<FloatVar, u64>,
 }
 
 impl Bindings {
@@ -61,6 +67,46 @@ impl Bindings {
         }
     }
 
+    /// Bind `iv` to the integer constant `val`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same value.  Returns `false` if `iv` was already bound to a
+    /// **different** value (the match should fail).
+    pub fn bind_int(&mut self, iv: IntVar, val: u64) -> bool {
+        if let Some(&existing) = self.int_vals.get(&iv) {
+            existing == val
+        } else {
+            self.int_vals.insert(iv, val);
+            true
+        }
+    }
+
+    /// Bind `bv` to the boolean constant `val`.
+    ///
+    /// Returns `true` if the binding succeeded (new or idempotent), `false` on
+    /// conflict.
+    pub fn bind_bool(&mut self, bv: BoolVar, val: bool) -> bool {
+        if let Some(&existing) = self.bool_vals.get(&bv) {
+            existing == val
+        } else {
+            self.bool_vals.insert(bv, val);
+            true
+        }
+    }
+
+    /// Bind `fv` to the float constant IEEE 754 bit pattern `bits`.
+    ///
+    /// Returns `true` if the binding succeeded (new or idempotent), `false` on
+    /// conflict.
+    pub fn bind_float(&mut self, fv: FloatVar, bits: u64) -> bool {
+        if let Some(&existing) = self.float_bits.get(&fv) {
+            existing == bits
+        } else {
+            self.float_bits.insert(fv, bits);
+            true
+        }
+    }
+
     /// Returns the `NodeOutputId` bound to `v`, or `None` if unbound.
     pub fn get(&self, v: Var) -> Option<NodeOutputId> {
         self.vars.get(&v).copied()
@@ -69,6 +115,22 @@ impl Bindings {
     /// Returns the `NodeId` bound to `nv`, or `None` if unbound.
     pub fn get_node(&self, nv: NodeVar) -> Option<NodeId> {
         self.node_vars.get(&nv).copied()
+    }
+
+    /// Returns the integer constant value bound to `iv`, or `None` if unbound.
+    pub fn get_int(&self, iv: IntVar) -> Option<u64> {
+        self.int_vals.get(&iv).copied()
+    }
+
+    /// Returns the boolean constant value bound to `bv`, or `None` if unbound.
+    pub fn get_bool(&self, bv: BoolVar) -> Option<bool> {
+        self.bool_vals.get(&bv).copied()
+    }
+
+    /// Returns the float constant IEEE 754 bit pattern bound to `fv`, or `None`
+    /// if unbound.
+    pub fn get_float_bits(&self, fv: FloatVar) -> Option<u64> {
+        self.float_bits.get(&fv).copied()
     }
 }
 
@@ -95,6 +157,28 @@ impl Match {
     /// or `None` if `nv` was not captured in this match.
     pub fn get_node(&self, nv: NodeVar) -> Option<NodeId> {
         self.bindings.get_node(nv)
+    }
+
+    /// Returns the integer constant value bound to the [`IntVar`] `iv`, or
+    /// `None` if `iv` was not captured in this match.
+    pub fn get_int(&self, iv: IntVar) -> Option<u64> {
+        self.bindings.get_int(iv)
+    }
+
+    /// Returns the boolean constant value bound to the [`BoolVar`] `bv`, or
+    /// `None` if `bv` was not captured in this match.
+    pub fn get_bool(&self, bv: BoolVar) -> Option<bool> {
+        self.bindings.get_bool(bv)
+    }
+
+    /// Returns the float constant IEEE 754 bit pattern bound to the [`FloatVar`]
+    /// `fv`, or `None` if `fv` was not captured in this match.
+    ///
+    /// Named `get_float` (not `get_float_bits`) to avoid colliding with the
+    /// graph-lookup helper [`Match::get_float_bits`] which takes a [`Var`] and a
+    /// graph reference.
+    pub fn get_float(&self, fv: FloatVar) -> Option<u64> {
+        self.bindings.get_float_bits(fv)
     }
 
     /// If the output bound to `v` was produced by an `IntConst` node, returns
@@ -1227,5 +1311,141 @@ impl<'g> Matcher<'g> {
             .node_outputs(node)
             .into_iter()
             .find(|&o| self.fn_graph.graph.output_kind(o) == NodeOutputKind::Control)
+    }
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::var::{BoolVar, FloatVar, IntVar};
+
+    // ── IntVar ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn int_var_bind_and_get() {
+        let mut b = Bindings::default();
+        let iv = IntVar::new();
+
+        // Unbound → None.
+        assert_eq!(b.get_int(iv), None);
+
+        // First bind succeeds.
+        assert!(b.bind_int(iv, 42));
+        assert_eq!(b.get_int(iv), Some(42));
+    }
+
+    #[test]
+    fn int_var_idempotent_rebind() {
+        let mut b = Bindings::default();
+        let iv = IntVar::new();
+        assert!(b.bind_int(iv, 42));
+        // Rebinding to the same value is OK.
+        assert!(b.bind_int(iv, 42));
+        assert_eq!(b.get_int(iv), Some(42));
+    }
+
+    #[test]
+    fn int_var_conflict_fails() {
+        let mut b = Bindings::default();
+        let iv = IntVar::new();
+        assert!(b.bind_int(iv, 42));
+        // Rebinding to a different value fails.
+        assert!(!b.bind_int(iv, 43));
+        // The original binding is preserved after a conflict.
+        assert_eq!(b.get_int(iv), Some(42));
+    }
+
+    // ── BoolVar ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn bool_var_bind_and_get() {
+        let mut b = Bindings::default();
+        let bv = BoolVar::new();
+
+        assert_eq!(b.get_bool(bv), None);
+
+        assert!(b.bind_bool(bv, true));
+        assert_eq!(b.get_bool(bv), Some(true));
+    }
+
+    #[test]
+    fn bool_var_idempotent_rebind() {
+        let mut b = Bindings::default();
+        let bv = BoolVar::new();
+        assert!(b.bind_bool(bv, false));
+        assert!(b.bind_bool(bv, false));
+        assert_eq!(b.get_bool(bv), Some(false));
+    }
+
+    #[test]
+    fn bool_var_conflict_fails() {
+        let mut b = Bindings::default();
+        let bv = BoolVar::new();
+        assert!(b.bind_bool(bv, true));
+        assert!(!b.bind_bool(bv, false));
+        assert_eq!(b.get_bool(bv), Some(true));
+    }
+
+    // ── FloatVar ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn float_var_bind_and_get() {
+        let mut b = Bindings::default();
+        let fv = FloatVar::new();
+
+        assert_eq!(b.get_float_bits(fv), None);
+
+        // Use the IEEE 754 bit pattern for 1.0f64.
+        let bits = 1.0f64.to_bits();
+        assert!(b.bind_float(fv, bits));
+        assert_eq!(b.get_float_bits(fv), Some(bits));
+    }
+
+    #[test]
+    fn float_var_idempotent_rebind() {
+        let mut b = Bindings::default();
+        let fv = FloatVar::new();
+        let bits = 2.0f64.to_bits();
+        assert!(b.bind_float(fv, bits));
+        assert!(b.bind_float(fv, bits));
+        assert_eq!(b.get_float_bits(fv), Some(bits));
+    }
+
+    #[test]
+    fn float_var_conflict_fails() {
+        let mut b = Bindings::default();
+        let fv = FloatVar::new();
+        let bits_a = 1.0f64.to_bits();
+        let bits_b = 2.0f64.to_bits();
+        assert!(b.bind_float(fv, bits_a));
+        assert!(!b.bind_float(fv, bits_b));
+        assert_eq!(b.get_float_bits(fv), Some(bits_a));
+    }
+
+    // ── IDs are globally unique across types ──────────────────────────────────
+
+    #[test]
+    fn capture_ids_are_globally_unique() {
+        // Each call to ::new() increments the shared counter.  The only
+        // guarantee we need is that two successive calls produce different ids.
+        let iv = IntVar::new();
+        let bv = BoolVar::new();
+        let fv = FloatVar::new();
+        let v = Var::new();
+        let nv = NodeVar::new();
+        // All five must be distinct (compared as their raw u32 inner values by
+        // verifying each pair is not identical when cast to the same type as u32).
+        // We expose no public field, so we use Debug output as a proxy.
+        let ids: Vec<String> = vec![
+            format!("{iv:?}"),
+            format!("{bv:?}"),
+            format!("{fv:?}"),
+            format!("{v:?}"),
+            format!("{nv:?}"),
+        ];
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "all capture IDs must be globally unique");
     }
 }

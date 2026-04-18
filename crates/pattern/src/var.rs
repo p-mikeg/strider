@@ -43,3 +43,63 @@ impl Default for NodeVar {
         Self::new()
     }
 }
+
+/// A capture variable that binds the **integer constant value** (`u64`) carried
+/// by an `IntConst` node.
+///
+/// Shares the global ID counter with [`Var`] and [`NodeVar`] so every capture
+/// id across the process is globally unique.  Future pattern variants (e.g.
+/// `AnyIntConst(IntVar)`) will populate this binding automatically; for now the
+/// storage and accessors are the foundation for Phase A2.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct IntVar(u32);
+
+impl IntVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for IntVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **boolean constant value** (`bool`) carried
+/// by a `BoolConst` node.
+///
+/// Shares the global ID counter with [`Var`] and [`NodeVar`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BoolVar(u32);
+
+impl BoolVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for BoolVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **IEEE 754 bit pattern** (`u64`) carried
+/// by a `FloatConst` node.
+///
+/// Shares the global ID counter with [`Var`] and [`NodeVar`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FloatVar(u32);
+
+impl FloatVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for FloatVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}

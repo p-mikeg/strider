@@ -190,7 +190,7 @@ pub use pat::{
     xor,
     zero_extend,
 };
-pub use var::{NodeVar, Var};
+pub use var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
 
 // Re-export op enums so callers can use `int_binary(IntBinaryOp::Add, …)`
 // without also depending on the `ir` crate directly.
