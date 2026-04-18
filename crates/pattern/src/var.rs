@@ -103,3 +103,163 @@ impl Default for FloatVar {
         Self::new()
     }
 }
+
+/// A capture variable that binds the **operator variant** of an
+/// `IntBinaryOp` node.
+///
+/// Use in [`crate::pat::int_binary_any`] to match any integer binary operator
+/// and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct IntBinaryOpVar(u32);
+
+impl IntBinaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for IntBinaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of an
+/// `IntUnaryOp` node.
+///
+/// Use in [`crate::pat::int_unary_any`] to match any integer unary operator
+/// and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct IntUnaryOpVar(u32);
+
+impl IntUnaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for IntUnaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of an
+/// `IntCmpOp` node.
+///
+/// Use in [`crate::pat::int_cmp_any`] to match any integer comparison
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct IntCmpOpVar(u32);
+
+impl IntCmpOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for IntCmpOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of a
+/// `BoolBinaryOp` node.
+///
+/// Use in [`crate::pat::bool_binary_any`] to match any boolean binary
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BoolBinaryOpVar(u32);
+
+impl BoolBinaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for BoolBinaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of a
+/// `BoolUnaryOp` node.
+///
+/// Use in [`crate::pat::bool_unary_any`] to match any boolean unary
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct BoolUnaryOpVar(u32);
+
+impl BoolUnaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for BoolUnaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of a
+/// `FloatBinaryOp` node.
+///
+/// Use in [`crate::pat::float_binary_any`] to match any float binary
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FloatBinaryOpVar(u32);
+
+impl FloatBinaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for FloatBinaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of a
+/// `FloatUnaryOp` node.
+///
+/// Use in [`crate::pat::float_unary_any`] to match any float unary
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FloatUnaryOpVar(u32);
+
+impl FloatUnaryOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for FloatUnaryOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A capture variable that binds the **operator variant** of a
+/// `FloatCmpOp` node.
+///
+/// Use in [`crate::pat::float_cmp_any`] to match any float comparison
+/// operator and recover the concrete variant after matching.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FloatCmpOpVar(u32);
+
+impl FloatCmpOpVar {
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for FloatCmpOpVar {
+    fn default() -> Self {
+        Self::new()
+    }
+}

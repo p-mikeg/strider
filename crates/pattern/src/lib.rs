@@ -98,10 +98,12 @@ pub use pat::{
     bool_and,
     // Bool ops
     bool_binary,
+    bool_binary_any,
     bool_const,
     bool_not,
     bool_or,
     bool_unary,
+    bool_unary_any,
     bool_xor,
     // Control nodes
     call,
@@ -119,9 +121,11 @@ pub use pat::{
     float_add,
     // Float ops
     float_binary,
+    float_binary_any,
     float_bits_to_int,
     float_ceil,
     float_cmp,
+    float_cmp_any,
     float_const,
     float_div,
     float_eq,
@@ -138,6 +142,7 @@ pub use pat::{
     float_to_float,
     float_to_int,
     float_unary,
+    float_unary_any,
     if_node,
     // Entry values
     initial_var,
@@ -145,10 +150,13 @@ pub use pat::{
     insert,
     // Int binary ops
     int_binary,
+    // Variant-agnostic op constructors
+    int_binary_any,
     int_bits_to_float,
     int_carry,
     // Int comparisons
     int_cmp,
+    int_cmp_any,
     int_const,
     int_eq,
     int_le,
@@ -160,6 +168,7 @@ pub use pat::{
     int_to_float,
     // Int unary ops
     int_unary,
+    int_unary_any,
     // Memory
     load,
     lzcount,
@@ -190,7 +199,10 @@ pub use pat::{
     xor,
     zero_extend,
 };
-pub use var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
+pub use var::{
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
+    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
+};
 
 // Re-export op enums so callers can use `int_binary(IntBinaryOp::Add, …)`
 // without also depending on the `ir` crate directly.

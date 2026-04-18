@@ -2,10 +2,16 @@ use std::collections::{HashMap, HashSet};
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp, IntCmpOp};
+use ir::{
+    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+    IntUnaryOp,
+};
 
 use crate::pat::{Pat, PatKind};
-use crate::var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
+use crate::var::{
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
+    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
+};
 
 // ── Commutativity helpers ─────────────────────────────────────────────────────
 
@@ -46,6 +52,22 @@ pub struct Bindings {
     bool_vals: HashMap<BoolVar, bool>,
     /// Values captured by [`FloatVar`] bindings (float constant IEEE 754 bit patterns).
     float_bits: HashMap<FloatVar, u64>,
+    /// Operator variants captured by [`IntBinaryOpVar`] bindings.
+    int_binary_ops: HashMap<IntBinaryOpVar, IntBinaryOp>,
+    /// Operator variants captured by [`IntUnaryOpVar`] bindings.
+    int_unary_ops: HashMap<IntUnaryOpVar, IntUnaryOp>,
+    /// Operator variants captured by [`IntCmpOpVar`] bindings.
+    int_cmp_ops: HashMap<IntCmpOpVar, IntCmpOp>,
+    /// Operator variants captured by [`BoolBinaryOpVar`] bindings.
+    bool_binary_ops: HashMap<BoolBinaryOpVar, BoolBinaryOp>,
+    /// Operator variants captured by [`BoolUnaryOpVar`] bindings.
+    bool_unary_ops: HashMap<BoolUnaryOpVar, BoolUnaryOp>,
+    /// Operator variants captured by [`FloatBinaryOpVar`] bindings.
+    float_binary_ops: HashMap<FloatBinaryOpVar, FloatBinaryOp>,
+    /// Operator variants captured by [`FloatUnaryOpVar`] bindings.
+    float_unary_ops: HashMap<FloatUnaryOpVar, FloatUnaryOp>,
+    /// Operator variants captured by [`FloatCmpOpVar`] bindings.
+    float_cmp_ops: HashMap<FloatCmpOpVar, FloatCmpOp>,
 }
 
 impl Bindings {
@@ -132,6 +154,150 @@ impl Bindings {
     pub fn get_float_bits(&self, fv: FloatVar) -> Option<u64> {
         self.float_bits.get(&fv).copied()
     }
+
+    /// Bind `v` to the integer binary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_int_binary_op(&mut self, v: IntBinaryOpVar, op: IntBinaryOp) -> bool {
+        if let Some(&existing) = self.int_binary_ops.get(&v) {
+            existing == op
+        } else {
+            self.int_binary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`IntBinaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_int_binary_op(&self, v: IntBinaryOpVar) -> Option<IntBinaryOp> {
+        self.int_binary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the integer unary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_int_unary_op(&mut self, v: IntUnaryOpVar, op: IntUnaryOp) -> bool {
+        if let Some(&existing) = self.int_unary_ops.get(&v) {
+            existing == op
+        } else {
+            self.int_unary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`IntUnaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_int_unary_op(&self, v: IntUnaryOpVar) -> Option<IntUnaryOp> {
+        self.int_unary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the integer comparison operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_int_cmp_op(&mut self, v: IntCmpOpVar, op: IntCmpOp) -> bool {
+        if let Some(&existing) = self.int_cmp_ops.get(&v) {
+            existing == op
+        } else {
+            self.int_cmp_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`IntCmpOp`] bound to `v`, or `None` if unbound.
+    pub fn get_int_cmp_op(&self, v: IntCmpOpVar) -> Option<IntCmpOp> {
+        self.int_cmp_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the boolean binary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_bool_binary_op(&mut self, v: BoolBinaryOpVar, op: BoolBinaryOp) -> bool {
+        if let Some(&existing) = self.bool_binary_ops.get(&v) {
+            existing == op
+        } else {
+            self.bool_binary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`BoolBinaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_bool_binary_op(&self, v: BoolBinaryOpVar) -> Option<BoolBinaryOp> {
+        self.bool_binary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the boolean unary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_bool_unary_op(&mut self, v: BoolUnaryOpVar, op: BoolUnaryOp) -> bool {
+        if let Some(&existing) = self.bool_unary_ops.get(&v) {
+            existing == op
+        } else {
+            self.bool_unary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`BoolUnaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_bool_unary_op(&self, v: BoolUnaryOpVar) -> Option<BoolUnaryOp> {
+        self.bool_unary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the float binary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_float_binary_op(&mut self, v: FloatBinaryOpVar, op: FloatBinaryOp) -> bool {
+        if let Some(&existing) = self.float_binary_ops.get(&v) {
+            existing == op
+        } else {
+            self.float_binary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`FloatBinaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_float_binary_op(&self, v: FloatBinaryOpVar) -> Option<FloatBinaryOp> {
+        self.float_binary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the float unary operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_float_unary_op(&mut self, v: FloatUnaryOpVar, op: FloatUnaryOp) -> bool {
+        if let Some(&existing) = self.float_unary_ops.get(&v) {
+            existing == op
+        } else {
+            self.float_unary_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`FloatUnaryOp`] bound to `v`, or `None` if unbound.
+    pub fn get_float_unary_op(&self, v: FloatUnaryOpVar) -> Option<FloatUnaryOp> {
+        self.float_unary_ops.get(&v).copied()
+    }
+
+    /// Bind `v` to the float comparison operator `op`.
+    ///
+    /// Returns `true` if the binding was newly established or was already bound
+    /// to the same variant.  Returns `false` on conflict.
+    pub fn bind_float_cmp_op(&mut self, v: FloatCmpOpVar, op: FloatCmpOp) -> bool {
+        if let Some(&existing) = self.float_cmp_ops.get(&v) {
+            existing == op
+        } else {
+            self.float_cmp_ops.insert(v, op);
+            true
+        }
+    }
+
+    /// Returns the [`FloatCmpOp`] bound to `v`, or `None` if unbound.
+    pub fn get_float_cmp_op(&self, v: FloatCmpOpVar) -> Option<FloatCmpOp> {
+        self.float_cmp_ops.get(&v).copied()
+    }
 }
 
 // ── Match ─────────────────────────────────────────────────────────────────────
@@ -179,6 +345,46 @@ impl Match {
     /// graph reference.
     pub fn get_float(&self, fv: FloatVar) -> Option<u64> {
         self.bindings.get_float_bits(fv)
+    }
+
+    /// Returns the [`IntBinaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_int_binary_op(&self, v: IntBinaryOpVar) -> Option<IntBinaryOp> {
+        self.bindings.get_int_binary_op(v)
+    }
+
+    /// Returns the [`IntUnaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_int_unary_op(&self, v: IntUnaryOpVar) -> Option<IntUnaryOp> {
+        self.bindings.get_int_unary_op(v)
+    }
+
+    /// Returns the [`IntCmpOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_int_cmp_op(&self, v: IntCmpOpVar) -> Option<IntCmpOp> {
+        self.bindings.get_int_cmp_op(v)
+    }
+
+    /// Returns the [`BoolBinaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_bool_binary_op(&self, v: BoolBinaryOpVar) -> Option<BoolBinaryOp> {
+        self.bindings.get_bool_binary_op(v)
+    }
+
+    /// Returns the [`BoolUnaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_bool_unary_op(&self, v: BoolUnaryOpVar) -> Option<BoolUnaryOp> {
+        self.bindings.get_bool_unary_op(v)
+    }
+
+    /// Returns the [`FloatBinaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_float_binary_op(&self, v: FloatBinaryOpVar) -> Option<FloatBinaryOp> {
+        self.bindings.get_float_binary_op(v)
+    }
+
+    /// Returns the [`FloatUnaryOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_float_unary_op(&self, v: FloatUnaryOpVar) -> Option<FloatUnaryOp> {
+        self.bindings.get_float_unary_op(v)
+    }
+
+    /// Returns the [`FloatCmpOp`] variant bound to `v`, or `None` if unbound.
+    pub fn get_float_cmp_op(&self, v: FloatCmpOpVar) -> Option<FloatCmpOp> {
+        self.bindings.get_float_cmp_op(v)
     }
 
     /// If the output bound to `v` was produced by an `IntConst` node, returns
@@ -523,6 +729,212 @@ impl<'g> Matcher<'g> {
                     *bindings = snap;
                     false
                 }
+            }
+
+            PatKind::IntBinaryAny {
+                op: op_var,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::IntBinaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(l, lhs, bindings)
+                    && self.match_output(r, rhs, bindings)
+                    && bindings.bind_int_binary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                if !ordered && is_commutative_int_op(*actual_op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings)
+                        && self.match_output(l, rhs, bindings)
+                        && bindings.bind_int_binary_op(*op_var, *actual_op)
+                    {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::IntUnaryAny { op: op_var, operand } => {
+                let NodeKind::IntUnaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(inp, operand, bindings)
+                    && bindings.bind_int_unary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::IntCmpAny {
+                op: op_var,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::IntCmpOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(l, lhs, bindings)
+                    && self.match_output(r, rhs, bindings)
+                    && bindings.bind_int_cmp_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                if !ordered && is_commutative_int_cmp_op(*actual_op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings)
+                        && self.match_output(l, rhs, bindings)
+                        && bindings.bind_int_cmp_op(*op_var, *actual_op)
+                    {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::BoolBinaryAny {
+                op: op_var,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::BoolBinaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(l, lhs, bindings)
+                    && self.match_output(r, rhs, bindings)
+                    && bindings.bind_bool_binary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                if !ordered && is_commutative_bool_op(*actual_op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings)
+                        && self.match_output(l, rhs, bindings)
+                        && bindings.bind_bool_binary_op(*op_var, *actual_op)
+                    {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::BoolUnaryAny { op: op_var, operand } => {
+                let NodeKind::BoolUnaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(inp, operand, bindings)
+                    && bindings.bind_bool_unary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::FloatBinaryAny {
+                op: op_var,
+                lhs,
+                rhs,
+                ordered,
+            } => {
+                let NodeKind::FloatBinaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(l, lhs, bindings)
+                    && self.match_output(r, rhs, bindings)
+                    && bindings.bind_float_binary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                if !ordered && is_commutative_float_op(*actual_op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings)
+                        && self.match_output(l, rhs, bindings)
+                        && bindings.bind_float_binary_op(*op_var, *actual_op)
+                    {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::FloatUnaryAny { op: op_var, operand } => {
+                let NodeKind::FloatUnaryOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(inp, operand, bindings)
+                    && bindings.bind_float_unary_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                *bindings = snap;
+                false
+            }
+
+            PatKind::FloatCmpAny {
+                op: op_var,
+                lhs,
+                rhs,
+                ordered: _,
+            } => {
+                // No float comparison operators are commutative in the existing
+                // helpers, so the `ordered` flag has no effect here — the swap
+                // path is never taken.  The field is retained for API symmetry
+                // with the other binary-any variants.
+                let NodeKind::FloatCmpOp(actual_op) = kind else {
+                    return false;
+                };
+                let Ok([l, r]) = self.fn_graph.graph.node_inputs_exact::<2>(node) else {
+                    return false;
+                };
+                let snap = bindings.clone();
+                if self.match_output(l, lhs, bindings)
+                    && self.match_output(r, rhs, bindings)
+                    && bindings.bind_float_cmp_op(*op_var, *actual_op)
+                {
+                    return true;
+                }
+                *bindings = snap;
+                false
             }
 
             PatKind::CastToBool { operand } =>
