@@ -22,6 +22,16 @@ strider_error::define_error! {
         /// types without having to shoehorn them into a dedicated variant.
         #[error("rewrite-rule closure failed: {0}")]
         RewriteClosure(Box<dyn std::error::Error + Send + Sync>),
+
+        /// A capture variable referenced by a [`crate::build::FromCtx`] impl
+        /// was not bound during the LHS match.  Indicates a pattern-authoring
+        /// bug — every capture variable used in the RHS macro must appear in
+        /// the LHS pattern and have a corresponding binding emitted by the
+        /// matcher.  The payload names the capture **kind** (e.g. `"IntVar"`,
+        /// `"IntBinaryOpVar"`) so the site of the bug is obvious from the
+        /// error message.
+        #[error("missing binding for capture of kind {0}")]
+        MissingBinding(&'static str),
     }
 }
 

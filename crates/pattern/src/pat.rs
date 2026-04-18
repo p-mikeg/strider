@@ -8,8 +8,8 @@ use ir::{
 };
 
 use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, NodeVar, Var,
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
+    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
 };
 
 /// Predicate function type used in [`PatKind::WithPredicate`].
@@ -22,6 +22,82 @@ pub type PredicateFn = Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputId) -> bool + S
 /// reference multiple captures.
 pub type MatchPredicateFn =
     Arc<dyn Fn(&BuiltFunctionGraph, &crate::matcher::Bindings) -> bool + Send + Sync>;
+
+// ── Const-capture overloading traits ──────────────────────────────────────────
+
+/// Sealed trait used by [`any_int_const`] to accept either a [`Var`] (binds
+/// the matched `NodeOutputId`) or an [`IntVar`] (binds the concrete
+/// constant value as `u64`).
+pub trait IntoAnyIntConst: sealed::SealedAnyIntConst {
+    #[doc(hidden)]
+    fn into_any_int_const_pat(self) -> Pat;
+}
+
+impl IntoAnyIntConst for Var {
+    fn into_any_int_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyIntConst(self))
+    }
+}
+
+impl IntoAnyIntConst for IntVar {
+    fn into_any_int_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyIntConstTyped(self))
+    }
+}
+
+/// Sealed trait used by [`any_bool_const`] to accept either a [`Var`] or a
+/// [`BoolVar`].
+pub trait IntoAnyBoolConst: sealed::SealedAnyBoolConst {
+    #[doc(hidden)]
+    fn into_any_bool_const_pat(self) -> Pat;
+}
+
+impl IntoAnyBoolConst for Var {
+    fn into_any_bool_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyBoolConst(self))
+    }
+}
+
+impl IntoAnyBoolConst for BoolVar {
+    fn into_any_bool_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyBoolConstTyped(self))
+    }
+}
+
+/// Sealed trait used by [`any_float_const`] to accept either a [`Var`] or a
+/// [`FloatVar`].
+pub trait IntoAnyFloatConst: sealed::SealedAnyFloatConst {
+    #[doc(hidden)]
+    fn into_any_float_const_pat(self) -> Pat;
+}
+
+impl IntoAnyFloatConst for Var {
+    fn into_any_float_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyFloatConst(self))
+    }
+}
+
+impl IntoAnyFloatConst for FloatVar {
+    fn into_any_float_const_pat(self) -> Pat {
+        Pat::new(PatKind::AnyFloatConstTyped(self))
+    }
+}
+
+mod sealed {
+    use crate::var::{BoolVar, FloatVar, IntVar, Var};
+
+    pub trait SealedAnyIntConst {}
+    impl SealedAnyIntConst for Var {}
+    impl SealedAnyIntConst for IntVar {}
+
+    pub trait SealedAnyBoolConst {}
+    impl SealedAnyBoolConst for Var {}
+    impl SealedAnyBoolConst for BoolVar {}
+
+    pub trait SealedAnyFloatConst {}
+    impl SealedAnyFloatConst for Var {}
+    impl SealedAnyFloatConst for FloatVar {}
+}
 
 // ── Core pattern type ─────────────────────────────────────────────────────────
 
@@ -122,6 +198,17 @@ pub enum PatKind {
     AnyIntConst(Var),
     /// Matches any `BoolConst` node and binds its output to `v`.
     AnyBoolConst(Var),
+
+    /// Matches any `IntConst` node and binds the **concrete constant value**
+    /// (`u64`) to `v`.  Same structural match as [`PatKind::AnyIntConst`] but
+    /// the capture is typed so rewrite-rule closures can read the value
+    /// directly via `FromCtx` without a graph lookup.
+    AnyIntConstTyped(IntVar),
+    /// Matches any `BoolConst` node and binds its value to `v`.
+    AnyBoolConstTyped(BoolVar),
+    /// Matches any `FloatConst` node and binds its IEEE 754 bit pattern to
+    /// `v`.
+    AnyFloatConstTyped(FloatVar),
 
     // ── Integer ops ───────────────────────────────────────────────────────────
     /// Matches an integer binary operation node.
@@ -984,16 +1071,20 @@ pub fn int_const(v: u64) -> Pat {
 pub fn bool_const(v: bool) -> Pat {
     Pat::new(PatKind::BoolConst(v))
 }
-/// Matches any `IntConst` node and binds its output to `v`.
-/// Fails if the node is not an `IntConst` — use this instead of `var(v)` when
-/// you want the pattern itself to enforce the node is a compile-time constant.
-pub fn any_int_const(v: Var) -> Pat {
-    Pat::new(PatKind::AnyIntConst(v))
+/// Matches any `IntConst` node and binds either the output (for a [`Var`]) or
+/// the concrete constant value (for an [`IntVar`]).
+///
+/// Fails if the producing node is not an `IntConst` — use this instead of
+/// `var(v)` when you want the pattern itself to enforce the node is a
+/// compile-time constant.
+pub fn any_int_const<C: IntoAnyIntConst>(v: C) -> Pat {
+    v.into_any_int_const_pat()
 }
 
-/// Matches any `BoolConst` node and binds its output to `v`.
-pub fn any_bool_const(v: Var) -> Pat {
-    Pat::new(PatKind::AnyBoolConst(v))
+/// Matches any `BoolConst` node and binds its output (for a [`Var`]) or its
+/// value (for a [`BoolVar`]).
+pub fn any_bool_const<C: IntoAnyBoolConst>(v: C) -> Pat {
+    v.into_any_bool_const_pat()
 }
 
 /// Matches any output for which `f` returns `true`.  Equivalent to `any().when(f)`.
@@ -1348,9 +1439,10 @@ pub fn float_is_nan(operand: impl Into<Pat>) -> Pat {
 pub fn float_const(bits: u64) -> Pat {
     Pat::new(PatKind::FloatConst(bits))
 }
-/// Matches any `FloatConst` node and binds its output to `v`.
-pub fn any_float_const(v: Var) -> Pat {
-    Pat::new(PatKind::AnyFloatConst(v))
+/// Matches any `FloatConst` node and binds either the output (for a [`Var`])
+/// or its IEEE 754 bit pattern (for a [`FloatVar`]).
+pub fn any_float_const<C: IntoAnyFloatConst>(v: C) -> Pat {
+    v.into_any_float_const_pat()
 }
 
 /// Matches an `IntToFloat` value-conversion node.

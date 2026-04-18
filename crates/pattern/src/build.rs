@@ -35,7 +35,7 @@
 use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
@@ -45,8 +45,8 @@ use crate::error::{ErrorKind, Result};
 use crate::matcher::{Bindings, Matcher};
 use crate::pat::Pat;
 use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, Var,
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
+    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
 };
 
 // ── BuildCtx / BuildValue ─────────────────────────────────────────────────────
@@ -811,6 +811,328 @@ pub fn float_cmp_from_var(v: FloatCmpOpVar, l: Build, r: Build) -> Build {
     Build::FloatCmpFromVar(v, Arc::new(l), Arc::new(r))
 }
 
+// ── FromCtx trait ─────────────────────────────────────────────────────────────
+
+/// Extracts a typed value from a [`BuildCtx`] given a capture variable.
+///
+/// Used by the [`int_const_with!`], [`bool_const_with!`], and
+/// [`float_const_with!`] macros to turn a capture identifier into its
+/// concrete value without per-closure boilerplate.
+///
+/// Every capture type added in Phases A1/A2 has an impl: [`Var`], [`NodeVar`],
+/// [`IntVar`], [`BoolVar`], [`FloatVar`], and the eight `*OpVar` types.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::MissingBinding`] if the capture was not bound during
+/// the LHS match — this indicates a pattern-authoring bug (the capture
+/// appears in the RHS but not in the LHS, or the LHS matches a node that
+/// doesn't populate that binding).
+pub trait FromCtx {
+    /// The Rust-native type extracted from the context.
+    type Output;
+    /// Retrieve the value bound to `self` inside `ctx`.
+    ///
+    /// Despite the `from_` prefix, this takes `&self` — the capture
+    /// variable *is* the key used to look up the binding.  The trait is
+    /// named from the *caller's* perspective: "derive a value from the
+    /// [`BuildCtx`]".
+    #[allow(clippy::wrong_self_convention)]
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output>;
+}
+
+impl FromCtx for Var {
+    type Output = NodeOutputId;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("Var").into())
+    }
+}
+
+impl FromCtx for NodeVar {
+    type Output = NodeId;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_node(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("NodeVar").into())
+    }
+}
+
+impl FromCtx for IntVar {
+    type Output = u64;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_int(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("IntVar").into())
+    }
+}
+
+impl FromCtx for BoolVar {
+    type Output = bool;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_bool(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("BoolVar").into())
+    }
+}
+
+impl FromCtx for FloatVar {
+    type Output = u64;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_float_bits(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("FloatVar").into())
+    }
+}
+
+impl FromCtx for IntBinaryOpVar {
+    type Output = IntBinaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_int_binary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("IntBinaryOpVar").into())
+    }
+}
+
+impl FromCtx for IntUnaryOpVar {
+    type Output = IntUnaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_int_unary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("IntUnaryOpVar").into())
+    }
+}
+
+impl FromCtx for IntCmpOpVar {
+    type Output = IntCmpOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_int_cmp_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("IntCmpOpVar").into())
+    }
+}
+
+impl FromCtx for BoolBinaryOpVar {
+    type Output = BoolBinaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_bool_binary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("BoolBinaryOpVar").into())
+    }
+}
+
+impl FromCtx for BoolUnaryOpVar {
+    type Output = BoolUnaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_bool_unary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("BoolUnaryOpVar").into())
+    }
+}
+
+impl FromCtx for FloatBinaryOpVar {
+    type Output = FloatBinaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_float_binary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("FloatBinaryOpVar").into())
+    }
+}
+
+impl FromCtx for FloatUnaryOpVar {
+    type Output = FloatUnaryOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_float_unary_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("FloatUnaryOpVar").into())
+    }
+}
+
+impl FromCtx for FloatCmpOpVar {
+    type Output = FloatCmpOp;
+    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+        ctx.bindings
+            .get_float_cmp_op(*self)
+            .ok_or_else(|| ErrorKind::MissingBinding("FloatCmpOpVar").into())
+    }
+}
+
+// ── first_value_input_type helper ─────────────────────────────────────────────
+
+/// Returns the [`NodeOutputType`] of the root node's **single** value input,
+/// if the root has exactly one input and it is a value-typed output.
+///
+/// Used by the `int_const_with!` / `bool_const_with!` / `float_const_with!`
+/// macros to auto-bind an `in_ty` identifier so rewrite-rule closures can
+/// refer to the producing-type of unary ops like `Popcount`, `Lzcount`,
+/// `Truncate`, `SignExtend`, etc. — where the input type differs from the
+/// root's output type.
+///
+/// Returns `None` if:
+/// * the root has zero or multiple inputs, or
+/// * the single input isn't a value edge (e.g. a control-typed input on a
+///   hypothetical unary control op — the generic helper shouldn't assume).
+///
+/// Rule bodies that need the type should propagate a missing-type failure
+/// with `in_ty.ok_or(...)?`.
+pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
+    let [inp] = ctx.graph.graph.node_inputs_exact::<1>(ctx.root).ok()?;
+    match ctx.graph.graph.output_kind(inp) {
+        NodeOutputKind::OutputType(t) => Some(t),
+        _ => None,
+    }
+}
+
+// ── Const-computed macros ─────────────────────────────────────────────────────
+
+/// Builds an `IntConst` node whose value is computed from LHS captures.
+///
+/// # Syntax
+///
+/// ```text
+/// int_const_with!([cap1, cap2, ...] => expression)
+/// ```
+///
+/// Each `capN` is a capture identifier that also appears in the LHS pattern.
+/// The macro expands to an [`int_const_fn`] closure that binds each capture
+/// to its concrete value via [`FromCtx`] and evaluates the body, wrapping
+/// the result in `Ok`.
+///
+/// Two special identifiers, if present in the bracket list, are bound to
+/// graph-derived values rather than looked up via [`FromCtx`]:
+///
+/// * `ty` — the root node's output type ([`BuildCtx::root_ty`]).
+/// * `in_ty` — `Option<NodeOutputType>`: the type of the root's single
+///   value input, when the root has exactly one input.  Use
+///   `in_ty.ok_or(...)?` if the rule truly requires it.
+///
+/// **Do not use `ty` or `in_ty` as your own capture names** — they are
+/// reserved by the macro.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use pattern::{rewrite_rule, IntVar, any_int_const, and, var, Var};
+/// use pattern::build;
+/// use pattern::int_const_with;
+///
+/// let c1 = IntVar::new();
+/// let c2 = IntVar::new();
+/// let x  = Var::new();
+///
+/// let rule = rewrite_rule(
+///     and(and(var(x), any_int_const(c1)), any_int_const(c2)),
+///     build::and(
+///         build::cap(x),
+///         int_const_with!([c1, c2] => c1 & c2),
+///     ),
+/// );
+/// ```
+#[macro_export]
+macro_rules! int_const_with {
+    ([$($caps:tt)*] => $body:expr) => {
+        $crate::build::int_const_fn(move |__strider_ctx: &$crate::build::BuildCtx<'_>| {
+            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
+            Ok({ $body })
+        })
+    };
+}
+
+/// Builds a `BoolConst` node whose value is computed from LHS captures.
+///
+/// Same grammar as [`int_const_with!`] but returns a `bool` from the body.
+#[macro_export]
+macro_rules! bool_const_with {
+    ([$($caps:tt)*] => $body:expr) => {
+        $crate::build::bool_const_fn(move |__strider_ctx: &$crate::build::BuildCtx<'_>| {
+            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
+            Ok({ $body })
+        })
+    };
+}
+
+/// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed from
+/// LHS captures.
+///
+/// Same grammar as [`int_const_with!`]; the body must evaluate to `u64`
+/// (the bit pattern).
+#[macro_export]
+macro_rules! float_const_with {
+    ([$($caps:tt)*] => $body:expr) => {
+        $crate::build::float_const_fn(move |__strider_ctx: &$crate::build::BuildCtx<'_>| {
+            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
+            Ok({ $body })
+        })
+    };
+}
+
+/// Internal helper: a tt-muncher that recursively expands a capture list
+/// into `let` bindings.
+///
+/// Invoked by [`int_const_with!`], [`bool_const_with!`], and
+/// [`float_const_with!`].  Each capture identifier in the list becomes a
+/// `let <ident> = …;` in the closure body.
+///
+/// Two identifiers are special-cased and bound to graph-derived values:
+///
+/// * `ty` — expands to `let ty = __ctx.root_ty;`
+/// * `in_ty` — expands to
+///   `let in_ty = $crate::build::first_value_input_type(__ctx);`
+///
+/// All other identifiers are treated as capture variables and resolved via
+/// [`FromCtx::from_ctx`], which returns `Result<_>`; the surrounding closure
+/// body uses `?` to propagate a missing binding as an error.
+///
+/// Being a tt-muncher (rather than a `$(...)*` expansion) is what lets the
+/// macro name its own identifiers like `ty` and `in_ty` inside `$body`
+/// despite macro hygiene — each special rule matches the *literal* ident
+/// `ty` / `in_ty` and the resulting `let` binding lives in the same
+/// expansion context as the user's body.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_with_bindings {
+    // Terminal: nothing left to consume.
+    ($ctx:ident;) => {};
+
+    // General case: capture the first identifier into `$cap:ident` so the
+    // resulting `let $cap = …;` carries the caller's hygiene context, then
+    // dispatch on whether it spelled `ty` / `in_ty` via a helper macro.
+    // We pass `$cap` twice: once as the literal-match selector, once as
+    // the hygiene-bearing metavariable the inner macro will re-emit.
+    ($ctx:ident; $cap:ident $(,)?) => {
+        $crate::__const_with_bind_one!($ctx, $cap, $cap);
+    };
+    ($ctx:ident; $cap:ident, $($rest:tt)*) => {
+        $crate::__const_with_bind_one!($ctx, $cap, $cap);
+        $crate::__const_with_bindings!($ctx; $($rest)*);
+    };
+}
+
+/// Emits a single `let`-binding inside the closure body.  Dispatches on
+/// the *spelling* of the first ident — `ty` / `in_ty` bind graph-derived
+/// values; anything else falls back to `FromCtx::from_ctx`.
+///
+/// The caller passes the ident **twice**: the first position is a
+/// literal-match selector (matches by spelling only), and the second is
+/// captured as `$hy:ident` and carries the caller's hygiene context, so
+/// `let $hy = …;` introduces a binding visible in the user's `$body`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_with_bind_one {
+    ($ctx:ident, ty, $hy:ident) => {
+        let $hy = $ctx.root_ty;
+        let _ = &$hy;
+    };
+    ($ctx:ident, in_ty, $hy:ident) => {
+        let $hy = $crate::build::first_value_input_type($ctx);
+        let _ = &$hy;
+    };
+    ($ctx:ident, $_sel:ident, $hy:ident) => {
+        let $hy = $crate::build::FromCtx::from_ctx(&$hy, $ctx)?;
+    };
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -930,6 +1252,300 @@ mod tests {
         let combined = apply_rules_in_order(vec![rule_no_match, rule_hit]);
         let changed = combined(&mut fg, add_node)?;
         assert!(changed, "at least one rule fired");
+        Ok(())
+    }
+
+    // ── int_const_with! / bool_const_with! / float_const_with! ────────────────
+
+    // `int_const_with!`, `bool_const_with!`, and `float_const_with!` are
+    // `#[macro_export]` macros and are addressed via `$crate::` inside the
+    // pattern crate — no extra `use` is required here.
+
+    /// Macro expansion with zero captures still compiles and produces a
+    /// valid `Build::IntConst`.  Fires the rule against `add(x, 0)` so we
+    /// can smoke-test end-to-end without relying on any other capture
+    /// wiring.
+    #[test]
+    fn int_const_with_zero_captures_compiles_and_runs() -> Result<()> {
+        let (mut fg, add_node, _) = graph_add_x_plus_zero()?;
+
+        let x = Var::new();
+        let rule = rewrite_rule(
+            pat_add(pat_var(x), pat_int_const(0)).into(),
+            int_const_with!([] => 42u64),
+        );
+        let changed = rule(&mut fg, add_node)?;
+        assert!(changed, "rule should fire and redirect uses");
+        Ok(())
+    }
+
+    /// Single-capture `int_const_with!` body referencing the captured
+    /// [`IntVar`] and the auto-bound `in_ty`.  Matches
+    /// `Popcount(IntConst(0b1011, U32))`, rewrites to `IntConst(3, U32)`.
+    #[test]
+    fn int_const_with_popcount_rewrite() -> Result<()> {
+        use crate::pat::{any_int_const, popcount};
+        use crate::var::IntVar;
+
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let c = b.build_int_const(0b1011, NodeOutputType::U32);
+        let pc_out = b.build_popcount(c, NodeOutputType::U32)?;
+        b.build_return(Some(pc_out), &[])?;
+        let mut fg = b.build()?;
+
+        let pc_node = fg.graph.get_node_from_output(pc_out);
+
+        let v = IntVar::new();
+        let rule = rewrite_rule(
+            popcount(any_int_const(v)),
+            int_const_with!([v, in_ty] => {
+                // `in_ty` is bound by the macro to `Option<NodeOutputType>`;
+                // narrow it and unwrap for this test.
+                let ty_in: NodeOutputType = in_ty.ok_or_else(|| {
+                    Error::rewrite_closure(std::io::Error::other(
+                        "expected integer input type",
+                    ))
+                })?;
+                ty_in.get_unsigned_int(v).unwrap_or(0).count_ones() as u64
+            }),
+        );
+        let changed = rule(&mut fg, pc_node)?;
+        assert!(changed, "popcount rule should fire");
+
+        // The Return's retval should now be the new IntConst(3, U32).
+        // Locate it via the return node.
+        let ret_node = {
+            let mut found = None;
+            for n in fg.preorder() {
+                if matches!(fg.graph.node_kind(n), NodeKind::Return) {
+                    found = Some(n);
+                    break;
+                }
+            }
+            found.ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?
+        };
+        let ret_inputs: Vec<NodeOutputId> =
+            fg.graph.node_inputs(ret_node).into_iter().collect();
+        // Return inputs = [ctrl(0), retval0(1), …]
+        let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+            ErrorKind::AssertionFailed("Return node missing retval input".into())
+        })?;
+        let producer = fg.graph.get_node_from_output(retval);
+        match fg.graph.node_kind(producer) {
+            NodeKind::IntConst(v) => assert_eq!(*v, 3, "popcount(0b1011) == 3"),
+            other => panic!("expected IntConst after rewrite, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// Multi-capture rule exercising `int_binary_any` + `int_const_with!`
+    /// with an op-variant capture.  Rewrites `Add(IntConst(1,U32),
+    /// IntConst(2,U32))` to `IntConst(3, U32)`.
+    #[test]
+    fn int_const_with_int_binary_any_add() -> Result<()> {
+        use crate::pat::int_binary_any;
+        use crate::var::{IntBinaryOpVar, IntVar};
+
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let one = b.build_int_const(1, NodeOutputType::U32);
+        let two = b.build_int_const(2, NodeOutputType::U32);
+        let add_out =
+            b.build_int_binary_operation(one, two, IntBinaryOp::Add, NodeOutputType::U32)?;
+        b.build_return(Some(add_out), &[])?;
+        let mut fg = b.build()?;
+
+        let add_node = fg.graph.get_node_from_output(add_out);
+
+        let op = IntBinaryOpVar::new();
+        let l = IntVar::new();
+        let rr = IntVar::new();
+
+        // A tiny evaluator: enough for Add/Sub/Mul at test-scope.
+        fn eval_simple(op: IntBinaryOp, l: u64, r: u64) -> Option<u64> {
+            match op {
+                IntBinaryOp::Add => Some(l.wrapping_add(r)),
+                IntBinaryOp::Sub => Some(l.wrapping_sub(r)),
+                IntBinaryOp::Mul => Some(l.wrapping_mul(r)),
+                _ => None,
+            }
+        }
+
+        // Matches LHS using `any_int_const(IntVar)` to bind each operand's
+        // value; both operand orderings considered automatically by the
+        // commutative-match path.
+        use crate::pat::any_int_const;
+        let rule = rewrite_rule(
+            int_binary_any(op, any_int_const(l), any_int_const(rr)),
+            int_const_with!([op, l, rr, ty] => {
+                // `ty` is bound by the macro to the root's output type;
+                // read it to exercise the auto-binding path.
+                let _ty: NodeOutputType = ty;
+                eval_simple(op, l, rr).ok_or_else(|| Error::rewrite_closure(
+                    std::io::Error::other("unsupported op in test evaluator"),
+                ))?
+            }),
+        );
+        let changed = rule(&mut fg, add_node)?;
+        assert!(changed, "int_binary_any+Add rule should fire");
+
+        // Locate the Return and verify its retval is IntConst(3).
+        let ret_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
+        let ret_inputs: Vec<NodeOutputId> =
+            fg.graph.node_inputs(ret_node).into_iter().collect();
+        let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+            ErrorKind::AssertionFailed("Return node missing retval".into())
+        })?;
+        let producer = fg.graph.get_node_from_output(retval);
+        match fg.graph.node_kind(producer) {
+            NodeKind::IntConst(v) => assert_eq!(*v, 3),
+            other => panic!("expected IntConst, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// `bool_const_with!`: rewrites `BoolUnary(Neg, BoolConst(true))`
+    /// to `BoolConst(false)`.  Exercises the `BoolVar` typed capture
+    /// end-to-end.
+    #[test]
+    fn bool_const_with_not_rewrite() -> Result<()> {
+        use crate::pat::{any_bool_const, bool_unary};
+        use crate::var::BoolVar;
+        use ir::BoolUnaryOp;
+
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let t = b.build_boolean_const(true);
+        let notted = b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)?;
+        // Return directly from the Bool output — `build_return` accepts
+        // any value type on the ret-val slot.
+        b.build_return(Some(notted), &[])?;
+        let mut fg = b.build()?;
+
+        let not_node = fg.graph.get_node_from_output(notted);
+
+        let bv = BoolVar::new();
+        let rule = rewrite_rule(
+            bool_unary(BoolUnaryOp::Neg, any_bool_const(bv)),
+            bool_const_with!([bv] => !bv),
+        );
+        let changed = rule(&mut fg, not_node)?;
+        assert!(changed, "bool_const_with Neg rule should fire");
+
+        // The Return input should now be a BoolConst(false).
+        let ret_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
+        let ret_inputs: Vec<NodeOutputId> =
+            fg.graph.node_inputs(ret_node).into_iter().collect();
+        let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+            ErrorKind::AssertionFailed("Return node missing retval".into())
+        })?;
+        let producer = fg.graph.get_node_from_output(retval);
+        match fg.graph.node_kind(producer) {
+            NodeKind::BoolConst(v) => assert!(!*v, "!true == false"),
+            other => panic!("expected BoolConst after rewrite, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// `float_const_with!`: flips the sign bit of a `FloatConst(1.0f64)`,
+    /// yielding `FloatConst(-1.0f64)`.  Exercises the `FloatVar` typed
+    /// capture end-to-end.
+    #[test]
+    fn float_const_with_signbit_flip() -> Result<()> {
+        use crate::pat::any_float_const;
+        use crate::var::FloatVar;
+
+        // Minimal graph: return a FloatConst(1.0, F64).  The rule fires on
+        // the `FloatConst` root directly.
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let f_out = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+        b.build_return(Some(f_out), &[])?;
+        let mut fg = b.build()?;
+
+        let f_node = fg.graph.get_node_from_output(f_out);
+
+        let f = FloatVar::new();
+        let signbit = 0x8000_0000_0000_0000u64;
+        let rule = rewrite_rule(
+            any_float_const(f),
+            float_const_with!([f] => f ^ signbit),
+        );
+        let changed = rule(&mut fg, f_node)?;
+        assert!(changed, "float_const_with sign-flip rule should fire");
+
+        // The Return input should now be FloatConst(-1.0).
+        let ret_node = fg
+            .preorder()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
+        let ret_inputs: Vec<NodeOutputId> =
+            fg.graph.node_inputs(ret_node).into_iter().collect();
+        let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+            ErrorKind::AssertionFailed("Return node missing retval".into())
+        })?;
+        let producer = fg.graph.get_node_from_output(retval);
+        match fg.graph.node_kind(producer) {
+            NodeKind::FloatConst(bits) => {
+                assert_eq!(*bits, (-1.0f64).to_bits(), "sign-bit flip of +1.0 is -1.0");
+            }
+            other => panic!("expected FloatConst, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    /// A closure returning `Err(pattern::Error::rewrite_closure(...))`
+    /// surfaces through the rewrite engine as `Err(_)`, not a panic.
+    #[test]
+    fn int_const_with_closure_error_surfaces_via_result() -> Result<()> {
+        use crate::pat::{any_int_const, popcount};
+        use crate::var::IntVar;
+
+        let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let c = b.build_int_const(0, NodeOutputType::U32);
+        let pc_out = b.build_popcount(c, NodeOutputType::U32)?;
+        b.build_return(Some(pc_out), &[])?;
+        let mut fg = b.build()?;
+        let pc_node = fg.graph.get_node_from_output(pc_out);
+
+        #[derive(Debug, thiserror::Error)]
+        #[error("deliberate test error")]
+        struct E;
+
+        let v = IntVar::new();
+        let rule = rewrite_rule(
+            popcount(any_int_const(v)),
+            int_const_with!([v] => {
+                // Force an error surface via `?` inside the body;
+                // the body's `Result<u64>` context propagates it out.
+                let _ = v;
+                Err::<u64, _>(Error::rewrite_closure(E))?
+            }),
+        );
+        let err = rule(&mut fg, pc_node).expect_err("rule should surface closure error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("deliberate test error") || msg.contains("rewrite-rule closure"),
+            "error should mention the closure failure, got: {msg}"
+        );
         Ok(())
     }
 }

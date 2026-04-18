@@ -67,7 +67,10 @@ mod matcher;
 mod pat;
 mod var;
 
-pub use build::{Build, BuildCtx, BuildValue, RewriteOutcome, apply_rules_in_order, rewrite_rule};
+pub use build::{
+    Build, BuildCtx, BuildValue, FromCtx, RewriteOutcome, apply_rules_in_order,
+    first_value_input_type, rewrite_rule,
+};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -80,6 +83,10 @@ pub use pat::{
     FloatBinaryOpPat,
     IfPat,
     IntBinaryOpPat,
+    // Const-capture overload traits
+    IntoAnyBoolConst,
+    IntoAnyFloatConst,
+    IntoAnyIntConst,
     // Blanket trait
     IntoPat,
     LoadPat,

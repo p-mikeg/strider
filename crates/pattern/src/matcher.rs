@@ -621,6 +621,27 @@ impl<'g> Matcher<'g> {
                 bindings.bind_var(*v, output)
             }
 
+            PatKind::AnyIntConstTyped(iv) => {
+                let NodeKind::IntConst(val) = kind else {
+                    return false;
+                };
+                bindings.bind_int(*iv, *val)
+            }
+
+            PatKind::AnyBoolConstTyped(bv) => {
+                let NodeKind::BoolConst(val) = kind else {
+                    return false;
+                };
+                bindings.bind_bool(*bv, *val)
+            }
+
+            PatKind::AnyFloatConstTyped(fv) => {
+                let NodeKind::FloatConst(bits) = kind else {
+                    return false;
+                };
+                bindings.bind_float(*fv, *bits)
+            }
+
             PatKind::IntBinaryOp {
                 op,
                 lhs,
