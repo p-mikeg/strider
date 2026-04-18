@@ -3,8 +3,6 @@ use ir::{
     BuiltFunctionGraph, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
 };
-use ir_macros::rewrite_rules;
-
 use crate::error::{ErrorKind, Result};
 use crate::pipeline::{OptimizationResult, Optimizer};
 
@@ -140,19 +138,71 @@ fn apply_reassoc_and_mask_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    let rules = rewrite_rules! {
-        // ── add/sub reassociation ─────────────────────────────────────────────
-        ((x + IntConst(c1)) + IntConst(c2)) => x + int_const(c1 + c2, ty),
-        ((x - IntConst(c1)) - IntConst(c2)) => x - int_const(c1 + c2, ty),
-        ((x + IntConst(c1)) - IntConst(c2)) => x + int_const(c1 - c2, ty),
-        ((x - IntConst(c1)) + IntConst(c2)) => x + int_const(c2 - c1, ty),
-        // ── AND-mask merging ──────────────────────────────────────────────────
-        ((a & IntConst(c1)) & IntConst(c2)) => a & int_const(c1 & c2, ty),
-        // ── AND distribution over OR of masks ─────────────────────────────────
-        (((a & IntConst(c1)) | (b & IntConst(c2))) & IntConst(c3))
-            => (a & int_const(c1 & c3, ty)) | (b & int_const(c2 & c3, ty)),
+    use pattern::build::{self, cap};
+    use pattern::{
+        BoxedRule, IntVar, Var, add, and, any_int_const, apply_rules_in_order, boxed_rule,
+        int_const_with, or, rewrite_rule, sub, var,
     };
-    rules(fg, node)
+
+    // (x + C1) + C2 → x + (C1 + C2)
+    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let rule_add_add = boxed_rule(rewrite_rule(
+        add(add(var(x), any_int_const(c1)), any_int_const(c2)),
+        build::add(cap(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+    ));
+
+    // (x - C1) - C2 → x - (C1 + C2)
+    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let rule_sub_sub = boxed_rule(rewrite_rule(
+        sub(sub(var(x), any_int_const(c1)), any_int_const(c2)),
+        build::sub(cap(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+    ));
+
+    // (x + C1) - C2 → x + (C1 - C2)
+    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let rule_add_sub = boxed_rule(rewrite_rule(
+        sub(add(var(x), any_int_const(c1)), any_int_const(c2)),
+        build::add(cap(x), int_const_with!([c1, c2] => c1.wrapping_sub(c2))),
+    ));
+
+    // (x - C1) + C2 → x + (C2 - C1)
+    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let rule_sub_add = boxed_rule(rewrite_rule(
+        add(sub(var(x), any_int_const(c1)), any_int_const(c2)),
+        build::add(cap(x), int_const_with!([c1, c2] => c2.wrapping_sub(c1))),
+    ));
+
+    // (a & C1) & C2 → a & (C1 & C2)
+    let (a, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let rule_and_merge = boxed_rule(rewrite_rule(
+        and(and(var(a), any_int_const(c1)), any_int_const(c2)),
+        build::and(cap(a), int_const_with!([c1, c2] => c1 & c2)),
+    ));
+
+    // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
+    let (a, b) = (Var::new(), Var::new());
+    let (c1, c2, c3) = (IntVar::new(), IntVar::new(), IntVar::new());
+    let rule_and_dist = boxed_rule(rewrite_rule(
+        and(
+            or(and(var(a), any_int_const(c1)), and(var(b), any_int_const(c2))),
+            any_int_const(c3),
+        ),
+        build::or(
+            build::and(cap(a), int_const_with!([c1, c3] => c1 & c3)),
+            build::and(cap(b), int_const_with!([c2, c3] => c2 & c3)),
+        ),
+    ));
+
+    let rules: Vec<BoxedRule> = vec![
+        rule_add_add,
+        rule_sub_sub,
+        rule_add_sub,
+        rule_sub_add,
+        rule_and_merge,
+        rule_and_dist,
+    ];
+    let changed = apply_rules_in_order(rules)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
 }
 
 /// Applies bitcast identity rules:
@@ -162,11 +212,29 @@ fn apply_bitcast_extend_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    let rules = rewrite_rules! {
-        IntBitsToFloat(FloatBitsToInt(x)) => x,
-        FloatBitsToInt(IntBitsToFloat(x)) => x,
+    use pattern::build::cap;
+    use pattern::{
+        BoxedRule, Var, apply_rules_in_order, boxed_rule, float_bits_to_int, int_bits_to_float,
+        rewrite_rule, var,
     };
-    rules(fg, node)
+
+    // IntBitsToFloat(FloatBitsToInt(x)) → x
+    let x = Var::new();
+    let rule_int_float = boxed_rule(rewrite_rule(
+        int_bits_to_float(float_bits_to_int(var(x))),
+        cap(x),
+    ));
+
+    // FloatBitsToInt(IntBitsToFloat(x)) → x
+    let x = Var::new();
+    let rule_float_int = boxed_rule(rewrite_rule(
+        float_bits_to_int(int_bits_to_float(var(x))),
+        cap(x),
+    ));
+
+    let rules: Vec<BoxedRule> = vec![rule_int_float, rule_float_int];
+    let changed = apply_rules_in_order(rules)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
 }
 
 /// Applies single-operand algebraic identities to integer binary operations.
