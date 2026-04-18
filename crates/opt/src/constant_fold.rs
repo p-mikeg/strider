@@ -641,30 +641,6 @@ fn try_fold_piece(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<Optimi
     Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
 }
 
-fn try_fold_extract(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let NodeKind::Extract { lsb, len } = *fg.graph.node_kind(node_id) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let out_kind = fg.graph.output_kind(out);
-    let ty = out_kind.as_value_or_err()?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-    let Some(v) = fg.int_const_val( input) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let mask = if len >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << len) - 1
-    };
-    let result = (v >> lsb) & mask;
-    let Some(masked) = ty.get_unsigned_int(result) else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    let new_out = fg.make_int_const( masked, ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
-}
-
 fn try_fold_insert(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
     let NodeKind::Insert { lsb, len } = *fg.graph.node_kind(node_id) else {
         return Ok(OptimizationResult::NoChange);
@@ -857,7 +833,6 @@ impl Optimizer for ConstantFold {
             result |= apply_reassoc_and_mask_rules(function, node_id)?;
             result |= apply_bitcast_extend_rules(function, node_id)?;
             result |= try_fold_piece(function, node_id)?;
-            result |= try_fold_extract(function, node_id)?;
             result |= try_fold_insert(function, node_id)?;
         }
         Ok(result)
@@ -1419,7 +1394,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Popcount / Lzcount / Piece / Extract / Insert ─────────────────────────
+    // ── Popcount / Lzcount / Piece / Insert ───────────────────────────────────
 
     #[test]
     fn fold_popcount_const() -> Result<()> {
@@ -1478,18 +1453,6 @@ mod tests {
         })?;
         assert!(ConstantFold.optimize(&mut fg)?.changed());
         assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xABCD));
-        Ok(())
-    }
-
-    #[test]
-    fn fold_extract_const() -> Result<()> {
-        // extract(0xABCDu16, lsb=4, len=8) = (0xABCD >> 4) & 0xFF = 0xBC
-        let mut fg = make_fn(|b| {
-            let v = b.build_int_const(0xABCD, NodeOutputType::U16);
-            Ok(b.build_extract(v, 4, 8, NodeOutputType::U8)?)
-        })?;
-        assert!(ConstantFold.optimize(&mut fg)?.changed());
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xBC));
         Ok(())
     }
 

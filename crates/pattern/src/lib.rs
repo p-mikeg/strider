@@ -126,7 +126,6 @@ pub use pat::{
     contains,
     div,
     extend,
-    extract,
     float_abs,
     float_add,
     // Float ops

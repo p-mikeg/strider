@@ -140,7 +140,7 @@ impl FunctionBuilder {
     ///
     /// Returns an error if the output does not carry a value (e.g. it is a
     /// control or memory edge).
-    fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
+    pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
         let kind = self.graph().output_kind(output_id);
         kind.as_value()
             .ok_or_else(|| ErrorKind::ExpectedValue(output_id, kind).into())
@@ -414,22 +414,6 @@ impl FunctionBuilder {
         let lo_ty = self.get_output_type(lo)?.to_natural_int_type();
         let lo = self.convert_to_int_if_needed(lo, lo_ty)?;
         Ok(self.build_single_output_pure(NodeKind::Piece, [hi, lo], output_type))
-    }
-
-    /// Emits an `Extract` node: extracts `len` bits starting at bit `lsb`.
-    /// inputs[0] = value.
-    ///
-    /// Non-integer inputs are automatically coerced to integers.
-    pub fn build_extract(
-        &mut self,
-        input_id: NodeOutputId,
-        lsb: u8,
-        len: u8,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        let input_ty = self.get_output_type(input_id)?.to_natural_int_type();
-        let input_id = self.convert_to_int_if_needed(input_id, input_ty)?;
-        Ok(self.build_single_output_pure(NodeKind::Extract { lsb, len }, [input_id], output_type))
     }
 
     /// Emits an `Insert` node: inserts `len` bits from `src` into `dest` at bit `lsb`.

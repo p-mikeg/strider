@@ -2018,7 +2018,7 @@ fn predicate_in_field_position() -> ir::Result<()> {
     Ok(())
 }
 
-// ── Lzcount / Piece / Extract / Insert pattern tests ─────────────────────────
+// ── Lzcount / Piece / Insert pattern tests ──────────────────────────────────
 
 #[test]
 fn lzcount_pattern_matches() -> ir::Result<()> {
@@ -2051,44 +2051,6 @@ fn piece_pattern_matches() -> ir::Result<()> {
 
     let m = Matcher::new(&g);
     let hits = m.find_all(&piece(any(), any()));
-    assert_eq!(hits.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn extract_pattern_exact_lsb_len() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let v = b.build_int_const(0xABCD, NodeOutputType::U16);
-    let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
-    b.build_return(Some(ex), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    // Exact match on lsb=4, len=8 → finds it.
-    let hits = m.find_all(&extract(Some(4), Some(8), any()));
-    assert_eq!(hits.len(), 1);
-    // Wrong lsb → no match.
-    let miss = m.find_all(&extract(Some(0), Some(8), any()));
-    assert!(miss.is_empty());
-    Ok(())
-}
-
-#[test]
-fn extract_pattern_wildcard() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let v = b.build_int_const(0xABCD, NodeOutputType::U16);
-    let ex = b.build_extract(v, 4, 8, NodeOutputType::U8)?;
-    b.build_return(Some(ex), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&extract(None, None, any()));
     assert_eq!(hits.len(), 1);
     Ok(())
 }

@@ -615,6 +615,8 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             }
             Opcode::Extract => {
                 // inputs[0] = value, inputs[1] = lsb (CONST), inputs[2] = bit_count (CONST)
+                // Lowered to: Truncate(ShiftRight(x, lsb), narrow_ty), with an extra
+                // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
                 let input = self.read_vn(&insn.inputs[0])?;
                 let lsb = insn.inputs[1].addr.off as u8;
                 let len = insn.inputs[2].addr.off as u8;
@@ -622,9 +624,37 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
                     .output
                     .as_ref()
                     .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
-                let out = self
-                    .builder
-                    .build_extract(input, lsb, len, out_vn.size.try_into()?)?;
+                let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
+                let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
+                let x_int = self.builder.convert_to_int_if_needed(input, x_nat_ty)?;
+                let shifted = if lsb == 0 {
+                    x_int
+                } else {
+                    let lsb_const = self.builder.build_int_const(lsb as u64, x_nat_ty);
+                    self.builder.build_int_binary_operation(
+                        x_int,
+                        lsb_const,
+                        IntBinaryOp::ShiftRight,
+                        x_nat_ty,
+                    )?
+                };
+                let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
+                let out = if (len as usize) < narrow_ty.bit_width() {
+                    let mask_val = if len >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << len) - 1
+                    };
+                    let mask = self.builder.build_int_const(mask_val, narrow_ty);
+                    self.builder.build_int_binary_operation(
+                        narrowed,
+                        mask,
+                        IntBinaryOp::And,
+                        narrow_ty,
+                    )?
+                } else {
+                    narrowed
+                };
                 self.write_vn(out_vn, out)?;
             }
             Opcode::Insert => {

@@ -460,9 +460,6 @@ pub enum NodeKind {
     /// inputs[0] = hi (most significant), inputs[1] = lo (least significant).
     /// Output width = bit_width(hi) + bit_width(lo).
     Piece,
-    /// Extract `len` bits starting at bit `lsb` from an integer value.
-    /// inputs[0] = value.  Upper bits of the output type are zero.
-    Extract { lsb: u8, len: u8 },
     /// Insert `len` bits from `src` into `dest` starting at bit `lsb`.
     /// inputs[0] = dest, inputs[1] = src.  Output has the same type as dest.
     Insert { lsb: u8, len: u8 },

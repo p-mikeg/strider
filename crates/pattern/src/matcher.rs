@@ -986,32 +986,6 @@ impl<'g> Matcher<'g> {
             PatKind::Piece { hi, lo } =>
                 self.match_binary_op(node, hi, lo, bindings, |k| matches!(k, NodeKind::Piece)),
 
-            PatKind::Extract {
-                lsb: pat_lsb,
-                len: pat_len,
-                operand,
-            } => {
-                let NodeKind::Extract { lsb, len } = kind else {
-                    return false;
-                };
-                if pat_lsb.is_some_and(|pl| pl != *lsb) {
-                    return false;
-                }
-                if pat_len.is_some_and(|pl| pl != *len) {
-                    return false;
-                }
-                let Ok([inp]) = self.fn_graph.graph.node_inputs_exact::<1>(node) else {
-                    return false;
-                };
-                let snap = bindings.clone();
-                if self.match_output(inp, operand, bindings) {
-                    true
-                } else {
-                    *bindings = snap;
-                    false
-                }
-            }
-
             PatKind::Insert {
                 lsb: pat_lsb,
                 len: pat_len,

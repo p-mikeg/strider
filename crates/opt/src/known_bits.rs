@@ -205,25 +205,6 @@ fn node_known_bits(
             }
         }
 
-        NodeKind::Extract { lsb, len } => {
-            // Output is exactly `len` bits; upper bits of the output type are zero.
-            let mask = if len >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << len) - 1
-            };
-            let upper_zeros = type_mask & !mask;
-            // Propagate known bits from the input for the extracted window.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let kb_in = known.get(&input).copied().unwrap_or_default();
-            let shifted_ones = (kb_in.ones >> lsb) & mask;
-            let shifted_zeros = (kb_in.zeros >> lsb) & mask;
-            Kb {
-                ones: shifted_ones,
-                zeros: shifted_zeros | upper_zeros,
-            }
-        }
-
         NodeKind::Piece => {
             let [hi, lo] = fg.graph.node_inputs_exact::<2>(node_id)?;
             let lo_kind = fg.graph.output_kind(lo);
@@ -401,31 +382,7 @@ mod tests {
         Ok(())
     }
 
-    // ── Extract / Popcount / Piece known-bits ─────────────────────────────────
-
-    /// `extract(x, lsb=0, len=4)` into U8 → upper nibble is always zero.
-    /// Therefore `and(result, 0xF0)` should fold to 0.
-    #[test]
-    fn known_bits_extract_upper_zero() -> Result<()> {
-        let mut fg =
-            make_fn(|b| {
-                let x = b.build_int_const(0xFF, NodeOutputType::U8);
-                let extracted = b.build_extract(x, 0, 4, NodeOutputType::U8)?;
-                let mask = b.build_int_const(0xF0, NodeOutputType::U8);
-                Ok(b.build_int_binary_operation(
-                    extracted,
-                    mask,
-                    IntBinaryOp::And,
-                    NodeOutputType::U8,
-                )?)
-            })?;
-        let mut changed = true;
-        while changed {
-            changed = KnownBits.optimize(&mut fg)?.changed();
-        }
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
-        Ok(())
-    }
+    // ── Popcount / Piece known-bits ───────────────────────────────────────────
 
     /// `popcount(U8)` fits in 4 bits (max = 8), so bits 4..7 are known zero.
     /// `and(popcount(x), 0xF0)` should fold to 0.

@@ -311,12 +311,6 @@ pub enum PatKind {
     Lzcount { operand: Pat },
     /// Matches a `Piece` node (concatenates hi and lo: `(hi << bits(lo)) | lo`).
     Piece { hi: Pat, lo: Pat },
-    /// Matches an `Extract` node.  `None` for `lsb`/`len` matches any value.
-    Extract {
-        lsb: Option<u8>,
-        len: Option<u8>,
-        operand: Pat,
-    },
     /// Matches an `Insert` node.  `None` for `lsb`/`len` matches any value.
     Insert {
         lsb: Option<u8>,
@@ -1314,14 +1308,6 @@ pub fn piece(hi: impl Into<Pat>, lo: impl Into<Pat>) -> Pat {
     Pat::new(PatKind::Piece {
         hi: hi.into(),
         lo: lo.into(),
-    })
-}
-/// Matches an extract node.  Pass `None` for `lsb`/`len` to match any value.
-pub fn extract(lsb: Option<u8>, len: Option<u8>, operand: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::Extract {
-        lsb,
-        len,
-        operand: operand.into(),
     })
 }
 /// Matches an insert node.  Pass `None` for `lsb`/`len` to match any value.

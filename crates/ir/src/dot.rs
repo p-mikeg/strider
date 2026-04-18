@@ -130,7 +130,6 @@ fn edge_style<R: MemReader>(
         | NodeKind::Truncate
         | NodeKind::Popcount
         | NodeKind::Lzcount
-        | NodeKind::Extract { .. }
         | NodeKind::FloatUnaryOp(_)
         | NodeKind::IntToFloat
         | NodeKind::FloatToInt
@@ -408,11 +407,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 let lo_ty = self.input_type(node, 1).map(|t| t.as_str()).unwrap_or("?");
                 let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
                 format!("Piece\n({hi_ty}\u{2016}{lo_ty}) \u{2192} {to}")
-            }
-            NodeKind::Extract { lsb, len } => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
-                format!("Extract[{lsb}..+{len}]\n{from} \u{2192} {to}")
             }
             NodeKind::Insert { lsb, len } => {
                 let dest_ty = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");

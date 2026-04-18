@@ -98,7 +98,6 @@ pub(crate) fn expected_signature(
         NodeKind::Popcount => (vec![AnyInt], vec![AnyInt]),
         NodeKind::Lzcount => (vec![AnyInt], vec![AnyInt]),
         NodeKind::Piece => (vec![AnyInt, AnyInt], vec![AnyInt]),
-        NodeKind::Extract { .. } => (vec![AnyInt], vec![AnyInt]),
         NodeKind::Insert { .. } => (vec![AnyInt, AnyInt], vec![AnyInt]),
         NodeKind::Extend(_) => (vec![AnyInt], vec![AnyInt]),
 
