@@ -7,6 +7,10 @@ strider_error::define_error! {
         /// Propagated from the underlying IR layer.
         #[error(transparent)]
         IrError(ir::ErrorKind),
+        /// Propagated from the `pattern` crate — raised by rewrite-rule
+        /// closures (`pattern::rewrite_rule`, `pattern::apply_rules_in_order`).
+        #[error(transparent)]
+        PatternError(pattern::ErrorKind),
         /// An output was expected to carry a concrete value but doesn't.
         #[error("expected value output, got {0:?}")]
         ExpectedValueOutput(ir::node::NodeOutputKind),
@@ -58,6 +62,21 @@ impl From<ir::ValidationErrors> for Error {
     #[track_caller]
     fn from(errs: ir::ValidationErrors) -> Self {
         Error::from(ir::Error::from(errs))
+    }
+}
+
+/// Hand-rolled bridge so `?` across the `pattern` → `opt` boundary preserves
+/// the origin backtrace + location chain captured by `pattern`.  Decomposes
+/// the inner wrapper, moves its `ErrorFields`, and appends the outer caller's
+/// site.
+impl From<pattern::Error> for Error {
+    #[track_caller]
+    fn from(e: pattern::Error) -> Self {
+        let (kind, fields) = e.decompose();
+        Error {
+            kind: Box::new(ErrorKind::PatternError(*kind)),
+            fields: fields.push_caller(),
+        }
     }
 }
 

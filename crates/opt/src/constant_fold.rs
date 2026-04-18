@@ -177,50 +177,51 @@ fn apply_bitcast_extend_rules(
 /// - `x * 0 → 0`, `x * 1 → x`
 /// - `x & 0 → 0`, `x & x → x`
 /// - `x | 0 → x`, `x | x → x`
-/// - `x << 0 → x`, `x >> 0 → x` (both shift directions)
+/// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
 fn apply_identity_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    let rules = rewrite_rules! {
-        (x + IntConst(0)) => x,
-        (x - IntConst(0)) => x,
-        (x - x)           => int_const(0, ty),
-        (x ^ x)           => int_const(0, ty),
-        (x ^ IntConst(0)) => x,
-        (x * IntConst(0)) => int_const(0, ty),
-        (x * IntConst(1)) => x,
-        (x & IntConst(0)) => int_const(0, ty),
-        (x & x)           => x,
-        (x | IntConst(0)) => x,
-        (x | x)           => x,
-        nop @ try_fold_shift_zero,
+    use pattern::build::{cap, int_const_lit};
+    use pattern::{
+        BoxedRule, Var, add, and, apply_rules_in_order, boxed_rule, int_const, mul, or,
+        rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
-    rules(fg, node)
-}
 
-/// Helper dispatched from `apply_identity_rules` via the escape hatch: handles
-/// `x << 0 → x`, `x >> 0 → x`, and `x >>> 0 → x`.
-fn try_fold_shift_zero(
-    fg: &mut BuiltFunctionGraph,
-    node_id: NodeId,
-) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntBinaryOp(op) = kind else {
-        return Ok(OptimizationResult::NoChange);
-    };
-    if !matches!(
-        op,
-        IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight
-    ) {
-        return Ok(OptimizationResult::NoChange);
-    }
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [lhs, _rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
-    if fg.int_const_val(_rhs) == Some(0) {
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
-    }
-    Ok(OptimizationResult::NoChange)
+    let x = Var::new();
+    let rules: Vec<BoxedRule> = vec![
+        // x + 0 → x  (commutative: also covers 0 + x)
+        boxed_rule(rewrite_rule(add(var(x), int_const(0)), cap(x))),
+        // x - 0 → x
+        boxed_rule(rewrite_rule(sub(var(x), int_const(0)), cap(x))),
+        // x - x → 0
+        boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const_lit(0))),
+        // x ^ x → 0
+        boxed_rule(rewrite_rule(xor(var(x), var(x)), int_const_lit(0))),
+        // x ^ 0 → x  (commutative)
+        boxed_rule(rewrite_rule(xor(var(x), int_const(0)), cap(x))),
+        // x * 0 → 0  (commutative)
+        boxed_rule(rewrite_rule(mul(var(x), int_const(0)), int_const_lit(0))),
+        // x * 1 → x  (commutative)
+        boxed_rule(rewrite_rule(mul(var(x), int_const(1)), cap(x))),
+        // x & 0 → 0  (commutative)
+        boxed_rule(rewrite_rule(and(var(x), int_const(0)), int_const_lit(0))),
+        // x & x → x
+        boxed_rule(rewrite_rule(and(var(x), var(x)), cap(x))),
+        // x | 0 → x  (commutative)
+        boxed_rule(rewrite_rule(or(var(x), int_const(0)), cap(x))),
+        // x | x → x
+        boxed_rule(rewrite_rule(or(var(x), var(x)), cap(x))),
+        // x << 0 → x  (non-commutative — only RHS 0 is the identity)
+        boxed_rule(rewrite_rule(shl(var(x), int_const(0)), cap(x))),
+        // x >> 0 → x  (logical shift right)
+        boxed_rule(rewrite_rule(shr(var(x), int_const(0)), cap(x))),
+        // x >>> 0 → x  (arithmetic / signed shift right)
+        boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), cap(x))),
+    ];
+
+    let changed = apply_rules_in_order(rules)(fg, node)?;
+    Ok(OptimizationResult::from_changed(changed))
 }
 
 /// Escape-hatch for constant-folding all `IntBinaryOp` nodes when both operands

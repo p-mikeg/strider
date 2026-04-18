@@ -443,9 +443,10 @@ pub fn eval(
 /// wrapped in [`ErrorKind::IrError`]; errors from user closures are wrapped in
 /// [`ErrorKind::RewriteClosure`] (via [`Error::rewrite_closure`]).
 pub fn rewrite_rule(
-    lhs: Pat,
+    lhs: impl Into<Pat>,
     rhs: Build,
 ) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static {
+    let lhs: Pat = lhs.into();
     move |fg: &mut BuiltFunctionGraph, node: NodeId| -> Result<bool> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
         //    mutate `fg` afterwards.
@@ -500,6 +501,36 @@ where
         }
         Ok(any)
     }
+}
+
+/// Type-erased rewrite-rule closure.
+///
+/// Each call to [`rewrite_rule`] returns a distinct opaque `impl Fn` type, so a
+/// `Vec<impl Fn>` can only hold rules with identical signatures — in practice,
+/// only a single rule.  Consumers composing a list of heterogeneous rules need
+/// to box each one to a common trait-object type; this alias plus
+/// [`boxed_rule`] factor that boilerplate out of every call site.
+pub type BoxedRule =
+    Box<dyn Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync>;
+
+/// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
+/// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
+///
+/// Typical use:
+///
+/// ```rust,ignore
+/// let rules: Vec<BoxedRule> = vec![
+///     boxed_rule(rewrite_rule(add(var(x), int_const(0)), build::cap(x))),
+///     boxed_rule(rewrite_rule(sub(var(x), var(x)),       build::int_const_lit(0))),
+///     // …
+/// ];
+/// let apply = apply_rules_in_order(rules);
+/// ```
+pub fn boxed_rule<R>(r: R) -> BoxedRule
+where
+    R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static,
+{
+    Box::new(r)
 }
 
 // ── Constructors ──────────────────────────────────────────────────────────────
@@ -1175,7 +1206,7 @@ mod tests {
         let (mut fg, add_node, _add_out) = graph_add_x_plus_zero()?;
 
         let x = Var::new();
-        let rule = rewrite_rule(pat_add(pat_var(x), pat_int_const(0)).into(), cap(x));
+        let rule = rewrite_rule(pat_add(pat_var(x), pat_int_const(0)), cap(x));
 
         let changed = rule(&mut fg, add_node)?;
         assert!(
@@ -1192,7 +1223,7 @@ mod tests {
         // A rule that matches `mul(x, 1)`, which our graph doesn't have.
         use crate::pat::mul as pat_mul;
         let x = Var::new();
-        let rule = rewrite_rule(pat_mul(pat_var(x), pat_int_const(1)).into(), cap(x));
+        let rule = rewrite_rule(pat_mul(pat_var(x), pat_int_const(1)), cap(x));
 
         let changed = rule(&mut fg, add_node)?;
         assert!(!changed, "rule whose LHS doesn't match should return Ok(false)");
@@ -1205,7 +1236,7 @@ mod tests {
 
         // LHS matches, but RHS is Skip → rewrite is aborted.
         let x = Var::new();
-        let rule = rewrite_rule(pat_add(pat_var(x), pat_int_const(0)).into(), skip());
+        let rule = rewrite_rule(pat_add(pat_var(x), pat_int_const(0)), skip());
 
         let changed = rule(&mut fg, add_node)?;
         assert!(!changed, "Build::Skip at the top level should report no change");
@@ -1229,7 +1260,7 @@ mod tests {
         // closure fires — is deferred to A4 where the `int_const_with!` macro
         // will supply the full typed-capture wiring.)
         let rule = rewrite_rule(
-            pat_mul(pat_var(x), pat_int_const(1)).into(),
+            pat_mul(pat_var(x), pat_int_const(1)),
             int_const_fn(|_ctx| Err(Error::rewrite_closure(CustomError))),
         );
         let changed = rule(&mut fg, add_node)?;
@@ -1244,10 +1275,10 @@ mod tests {
 
         let x1 = Var::new();
         let rule_no_match =
-            rewrite_rule(pat_mul(pat_var(x1), pat_int_const(1)).into(), cap(x1));
+            rewrite_rule(pat_mul(pat_var(x1), pat_int_const(1)), cap(x1));
         let x2 = Var::new();
         let rule_hit =
-            rewrite_rule(pat_add(pat_var(x2), pat_int_const(0)).into(), cap(x2));
+            rewrite_rule(pat_add(pat_var(x2), pat_int_const(0)), cap(x2));
 
         let combined = apply_rules_in_order(vec![rule_no_match, rule_hit]);
         let changed = combined(&mut fg, add_node)?;
@@ -1271,7 +1302,7 @@ mod tests {
 
         let x = Var::new();
         let rule = rewrite_rule(
-            pat_add(pat_var(x), pat_int_const(0)).into(),
+            pat_add(pat_var(x), pat_int_const(0)),
             int_const_with!([] => 42u64),
         );
         let changed = rule(&mut fg, add_node)?;

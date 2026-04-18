@@ -68,8 +68,8 @@ mod pat;
 mod var;
 
 pub use build::{
-    Build, BuildCtx, BuildValue, FromCtx, RewriteOutcome, apply_rules_in_order,
-    first_value_input_type, rewrite_rule,
+    BoxedRule, Build, BuildCtx, BuildValue, FromCtx, RewriteOutcome, apply_rules_in_order,
+    boxed_rule, first_value_input_type, rewrite_rule,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
