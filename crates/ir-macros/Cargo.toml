@@ -14,6 +14,7 @@ syn = { version = "2.0", features = ["full"] }
 [dev-dependencies]
 ir.workspace = true
 opt.workspace = true
+pattern.workspace = true
 rsleigh.workspace = true
 
 [lints]

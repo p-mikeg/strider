@@ -24,6 +24,12 @@ strider_error::define_error! {
         /// Carries a human-readable site label and the actual node kind present.
         #[error("expected {0} node, got {1:?}")]
         ExpectedNodeNotFound(&'static str, ir::node::NodeKind),
+        /// A post-match capture extraction returned `None`. Indicates a bug in the
+        /// pattern-rewrite pipeline: the match succeeded but a named capture
+        /// couldn't be resolved (should be impossible if the pattern and
+        /// extraction stay in sync).
+        #[error("internal: pattern capture `{0}` not bound in successful match")]
+        InternalCaptureMissing(&'static str),
         /// A test assertion failed. Exists so tests can return `Result<(), Error>`
         /// instead of using `panic!`.
         #[error("assertion failed: {0}")]

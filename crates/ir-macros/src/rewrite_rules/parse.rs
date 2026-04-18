@@ -30,7 +30,7 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{
-    Error, Expr, Ident, LitBool, LitInt, Lifetime, Result, Token,
+    Error, Expr, Ident, LitBool, LitInt, Result, Token,
     parse::{Parse, ParseStream},
 };
 
@@ -82,12 +82,221 @@ impl Rule {
         let mut caps = CaptureEnv::new();
         // Collect captures from LHS so the RHS emitter knows each name's kind.
         self.lhs.collect_captures(&mut caps);
-        // Emit LHS matching code. On success, each capture is bound as a
-        // plain `let` binding in scope; on failure the emitted code diverges
-        // via `return Ok(NoChange);`.
-        let mut ctx = EmitCtx::new();
-        let lhs_check = self.lhs.emit_check(&caps, &mut ctx, self.where_guard.as_ref())?;
-        // Emit RHS expression (uses captures as live bindings).
+
+        // ── Build the Pat expression ──────────────────────────────────────────
+        // Walk the LhsPat tree and emit a ::pattern::... builder expression.
+        // type_to_value maps InputType capture names → their value_name idents.
+        let mut type_to_value: Vec<(Ident, Ident)> = Vec::new();
+
+        // ── Static OnceLock Var allocations ──────────────────────────────────
+        // One per capture that needs a Var (Output, IntConst, BoolConst,
+        // FloatConst). InputType captures share the Var of their value_name.
+        // We also always allocate __v_root for the where-guard's ty extraction.
+        let var_statics: Vec<TokenStream> = caps.bindings.iter()
+            .filter(|(_, k)| !matches!(k, CaptureKind::InputType))
+            .map(|(id, _)| {
+                let static_name = Ident::new(
+                    &format!("__V_{}", id),
+                    Span::call_site(),
+                );
+                let local_name = Ident::new(
+                    &format!("__v_{}", id),
+                    Span::call_site(),
+                );
+                quote! {
+                    static #static_name: ::std::sync::OnceLock<::pattern::Var> =
+                        ::std::sync::OnceLock::new();
+                    let #local_name: ::pattern::Var =
+                        *#static_name.get_or_init(::pattern::Var::new);
+                }
+            })
+            .collect();
+
+        // __v_root is needed for the where-guard's ty extraction.
+        let v_root_static = quote! {
+            static __V_root: ::std::sync::OnceLock<::pattern::Var> =
+                ::std::sync::OnceLock::new();
+            let __v_root: ::pattern::Var =
+                *__V_root.get_or_init(::pattern::Var::new);
+        };
+
+        // ── Build guard closure body (shared between orderings if commutative) ─
+        let guard_closure_body: Option<TokenStream> = self.where_guard.as_ref().map(|guard_expr| {
+            let guard_bindings: Vec<TokenStream> = caps.bindings.iter()
+                .map(|(id, kind)| {
+                    let v_ident = Ident::new(&format!("__v_{}", id), Span::call_site());
+                    let out_ident = Ident::new(
+                        &format!("__guard_out_{}", id),
+                        Span::call_site(),
+                    );
+                    match kind {
+                        CaptureKind::Output => quote! {
+                            let ::core::option::Option::Some(#out_ident) = __b.get(#v_ident)
+                                else { return false; };
+                            let #id: ir::node::NodeOutputId = #out_ident;
+                        },
+                        CaptureKind::IntConst => quote! {
+                            let ::core::option::Option::Some(#out_ident) = __b.get(#v_ident)
+                                else { return false; };
+                            let ::core::option::Option::Some(#id) = fg.int_const_val(#out_ident)
+                                else { return false; };
+                        },
+                        CaptureKind::BoolConst => quote! {
+                            let ::core::option::Option::Some(#out_ident) = __b.get(#v_ident)
+                                else { return false; };
+                            let ::core::option::Option::Some(#id) = fg.bool_const_val(#out_ident)
+                                else { return false; };
+                        },
+                        CaptureKind::FloatConst => quote! {
+                            let ::core::option::Option::Some(#out_ident) = __b.get(#v_ident)
+                                else { return false; };
+                            let ::core::option::Option::Some(#id) = fg.float_const_val(#out_ident)
+                                else { return false; };
+                        },
+                        CaptureKind::InputType => {
+                            let value_name = type_to_value.iter()
+                                .find(|(t, _)| t == id)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or_else(|| id.clone());
+                            let value_v = Ident::new(
+                                &format!("__v_{}", value_name),
+                                Span::call_site(),
+                            );
+                            let val_out = Ident::new(
+                                &format!("__guard_out_{}", value_name),
+                                Span::call_site(),
+                            );
+                            quote! {
+                                let ::core::option::Option::Some(#val_out) = __b.get(#value_v)
+                                    else { return false; };
+                                let ::core::option::Option::Some(#id) =
+                                    fg.graph.output_kind(#val_out).as_value()
+                                    else { return false; };
+                            }
+                        }
+                    }
+                })
+                .collect();
+            let ty_in_guard = quote! {
+                let ::core::option::Option::Some(__root_out_g) = __b.get(__v_root)
+                    else { return false; };
+                let ::core::option::Option::Some(ty) =
+                    fg.graph.output_kind(__root_out_g).as_value()
+                    else { return false; };
+            };
+            quote! {
+                #( #guard_bindings )*
+                #ty_in_guard
+                (#guard_expr) as bool
+            }
+        });
+
+        // ── Build the final Pat tree(s) ───────────────────────────────────────
+        // For commutative root ops with a where guard, we emit TWO ordered
+        // patterns (one per operand ordering) and try them with `or_else`.
+        // This ensures the guard sees each ordering and can accept/reject each.
+        let match_ts = if let Some(guard_body) = &guard_closure_body {
+            if self.lhs.root_is_commutative() {
+                // Two ordered patterns (stated and swapped), each with the guard.
+                let inner1 = emit_pat_builder(&self.lhs, &mut type_to_value, false);
+                let inner2 = emit_pat_builder(&self.lhs, &mut type_to_value, true);
+                quote! {
+                    let __pat1: ::pattern::Pat = #inner1
+                        .ordered()
+                        .capture(__v_root)
+                        .when_match(move |fg, __b| { #guard_body });
+                    let __pat2: ::pattern::Pat = #inner2
+                        .ordered()
+                        .capture(__v_root)
+                        .when_match(move |fg, __b| { #guard_body });
+                    let __matched = {
+                        let __matcher = ::pattern::Matcher::new(fg);
+                        __matcher.match_at(node, &__pat1)
+                            .or_else(|| __matcher.match_at(node, &__pat2))
+                    };
+                }
+            } else {
+                // Single pattern with guard (non-commutative root).
+                let inner = emit_pat_builder(&self.lhs, &mut type_to_value, false);
+                quote! {
+                    let __pat: ::pattern::Pat = <::pattern::Pat>::from(#inner)
+                        .capture(__v_root)
+                        .when_match(move |fg, __b| { #guard_body });
+                    let __matched = {
+                        let __matcher = ::pattern::Matcher::new(fg);
+                        __matcher.match_at(node, &__pat)
+                    };
+                }
+            }
+        } else {
+            // No guard — single pattern, commutative ops auto-retry both orderings.
+            let inner = emit_pat_builder(&self.lhs, &mut type_to_value, false);
+            quote! {
+                let __pat: ::pattern::Pat = <::pattern::Pat>::from(#inner);
+                let __matched = {
+                    let __matcher = ::pattern::Matcher::new(fg);
+                    __matcher.match_at(node, &__pat)
+                };
+            }
+        };
+
+        // ── Capture extraction after successful match ─────────────────────────
+        let extractions: Vec<TokenStream> = caps.bindings.iter()
+            .map(|(id, kind)| {
+                let v_ident = Ident::new(&format!("__v_{}", id), Span::call_site());
+                match kind {
+                    CaptureKind::Output => quote! {
+                        let #id: ir::node::NodeOutputId = __m.get(#v_ident)
+                            .ok_or_else(|| opt::Error::from(
+                                opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                            ))?;
+                    },
+                    CaptureKind::IntConst => quote! {
+                        let #id: u64 = __m.get_int_const(#v_ident, fg)
+                            .ok_or_else(|| opt::Error::from(
+                                opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                            ))?;
+                    },
+                    CaptureKind::BoolConst => quote! {
+                        let #id: bool = __m.get_bool_const(#v_ident, fg)
+                            .ok_or_else(|| opt::Error::from(
+                                opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                            ))?;
+                    },
+                    CaptureKind::FloatConst => quote! {
+                        let #id: u64 = __m.get_float_bits(#v_ident, fg)
+                            .ok_or_else(|| opt::Error::from(
+                                opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                            ))?;
+                    },
+                    CaptureKind::InputType => {
+                        // Derive the type from the corresponding value capture's output.
+                        let value_name = type_to_value.iter()
+                            .find(|(t, _)| t == id)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| id.clone());
+                        let value_v = Ident::new(
+                            &format!("__v_{}", value_name),
+                            Span::call_site(),
+                        );
+                        quote! {
+                            let #id: ir::node::NodeOutputType = {
+                                let __input_out = __m.get(#value_v)
+                                    .ok_or_else(|| opt::Error::from(
+                                        opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                                    ))?;
+                                fg.graph.output_kind(__input_out).as_value()
+                                    .ok_or_else(|| opt::Error::from(
+                                        opt::ErrorKind::InternalCaptureMissing(stringify!(#id))
+                                    ))?
+                            };
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        // ── Emit RHS expression ───────────────────────────────────────────────
         let rhs_ts = self.rhs.emit(&caps)?;
 
         Ok(quote! {
@@ -101,41 +310,36 @@ impl Rule {
                 fg: &mut ir::BuiltFunctionGraph,
                 node: ir::node::NodeId,
             ) -> ::core::result::Result<opt::OptimizationResult, opt::Error> {
-                // `ty` is the output type of the matched root node; available in RHS expressions.
-                #[allow(unused_variables)]
-                let ty: ir::node::NodeOutputType = fg.graph
-                    .output_kind(fg.graph.node_outputs(node)[0])
-                    .as_value()
-                    .unwrap_or(ir::node::NodeOutputType::U64);
+                // ── Stable Var identities per capture (one OnceLock per capture) ──
+                #v_root_static
+                #( #var_statics )*
 
-                #lhs_check
+                // ── Build the Pat tree and run the matcher ────────────────────
+                #match_ts
 
+                let ::core::option::Option::Some(__m) = __matched else {
+                    return ::core::result::Result::Ok(opt::OptimizationResult::NoChange);
+                };
+
+                // ── Extract captures ──────────────────────────────────────────
+                #( #extractions )*
+
+                // ── Resolve `ty` (root output type; available in RHS) ─────────
                 let [__root_out] = fg.graph.node_outputs_exact::<1>(node)?;
+                let ::core::option::Option::Some(ty) =
+                    fg.graph.output_kind(__root_out).as_value()
+                else {
+                    return ::core::result::Result::Ok(opt::OptimizationResult::NoChange);
+                };
+                #[allow(unused_variables)]
+                let ty: ir::node::NodeOutputType = ty;
+
+                // ── Emit RHS and apply rewrite ────────────────────────────────
                 let __new_out: ir::node::NodeOutputId = #rhs_ts;
                 let __changed = fg.replace_all_uses(__root_out, __new_out)?;
                 ::core::result::Result::Ok(opt::OptimizationResult::from_changed(__changed))
             }
         })
-    }
-}
-
-// ── Emit context ─────────────────────────────────────────────────────────────
-
-/// Per-rule code-emission state: supplies fresh identifiers/labels so nested
-/// commutative scopes don't collide.
-pub(super) struct EmitCtx {
-    counter: usize,
-}
-
-impl EmitCtx {
-    pub fn new() -> Self { EmitCtx { counter: 0 } }
-
-    fn fresh(&mut self, prefix: &str) -> (Ident, Lifetime) {
-        let n = self.counter;
-        self.counter += 1;
-        let ident = Ident::new(&format!("{prefix}_{n}"), Span::call_site());
-        let lifetime = Lifetime::new(&format!("'{prefix}_lbl_{n}"), Span::call_site());
-        (ident, lifetime)
     }
 }
 
@@ -147,7 +351,7 @@ pub(super) enum CaptureKind {
     Output,
     /// Bound to `u64`.
     IntConst,
-    /// Bound to `NodeOutputType`.
+    /// Bound to `NodeOutputType` (derived from an IntConst capture's output).
     InputType,
     /// Bound to `bool`.
     BoolConst,
@@ -173,16 +377,6 @@ impl CaptureEnv {
     }
 }
 
-fn kind_type(kind: CaptureKind) -> TokenStream {
-    match kind {
-        CaptureKind::Output     => quote! { ir::node::NodeOutputId },
-        CaptureKind::IntConst   => quote! { u64 },
-        CaptureKind::InputType  => quote! { ir::node::NodeOutputType },
-        CaptureKind::BoolConst  => quote! { bool },
-        CaptureKind::FloatConst => quote! { u64 },
-    }
-}
-
 // ── LHS AST ───────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug)]
@@ -191,9 +385,6 @@ pub(super) enum IntBinOpKind {
 }
 
 impl IntBinOpKind {
-    pub fn is_commutative(self) -> bool {
-        matches!(self, Self::Add | Self::Mul | Self::And | Self::Or | Self::Xor)
-    }
     pub fn variant_ident(self) -> Ident {
         Ident::new(match self {
             Self::Add => "Add",  Self::Sub => "Sub",  Self::Mul => "Mul",
@@ -209,14 +400,6 @@ pub(super) enum BoolBinOpKind {
 }
 
 impl BoolBinOpKind {
-    pub fn variant_ident(self) -> Ident {
-        Ident::new(match self {
-            Self::And => "And",
-            Self::Or  => "Or",
-            Self::Xor => "Xor",
-        }, Span::call_site())
-    }
-
     /// Parse a `BAnd` / `BOr` / `BXor` head ident into the corresponding kind.
     pub fn from_ident(ident: &Ident) -> Option<Self> {
         match ident.to_string().as_str() {
@@ -231,14 +414,6 @@ impl BoolBinOpKind {
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ExtendKind { SignExtend, ZeroExtend }
 
-impl ExtendKind {
-    pub fn variant_ident(self) -> Ident {
-        Ident::new(match self {
-            Self::SignExtend => "SignExtend",
-            Self::ZeroExtend => "ZeroExtend",
-        }, Span::call_site())
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum FloatBinOpKind {
@@ -246,17 +421,6 @@ pub(super) enum FloatBinOpKind {
 }
 
 impl FloatBinOpKind {
-    pub fn is_commutative(self) -> bool {
-        matches!(self, Self::Add | Self::Mul)
-    }
-    pub fn variant_ident(self) -> Ident {
-        Ident::new(match self {
-            Self::Add => "Add",
-            Self::Sub => "Sub",
-            Self::Mul => "Mul",
-            Self::Div => "Div",
-        }, Span::call_site())
-    }
     /// Parse `FAdd` / `FSub` / `FMul` / `FDiv` head ident.
     pub fn from_ident(ident: &Ident) -> Option<Self> {
         match ident.to_string().as_str() {
@@ -275,17 +439,6 @@ pub(super) enum FloatCmpOpKind {
 }
 
 impl FloatCmpOpKind {
-    pub fn is_commutative(self) -> bool {
-        matches!(self, Self::Equal | Self::NotEqual)
-    }
-    pub fn variant_ident(self) -> Ident {
-        Ident::new(match self {
-            Self::Equal    => "Equal",
-            Self::NotEqual => "NotEqual",
-            Self::Less     => "Less",
-            Self::LessEqual => "LessEqual",
-        }, Span::call_site())
-    }
     /// Parse `FEq` / `FNe` / `FLt` / `FLe` head ident.
     pub fn from_ident(ident: &Ident) -> Option<Self> {
         match ident.to_string().as_str() {
@@ -304,22 +457,6 @@ pub(super) enum IntCmpOpKind {
 }
 
 impl IntCmpOpKind {
-    pub fn is_commutative(self) -> bool {
-        matches!(self, Self::Equal | Self::Carry | Self::Scarry)
-    }
-    pub fn variant_ident(self) -> Ident {
-        Ident::new(match self {
-            Self::Equal      => "Equal",
-            Self::Less       => "Less",
-            Self::LessEqual  => "LessEqual",
-            Self::Sless      => "Sless",
-            Self::SlessEqual => "SlessEqual",
-            Self::Carry      => "Carry",
-            Self::Borrow     => "Borrow",
-            Self::Scarry     => "Scarry",
-            Self::Sborrow    => "Sborrow",
-        }, Span::call_site())
-    }
     /// Parse `IntEq` / `IntLt` / `IntLe` / `IntSlt` / `IntSle` /
     /// `IntCarry` / `IntBorrow` / `IntScarry` / `IntSborrow` head ident.
     pub fn from_ident(ident: &Ident) -> Option<Self> {
@@ -584,703 +721,206 @@ impl LhsPat {
         }
     }
 
-    /// Emit LHS matching code at the rule's top level.
-    ///
-    /// On mismatch, the emitted code diverges via `return Ok(NoChange);`.
-    /// On match, all captures in `caps` are bound as live `let` bindings in
-    /// the surrounding scope, and control falls through to the RHS.
-    ///
-    /// `guard` is an optional `where <Expr>` guard evaluated after captures are
-    /// bound. For commutative patterns a failed guard `continue`s to try the
-    /// other ordering; for non-commutative / leaf patterns it returns `NoChange`.
-    pub fn emit_check(
-        &self,
-        _caps: &CaptureEnv,
-        ctx: &mut EmitCtx,
-        guard: Option<&Expr>,
-    ) -> Result<TokenStream> {
-        let no_change = quote! {
-            return ::core::result::Result::Ok(opt::OptimizationResult::NoChange);
-        };
-
-        // Helper: emit the guard check that diverges with `fail_ts` on failure.
-        // Returns an empty stream when there is no guard.
-        let guard_check = |fail_ts: &TokenStream| -> TokenStream {
-            match guard {
-                None => quote! {},
-                Some(g) => quote! { if !(#g) { #fail_ts } },
-            }
-        };
-
+    /// Returns true if this pattern's root operator is commutative —
+    /// i.e., the pattern crate's builder supports `.ordered()` and
+    /// both operand orderings should be tried when a `where` guard is present.
+    pub fn root_is_commutative(&self) -> bool {
         match self {
-            LhsPat::IntBinaryOp { op, lhs, rhs } if op.is_commutative() => {
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("ord");
-
-                // Collect captures introduced by each side, in pattern order
-                // (lhs, then rhs), so we can destructure them after the loop.
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __ord_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __ord_r }, &quote! { continue; }, ctx)?;
-                let guard_ts = guard_check(&quote! { continue; });
-
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::IntBinaryOp;
-                        let NodeKind::IntBinaryOp(IntBinaryOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__ord_l, __ord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
-                            #lhs_body
-                            #rhs_body
-                            #guard_ts
-                            break #label #cap_tuple;
-                        }
-                        // No ordering matched: fall through to fail.
-                        #no_change
-                    };
-                })
+            // Commutative int binary ops
+            LhsPat::IntBinaryOp { op, .. } => matches!(
+                op,
+                IntBinOpKind::Add | IntBinOpKind::Mul
+                    | IntBinOpKind::And | IntBinOpKind::Or | IntBinOpKind::Xor
+            ),
+            // All bool binary ops are commutative
+            LhsPat::BoolBinaryOp { .. } => true,
+            // Commutative float binary ops
+            LhsPat::FloatBinaryOp { op, .. } => {
+                matches!(op, FloatBinOpKind::Add | FloatBinOpKind::Mul)
             }
-
-            LhsPat::IntBinaryOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
-                let guard_ts = guard_check(&no_change);
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::IntBinaryOp;
-                        let NodeKind::IntBinaryOp(IntBinaryOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    #lhs_body
-                    #rhs_body
-                    #guard_ts
-                })
+            // Float cmp: Equal and NotEqual are commutative
+            LhsPat::FloatCmpOp { op, .. } => {
+                matches!(op, FloatCmpOpKind::Equal | FloatCmpOpKind::NotEqual)
             }
-
-            LhsPat::BoolBinaryOp { op, lhs, rhs } => {
-                // All `BoolBinaryOp` variants (`And`, `Or`, `Xor`) are commutative.
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("bord");
-
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __bord_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __bord_r }, &quote! { continue; }, ctx)?;
-                let guard_ts = guard_check(&quote! { continue; });
-
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::BoolBinaryOp;
-                        let NodeKind::BoolBinaryOp(BoolBinaryOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__bord_l, __bord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
-                            #lhs_body
-                            #rhs_body
-                            #guard_ts
-                            break #label #cap_tuple;
-                        }
-                        #no_change
-                    };
-                })
+            // Int cmp: Equal, Carry, Scarry are commutative
+            LhsPat::IntCmpOp { op, .. } => {
+                matches!(op, IntCmpOpKind::Equal | IntCmpOpKind::Carry | IntCmpOpKind::Scarry)
             }
-
-            LhsPat::FloatBinaryOp { op, lhs, rhs } if op.is_commutative() => {
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("ford");
-
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __ford_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __ford_r }, &quote! { continue; }, ctx)?;
-                let guard_ts = guard_check(&quote! { continue; });
-
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::FloatBinaryOp;
-                        let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__ford_l, __ford_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
-                            #lhs_body
-                            #rhs_body
-                            #guard_ts
-                            break #label #cap_tuple;
-                        }
-                        #no_change
-                    };
-                })
-            }
-
-            LhsPat::FloatBinaryOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
-                let guard_ts = guard_check(&no_change);
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::FloatBinaryOp;
-                        let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    #lhs_body
-                    #rhs_body
-                    #guard_ts
-                })
-            }
-
-            LhsPat::FloatCmpOp { op, lhs, rhs } if op.is_commutative() => {
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("fcord");
-
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __fcord_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __fcord_r }, &quote! { continue; }, ctx)?;
-                let guard_ts = guard_check(&quote! { continue; });
-
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::FloatCmpOp;
-                        let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__fcord_l, __fcord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
-                            #lhs_body
-                            #rhs_body
-                            #guard_ts
-                            break #label #cap_tuple;
-                        }
-                        #no_change
-                    };
-                })
-            }
-
-            LhsPat::FloatCmpOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
-                let guard_ts = guard_check(&no_change);
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::FloatCmpOp;
-                        let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    #lhs_body
-                    #rhs_body
-                    #guard_ts
-                })
-            }
-
-            LhsPat::IntCmpOp { op, lhs, rhs } if op.is_commutative() => {
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("icord");
-
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __icord_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __icord_r }, &quote! { continue; }, ctx)?;
-                let guard_ts = guard_check(&quote! { continue; });
-
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::IntCmpOp;
-                        let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__icord_l, __icord_r) in [(__root_in0, __root_in1), (__root_in1, __root_in0)] {
-                            #lhs_body
-                            #rhs_body
-                            #guard_ts
-                            break #label #cap_tuple;
-                        }
-                        #no_change
-                    };
-                })
-            }
-
-            LhsPat::IntCmpOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-                let lhs_body = lhs.emit_sub(&quote! { __root_in0 }, &no_change, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __root_in1 }, &no_change, ctx)?;
-                let guard_ts = guard_check(&no_change);
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::IntCmpOp;
-                        let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__root_in0, __root_in1] = match fg.graph.node_inputs_exact::<2>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    #lhs_body
-                    #rhs_body
-                    #guard_ts
-                })
-            }
-
-            LhsPat::ExtendOp { kind, inner } => {
-                let variant = kind.variant_ident();
-                let inner_body = inner.emit_sub(&quote! { __ext_inner }, &no_change, ctx)?;
-                let guard_ts = guard_check(&no_change);
-                Ok(quote! {
-                    {
-                        use ir::node::NodeKind;
-                        use ir::ExtendOp;
-                        let NodeKind::Extend(ExtendOp::#variant) = *fg.graph.node_kind(node) else {
-                            #no_change
-                        };
-                    }
-                    let [__ext_inner] = match fg.graph.node_inputs_exact::<1>(node) {
-                        Ok(v) => v,
-                        Err(_) => { #no_change }
-                    };
-                    #inner_body
-                    #guard_ts
-                })
-            }
-
-            other => {
-                // Simple root pattern: get the node's output and delegate.
-                let guard_ts = guard_check(&no_change);
-                let no_change_ref = &no_change;
-                let sub = other.emit_sub(&quote! { __root_val }, no_change_ref, ctx)?;
-                Ok(quote! {
-                    let __root_val = fg.graph.node_outputs(node)[0];
-                    #sub
-                    #guard_ts
-                })
-            }
-        }
-    }
-
-    /// Emit match code for this sub-pattern where `val_ts` is a `NodeOutputId` expression.
-    ///
-    /// `fail_ts` is the token stream to emit on mismatch (e.g. `return Ok(NoChange);`
-    /// or `continue;`).  It must be a diverging statement.
-    ///
-    /// On success, the emitted code introduces all captures of this
-    /// sub-pattern as live `let` bindings in the surrounding scope.
-    fn emit_sub(
-        &self,
-        val_ts: &TokenStream,
-        fail_ts: &TokenStream,
-        ctx: &mut EmitCtx,
-    ) -> Result<TokenStream> {
-        match self {
-            LhsPat::OutputCapture(name) => {
-                // Bind the capture directly: `let x = #val_ts;`.
-                Ok(quote! { let #name: ir::node::NodeOutputId = #val_ts; })
-            }
-
-            LhsPat::IntConstLiteral { value } => Ok(quote! {
-                {
-                    let Some(__cv) = fg.int_const_val(#val_ts) else { #fail_ts };
-                    if __cv != #value { #fail_ts }
-                }
-            }),
-
-            LhsPat::IntConstCapture { name } => Ok(quote! {
-                let Some(#name): ::core::option::Option<u64> = fg.int_const_val(#val_ts) else { #fail_ts };
-            }),
-
-            LhsPat::IntConstCaptureWithType { value_name, type_name } => Ok(quote! {
-                let Some(#value_name): ::core::option::Option<u64> = fg.int_const_val(#val_ts) else { #fail_ts };
-                let Some(#type_name): ::core::option::Option<ir::node::NodeOutputType> =
-                    fg.graph.output_kind(#val_ts).as_value() else { #fail_ts };
-            }),
-
-            LhsPat::BoolConstLiteral { value } => Ok(quote! {
-                {
-                    let Some(__bcv) = fg.bool_const_val(#val_ts) else { #fail_ts };
-                    if __bcv != #value { #fail_ts }
-                }
-            }),
-
-            LhsPat::BoolConstCapture { name } => Ok(quote! {
-                let Some(#name): ::core::option::Option<bool> = fg.bool_const_val(#val_ts) else { #fail_ts };
-            }),
-
-            LhsPat::FloatConstLiteral { bits } => Ok(quote! {
-                {
-                    let Some(__fcv) = fg.float_const_val(#val_ts) else { #fail_ts };
-                    if __fcv != #bits { #fail_ts }
-                }
-            }),
-
-            LhsPat::FloatConstCapture { name } => Ok(quote! {
-                let Some(#name): ::core::option::Option<u64> = fg.float_const_val(#val_ts) else { #fail_ts };
-            }),
-
-            LhsPat::BoolBinaryOp { op, lhs, rhs } => {
-                // All `BoolBinaryOp` variants (`And`, `Or`, `Xor`) are commutative.
-                let variant = op.variant_ident();
-                let (_, label) = ctx.fresh("bnord");
-
-                let mut sub_caps = CaptureEnv::new();
-                lhs.collect_captures(&mut sub_caps);
-                rhs.collect_captures(&mut sub_caps);
-                let cap_tuple = cap_tuple_tokens(&sub_caps);
-                let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                let lhs_body = lhs.emit_sub(&quote! { __bnested_l }, &quote! { continue; }, ctx)?;
-                let rhs_body = rhs.emit_sub(&quote! { __bnested_r }, &quote! { continue; }, ctx)?;
-
-                Ok(quote! {
-                    let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                    {
-                        use ir::node::NodeKind;
-                        use ir::BoolBinaryOp;
-                        let NodeKind::BoolBinaryOp(BoolBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                    }
-                    let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                        Ok(v) => v,
-                        Err(_) => { #fail_ts }
-                    };
-                    let #cap_tuple: #cap_tuple_ty = #label: loop {
-                        for (__bnested_l, __bnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
-                            #lhs_body
-                            #rhs_body
-                            break #label #cap_tuple;
-                        }
-                        #fail_ts
-                    };
-                })
-            }
-
-            LhsPat::IntBinaryOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-
-                if op.is_commutative() {
-                    let (_, label) = ctx.fresh("nord");
-
-                    let mut sub_caps = CaptureEnv::new();
-                    lhs.collect_captures(&mut sub_caps);
-                    rhs.collect_captures(&mut sub_caps);
-                    let cap_tuple = cap_tuple_tokens(&sub_caps);
-                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                    let lhs_body = lhs.emit_sub(&quote! { __nested_l }, &quote! { continue; }, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __nested_r }, &quote! { continue; }, ctx)?;
-
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::IntBinaryOp;
-                            let NodeKind::IntBinaryOp(IntBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        let #cap_tuple: #cap_tuple_ty = #label: loop {
-                            for (__nested_l, __nested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
-                                #lhs_body
-                                #rhs_body
-                                break #label #cap_tuple;
-                            }
-                            #fail_ts
-                        };
-                    })
-                } else {
-                    let lhs_body = lhs.emit_sub(&quote! { __sub_lhs }, fail_ts, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __sub_rhs }, fail_ts, ctx)?;
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::IntBinaryOp;
-                            let NodeKind::IntBinaryOp(IntBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_lhs, __sub_rhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        #lhs_body
-                        #rhs_body
-                    })
-                }
-            }
-
-            LhsPat::FloatBinaryOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-
-                if op.is_commutative() {
-                    let (_, label) = ctx.fresh("fnord");
-
-                    let mut sub_caps = CaptureEnv::new();
-                    lhs.collect_captures(&mut sub_caps);
-                    rhs.collect_captures(&mut sub_caps);
-                    let cap_tuple = cap_tuple_tokens(&sub_caps);
-                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                    let lhs_body = lhs.emit_sub(&quote! { __fnested_l }, &quote! { continue; }, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __fnested_r }, &quote! { continue; }, ctx)?;
-
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::FloatBinaryOp;
-                            let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        let #cap_tuple: #cap_tuple_ty = #label: loop {
-                            for (__fnested_l, __fnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
-                                #lhs_body
-                                #rhs_body
-                                break #label #cap_tuple;
-                            }
-                            #fail_ts
-                        };
-                    })
-                } else {
-                    let lhs_body = lhs.emit_sub(&quote! { __sub_flhs }, fail_ts, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __sub_frhs }, fail_ts, ctx)?;
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::FloatBinaryOp;
-                            let NodeKind::FloatBinaryOp(FloatBinaryOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_flhs, __sub_frhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        #lhs_body
-                        #rhs_body
-                    })
-                }
-            }
-
-            LhsPat::FloatCmpOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-
-                if op.is_commutative() {
-                    let (_, label) = ctx.fresh("fcnord");
-
-                    let mut sub_caps = CaptureEnv::new();
-                    lhs.collect_captures(&mut sub_caps);
-                    rhs.collect_captures(&mut sub_caps);
-                    let cap_tuple = cap_tuple_tokens(&sub_caps);
-                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                    let lhs_body = lhs.emit_sub(&quote! { __fcnested_l }, &quote! { continue; }, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __fcnested_r }, &quote! { continue; }, ctx)?;
-
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::FloatCmpOp;
-                            let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        let #cap_tuple: #cap_tuple_ty = #label: loop {
-                            for (__fcnested_l, __fcnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
-                                #lhs_body
-                                #rhs_body
-                                break #label #cap_tuple;
-                            }
-                            #fail_ts
-                        };
-                    })
-                } else {
-                    let lhs_body = lhs.emit_sub(&quote! { __sub_fclhs }, fail_ts, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __sub_fcrhs }, fail_ts, ctx)?;
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::FloatCmpOp;
-                            let NodeKind::FloatCmpOp(FloatCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_fclhs, __sub_fcrhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        #lhs_body
-                        #rhs_body
-                    })
-                }
-            }
-
-            LhsPat::IntCmpOp { op, lhs, rhs } => {
-                let variant = op.variant_ident();
-
-                if op.is_commutative() {
-                    let (_, label) = ctx.fresh("icnord");
-
-                    let mut sub_caps = CaptureEnv::new();
-                    lhs.collect_captures(&mut sub_caps);
-                    rhs.collect_captures(&mut sub_caps);
-                    let cap_tuple = cap_tuple_tokens(&sub_caps);
-                    let cap_tuple_ty = cap_tuple_ty_tokens(&sub_caps);
-
-                    let lhs_body = lhs.emit_sub(&quote! { __icnested_l }, &quote! { continue; }, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __icnested_r }, &quote! { continue; }, ctx)?;
-
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::IntCmpOp;
-                            let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_ni0, __sub_ni1] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        let #cap_tuple: #cap_tuple_ty = #label: loop {
-                            for (__icnested_l, __icnested_r) in [(__sub_ni0, __sub_ni1), (__sub_ni1, __sub_ni0)] {
-                                #lhs_body
-                                #rhs_body
-                                break #label #cap_tuple;
-                            }
-                            #fail_ts
-                        };
-                    })
-                } else {
-                    let lhs_body = lhs.emit_sub(&quote! { __sub_iclhs }, fail_ts, ctx)?;
-                    let rhs_body = rhs.emit_sub(&quote! { __sub_icrhs }, fail_ts, ctx)?;
-                    Ok(quote! {
-                        let __sub_node = fg.graph.get_node_from_output(#val_ts);
-                        {
-                            use ir::node::NodeKind;
-                            use ir::IntCmpOp;
-                            let NodeKind::IntCmpOp(IntCmpOp::#variant) = *fg.graph.node_kind(__sub_node) else { #fail_ts };
-                        }
-                        let [__sub_iclhs, __sub_icrhs] = match fg.graph.node_inputs_exact::<2>(__sub_node) {
-                            Ok(v) => v,
-                            Err(_) => { #fail_ts }
-                        };
-                        #lhs_body
-                        #rhs_body
-                    })
-                }
-            }
-
-            LhsPat::ExtendOp { kind, inner } => {
-                let variant = kind.variant_ident();
-                let inner_body = inner.emit_sub(&quote! { __sub_ext_inner }, fail_ts, ctx)?;
-                Ok(quote! {
-                    let __sub_ext_node = fg.graph.get_node_from_output(#val_ts);
-                    {
-                        use ir::node::NodeKind;
-                        use ir::ExtendOp;
-                        let NodeKind::Extend(ExtendOp::#variant) = *fg.graph.node_kind(__sub_ext_node) else { #fail_ts };
-                    }
-                    let [__sub_ext_inner] = match fg.graph.node_inputs_exact::<1>(__sub_ext_node) {
-                        Ok(v) => v,
-                        Err(_) => { #fail_ts }
-                    };
-                    #inner_body
-                })
-            }
+            _ => false,
         }
     }
 }
 
-/// Emit `(c1, c2, ...)` tokens for the captures in `env`.
-fn cap_tuple_tokens(env: &CaptureEnv) -> TokenStream {
-    let elems: Vec<TokenStream> = env.bindings.iter().map(|(id, _)| quote! { #id }).collect();
-    // Use trailing comma so single-element tuples parse correctly as tuples,
-    // not parenthesised expressions.
-    quote! { ( #( #elems, )* ) }
-}
+// ── Pat builder emission ──────────────────────────────────────────────────────
 
-/// Emit the type `(T1, T2, ...)` tokens matching `cap_tuple_tokens`.
-fn cap_tuple_ty_tokens(env: &CaptureEnv) -> TokenStream {
-    let tys: Vec<TokenStream> = env.bindings.iter().map(|(_, k)| kind_type(*k)).collect();
-    quote! { ( #( #tys, )* ) }
+/// Walk a `LhsPat` tree and emit a `::pattern::...` builder expression.
+///
+/// `type_to_value` accumulates `(type_name, value_name)` pairs for
+/// `IntConstCaptureWithType` nodes — needed later during capture extraction
+/// so we know which `Var` to read when resolving an `InputType` capture.
+///
+/// `swap_root` — when `true`, swaps the lhs/rhs of the top-level binary op.
+/// Used to emit the "reversed operand ordering" pattern for commutative ops
+/// with a `where` guard (so the guard sees each ordering independently).
+/// Sub-patterns are always emitted in their stated order.
+///
+/// The emitted expression converts to `::pattern::Pat` via `.into()` for most
+/// variants (binary op builders), or is already a `Pat` for leaf variants.
+/// The caller wraps the whole thing in `<::pattern::Pat>::from(...)` or
+/// chained `.capture(...).when_match(...)`.
+fn emit_pat_builder(
+    pat: &LhsPat,
+    type_to_value: &mut Vec<(Ident, Ident)>,
+    swap_root: bool,
+) -> TokenStream {
+    match pat {
+        LhsPat::OutputCapture(name) => {
+            let v = Ident::new(&format!("__v_{}", name), Span::call_site());
+            quote! { ::pattern::var(#v) }
+        }
+
+        LhsPat::IntConstLiteral { value } => {
+            quote! { ::pattern::int_const(#value) }
+        }
+
+        LhsPat::IntConstCapture { name } => {
+            let v = Ident::new(&format!("__v_{}", name), Span::call_site());
+            quote! { ::pattern::any_int_const(#v) }
+        }
+
+        LhsPat::IntConstCaptureWithType { value_name, type_name } => {
+            // Register the type→value mapping for extraction.
+            type_to_value.push((type_name.clone(), value_name.clone()));
+            let v = Ident::new(&format!("__v_{}", value_name), Span::call_site());
+            // The pattern only captures the value; type_name is derived from it.
+            quote! { ::pattern::any_int_const(#v) }
+        }
+
+        LhsPat::BoolConstLiteral { value } => {
+            quote! { ::pattern::bool_const(#value) }
+        }
+
+        LhsPat::BoolConstCapture { name } => {
+            let v = Ident::new(&format!("__v_{}", name), Span::call_site());
+            quote! { ::pattern::any_bool_const(#v) }
+        }
+
+        LhsPat::FloatConstLiteral { bits } => {
+            quote! { ::pattern::float_const(#bits) }
+        }
+
+        LhsPat::FloatConstCapture { name } => {
+            let v = Ident::new(&format!("__v_{}", name), Span::call_site());
+            quote! { ::pattern::any_float_const(#v) }
+        }
+
+        LhsPat::IntBinaryOp { op, lhs, rhs } => {
+            // When swap_root, emit rhs-var on the left and lhs-var on the right.
+            // Child recursion always uses swap_root=false (only root swaps).
+            let (first, second) = if swap_root {
+                (emit_pat_builder(rhs, type_to_value, false),
+                 emit_pat_builder(lhs, type_to_value, false))
+            } else {
+                (emit_pat_builder(lhs, type_to_value, false),
+                 emit_pat_builder(rhs, type_to_value, false))
+            };
+            let (l, r) = (first, second);
+            // Use shorthand free constructors; commutative ones auto-try both orderings.
+            match op {
+                IntBinOpKind::Add => quote! { ::pattern::add(#l, #r) },
+                IntBinOpKind::Sub => quote! { ::pattern::sub(#l, #r) },
+                IntBinOpKind::Mul => quote! { ::pattern::mul(#l, #r) },
+                IntBinOpKind::Div => quote! { ::pattern::div(#l, #r) },
+                IntBinOpKind::And => quote! { ::pattern::and(#l, #r) },
+                IntBinOpKind::Or  => quote! { ::pattern::or(#l, #r)  },
+                IntBinOpKind::Xor => quote! { ::pattern::xor(#l, #r) },
+                IntBinOpKind::Shl => quote! { ::pattern::shl(#l, #r) },
+                IntBinOpKind::Shr => quote! { ::pattern::shr(#l, #r) },
+            }
+        }
+
+        LhsPat::BoolBinaryOp { op, lhs, rhs } => {
+            let (first, second) = if swap_root {
+                (emit_pat_builder(rhs, type_to_value, false),
+                 emit_pat_builder(lhs, type_to_value, false))
+            } else {
+                (emit_pat_builder(lhs, type_to_value, false),
+                 emit_pat_builder(rhs, type_to_value, false))
+            };
+            let (l, r) = (first, second);
+            match op {
+                BoolBinOpKind::And => quote! { ::pattern::bool_and(#l, #r) },
+                BoolBinOpKind::Or  => quote! { ::pattern::bool_or(#l, #r)  },
+                BoolBinOpKind::Xor => quote! { ::pattern::bool_xor(#l, #r) },
+            }
+        }
+
+        LhsPat::FloatBinaryOp { op, lhs, rhs } => {
+            let (first, second) = if swap_root {
+                (emit_pat_builder(rhs, type_to_value, false),
+                 emit_pat_builder(lhs, type_to_value, false))
+            } else {
+                (emit_pat_builder(lhs, type_to_value, false),
+                 emit_pat_builder(rhs, type_to_value, false))
+            };
+            let (l, r) = (first, second);
+            match op {
+                FloatBinOpKind::Add => quote! { ::pattern::float_add(#l, #r) },
+                FloatBinOpKind::Sub => quote! { ::pattern::float_sub(#l, #r) },
+                FloatBinOpKind::Mul => quote! { ::pattern::float_mul(#l, #r) },
+                FloatBinOpKind::Div => quote! { ::pattern::float_div(#l, #r) },
+            }
+        }
+
+        LhsPat::FloatCmpOp { op, lhs, rhs } => {
+            let (first, second) = if swap_root {
+                (emit_pat_builder(rhs, type_to_value, false),
+                 emit_pat_builder(lhs, type_to_value, false))
+            } else {
+                (emit_pat_builder(lhs, type_to_value, false),
+                 emit_pat_builder(rhs, type_to_value, false))
+            };
+            let (l, r) = (first, second);
+            match op {
+                FloatCmpOpKind::Equal    => quote! { ::pattern::float_eq(#l, #r) },
+                FloatCmpOpKind::NotEqual => quote! { ::pattern::float_ne(#l, #r) },
+                FloatCmpOpKind::Less     => quote! { ::pattern::float_lt(#l, #r) },
+                FloatCmpOpKind::LessEqual => quote! { ::pattern::float_le(#l, #r) },
+            }
+        }
+
+        LhsPat::IntCmpOp { op, lhs, rhs } => {
+            let (first, second) = if swap_root {
+                (emit_pat_builder(rhs, type_to_value, false),
+                 emit_pat_builder(lhs, type_to_value, false))
+            } else {
+                (emit_pat_builder(lhs, type_to_value, false),
+                 emit_pat_builder(rhs, type_to_value, false))
+            };
+            let (l, r) = (first, second);
+            match op {
+                IntCmpOpKind::Equal      => quote! { ::pattern::int_eq(#l, #r)     },
+                IntCmpOpKind::Less       => quote! { ::pattern::int_lt(#l, #r)     },
+                IntCmpOpKind::LessEqual  => quote! { ::pattern::int_le(#l, #r)     },
+                IntCmpOpKind::Sless      => quote! { ::pattern::int_slt(#l, #r)    },
+                IntCmpOpKind::SlessEqual => quote! { ::pattern::int_sle(#l, #r)    },
+                IntCmpOpKind::Carry      => quote! { ::pattern::int_carry(#l, #r)  },
+                IntCmpOpKind::Borrow     => quote! {
+                    ::pattern::int_cmp(::pattern::IntCmpOp::Borrow, #l, #r)
+                },
+                IntCmpOpKind::Scarry     => quote! { ::pattern::int_scarry(#l, #r) },
+                IntCmpOpKind::Sborrow    => quote! { ::pattern::int_sborrow(#l, #r) },
+            }
+        }
+
+        LhsPat::ExtendOp { kind, inner } => {
+            let i = emit_pat_builder(inner, type_to_value, false);
+            match kind {
+                ExtendKind::SignExtend  => quote! { ::pattern::sign_extend(#i) },
+                ExtendKind::ZeroExtend => quote! { ::pattern::zero_extend(#i) },
+            }
+        }
+    }
 }
 
 // ── RHS AST ───────────────────────────────────────────────────────────────────

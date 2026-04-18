@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 ir-macros.workspace = true
 ir.workspace = true
+pattern.workspace = true
 rsleigh.workspace = true
 strider-error.workspace = true
 thiserror = { workspace = true }

@@ -673,14 +673,15 @@ fn int_eq_pattern_matches_in_if_graph() -> ir::Result<()> {
 }
 
 #[test]
-fn int_eq_wrong_order_no_match() -> ir::Result<()> {
+fn int_eq_commutative_matches_both_orders() -> ir::Result<()> {
+    // IntEq is commutative: int_eq(a, b) matches the same nodes as int_eq(b, a).
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&int_eq(int_const(1), int_const(4)));
-    assert!(
-        hits.is_empty(),
-        "int_eq is not commutative in pattern matching"
-    );
+    // Both orderings should produce a hit (the graph has IntCmpOp::Equal(4, 1)).
+    let hits_natural = m.find_all(&int_eq(int_const(4), int_const(1)));
+    let hits_swapped = m.find_all(&int_eq(int_const(1), int_const(4)));
+    assert_eq!(hits_natural.len(), 1, "natural order should match");
+    assert_eq!(hits_swapped.len(), 1, "swapped order should also match (commutative)");
     Ok(())
 }
 

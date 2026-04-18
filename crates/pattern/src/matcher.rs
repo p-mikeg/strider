@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
-use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
+use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp, IntCmpOp};
 
 use crate::pat::{Pat, PatKind};
 use crate::var::{NodeVar, Var};
@@ -22,6 +22,10 @@ fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
 
 fn is_commutative_float_op(op: FloatBinaryOp) -> bool {
     matches!(op, FloatBinaryOp::Add | FloatBinaryOp::Mul)
+}
+
+fn is_commutative_int_cmp_op(op: IntCmpOp) -> bool {
+    matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
 }
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
@@ -306,7 +310,7 @@ impl<'g> Matcher<'g> {
                 }
             }
 
-            PatKind::IntCmpOp { op, lhs, rhs } => {
+            PatKind::IntCmpOp { op, lhs, rhs, ordered } => {
                 let NodeKind::IntCmpOp(actual) = kind else {
                     return false;
                 };
@@ -318,11 +322,16 @@ impl<'g> Matcher<'g> {
                 };
                 let snap = bindings.clone();
                 if self.match_output(l, lhs, bindings) && self.match_output(r, rhs, bindings) {
-                    true
-                } else {
-                    *bindings = snap;
-                    false
+                    return true;
                 }
+                if !ordered && is_commutative_int_cmp_op(*op) {
+                    *bindings = snap.clone();
+                    if self.match_output(r, lhs, bindings) && self.match_output(l, rhs, bindings) {
+                        return true;
+                    }
+                }
+                *bindings = snap;
+                false
             }
 
             PatKind::BoolBinaryOp {

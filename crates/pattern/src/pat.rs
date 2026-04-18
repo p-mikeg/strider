@@ -108,7 +108,9 @@ pub enum PatKind {
     /// Matches an integer unary operation node.
     IntUnaryOp { op: IntUnaryOp, operand: Pat },
     /// Matches an integer comparison node (produces a `Bool` output).
-    IntCmpOp { op: IntCmpOp, lhs: Pat, rhs: Pat },
+    /// When `ordered` is `false` and the op is commutative (`Equal`, `Carry`,
+    /// `Scarry`), both operand orderings are tried automatically.
+    IntCmpOp { op: IntCmpOp, lhs: Pat, rhs: Pat, ordered: bool },
 
     // ── Bool ops ──────────────────────────────────────────────────────────────
     /// Matches a boolean binary operation node.
@@ -1126,11 +1128,15 @@ pub fn not(operand: impl Into<Pat>) -> Pat {
 // Integer comparisons (→ Bool)
 
 /// Matches an integer comparison node with the given `op`.
+///
+/// For commutative ops (`Equal`, `Carry`, `Scarry`), both operand orderings
+/// are tried automatically.  Use `int_cmp_ordered` to disable this.
 pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     Pat::new(PatKind::IntCmpOp {
         op,
         lhs: lhs.into(),
         rhs: rhs.into(),
+        ordered: false,
     })
 }
 /// Matches an unsigned equality comparison (`lhs == rhs`).
