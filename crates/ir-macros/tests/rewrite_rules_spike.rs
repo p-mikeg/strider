@@ -190,3 +190,154 @@ fn rule_3_sign_extend_constant() -> Result<()> {
 
     Ok(())
 }
+
+// ── Grammar tests: RHS outer `+`, `-`, `|` binary ops ────────────────────────
+
+/// Rule: `(x + IntConst(c1)) + IntConst(c2) => x + int_const(c1 + c2, ty)`
+/// Tests that `+` is accepted as an outer RhsExpr binary operator.
+#[test]
+fn rhs_outer_add_reassoc() -> Result<()> {
+    let vn = rsleigh::Vn {
+        size: 8,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::REGISTER },
+    };
+    let mut fg = {
+        let mut b = FunctionBuilder::new(vec![vn], &[vn], &[], &[]).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let x = b.read_variable(&vn).unwrap();
+        let c3 = b.build_int_const(3, NodeOutputType::U64);
+        let c4 = b.build_int_const(4, NodeOutputType::U64);
+        let inner = b
+            .build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let outer = b
+            .build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.build().unwrap()
+    };
+
+    let apply = rewrite_rules! {
+        ((x + IntConst(c1)) + IntConst(c2)) => x + int_const(c1 + c2, ty),
+    };
+
+    let outer_out = return_value(&fg);
+    let outer_node = fg.graph.get_node_from_output(outer_out);
+    let res = apply(&mut fg, outer_node)?;
+    assert_eq!(res, OptimizationResult::Changed);
+    // After the rewrite the root should be an Add with const 7.
+    let new_out = return_value(&fg);
+    let new_node = fg.graph.get_node_from_output(new_out);
+    assert!(
+        matches!(fg.graph.node_kind(new_node), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+        "expected Add after reassoc, got {:?}",
+        fg.graph.node_kind(new_node)
+    );
+    Ok(())
+}
+
+/// Rule: `(x - IntConst(c1)) - IntConst(c2) => x - int_const(c1 + c2, ty)`
+/// Tests that `-` is accepted as an outer RhsExpr binary operator.
+#[test]
+fn rhs_outer_sub_reassoc() -> Result<()> {
+    let vn = rsleigh::Vn {
+        size: 8,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::REGISTER },
+    };
+    let mut fg = {
+        let mut b = FunctionBuilder::new(vec![vn], &[vn], &[], &[]).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let x = b.read_variable(&vn).unwrap();
+        let c3 = b.build_int_const(3, NodeOutputType::U64);
+        let c4 = b.build_int_const(4, NodeOutputType::U64);
+        let inner = b
+            .build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)
+            .unwrap();
+        let outer = b
+            .build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.build().unwrap()
+    };
+
+    let apply = rewrite_rules! {
+        ((x - IntConst(c1)) - IntConst(c2)) => x - int_const(c1 + c2, ty),
+    };
+
+    let outer_out = return_value(&fg);
+    let outer_node = fg.graph.get_node_from_output(outer_out);
+    let res = apply(&mut fg, outer_node)?;
+    assert_eq!(res, OptimizationResult::Changed);
+    // After the rewrite the root should be a Sub.
+    let new_out = return_value(&fg);
+    let new_node = fg.graph.get_node_from_output(new_out);
+    assert!(
+        matches!(fg.graph.node_kind(new_node), NodeKind::IntBinaryOp(IntBinaryOp::Sub)),
+        "expected Sub after reassoc, got {:?}",
+        fg.graph.node_kind(new_node)
+    );
+    Ok(())
+}
+
+/// Rule: `((a & IntConst(c1)) | (b & IntConst(c2))) & IntConst(c3) =>
+///         (a & int_const(c1 & c3, ty)) | (b & int_const(c2 & c3, ty))`
+/// Tests that `|` and parenthesized sub-expressions are accepted in the RHS.
+#[test]
+fn rhs_outer_or_distribution() -> Result<()> {
+    let av = rsleigh::Vn {
+        size: 8,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::REGISTER },
+    };
+    let bv = rsleigh::Vn {
+        size: 8,
+        addr: rsleigh::VnAddr { off: 8, space: rsleigh::VnSpace::REGISTER },
+    };
+    let mut fg = {
+        let mut b = FunctionBuilder::new(vec![av, bv], &[av, bv], &[], &[]).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let a = b.read_variable(&av).unwrap();
+        let bval = b.read_variable(&bv).unwrap();
+        let f0 = b.build_int_const(0xF0, NodeOutputType::U64);
+        let f0_ = b.build_int_const(0x0F, NodeOutputType::U64);
+        let ff = b.build_int_const(0xFF, NodeOutputType::U64);
+        let a_f0 = b
+            .build_int_binary_operation(a, f0, IntBinaryOp::And, NodeOutputType::U64)
+            .unwrap();
+        let b_0f = b
+            .build_int_binary_operation(bval, f0_, IntBinaryOp::And, NodeOutputType::U64)
+            .unwrap();
+        let or = b
+            .build_int_binary_operation(a_f0, b_0f, IntBinaryOp::Or, NodeOutputType::U64)
+            .unwrap();
+        let outer = b
+            .build_int_binary_operation(or, ff, IntBinaryOp::And, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.build().unwrap()
+    };
+
+    let apply = rewrite_rules! {
+        (((a & IntConst(c1)) | (b & IntConst(c2))) & IntConst(c3))
+            => (a & int_const(c1 & c3, ty)) | (b & int_const(c2 & c3, ty)),
+    };
+
+    let outer_out = return_value(&fg);
+    let outer_node = fg.graph.get_node_from_output(outer_out);
+    let res = apply(&mut fg, outer_node)?;
+    assert_eq!(res, OptimizationResult::Changed);
+    // After the rewrite the root should be an Or.
+    let new_out = return_value(&fg);
+    let new_node = fg.graph.get_node_from_output(new_out);
+    assert!(
+        matches!(fg.graph.node_kind(new_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+        "expected Or after distribution, got {:?}",
+        fg.graph.node_kind(new_node)
+    );
+    Ok(())
+}

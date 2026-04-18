@@ -1,9 +1,9 @@
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::{
     BoolUnaryOp, BuiltFunctionGraph, ExtendOp, FloatBinaryOp, FloatCmpOp,
     FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
-use ir_macros::{match_value, rewrite_rules};
+use ir_macros::rewrite_rules;
 
 use crate::error::{ErrorKind, Result};
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -128,72 +128,31 @@ fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool
 
 // ── per-node folding ──────────────────────────────────────────────────────────
 
-/// If `out` is the output of an `Add` or `Sub` node that has one constant
-/// operand, returns `(base, delta)` such that `out == base + delta (mod 2^N)`.
-/// For `base - C` the delta is `-C mod 2^N`. Returns `None` otherwise.
-fn extract_const_offset(
-    fg: &BuiltFunctionGraph,
-    out: NodeOutputId,
-    ty: NodeOutputType,
-) -> Option<(NodeOutputId, u64)> {
-    let node = fg.graph.get_node_from_output(out);
-    let kind = *fg.graph.node_kind(node);
-    let inputs = fg.graph.node_inputs(node);
-    if inputs.len() != 2 {
-        return None;
-    }
-    let (l, r) = (inputs[0], inputs[1]);
-    match kind {
-        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            if let Some(c) = fg.int_const_val( r) {
-                return Some((l, c));
-            }
-            if let Some(c) = fg.int_const_val( l) {
-                return Some((r, c));
-            }
-            None
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            let c = fg.int_const_val( r)?;
-            let neg = 0u64.wrapping_sub(c);
-            ty.get_unsigned_int(neg).map(|n| (l, n))
-        }
-        _ => None,
-    }
-}
-
-/// Rewrites `(base ± C1) ± C2` into `base ± K` for a single folded constant.
-/// `outer_const` is the constant operand on the outer op, `inner_out` is the
-/// non-constant operand (expected to decompose via [`extract_const_offset`]).
-/// `outer_is_sub_with_const_rhs` is true when the outer op is `base - C2`.
-/// Returns `Changed` on rewrite.
-fn try_reassociate_add_sub(
+/// Applies add/sub reassociation and AND-mask merging rules.
+///
+/// Rules:
+/// - `(x + C1) + C2 → x + (C1 + C2)`
+/// - `(x - C1) - C2 → x - (C1 + C2)`
+/// - `(x + C1) - C2 → x + (C1 - C2)`
+/// - `(a & C1) & C2 → a & (C1 & C2)`
+/// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
+fn apply_reassoc_and_mask_rules(
     fg: &mut BuiltFunctionGraph,
-    out: NodeOutputId,
-    ty: NodeOutputType,
-    inner_out: NodeOutputId,
-    outer_const: u64,
-    outer_is_sub_with_const_rhs: bool,
+    node: NodeId,
 ) -> Result<OptimizationResult> {
-    let Some((base, inner_delta)) = extract_const_offset(fg, inner_out, ty) else {
-        return Ok(OptimizationResult::NoChange);
+    let rules = rewrite_rules! {
+        // ── add/sub reassociation ─────────────────────────────────────────────
+        ((x + IntConst(c1)) + IntConst(c2)) => x + int_const(c1 + c2, ty),
+        ((x - IntConst(c1)) - IntConst(c2)) => x - int_const(c1 + c2, ty),
+        ((x + IntConst(c1)) - IntConst(c2)) => x + int_const(c1 - c2, ty),
+        ((x - IntConst(c1)) + IntConst(c2)) => x + int_const(c2 - c1, ty),
+        // ── AND-mask merging ──────────────────────────────────────────────────
+        ((a & IntConst(c1)) & IntConst(c2)) => a & int_const(c1 & c2, ty),
+        // ── AND distribution over OR of masks ─────────────────────────────────
+        (((a & IntConst(c1)) | (b & IntConst(c2))) & IntConst(c3))
+            => (a & int_const(c1 & c3, ty)) | (b & int_const(c2 & c3, ty)),
     };
-    let merged = if outer_is_sub_with_const_rhs {
-        inner_delta.wrapping_sub(outer_const)
-    } else {
-        inner_delta.wrapping_add(outer_const)
-    };
-    let masked = ty
-        .get_unsigned_int(merged)
-        .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
-    let merged_c = fg.make_int_const( masked, ty)?;
-    let new_node = fg.graph.create_node(
-        NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        [base, merged_c],
-        [NodeOutputKind::OutputType(ty)],
-    );
-    let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
+    rules(fg, node)
 }
 
 /// Applies single-operand algebraic identities to integer binary operations.
@@ -505,9 +464,10 @@ fn try_fold_cast_to_int_const(
     Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
 }
 
+/// Handles the `x & all_ones → x` identity, which depends on the type width
+/// and cannot be expressed as a static `rewrite_rules!` pattern.
 fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<OptimizationResult> {
-    let kind = *fg.graph.node_kind(node_id);
-    let NodeKind::IntBinaryOp(op) = kind else {
+    let NodeKind::IntBinaryOp(IntBinaryOp::And) = *fg.graph.node_kind(node_id) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -518,110 +478,20 @@ fn try_fold_int_binary(fg: &mut BuiltFunctionGraph, node_id: NodeId) -> Result<O
         .ok_or(ErrorKind::ExpectedValueOutput(out_kind))?;
     let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
 
-    let lhs_c = fg.int_const_val( lhs);
-    let rhs_c = fg.int_const_val( rhs);
     // Types wider than U64 (U128/U256) aren't representable in the 64-bit
-    // IntConst slot — skip algebraic-identity folding for them.
+    // IntConst slot — skip this folding for them.
     let Some(all_ones) = ty.get_unsigned_int(u64::MAX) else {
         return Ok(OptimizationResult::NoChange);
     };
 
-    // Reassociation and remaining structural rewrites.
-    match op {
-        IntBinaryOp::Add => {
-            // (base ± C1) + C2 → base + K
-            if let Some(c2) = rhs_c {
-                let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, false)?;
-                if r.changed() {
-                    return Ok(r);
-                }
-            }
-            if let Some(c1) = lhs_c {
-                let r = try_reassociate_add_sub(fg, out, ty, rhs, c1, false)?;
-                if r.changed() {
-                    return Ok(r);
-                }
-            }
-        }
-        IntBinaryOp::Sub => {
-            // (base ± C1) - C2 → base + K
-            if let Some(c2) = rhs_c {
-                let r = try_reassociate_add_sub(fg, out, ty, lhs, c2, true)?;
-                if r.changed() {
-                    return Ok(r);
-                }
-            }
-        }
-        IntBinaryOp::And => {
-            // Identity: x & all_ones → x
-            if lhs_c == Some(all_ones) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
-            }
-            if rhs_c == Some(all_ones) {
-                return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
-            }
-            // (a & C1) & C2 → a & (C1 & C2)
-            if let Some(c2) = rhs_c {
-                let graph = &fg.graph;
-                match_value! {
-                    if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
-                        = graph, lhs
-                    {
-                        if let Some(c1) = fg.int_const_val( inner_rhs) {
-                            let merged = fg.make_int_const( c1 & c2, ty)?;
-                            let new_node = fg.graph.create_node(
-                                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                                [inner_lhs, merged],
-                                [NodeOutputKind::OutputType(ty)],
-                            );
-                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-                        }
-                        if let Some(c1) = fg.int_const_val( inner_lhs) {
-                            let merged = fg.make_int_const( c1 & c2, ty)?;
-                            let new_node = fg.graph.create_node(
-                                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                                [inner_rhs, merged],
-                                [NodeOutputKind::OutputType(ty)],
-                            );
-                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-                        }
-                    }
-                }
-            }
-            // C1 & (a & C2) → a & (C1 & C2) (symmetric case)
-            if let Some(c1) = lhs_c {
-                let graph = &fg.graph;
-                match_value! {
-                    if let NodeKind::IntBinaryOp(IntBinaryOp::And)[val inner_lhs, val inner_rhs]
-                        = graph, rhs
-                    {
-                        if let Some(c2) = fg.int_const_val( inner_rhs) {
-                            let merged = fg.make_int_const( c1 & c2, ty)?;
-                            let new_node = fg.graph.create_node(
-                                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                                [inner_lhs, merged],
-                                [NodeOutputKind::OutputType(ty)],
-                            );
-                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-                        }
-                        if let Some(c2) = fg.int_const_val( inner_lhs) {
-                            let merged = fg.make_int_const( c1 & c2, ty)?;
-                            let new_node = fg.graph.create_node(
-                                NodeKind::IntBinaryOp(IntBinaryOp::And),
-                                [inner_rhs, merged],
-                                [NodeOutputKind::OutputType(ty)],
-                            );
-                            let new_out = fg.graph.node_outputs_exact::<1>(new_node)?[0];
-                            return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
+    // Identity: x & all_ones → x
+    let lhs_c = fg.int_const_val(lhs);
+    let rhs_c = fg.int_const_val(rhs);
+    if lhs_c == Some(all_ones) {
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, rhs)?));
+    }
+    if rhs_c == Some(all_ones) {
+        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, lhs)?));
     }
 
     Ok(OptimizationResult::NoChange)
@@ -1069,6 +939,7 @@ impl Optimizer for ConstantFold {
             result |= apply_identity_rules(function, node_id)?;
             result |= apply_const_eval_rules(function, node_id)?;
             result |= apply_bool_float_rules(function, node_id)?;
+            result |= apply_reassoc_and_mask_rules(function, node_id)?;
             result |= try_fold_int_binary(function, node_id)?;
             result |= try_fold_piece(function, node_id)?;
             result |= try_fold_extract(function, node_id)?;
@@ -1296,6 +1167,45 @@ mod tests {
         Ok(())
     }
 
+    /// Asserts the return-value node is `expected_base - expected_const`
+    /// (lhs must be the base, rhs must be the constant; Sub is non-commutative).
+    fn assert_sub_with_const(
+        fg: &ir::BuiltFunctionGraph,
+        expected_base: ir::Value,
+        expected_const: u64,
+        ty: NodeOutputType,
+    ) -> Result<()> {
+        let val = return_value(fg)?;
+        let node = fg.graph.get_node_from_output(val);
+        assert!(
+            matches!(
+                fg.graph.node_kind(node),
+                NodeKind::IntBinaryOp(IntBinaryOp::Sub)
+            ),
+            "expected outer Sub, got {:?}",
+            fg.graph.node_kind(node)
+        );
+        let inputs = fg.graph.node_inputs(node);
+        assert_eq!(inputs.len(), 2);
+        let l = inputs[0];
+        let r = inputs[1];
+        let masked = ty
+            .get_unsigned_int(expected_const)
+            .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
+        let const_on_rhs = matches!(
+            *fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
+        );
+        assert!(
+            l == expected_base && const_on_rhs,
+            "expected `base - {:#x}`; got lhs kind={:?}, rhs kind={:?}",
+            masked,
+            fg.graph.node_kind(fg.graph.get_node_from_output(l)),
+            fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+        );
+        Ok(())
+    }
+
     #[test]
     fn reassoc_add_add_consts() -> Result<()> {
         // (x + 3) + 4 → x + 7
@@ -1355,7 +1265,7 @@ mod tests {
 
     #[test]
     fn reassoc_sub_sub_consts() -> Result<()> {
-        // (x - 3) - 4 → x + (-7 mod 2^64)
+        // (x - 3) - 4 → x - 7
         let vn = reg_vn(0x1000, 8);
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c3 = b.build_int_const(3, NodeOutputType::U64);
@@ -1368,7 +1278,7 @@ mod tests {
         while changed {
             changed = ConstantFold.optimize(&mut fg)?.changed();
         }
-        assert_add_with_const(&fg, x, 0u64.wrapping_sub(7), NodeOutputType::U64)?;
+        assert_sub_with_const(&fg, x, 7, NodeOutputType::U64)?;
         Ok(())
     }
 
@@ -1412,8 +1322,8 @@ mod tests {
 
     #[test]
     fn reassoc_chain_three_subs() -> Result<()> {
-        // ((x - 4) - 4) - 4 → x + (-12 mod 2^64).  Requires the fixed-point
-        // loop to compose multiple reassociation steps.
+        // ((x - 4) - 4) - 4 → x - 12.  Requires the fixed-point loop to
+        // compose multiple reassociation steps.
         let vn = reg_vn(0x1000, 8);
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c4 = b.build_int_const(4, NodeOutputType::U64);
@@ -1425,13 +1335,13 @@ mod tests {
         while changed {
             changed = ConstantFold.optimize(&mut fg)?.changed();
         }
-        assert_add_with_const(&fg, x, 0u64.wrapping_sub(12), NodeOutputType::U64)?;
+        assert_sub_with_const(&fg, x, 12, NodeOutputType::U64)?;
         Ok(())
     }
 
     #[test]
     fn reassoc_chain_three_subs_u32() -> Result<()> {
-        // Same chain but at U32: the constant must be masked to 32 bits.
+        // Same chain but at U32: ((x - 4) - 4) - 4 → x - 12.
         let vn = reg_vn(0x1000, 4);
         let (mut fg, x) = make_fn_with_var(vn, |b, x| {
             let c4 = b.build_int_const(4, NodeOutputType::U32);
@@ -1443,10 +1353,7 @@ mod tests {
         while changed {
             changed = ConstantFold.optimize(&mut fg)?.changed();
         }
-        let masked = NodeOutputType::U32
-            .get_unsigned_int(0u64.wrapping_sub(12))
-            .ok_or(ErrorKind::ExpectedIntegerType(NodeOutputType::U32))?;
-        assert_add_with_const(&fg, x, masked, NodeOutputType::U32)?;
+        assert_sub_with_const(&fg, x, 12, NodeOutputType::U32)?;
         Ok(())
     }
 
@@ -1473,6 +1380,37 @@ mod tests {
         let res = ConstantFold.optimize(&mut fg)?;
         assert!(!res.changed(), "no-const chain should not reassociate");
         assert_eq!(return_value(&fg)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn distribution_rewrite() -> Result<()> {
+        // Build ((a & 0xF0) | (b & 0x0F)) & 0xFF.
+        // Rule fires: (a & (0xF0 & 0xFF)) | (b & (0x0F & 0xFF))
+        //           = (a & 0xF0) | (b & 0x0F)  — changed=true.
+        let av = reg_vn(0x1000, 8);
+        let bv = reg_vn(0x1008, 8);
+        let mut b = FunctionBuilder::new(vec![av, bv], &[av, bv], &[], &[])?;
+        let r = b.create_region()?;
+        b.set_entry_region(r)?;
+        b.set_region(r);
+        let a = b.read_variable(&av)?;
+        let bval = b.read_variable(&bv)?;
+        let f0 = b.build_int_const(0xF0, NodeOutputType::U64);
+        let f0_ = b.build_int_const(0x0F, NodeOutputType::U64);
+        let ff = b.build_int_const(0xFF, NodeOutputType::U64);
+        let a_and_f0 =
+            b.build_int_binary_operation(a, f0, IntBinaryOp::And, NodeOutputType::U64)?;
+        let b_and_0f =
+            b.build_int_binary_operation(bval, f0_, IntBinaryOp::And, NodeOutputType::U64)?;
+        let or_node =
+            b.build_int_binary_operation(a_and_f0, b_and_0f, IntBinaryOp::Or, NodeOutputType::U64)?;
+        let outer =
+            b.build_int_binary_operation(or_node, ff, IntBinaryOp::And, NodeOutputType::U64)?;
+        b.build_return(Some(outer), &[])?;
+        let mut fg = b.build()?;
+        let changed = ConstantFold.optimize(&mut fg)?.changed();
+        assert!(changed, "distribution rule should fire");
         Ok(())
     }
 

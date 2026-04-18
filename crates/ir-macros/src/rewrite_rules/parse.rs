@@ -33,7 +33,8 @@
 /// RhsExpr  := 'int_const' '(' RhsValExpr ',' Ident ')'
 ///           | 'float_const' '(' RhsValExpr ',' RhsTyExpr ')'
 ///           | 'bool_const' '(' Expr ')'
-///           | RhsAtom ('&' RhsAtom)*
+///           | RhsAtom (('&' | '|' | '+' | '-') RhsAtom)?
+/// RhsAtom  := '(' RhsExpr ')' | Ident | 'int_const' '(' ... ')' | ...
 ///
 /// Escape rule: `label @ fn_name` — the `label` ident is purely documentary
 /// (discarded at parse time) and `fn_name` is called directly as
@@ -1154,10 +1155,30 @@ fn parse_rhs(input: ParseStream) -> Result<RhsExpr> {
         let rhs = parse_rhs_atom(input)?;
         return Ok(RhsExpr::BinOp { op: IntBinOpKind::And, lhs: Box::new(lhs), rhs: Box::new(rhs) });
     }
+    if input.peek(Token![|]) {
+        input.parse::<Token![|]>()?;
+        let rhs = parse_rhs_atom(input)?;
+        return Ok(RhsExpr::BinOp { op: IntBinOpKind::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+    }
+    if input.peek(Token![+]) {
+        input.parse::<Token![+]>()?;
+        let rhs = parse_rhs_atom(input)?;
+        return Ok(RhsExpr::BinOp { op: IntBinOpKind::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+    }
+    if input.peek(Token![-]) {
+        input.parse::<Token![-]>()?;
+        let rhs = parse_rhs_atom(input)?;
+        return Ok(RhsExpr::BinOp { op: IntBinOpKind::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+    }
     Ok(lhs)
 }
 
 fn parse_rhs_atom(input: ParseStream) -> Result<RhsExpr> {
+    // Allow parenthesized RHS sub-expressions, e.g. `(a & int_const(c, ty))`.
+    if input.peek(syn::token::Paren) {
+        let content; syn::parenthesized!(content in input);
+        return parse_rhs(&content);
+    }
     if !input.peek(Ident) {
         return Err(input.error("expected identifier or `int_const(...)`/`float_const(...)`/`bool_const(...)` in RHS expression"));
     }
