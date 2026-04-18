@@ -3,7 +3,8 @@
 /// Grammar subset:
 /// ```text
 /// Rules    := Rule (',' Rule)* ','?
-/// Rule     := LhsPat ('where' Expr)? '=>' RhsExpr
+/// Rule     := LhsPat ('where' Expr)? '=>' RhsExpr   -- pattern rule
+///           | Ident '@' Ident                         -- escape rule
 /// LhsPat   := '(' LhsPat BinOpSym LhsPat ')'
 ///           | 'Extend' '::' '<' ExtendKind '>' '(' LhsPat ')'
 ///           | 'IntConst' '(' IntConstPat ')'
@@ -26,6 +27,10 @@
 ///           | 'float_const' '(' RhsValExpr ',' RhsTyExpr ')'
 ///           | 'bool_const' '(' Expr ')'
 ///           | RhsAtom ('&' RhsAtom)*
+///
+/// Escape rule: `label @ fn_name` — the `label` ident is purely documentary
+/// (discarded at parse time) and `fn_name` is called directly as
+/// `fn_name(fg, node)`.  No pattern matching or LHS/RHS is involved.
 /// ```
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -52,15 +57,24 @@ impl Parse for Rules {
     }
 }
 
-pub(super) struct Rule {
-    pub lhs: LhsPat,
-    /// Optional `where <Expr>` guard; evaluated after LHS captures are bound.
-    pub where_guard: Option<Expr>,
-    pub rhs: RhsExpr,
+pub(super) enum Rule {
+    /// A pattern rule: `LhsPat [where Expr] => RhsExpr`.
+    Pattern { lhs: Box<LhsPat>, where_guard: Option<Expr>, rhs: Box<RhsExpr> },
+    /// An escape rule: `label @ fn_name` — calls `fn_name(fg, node)` directly.
+    /// The `label` ident is discarded at parse time; it exists for documentation.
+    Escape { fn_name: Ident },
 }
 
 impl Parse for Rule {
     fn parse(input: ParseStream) -> Result<Self> {
+        // Peek for `Ident @ ...` — the escape-hatch form.
+        if input.peek(Ident) && input.peek2(Token![@]) {
+            input.parse::<Ident>()?; // consume the label (purely documentary)
+            input.parse::<Token![@]>()?;
+            let fn_name: Ident = input.parse()?;
+            return Ok(Rule::Escape { fn_name });
+        }
+        // Fall through to the pattern-rule form.
         let lhs = input.parse::<LhsPat>()?;
         // Optional `where <Expr>` clause before `=>`.
         let where_guard = if input.peek(Token![where]) {
@@ -73,15 +87,38 @@ impl Parse for Rule {
         };
         input.parse::<Token![=>]>()?;
         let rhs = input.parse::<RhsExpr>()?;
-        Ok(Rule { lhs, where_guard, rhs })
+        Ok(Rule::Pattern { lhs: Box::new(lhs), where_guard, rhs: Box::new(rhs) })
     }
 }
 
 impl Rule {
     pub fn codegen(&self, name: &proc_macro2::Ident) -> Result<TokenStream> {
+        match self {
+            Rule::Escape { fn_name } => Ok(quote! {
+                #[allow(non_snake_case, clippy::needless_pass_by_ref_mut)]
+                fn #name(
+                    fg: &mut ir::BuiltFunctionGraph,
+                    node: ir::node::NodeId,
+                ) -> ::core::result::Result<opt::OptimizationResult, opt::Error> {
+                    #fn_name(fg, node)
+                }
+            }),
+            Rule::Pattern { lhs, where_guard, rhs } => {
+                self.codegen_pattern(name, lhs, where_guard, rhs)
+            }
+        }
+    }
+
+    fn codegen_pattern(
+        &self,
+        name: &proc_macro2::Ident,
+        lhs: &LhsPat,
+        where_guard: &Option<Expr>,
+        rhs: &RhsExpr,
+    ) -> Result<TokenStream> {
         let mut caps = CaptureEnv::new();
         // Collect captures from LHS so the RHS emitter knows each name's kind.
-        self.lhs.collect_captures(&mut caps);
+        lhs.collect_captures(&mut caps);
 
         // ── Build the Pat expression ──────────────────────────────────────────
         // Walk the LhsPat tree and emit a ::pattern::... builder expression.
@@ -121,7 +158,7 @@ impl Rule {
         };
 
         // ── Build guard closure body (shared between orderings if commutative) ─
-        let guard_closure_body: Option<TokenStream> = self.where_guard.as_ref().map(|guard_expr| {
+        let guard_closure_body: Option<TokenStream> = where_guard.as_ref().map(|guard_expr| {
             let guard_bindings: Vec<TokenStream> = caps.bindings.iter()
                 .map(|(id, kind)| {
                     let v_ident = Ident::new(&format!("__v_{}", id), Span::call_site());
@@ -196,10 +233,10 @@ impl Rule {
         // patterns (one per operand ordering) and try them with `or_else`.
         // This ensures the guard sees each ordering and can accept/reject each.
         let match_ts = if let Some(guard_body) = &guard_closure_body {
-            if self.lhs.root_is_commutative() {
+            if lhs.root_is_commutative() {
                 // Two ordered patterns (stated and swapped), each with the guard.
-                let inner1 = emit_pat_builder(&self.lhs, &mut type_to_value, false);
-                let inner2 = emit_pat_builder(&self.lhs, &mut type_to_value, true);
+                let inner1 = emit_pat_builder(lhs, &mut type_to_value, false);
+                let inner2 = emit_pat_builder(lhs, &mut type_to_value, true);
                 quote! {
                     let __pat1: ::pattern::Pat = #inner1
                         .ordered()
@@ -217,7 +254,7 @@ impl Rule {
                 }
             } else {
                 // Single pattern with guard (non-commutative root).
-                let inner = emit_pat_builder(&self.lhs, &mut type_to_value, false);
+                let inner = emit_pat_builder(lhs, &mut type_to_value, false);
                 quote! {
                     let __pat: ::pattern::Pat = <::pattern::Pat>::from(#inner)
                         .capture(__v_root)
@@ -230,7 +267,7 @@ impl Rule {
             }
         } else {
             // No guard — single pattern, commutative ops auto-retry both orderings.
-            let inner = emit_pat_builder(&self.lhs, &mut type_to_value, false);
+            let inner = emit_pat_builder(lhs, &mut type_to_value, false);
             quote! {
                 let __pat: ::pattern::Pat = <::pattern::Pat>::from(#inner);
                 let __matched = {
@@ -297,7 +334,7 @@ impl Rule {
             .collect();
 
         // ── Emit RHS expression ───────────────────────────────────────────────
-        let rhs_ts = self.rhs.emit(&caps)?;
+        let rhs_ts = rhs.emit(&caps)?;
 
         Ok(quote! {
             #[allow(
