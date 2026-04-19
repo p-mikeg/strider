@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use std::io;
 
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use crate::node_signature::{SlotRole, expected_signature};
 
 /// Formats a signed SP-relative offset so that the sign is always shown
 /// (e.g. `0` → ` + 0`, `-4` → ` - 4`, `8` → ` + 8`).  Used by the StackStore
@@ -92,133 +93,37 @@ fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
 // ── edge appearance ───────────────────────────────────────────────────────────
 
+/// Color for a slot role on edge labels.
+fn role_color(role: SlotRole) -> &'static str {
+    match role {
+        SlotRole::Control => "\"#00cccc\"", // aqua
+        SlotRole::Memory => "\"#cc88aa\"",  // pink
+        SlotRole::Phi | SlotRole::In => "\"#dddddd\"", // white
+        SlotRole::Lhs => "\"#4488ff\"",     // blue
+        SlotRole::Rhs => "\"#ff4444\"",     // red
+        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
+        SlotRole::Addr | SlotRole::Sp | SlotRole::Off => "\"#cc88ff\"", // purple
+        SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
+        SlotRole::Target | SlotRole::Seg => "\"#ffdd44\"", // yellow
+        SlotRole::Cond => "\"#ff44ff\"",    // magenta
+    }
+}
+
 /// Returns `(label, color)` for the edge that delivers `output` as the
-/// `input_idx`-th input of `consumer`.
+/// `input_idx`-th input of `consumer`.  Labels and colours are driven by
+/// the consumer's [`Signature`]: the slot's `name` is the label and the
+/// slot's `role` selects the colour via [`role_color`].
 fn edge_style<R: MemReader>(
     dumper: &GraphDotDumper<'_, R>,
     consumer: NodeId,
     input_idx: usize,
-    output: NodeOutputId,
+    _output: NodeOutputId,
 ) -> (&'static str, &'static str) {
-    let out_kind = dumper.graph.output_kind(output);
-
-    // Non-value output kinds always use the same role regardless of position.
-    match out_kind {
-        NodeOutputKind::Control => return ("ctrl", "\"#00cccc\""), // aqua
-        NodeOutputKind::Memory => return ("mem", "\"#cc88aa\""),   // pink
-        NodeOutputKind::ControlPhi => return ("phi", "\"#dddddd\""), // white
-        NodeOutputKind::OutputType(_) => {}                        // fall through
-    }
-
-    // Value edges: colour/label depend on how the consumer uses this slot.
-    match dumper.graph.node_kind(consumer) {
-        NodeKind::IntBinaryOp(_)
-        | NodeKind::IntCmpOp(_)
-        | NodeKind::BoolBinaryOp(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatCmpOp(_) => match input_idx {
-            0 => ("lhs", "\"#4488ff\""), // blue
-            1 => ("rhs", "\"#ff4444\""), // red
-            _ => ("", "\"#cccccc\""),
-        },
-
-        NodeKind::IntUnaryOp(_)
-        | NodeKind::BoolUnaryOp(_)
-        | NodeKind::Extend(_)
-        | NodeKind::CastToBool
-        | NodeKind::CastToInt
-        | NodeKind::Truncate
-        | NodeKind::Popcount
-        | NodeKind::Lzcount
-        | NodeKind::FloatUnaryOp(_)
-        | NodeKind::IntToFloat
-        | NodeKind::FloatToInt
-        | NodeKind::FloatToFloat
-        | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt
-        | NodeKind::CastToFloat => ("val", "\"#88cc88\""), // green
-
-        NodeKind::Load(_) => match input_idx {
-            0 => ("mem", "\"#cc88aa\""),
-            1 => ("addr", "\"#cc88ff\""), // purple
-            _ => ("", "\"#cccccc\""),
-        },
-
-        NodeKind::Store(_) => match input_idx {
-            0 => ("mem", "\"#cc88aa\""),
-            1 => ("addr", "\"#cc88ff\""), // purple
-            2 => ("data", "\"#ff8800\""), // orange
-            _ => ("", "\"#cccccc\""),
-        },
-
-        // StackStore inputs = [memory, base, data].
-        NodeKind::StackStore { .. } => match input_idx {
-            0 => ("mem", "\"#cc88aa\""),
-            1 => ("sp", "\"#cc88ff\""),   // purple — SP base
-            2 => ("data", "\"#ff8800\""), // orange
-            _ => ("", "\"#cccccc\""),
-        },
-
-        // StackStorePhi inputs = [phi_token, memory, data].
-        NodeKind::StackStorePhi { .. } => match input_idx {
-            0 => ("phi", "\"#dddddd\""),
-            1 => ("mem", "\"#cc88aa\""),
-            2 => ("data", "\"#ff8800\""), // orange
-            _ => ("", "\"#cccccc\""),
-        },
-
-        NodeKind::Call => match input_idx {
-            0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem", "\"#cc88aa\""),
-            2 => ("target", "\"#ffdd44\""), // yellow
-            _ => ("arg", "\"#ff8800\""),    // orange
-        },
-
-        // CallOther inputs = [ctrl, memory, arg0, arg1, …]
-        NodeKind::CallOther { .. } => match input_idx {
-            0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem", "\"#cc88aa\""),
-            _ => ("arg", "\"#ff8800\""),
-        },
-
-        // SegmentOp inputs = [segment, offset]
-        NodeKind::SegmentOp { .. } => match input_idx {
-            0 => ("seg", "\"#ffdd44\""), // yellow — segment selector
-            1 => ("off", "\"#cc88ff\""), // purple — offset
-            _ => ("", "\"#cccccc\""),
-        },
-
-        // CPoolRef / New inputs are opaque references; label them by index.
-        NodeKind::CPoolRef | NodeKind::New => ("ref", "\"#ff8800\""),
-
-        NodeKind::If => match input_idx {
-            0 => ("ctrl", "\"#00cccc\""),
-            1 => ("cond", "\"#ff44ff\""), // magenta
-            _ => ("", "\"#cccccc\""),
-        },
-
-        NodeKind::Return => match input_idx {
-            0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem", "\"#cc88aa\""),
-            2 => ("val", "\"#88cc88\""),
-            _ => ("", "\"#cccccc\""),
-        },
-
-        NodeKind::ControlState => ("ctrl", "\"#00cccc\""),
-
-        // ControlPhi value inputs (inputs[1+]) have NodeOutputKind::OutputType
-        // and fall through here.  MemPhi inputs are all either ControlPhi-dispatch
-        // (kind=ControlPhi, handled above) or Memory (kind=Memory, handled above),
-        // so MemPhi never reaches this arm.
-        NodeKind::ControlPhi(_) => ("in", "\"#dddddd\""),
-
-        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => match input_idx {
-            0 => ("ctrl", "\"#00cccc\""),
-            1 => ("mem", "\"#cc88aa\""),
-            _ => ("", "\"#cccccc\""),
-        },
-
-        _ => ("", "\"#cccccc\""),
+    let kind = dumper.graph.node_kind(consumer);
+    let sig = expected_signature(kind);
+    match sig.inputs.at(input_idx) {
+        Some(slot) => (slot.name, role_color(slot.role)),
+        None => ("", "\"#cccccc\""),
     }
 }
 
