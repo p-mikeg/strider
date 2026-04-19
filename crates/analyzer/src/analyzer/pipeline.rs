@@ -1,0 +1,154 @@
+use crate::error::{ErrorKind, Result};
+
+use super::IrAnalyzer;
+
+/// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
+/// function graph.
+///
+/// Holds the target architecture description and the resolved calling
+/// convention.  Create one `Analyzer` per architecture/ABI combination and
+/// reuse it to analyse multiple functions.
+pub struct Analyzer {
+    pub(super) calling_convention: crate::calling_convention::BuiltCallingConvention,
+    pub(super) arch: crate::SleighArch,
+}
+
+impl Analyzer {
+    /// Creates a new `Analyzer` for `arch` with the given Sleigh register list
+    /// and calling convention.
+    ///
+    /// Resolves all register names in `calling_convention` against
+    /// `sleigh_regs`.  Returns an error if any name is unknown.
+    pub fn new(
+        arch: crate::SleighArch,
+        sleigh_regs: rsleigh::SleighRegs,
+        calling_convention: crate::CallingConvention,
+    ) -> Result<Self> {
+        let built_calling_convention = calling_convention.build(&sleigh_regs)?;
+        Ok(Self {
+            arch,
+            calling_convention: built_calling_convention,
+        })
+    }
+
+    /// Returns the resolved calling convention this analyzer was built with.
+    pub fn calling_convention(&self) -> &crate::calling_convention::BuiltCallingConvention {
+        &self.calling_convention
+    }
+
+    /// Builds an optimizer pipeline containing the default passes plus the
+    /// convention-aware stack-argument passes:
+    ///
+    /// 1. All passes from [`opt::default_pipeline`] (constant folding,
+    ///    known-bits, redundant-phi, dead-branch).
+    /// 2. [`opt::StackStoreDetect`] inside the fixed-point loop, using the
+    ///    convention's stack-pointer varnode.
+    /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after
+    ///    convergence), using the convention's positional stack-arg offsets.
+    pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
+        let mut p = opt::default_pipeline();
+        p.add(opt::StackStoreDetect::new(
+            self.calling_convention.stack_ptr_vn,
+        ));
+        p.add_post_pass(opt::CallStackArgCollect::new(
+            self.calling_convention.stack_arg_offsets.clone(),
+        ));
+        p
+    }
+
+    /// Collects the set of all distinct varnodes referenced by any instruction
+    /// across all regions of `cfg`.
+    ///
+    /// The result is used to pre-declare every variable the IR builder must
+    /// track.
+    pub(super) fn find_all_unique_vns<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+    ) -> Vec<rsleigh::Vn> {
+        let mut all_vns: std::collections::HashSet<rsleigh::Vn> = std::collections::HashSet::new();
+        for region in cfg.regions() {
+            for wrapped in region.insns.iter() {
+                for vn in wrapped.insn.all_vns() {
+                    all_vns.insert(vn);
+                }
+            }
+        }
+        all_vns.iter().copied().collect()
+    }
+
+    /// Translates a complete control-flow graph into an [`ir::BuiltFunctionGraph`].
+    ///
+    /// The pipeline:
+    /// 1. Build the function entry node.
+    /// 2. Map the CFG graph: each node stores `Option<ir::RegionId>` (None first,
+    ///    then filled in fallibly via `node_weight_mut`).
+    /// 3. Set the entry region.
+    /// 4. Translate instructions in each region, resolving branch targets via
+    ///    the mapped graph.
+    /// 5. Link fallthrough edges by iterating `cfg_ir_graph`'s edges.
+    pub fn analyze_cfg<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+    ) -> Result<ir::BuiltFunctionGraph> {
+        let mut ir_analyzer = IrAnalyzer::new(self, cfg)?;
+
+        ir_analyzer.build_entry()?;
+
+        // Step 1: create the structural clone of the CFG graph with None placeholders.
+        // The map closure is infallible; IR region creation happens below.
+        let mut cfg_ir_graph = cfg.graph.map(|_, _| None::<ir::RegionId>, |_, e| *e);
+
+        // Step 2: fill in IR regions (fallible).
+        for region_id in cfg.region_ids() {
+            let ir_region = ir_analyzer.builder.create_region()?;
+            *cfg_ir_graph
+                .node_weight_mut(region_id)
+                .ok_or(ErrorKind::CfgNoRegion(region_id))? = Some(ir_region);
+        }
+
+        // Helper closure: map a CFG region id to its IR region id via the graph.
+        let ir_region_of = |region_id: cfg::RegionId| -> Result<ir::RegionId> {
+            cfg_ir_graph
+                .node_weight(region_id)
+                .copied()
+                .flatten()
+                .ok_or_else(|| ErrorKind::CfgNoRegion(region_id).into())
+        };
+
+        // Set entry region.
+        ir_analyzer
+            .builder
+            .set_entry_region(ir_region_of(cfg.entry)?)?;
+
+        // Translate instructions for each region.
+        for node_idx in cfg_ir_graph.node_indices() {
+            let ir_region = ir_region_of(node_idx)?;
+            ir_analyzer.builder.set_region(ir_region);
+            let region = cfg
+                .graph
+                .node_weight(node_idx)
+                .ok_or(ErrorKind::CfgNoRegion(node_idx))?;
+            for wrapped_insn in &region.insns {
+                ir_analyzer.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
+            }
+        }
+
+        // Link fallthrough edges by inspecting cfg_ir_graph's edges directly.
+        for edge_idx in cfg_ir_graph.edge_indices() {
+            let Some(weight) = cfg_ir_graph.edge_weight(edge_idx) else {
+                continue;
+            };
+            if *weight != cfg::RegionEdgeKind::Fallthrough {
+                continue;
+            }
+            let Some((src, tgt)) = cfg_ir_graph.edge_endpoints(edge_idx) else {
+                continue;
+            };
+            ir_analyzer
+                .builder
+                .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+        }
+
+        Ok(ir_analyzer.builder.build()?)
+    }
+}
