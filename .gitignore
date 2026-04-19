@@ -1,2 +1,9 @@
 /target
 binary_tests/out
+
+# Analyzer example output (cfg.dot/html, graph.dot/html, graph-opt.dot/html)
+/*.dot
+/*.html
+
+# Stray rlib artifacts from out-of-tree test builds
+/*.rlib
