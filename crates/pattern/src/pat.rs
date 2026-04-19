@@ -556,482 +556,159 @@ impl From<FloatBinaryOpPat> for Pat {
 
 // ── Builder: LoadPat ──────────────────────────────────────────────────────────
 
-/// Builder for `Load` node patterns.  Created by [`load`].
-pub struct LoadPat {
-    space: Option<rsleigh::VnSpace>,
-    addr: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
-}
-
-impl LoadPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            space: None,
-            addr: None,
-            output_var: None,
-            node_var: None,
-        }
-    }
-
-    /// Restrict the match to loads in address space `s`.
-    pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.space = Some(s);
-        self
-    }
-    /// Constrain the load's address operand.
-    pub fn addr(mut self, p: impl Into<Pat>) -> Self {
-        self.addr = Some(p.into());
-        self
-    }
-    /// Bind the load's value output (`NodeOutputId`) to `v`.
-    pub fn capture_output(mut self, v: Var) -> Self {
-        self.output_var = Some(v);
-        self
-    }
-    /// Bind the load's node (`NodeId`) to `nv`.
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<LoadPat> for Pat {
-    fn from(b: LoadPat) -> Pat {
-        Pat::new(PatKind::Load {
-            space: b.space,
-            addr: b.addr,
-            output_var: b.output_var,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `Load` node patterns.  Created by [`load`].
+    pub struct LoadPat => PatKind::Load {
+        /// Restrict the match to loads in address space `s`.
+        opt space: rsleigh::VnSpace;
+        /// Constrain the load's address operand.
+        pat addr;
+        /// Bind the load's value output (`NodeOutputId`) to `v`.
+        opt output_var: Var as capture_output;
+        /// Bind the load's node (`NodeId`) to `nv`.
+        opt node_var: NodeVar as capture_node;
     }
 }
 
 // ── Builder: StorePat ─────────────────────────────────────────────────────────
 
-/// Builder for `Store` node patterns.  Created by [`store`].
-pub struct StorePat {
-    space: Option<rsleigh::VnSpace>,
-    addr: Option<Pat>,
-    data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
-}
-
-impl StorePat {
-    pub(crate) fn new() -> Self {
-        Self {
-            space: None,
-            addr: None,
-            data: None,
-            output_var: None,
-            node_var: None,
-        }
-    }
-
-    /// Restrict the match to stores in address space `s`.
-    pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.space = Some(s);
-        self
-    }
-    /// Constrain the store's address operand.
-    pub fn addr(mut self, p: impl Into<Pat>) -> Self {
-        self.addr = Some(p.into());
-        self
-    }
-    /// Constrain the value being stored.
-    pub fn data(mut self, p: impl Into<Pat>) -> Self {
-        self.data = Some(p.into());
-        self
-    }
-    /// Bind the store's memory output (`NodeOutputId`) to `v`.
-    pub fn capture_output(mut self, v: Var) -> Self {
-        self.output_var = Some(v);
-        self
-    }
-    /// Bind the store's node (`NodeId`) to `nv`.
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<StorePat> for Pat {
-    fn from(b: StorePat) -> Pat {
-        Pat::new(PatKind::Store {
-            space: b.space,
-            addr: b.addr,
-            data: b.data,
-            output_var: b.output_var,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `Store` node patterns.  Created by [`store`].
+    pub struct StorePat => PatKind::Store {
+        /// Restrict the match to stores in address space `s`.
+        opt space: rsleigh::VnSpace;
+        /// Constrain the store's address operand.
+        pat addr;
+        /// Constrain the value being stored.
+        pat data;
+        /// Bind the store's memory output (`NodeOutputId`) to `v`.
+        opt output_var: Var as capture_output;
+        /// Bind the store's node (`NodeId`) to `nv`.
+        opt node_var: NodeVar as capture_node;
     }
 }
 
 // ── Builder: StackStorePat ────────────────────────────────────────────────────
 
-/// Builder for `StackStore` node patterns.  Created by [`stack_store`].
-pub struct StackStorePat {
-    space: Option<rsleigh::VnSpace>,
-    offset: Option<i64>,
-    data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
-}
-
-impl StackStorePat {
-    pub(crate) fn new() -> Self {
-        Self {
-            space: None,
-            offset: None,
-            data: None,
-            output_var: None,
-            node_var: None,
-        }
-    }
-
-    /// Restrict the match to stack-stores in address space `s`.
-    pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.space = Some(s);
-        self
-    }
-    /// Match only the stack-store at the given SP-relative offset.
-    pub fn offset(mut self, o: i64) -> Self {
-        self.offset = Some(o);
-        self
-    }
-    /// Constrain the stored value.
-    pub fn data(mut self, p: impl Into<Pat>) -> Self {
-        self.data = Some(p.into());
-        self
-    }
-    /// Bind the stack-store's memory output (`NodeOutputId`) to `v`.
-    pub fn capture_output(mut self, v: Var) -> Self {
-        self.output_var = Some(v);
-        self
-    }
-    /// Bind the stack-store's node (`NodeId`) to `nv`.
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<StackStorePat> for Pat {
-    fn from(b: StackStorePat) -> Pat {
-        Pat::new(PatKind::StackStore {
-            space: b.space,
-            offset: b.offset,
-            data: b.data,
-            output_var: b.output_var,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `StackStore` node patterns.  Created by [`stack_store`].
+    pub struct StackStorePat => PatKind::StackStore {
+        /// Restrict the match to stack-stores in address space `s`.
+        opt space: rsleigh::VnSpace;
+        /// Match only the stack-store at the given SP-relative offset.
+        opt offset: i64;
+        /// Constrain the stored value.
+        pat data;
+        /// Bind the stack-store's memory output (`NodeOutputId`) to `v`.
+        opt output_var: Var as capture_output;
+        /// Bind the stack-store's node (`NodeId`) to `nv`.
+        opt node_var: NodeVar as capture_node;
     }
 }
 
 // ── Builder: StackStorePhiPat ─────────────────────────────────────────────────
 
-/// Builder for `StackStorePhi` node patterns.  Created by [`stack_store_phi`].
-pub struct StackStorePhiPat {
-    space: Option<rsleigh::VnSpace>,
-    offsets: Option<Vec<i64>>,
-    data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
-}
-
-impl StackStorePhiPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            space: None,
-            offsets: None,
-            data: None,
-            output_var: None,
-            node_var: None,
+define_pat_builder! {
+    /// Builder for `StackStorePhi` node patterns.  Created by [`stack_store_phi`].
+    pub struct StackStorePhiPat => PatKind::StackStorePhi {
+        opt space: rsleigh::VnSpace;
+        opt_field offsets: Vec<i64>;
+        pat data;
+        opt output_var: Var as capture_output;
+        opt node_var: NodeVar as capture_node;
+    }
+    extra {
+        /// Match the per-branch offsets exactly.  The supplied list is sorted
+        /// ascending before comparison, so caller order is irrelevant.
+        pub fn offsets<I: IntoIterator<Item = i64>>(mut self, os: I) -> Self {
+            let mut v: Vec<i64> = os.into_iter().collect();
+            v.sort();
+            self.offsets = Some(v);
+            self
         }
-    }
-
-    pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.space = Some(s);
-        self
-    }
-    /// Match the per-branch offsets exactly.  The supplied list is sorted
-    /// ascending before comparison, so caller order is irrelevant.
-    pub fn offsets<I: IntoIterator<Item = i64>>(mut self, os: I) -> Self {
-        let mut v: Vec<i64> = os.into_iter().collect();
-        v.sort();
-        self.offsets = Some(v);
-        self
-    }
-    pub fn data(mut self, p: impl Into<Pat>) -> Self {
-        self.data = Some(p.into());
-        self
-    }
-    pub fn capture_output(mut self, v: Var) -> Self {
-        self.output_var = Some(v);
-        self
-    }
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<StackStorePhiPat> for Pat {
-    fn from(b: StackStorePhiPat) -> Pat {
-        Pat::new(PatKind::StackStorePhi {
-            space: b.space,
-            offsets: b.offsets,
-            data: b.data,
-            output_var: b.output_var,
-            node_var: b.node_var,
-        })
     }
 }
 
 // ── Builder: PhiPat ──────────────────────────────────────────────────────────
 
-/// Builder for `ControlPhi` node patterns.  Created by [`phi`] or [`phi_for`].
-pub struct PhiPat {
-    vn: Option<rsleigh::Vn>,
-    inputs: Vec<(usize, Pat)>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
-}
+use crate::pat_macros::define_pat_builder;
 
-impl PhiPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            vn: None,
-            inputs: Vec::new(),
-            output_var: None,
-            node_var: None,
-        }
-    }
-
-    /// Restrict the match to phi nodes for varnode `vn`.
-    pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
-        self.vn = Some(vn);
-        self
-    }
-    /// Constrain the value arriving from predecessor slot `idx`.
-    pub fn input(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.inputs.push((idx, p.into()));
-        self
-    }
-    /// Bind the phi's output (`NodeOutputId`) to `v`.
-    pub fn capture_output(mut self, v: Var) -> Self {
-        self.output_var = Some(v);
-        self
-    }
-    /// Bind the phi's `NodeId` to `nv`.
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<PhiPat> for Pat {
-    fn from(b: PhiPat) -> Pat {
-        Pat::new(PatKind::Phi {
-            vn: b.vn,
-            inputs: b.inputs,
-            output_var: b.output_var,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `ControlPhi` node patterns.  Created by [`phi`] or [`phi_for`].
+    pub struct PhiPat => PatKind::Phi {
+        /// Restrict the match to phi nodes for varnode `vn`.
+        opt vn: rsleigh::Vn as for_vn;
+        /// Constrain the value arriving from predecessor slot `idx`.
+        vec_pat inputs push input;
+        /// Bind the phi's output (`NodeOutputId`) to `v`.
+        opt output_var: Var as capture_output;
+        /// Bind the phi's `NodeId` to `nv`.
+        opt node_var: NodeVar as capture_node;
     }
 }
 
 // ── Builder: CallPat ──────────────────────────────────────────────────────────
 
-/// Builder for `Call` node patterns.  Created by [`call`].
-pub struct CallPat {
-    target: Option<Pat>,
-    args: Vec<(usize, Pat)>,
-    node_var: Option<NodeVar>,
-}
-
-impl CallPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            target: None,
-            args: Vec::new(),
-            node_var: None,
+define_pat_builder! {
+    /// Builder for `Call` node patterns.  Created by [`call`].
+    pub struct CallPat => PatKind::Call {
+        /// Constrain the call target with an arbitrary pattern.
+        pat target;
+        /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
+        vec_pat args push arg;
+        /// Bind the matched `Call` node to `nv`.
+        opt node_var: NodeVar as capture;
+    }
+    extra {
+        /// Constrain the call target to the literal address `addr`.
+        pub fn at(self, addr: u64) -> Self {
+            self.target(Pat::new(PatKind::IntConst(addr)))
         }
-    }
-
-    /// Constrain the call target to the literal address `addr`.
-    pub fn at(self, addr: u64) -> Self {
-        self.target(Pat::new(PatKind::IntConst(addr)))
-    }
-    /// Constrain the call target with an arbitrary pattern.
-    pub fn target(mut self, p: impl Into<Pat>) -> Self {
-        self.target = Some(p.into());
-        self
-    }
-    /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
-    pub fn arg(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.args.push((idx, p.into()));
-        self
-    }
-    /// Bind the matched `Call` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<CallPat> for Pat {
-    fn from(b: CallPat) -> Pat {
-        Pat::new(PatKind::Call {
-            target: b.target,
-            args: b.args,
-            node_var: b.node_var,
-        })
     }
 }
 
 // ── Builder: CallOtherPat ─────────────────────────────────────────────────────
 
-/// Builder for `CallOther` node patterns.  Created by [`call_other`].
-pub struct CallOtherPat {
-    user_op_id: Option<u64>,
-    args: Vec<(usize, Pat)>,
-    node_var: Option<NodeVar>,
-}
-
-impl CallOtherPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            user_op_id: None,
-            args: Vec::new(),
-            node_var: None,
-        }
-    }
-
-    /// Constrain the matched node to a specific user-op id.
-    pub fn user_op_id(mut self, id: u64) -> Self {
-        self.user_op_id = Some(id);
-        self
-    }
-    /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
-    pub fn arg(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.args.push((idx, p.into()));
-        self
-    }
-    /// Bind the matched `CallOther` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<CallOtherPat> for Pat {
-    fn from(b: CallOtherPat) -> Pat {
-        Pat::new(PatKind::CallOther {
-            user_op_id: b.user_op_id,
-            args: b.args,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `CallOther` node patterns.  Created by [`call_other`].
+    pub struct CallOtherPat => PatKind::CallOther {
+        /// Constrain the matched node to a specific user-op id.
+        opt user_op_id: u64;
+        /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
+        vec_pat args push arg;
+        /// Bind the matched `CallOther` node to `nv`.
+        opt node_var: NodeVar as capture;
     }
 }
 
 // ── Builder: RetPat ───────────────────────────────────────────────────────────
 
-/// Builder for `Return` node patterns.  Created by [`ret`].
-pub struct RetPat {
-    preceded_by: Option<Pat>,
-    ret_vals: Vec<(usize, Pat)>,
-    node_var: Option<NodeVar>,
-}
-
-impl RetPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            preceded_by: None,
-            ret_vals: Vec::new(),
-            node_var: None,
-        }
-    }
-
-    /// Require that the return is preceded by a call matching `call` somewhere
-    /// earlier on the same control path (backward walk).
-    pub fn preceded_by(mut self, call: impl Into<Pat>) -> Self {
-        self.preceded_by = Some(call.into());
-        self
-    }
-    /// Constrain return value at position `idx` (0-based after the ctrl input).
-    pub fn ret_val(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.ret_vals.push((idx, p.into()));
-        self
-    }
-    /// Bind the matched `Return` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<RetPat> for Pat {
-    fn from(b: RetPat) -> Pat {
-        Pat::new(PatKind::Return {
-            preceded_by: b.preceded_by,
-            ret_vals: b.ret_vals,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `Return` node patterns.  Created by [`ret`].
+    pub struct RetPat => PatKind::Return {
+        /// Require that the return is preceded by a call matching `call` somewhere
+        /// earlier on the same control path (backward walk).
+        pat preceded_by;
+        /// Constrain return value at position `idx` (0-based after the ctrl input).
+        vec_pat ret_vals push ret_val;
+        /// Bind the matched `Return` node to `nv`.
+        opt node_var: NodeVar as capture;
     }
 }
 
 // ── Builder: IfPat ────────────────────────────────────────────────────────────
 
-/// Builder for `If` node patterns.  Created by [`if_node`].
-pub struct IfPat {
-    cond: Option<Pat>,
-    true_branch: Option<Pat>,
-    false_branch: Option<Pat>,
-    node_var: Option<NodeVar>,
-}
-
-impl IfPat {
-    pub(crate) fn new() -> Self {
-        Self {
-            cond: None,
-            true_branch: None,
-            false_branch: None,
-            node_var: None,
-        }
-    }
-
-    /// Constrain the branch condition.
-    pub fn cond(mut self, p: impl Into<Pat>) -> Self {
-        self.cond = Some(p.into());
-        self
-    }
-    /// Require a node matching `p` to be reachable on the true branch (forward search).
-    pub fn true_branch(mut self, p: impl Into<Pat>) -> Self {
-        self.true_branch = Some(p.into());
-        self
-    }
-    /// Require a node matching `p` to be reachable on the false branch (forward search).
-    pub fn false_branch(mut self, p: impl Into<Pat>) -> Self {
-        self.false_branch = Some(p.into());
-        self
-    }
-    /// Bind the matched `If` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
-}
-
-impl From<IfPat> for Pat {
-    fn from(b: IfPat) -> Pat {
-        Pat::new(PatKind::If {
-            cond: b.cond,
-            true_branch: b.true_branch,
-            false_branch: b.false_branch,
-            node_var: b.node_var,
-        })
+define_pat_builder! {
+    /// Builder for `If` node patterns.  Created by [`if_node`].
+    pub struct IfPat => PatKind::If {
+        /// Constrain the branch condition.
+        pat cond;
+        /// Require a node matching `p` to be reachable on the true branch (forward search).
+        pat true_branch;
+        /// Require a node matching `p` to be reachable on the false branch (forward search).
+        pat false_branch;
+        /// Bind the matched `If` node to `nv`.
+        opt node_var: NodeVar as capture;
     }
 }
 

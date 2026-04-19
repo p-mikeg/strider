@@ -65,6 +65,7 @@ pub use error::{Error, ErrorKind, Result};
 
 mod matcher;
 mod pat;
+mod pat_macros;
 mod var;
 
 pub use build::{
