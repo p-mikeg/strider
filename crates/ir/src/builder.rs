@@ -53,6 +53,16 @@ impl FunctionBuilder {
         &mut self.function.graph
     }
 
+    fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {
+        for &v in inputs {
+            let kind = self.graph().output_kind(v);
+            if !kind.is_value() {
+                return Err(ErrorKind::ExpectedValue(v, kind).into());
+            }
+        }
+        Ok(())
+    }
+
     /// Creates a new [`FunctionBuilder`] with the given variable set and
     /// calling-convention registers.
     ///
@@ -758,12 +768,7 @@ impl FunctionBuilder {
         if !ctrl_kind.is_control() {
             return Err(ErrorKind::ExpectedControl(res.control, ctrl_kind).into());
         }
-        for &v in &ret_inputs {
-            let kind = self.graph().output_kind(v);
-            if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(v, kind).into());
-            }
-        }
+        self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
             NodeKind::Return,
@@ -848,12 +853,7 @@ impl FunctionBuilder {
             .map(|v| self.graph().output_kind(*v))
             .collect();
 
-        for &v in &arg_passing {
-            let kind = self.graph().output_kind(v);
-            if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(v, kind).into());
-            }
-        }
+        self.validate_value_inputs(&arg_passing)?;
         for k in &cloberred_kinds {
             if !k.is_value() {
                 return Err(ErrorKind::ExpectedValue(NodeOutputId::default(), *k).into());
@@ -895,12 +895,7 @@ impl FunctionBuilder {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
-        for &v in args {
-            let kind = self.graph().output_kind(v);
-            if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(v, kind).into());
-            }
-        }
+        self.validate_value_inputs(args)?;
 
         let mut output_kinds: SmallVec<[NodeOutputKind; 3]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
@@ -950,12 +945,7 @@ impl FunctionBuilder {
         refs: &[NodeOutputId],
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        for &r in refs {
-            let kind = self.graph().output_kind(r);
-            if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(r, kind).into());
-            }
-        }
+        self.validate_value_inputs(refs)?;
         let node = self.create_node(
             NodeKind::CPoolRef,
             refs.iter().copied(),
@@ -972,12 +962,7 @@ impl FunctionBuilder {
         args: &[NodeOutputId],
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        for &a in args {
-            let kind = self.graph().output_kind(a);
-            if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(a, kind).into());
-            }
-        }
+        self.validate_value_inputs(args)?;
         let node = self.create_node(
             NodeKind::New,
             args.iter().copied(),
