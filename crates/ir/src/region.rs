@@ -46,6 +46,26 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
+    /// Returns `Ok(())` if `output` has `Control` kind; otherwise
+    /// `Err(ExpectedControl)`.
+    fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
+        let kind = self.graph().output_kind(output);
+        if !kind.is_control() {
+            return Err(ErrorKind::ExpectedControl(output, kind).into());
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise
+    /// `Err(ExpectedMemory)`.
+    fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
+        let kind = self.graph().output_kind(output);
+        if !kind.is_memory() {
+            return Err(ErrorKind::ExpectedMemory(output, kind).into());
+        }
+        Ok(())
+    }
+
     /// Returns the id of the current region, or an error if no region is set
     /// or if the region has already been terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
@@ -68,10 +88,7 @@ impl FunctionBuilder {
 
     /// Advances the control edge of the active region to `ctrl`.
     pub(crate) fn advance_cur_region_ctrl(&mut self, ctrl: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(ctrl);
-        if !kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(ctrl, kind).into());
-        }
+        self.require_control_kind(ctrl)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_ctrl = ctrl;
         Ok(())
@@ -79,10 +96,7 @@ impl FunctionBuilder {
 
     /// Advances the memory token of the active region to `memory`.
     pub(crate) fn advance_cur_region_memory(&mut self, memory: NodeOutputId) -> Result<()> {
-        let kind = self.graph().output_kind(memory);
-        if !kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(memory, kind).into());
-        }
+        self.require_memory_kind(memory)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
         Ok(())
@@ -134,14 +148,8 @@ impl FunctionBuilder {
         memory_id: NodeOutputId,
         initial_variables: SecondaryMap<VarId, NodeOutputId>,
     ) -> Result<RegionId> {
-        let memory_kind = self.graph().output_kind(memory_id);
-        if !memory_kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(memory_id, memory_kind).into());
-        }
-        let control_kind = self.graph().output_kind(control_id);
-        if !control_kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(control_id, control_kind).into());
-        }
+        self.require_memory_kind(memory_id)?;
+        self.require_control_kind(control_id)?;
         Ok(self.regions.push(Region {
             terminated: false,
             control_node,
@@ -172,10 +180,7 @@ impl FunctionBuilder {
         region: RegionId,
         control: NodeOutputId,
     ) -> Result<()> {
-        let kind = self.graph().output_kind(control);
-        if !kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(control, kind).into());
-        }
+        self.require_control_kind(control)?;
         let control_node = self.regions[region].control_node;
         self.graph_mut().add_node_input(control_node, control)
     }
@@ -186,10 +191,7 @@ impl FunctionBuilder {
         region: RegionId,
         memory: NodeOutputId,
     ) -> Result<()> {
-        let kind = self.graph().output_kind(memory);
-        if !kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(memory, kind).into());
-        }
+        self.require_memory_kind(memory)?;
         let memory_node = self.regions[region].memory_node;
         self.graph_mut().add_node_input(memory_node, memory)
     }
