@@ -1,0 +1,87 @@
+use super::FunctionBuilder;
+use crate::error::{ErrorKind, Result};
+use crate::node::{NodeKind, NodeOutputId, NodeOutputKind};
+use crate::region::RegionId;
+use cranelift_entity::SecondaryMap;
+
+impl FunctionBuilder {
+    /// Returns the current `NodeOutputId` for `var` in the active region, or
+    /// `None` if the variable is not known.
+    pub fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
+        if let Some(variable_id) = self.variable_to_id.get(var) {
+            Ok(Some(self.read_variable_from_id(*variable_id)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns the current `NodeOutputId` for `variable` in the active region.
+    ///
+    /// Returns an error if the variable is not tracked or no region is active.
+    pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<NodeOutputId> {
+        let &id = self
+            .variable_to_id
+            .get(variable)
+            .ok_or(ErrorKind::VariableNotFound(*variable))?;
+        self.read_variable_from_id(id)
+    }
+
+    /// Writes `value` to `variable` in the active region.
+    pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: NodeOutputId) -> Result<()> {
+        let var_id = *self
+            .variable_to_id
+            .get(variable)
+            .ok_or(ErrorKind::VariableNotFound(*variable))?;
+        self.write_variable_from_id(var_id, value)
+    }
+
+    /// Wires `region_id` as the function entry: connects the entry control
+    /// and memory edges and creates initial variable nodes for every tracked
+    /// variable.
+    pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
+        let entry_control = self.body().entry_control;
+        let entry_memory = self.body().entry_memory;
+        self.link_control_regions(region_id, entry_control)?;
+        self.link_memory_regions(region_id, entry_memory)?;
+
+        // Create initial variables
+        let var_ids: Vec<_> = self.variables.keys().collect();
+        let mut initial_variables = SecondaryMap::new();
+        for var_id in var_ids {
+            let var = self.variables[var_id];
+            let output_type = var.size.try_into()?;
+            initial_variables[var_id] =
+                self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
+        }
+        self.link_region_variables(region_id, &initial_variables)
+    }
+
+    /// Creates a new region in the graph with fresh `ControlState`,
+    /// `MemPhi`, and per-variable `ControlPhi` nodes.
+    pub fn create_region(&mut self) -> Result<RegionId> {
+        let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
+        let [memory] = self.graph().node_outputs_exact(memory_node)?;
+
+        let control_node = self.create_node(
+            NodeKind::ControlState,
+            [],
+            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        );
+        let [control, phi_token] = self.graph().node_outputs_exact(control_node)?;
+
+        // Wire the ControlPhi dispatch token as MemPhi.inputs[0], mirroring how
+        // ControlPhi nodes are linked.  This gives MemPhi a direct back-reference to
+        // its ControlState so that dead-branch elimination and redundant-phi removal
+        // can treat MemPhi and ControlPhi identically (same positional logic, same
+        // automatic discovery via output_uses(cs_phi_out)).
+        self.graph_mut().add_node_input(memory_node, phi_token)?;
+
+        let var_ids: Vec<_> = self.variables.keys().collect();
+        let mut variables = SecondaryMap::new();
+        for var_id in var_ids {
+            let var = self.variables[var_id];
+            variables[var_id] = self.build_control_phi(var, phi_token, &[])?;
+        }
+        self.create_region_helper(control_node, control, memory_node, memory, variables)
+    }
+}
