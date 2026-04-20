@@ -27,6 +27,9 @@ use super::Matcher;
 use super::bindings::Bindings;
 use crate::pat::{Pat, PatKind};
 
+// `bool_` (trailing underscore) because `bool` is a Rust primitive type
+// and reusing it as a module name requires `mod r#bool;` / `r#bool::…` at
+// every call site, which is uglier than the suffix.
 mod bool_;
 mod casts;
 mod constants;
