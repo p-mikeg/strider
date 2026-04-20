@@ -18,119 +18,35 @@ use crate::var::{
 
 use super::{BuildCtx, FromCtx};
 
-impl FromCtx for Var {
-    type Output = NodeOutputId;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("Var").into())
-    }
+/// Generate a [`FromCtx`] impl for a capture-variable type.
+///
+/// `$var` is the capture-variable type, `$out` is its `Output` associated
+/// type (may be a tuple), `$getter` is the `Bindings` method used to look
+/// up the binding, and `$tag` is the string tag for the
+/// [`ErrorKind::MissingBinding`] error.
+macro_rules! impl_from_ctx {
+    ($var:ty, $out:ty, $getter:ident, $tag:literal) => {
+        impl FromCtx for $var {
+            type Output = $out;
+            fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
+                ctx.bindings
+                    .$getter(*self)
+                    .ok_or_else(|| ErrorKind::MissingBinding($tag).into())
+            }
+        }
+    };
 }
 
-impl FromCtx for NodeVar {
-    type Output = NodeId;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_node(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("NodeVar").into())
-    }
-}
-
-impl FromCtx for IntVar {
-    type Output = u64;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_int(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("IntVar").into())
-    }
-}
-
-impl FromCtx for BoolVar {
-    type Output = bool;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_bool(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("BoolVar").into())
-    }
-}
-
-impl FromCtx for FloatVar {
-    type Output = u64;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_float_bits(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("FloatVar").into())
-    }
-}
-
-impl FromCtx for IntBinaryOpVar {
-    type Output = IntBinaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_int_binary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("IntBinaryOpVar").into())
-    }
-}
-
-impl FromCtx for IntUnaryOpVar {
-    type Output = IntUnaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_int_unary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("IntUnaryOpVar").into())
-    }
-}
-
-impl FromCtx for IntCmpOpVar {
-    type Output = IntCmpOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_int_cmp_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("IntCmpOpVar").into())
-    }
-}
-
-impl FromCtx for BoolBinaryOpVar {
-    type Output = BoolBinaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_bool_binary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("BoolBinaryOpVar").into())
-    }
-}
-
-impl FromCtx for BoolUnaryOpVar {
-    type Output = BoolUnaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_bool_unary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("BoolUnaryOpVar").into())
-    }
-}
-
-impl FromCtx for FloatBinaryOpVar {
-    type Output = FloatBinaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_float_binary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("FloatBinaryOpVar").into())
-    }
-}
-
-impl FromCtx for FloatUnaryOpVar {
-    type Output = FloatUnaryOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_float_unary_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("FloatUnaryOpVar").into())
-    }
-}
-
-impl FromCtx for FloatCmpOpVar {
-    type Output = FloatCmpOp;
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-        ctx.bindings
-            .get_float_cmp_op(*self)
-            .ok_or_else(|| ErrorKind::MissingBinding("FloatCmpOpVar").into())
-    }
-}
+impl_from_ctx!(Var, NodeOutputId, get, "Var");
+impl_from_ctx!(NodeVar, NodeId, get_node, "NodeVar");
+impl_from_ctx!(IntVar, u64, get_int, "IntVar");
+impl_from_ctx!(BoolVar, bool, get_bool, "BoolVar");
+impl_from_ctx!(FloatVar, u64, get_float_bits, "FloatVar");
+impl_from_ctx!(IntBinaryOpVar, IntBinaryOp, get_int_binary_op, "IntBinaryOpVar");
+impl_from_ctx!(IntUnaryOpVar, IntUnaryOp, get_int_unary_op, "IntUnaryOpVar");
+impl_from_ctx!(IntCmpOpVar, IntCmpOp, get_int_cmp_op, "IntCmpOpVar");
+impl_from_ctx!(BoolBinaryOpVar, BoolBinaryOp, get_bool_binary_op, "BoolBinaryOpVar");
+impl_from_ctx!(BoolUnaryOpVar, BoolUnaryOp, get_bool_unary_op, "BoolUnaryOpVar");
+impl_from_ctx!(FloatBinaryOpVar, FloatBinaryOp, get_float_binary_op, "FloatBinaryOpVar");
+impl_from_ctx!(FloatUnaryOpVar, FloatUnaryOp, get_float_unary_op, "FloatUnaryOpVar");
+impl_from_ctx!(FloatCmpOpVar, FloatCmpOp, get_float_cmp_op, "FloatCmpOpVar");
