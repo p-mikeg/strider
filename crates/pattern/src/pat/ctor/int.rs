@@ -2,6 +2,7 @@
 
 use ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 
+use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
 use crate::pat::{IntBinaryOpPat, Pat, PatKind};
 
 // ── Integer binary ops ────────────────────────────────────────────────────────
@@ -18,58 +19,35 @@ pub fn int_binary(op: IntBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> 
         ordered: false,
     }
 }
-/// Matches an unsigned addition node (`lhs + rhs`).  Commutative.
-pub fn add(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Add, lhs, rhs)
-}
-/// Matches an unsigned subtraction node (`lhs - rhs`).  Not commutative.
-pub fn sub(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Sub, lhs, rhs)
-}
-/// Matches an unsigned multiplication node.  Commutative.
-pub fn mul(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Mul, lhs, rhs)
-}
-/// Matches an unsigned division node.  Not commutative.
-pub fn div(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Div, lhs, rhs)
-}
-/// Matches a signed division node.  Not commutative.
-pub fn sdiv(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Sdiv, lhs, rhs)
-}
-/// Matches an unsigned remainder node.  Not commutative.
-pub fn rem(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Rem, lhs, rhs)
-}
-/// Matches a signed remainder node.  Not commutative.
-pub fn srem(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Srem, lhs, rhs)
-}
-/// Matches a bitwise AND node.  Commutative.
-pub fn and(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::And, lhs, rhs)
-}
-/// Matches a bitwise OR node.  Commutative.
-pub fn or(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Or, lhs, rhs)
-}
-/// Matches a bitwise XOR node.  Commutative.
-pub fn xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::Xor, lhs, rhs)
-}
-/// Matches a logical left-shift node.  Not commutative.
-pub fn shl(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::ShiftLeft, lhs, rhs)
-}
-/// Matches a logical right-shift node.  Not commutative.
-pub fn shr(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::ShiftRight, lhs, rhs)
-}
-/// Matches an arithmetic (signed) right-shift node.  Not commutative.
-pub fn sshr(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
-    int_binary(IntBinaryOp::SShiftRight, lhs, rhs)
-}
+
+decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
+    /// Matches an unsigned addition node (`lhs + rhs`).  Commutative.
+    (add, Add),
+    /// Matches an unsigned subtraction node (`lhs - rhs`).  Not commutative.
+    (sub, Sub),
+    /// Matches an unsigned multiplication node.  Commutative.
+    (mul, Mul),
+    /// Matches an unsigned division node.  Not commutative.
+    (div, Div),
+    /// Matches a signed division node.  Not commutative.
+    (sdiv, Sdiv),
+    /// Matches an unsigned remainder node.  Not commutative.
+    (rem, Rem),
+    /// Matches a signed remainder node.  Not commutative.
+    (srem, Srem),
+    /// Matches a bitwise AND node.  Commutative.
+    (and, And),
+    /// Matches a bitwise OR node.  Commutative.
+    (or, Or),
+    /// Matches a bitwise XOR node.  Commutative.
+    (xor, Xor),
+    /// Matches a logical left-shift node.  Not commutative.
+    (shl, ShiftLeft),
+    /// Matches a logical right-shift node.  Not commutative.
+    (shr, ShiftRight),
+    /// Matches an arithmetic (signed) right-shift node.  Not commutative.
+    (sshr, SShiftRight),
+]);
 
 // ── Integer unary ops ─────────────────────────────────────────────────────────
 
@@ -80,14 +58,13 @@ pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
         operand: operand.into(),
     })
 }
-/// Matches an integer negation node (`-operand`).
-pub fn neg(operand: impl Into<Pat>) -> Pat {
-    int_unary(IntUnaryOp::Neg, operand)
-}
-/// Matches a bitwise complement node (`~operand`).
-pub fn not(operand: impl Into<Pat>) -> Pat {
-    int_unary(IntUnaryOp::Not, operand)
-}
+
+decl_pat_unary_ops!(int_unary, IntUnaryOp, Pat, [
+    /// Matches an integer negation node (`-operand`).
+    (neg, Neg),
+    /// Matches a bitwise complement node (`~operand`).
+    (not, Not),
+]);
 
 // ── Integer comparisons (→ Bool) ──────────────────────────────────────────────
 
@@ -103,35 +80,22 @@ pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
         ordered: false,
     })
 }
-/// Matches an unsigned equality comparison (`lhs == rhs`).
-pub fn int_eq(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Equal, lhs, rhs)
-}
-/// Matches an unsigned less-than comparison (`lhs < rhs`).
-pub fn int_lt(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Less, lhs, rhs)
-}
-/// Matches an unsigned less-or-equal comparison (`lhs <= rhs`).
-pub fn int_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::LessEqual, lhs, rhs)
-}
-/// Matches a signed less-than comparison.
-pub fn int_slt(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Sless, lhs, rhs)
-}
-/// Matches a signed less-or-equal comparison.
-pub fn int_sle(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::SlessEqual, lhs, rhs)
-}
-/// Matches an unsigned addition carry-out check.
-pub fn int_carry(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Carry, lhs, rhs)
-}
-/// Matches a signed addition overflow check.
-pub fn int_scarry(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Scarry, lhs, rhs)
-}
-/// Matches a signed subtraction borrow check.
-pub fn int_sborrow(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    int_cmp(IntCmpOp::Sborrow, lhs, rhs)
-}
+
+decl_pat_cmp_ops!(int_cmp, IntCmpOp, Pat, [
+    /// Matches an unsigned equality comparison (`lhs == rhs`).
+    (int_eq, Equal),
+    /// Matches an unsigned less-than comparison (`lhs < rhs`).
+    (int_lt, Less),
+    /// Matches an unsigned less-or-equal comparison (`lhs <= rhs`).
+    (int_le, LessEqual),
+    /// Matches a signed less-than comparison.
+    (int_slt, Sless),
+    /// Matches a signed less-or-equal comparison.
+    (int_sle, SlessEqual),
+    /// Matches an unsigned addition carry-out check.
+    (int_carry, Carry),
+    /// Matches a signed addition overflow check.
+    (int_scarry, Scarry),
+    /// Matches a signed subtraction borrow check.
+    (int_sborrow, Sborrow),
+]);

@@ -63,6 +63,7 @@ pub mod build;
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
 
+mod macros;
 mod matcher;
 mod pat;
 mod pat_macros;

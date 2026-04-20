@@ -7,6 +7,7 @@
 
 use ir::{BoolBinaryOp, BoolUnaryOp};
 
+use crate::macros::{decl_pat_binary_ops, decl_pat_unary_ops};
 use crate::pat::{BoolBinaryOpPat, Pat, PatKind};
 
 /// Matches a boolean binary operation with the given `op`.
@@ -20,18 +21,16 @@ pub fn bool_binary(op: BoolBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -
         ordered: false,
     }
 }
-/// Matches a boolean AND node.  Commutative.
-pub fn bool_and(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
-    bool_binary(BoolBinaryOp::And, lhs, rhs)
-}
-/// Matches a boolean OR node.  Commutative.
-pub fn bool_or(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
-    bool_binary(BoolBinaryOp::Or, lhs, rhs)
-}
-/// Matches a boolean XOR node.  Commutative.
-pub fn bool_xor(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> BoolBinaryOpPat {
-    bool_binary(BoolBinaryOp::Xor, lhs, rhs)
-}
+
+decl_pat_binary_ops!(bool_binary, BoolBinaryOp, BoolBinaryOpPat, [
+    /// Matches a boolean AND node.  Commutative.
+    (bool_and, And),
+    /// Matches a boolean OR node.  Commutative.
+    (bool_or, Or),
+    /// Matches a boolean XOR node.  Commutative.
+    (bool_xor, Xor),
+]);
+
 /// Matches a boolean unary operation with the given `op`.
 pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
     Pat::new(PatKind::BoolUnaryOp {
@@ -39,7 +38,8 @@ pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
         operand: operand.into(),
     })
 }
-/// Matches a boolean NOT node.
-pub fn bool_not(operand: impl Into<Pat>) -> Pat {
-    bool_unary(BoolUnaryOp::Neg, operand)
-}
+
+decl_pat_unary_ops!(bool_unary, BoolUnaryOp, Pat, [
+    /// Matches a boolean NOT node.
+    (bool_not, Neg),
+]);
