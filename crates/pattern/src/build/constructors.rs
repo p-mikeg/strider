@@ -22,6 +22,49 @@ use crate::var::{
 
 use super::{Build, BuildCtx, BuildValue};
 
+/// Declare public two-operand constructors that delegate to a private
+/// `$builder(OpEnum::$variant, l, r)` helper.
+///
+/// Each entry is `(pub_fn_name, OpEnumVariant)` and may carry arbitrary
+/// outer attributes (doc comments, `#[inline]`, etc.).
+macro_rules! decl_binary_ops {
+    ($builder:ident, $op_enum:ident, [ $( $(#[$attr:meta])* ($fn_name:ident, $variant:ident) ),* $(,)? ]) => {
+        $(
+            $(#[$attr])*
+            pub fn $fn_name(l: Build, r: Build) -> Build {
+                $builder($op_enum::$variant, l, r)
+            }
+        )*
+    };
+}
+
+/// Declare public one-operand constructors that delegate to a private
+/// `$builder(OpEnum::$variant, x)` helper.
+macro_rules! decl_unary_ops {
+    ($builder:ident, $op_enum:ident, [ $( $(#[$attr:meta])* ($fn_name:ident, $variant:ident) ),* $(,)? ]) => {
+        $(
+            $(#[$attr])*
+            pub fn $fn_name(x: Build) -> Build {
+                $builder($op_enum::$variant, x)
+            }
+        )*
+    };
+}
+
+/// Declare public comparison constructors.  Identical in shape to
+/// [`decl_binary_ops`] but kept as a distinct macro so the call-site reads
+/// as a cmp-op group rather than a binary-op group.
+macro_rules! decl_cmp_ops {
+    ($builder:ident, $op_enum:ident, [ $( $(#[$attr:meta])* ($fn_name:ident, $variant:ident) ),* $(,)? ]) => {
+        $(
+            $(#[$attr])*
+            pub fn $fn_name(l: Build, r: Build) -> Build {
+                $builder($op_enum::$variant, l, r)
+            }
+        )*
+    };
+}
+
 /// Reuse a captured [`Var`] from the LHS match.
 pub fn cap(v: Var) -> Build {
     Build::Capture(v)
@@ -78,116 +121,78 @@ fn int_binary(op: IntBinaryOp, l: Build, r: Build) -> Build {
     Build::IntBinary(op, Arc::new(l), Arc::new(r))
 }
 
-/// Build `l + r`.
-pub fn add(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Add, l, r)
-}
-/// Build `l - r`.
-pub fn sub(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Sub, l, r)
-}
-/// Build `l * r`.
-pub fn mul(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Mul, l, r)
-}
-/// Build `l & r`.
-pub fn and(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::And, l, r)
-}
-/// Build `l | r`.
-pub fn or(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Or, l, r)
-}
-/// Build `l ^ r`.
-pub fn xor(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Xor, l, r)
-}
-/// Build `l << r`.
-pub fn shl(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::ShiftLeft, l, r)
-}
-/// Build `l >> r` (logical / unsigned).
-pub fn shr(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::ShiftRight, l, r)
-}
-/// Build `l >>> r` (arithmetic / signed).
-pub fn sshr(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::SShiftRight, l, r)
-}
-/// Build `l / r` (unsigned).
-pub fn div(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Div, l, r)
-}
-/// Build `l / r` (signed).
-pub fn sdiv(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Sdiv, l, r)
-}
-/// Build `l % r` (unsigned).
-pub fn rem(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Rem, l, r)
-}
-/// Build `l % r` (signed).
-pub fn srem(l: Build, r: Build) -> Build {
-    int_binary(IntBinaryOp::Srem, l, r)
-}
+decl_binary_ops!(int_binary, IntBinaryOp, [
+    /// Build `l + r`.
+    (add, Add),
+    /// Build `l - r`.
+    (sub, Sub),
+    /// Build `l * r`.
+    (mul, Mul),
+    /// Build `l & r`.
+    (and, And),
+    /// Build `l | r`.
+    (or, Or),
+    /// Build `l ^ r`.
+    (xor, Xor),
+    /// Build `l << r`.
+    (shl, ShiftLeft),
+    /// Build `l >> r` (logical / unsigned).
+    (shr, ShiftRight),
+    /// Build `l >>> r` (arithmetic / signed).
+    (sshr, SShiftRight),
+    /// Build `l / r` (unsigned).
+    (div, Div),
+    /// Build `l / r` (signed).
+    (sdiv, Sdiv),
+    /// Build `l % r` (unsigned).
+    (rem, Rem),
+    /// Build `l % r` (signed).
+    (srem, Srem),
+]);
 
 // Integer unary ops
 fn int_unary(op: IntUnaryOp, x: Build) -> Build {
     Build::IntUnary(op, Arc::new(x))
 }
 
-/// Build `-x`.
-pub fn neg(x: Build) -> Build {
-    int_unary(IntUnaryOp::Neg, x)
-}
-/// Build `!x` (bitwise complement).
-pub fn not(x: Build) -> Build {
-    int_unary(IntUnaryOp::Not, x)
-}
+decl_unary_ops!(int_unary, IntUnaryOp, [
+    /// Build `-x`.
+    (neg, Neg),
+    /// Build `!x` (bitwise complement).
+    (not, Not),
+]);
 
 // Integer cmp ops (→ Bool)
 fn int_cmp(op: IntCmpOp, l: Build, r: Build) -> Build {
     Build::IntCmp(op, Arc::new(l), Arc::new(r))
 }
 
-/// Build `l == r` (integer equality).
-pub fn int_eq(l: Build, r: Build) -> Build {
-    int_cmp(IntCmpOp::Equal, l, r)
-}
-/// Build `l < r` (unsigned less-than).
-pub fn int_lt(l: Build, r: Build) -> Build {
-    int_cmp(IntCmpOp::Less, l, r)
-}
-/// Build `l < r` (signed less-than).
-pub fn int_slt(l: Build, r: Build) -> Build {
-    int_cmp(IntCmpOp::Sless, l, r)
-}
-/// Build `l <= r` (unsigned less-or-equal).
-pub fn int_le(l: Build, r: Build) -> Build {
-    int_cmp(IntCmpOp::LessEqual, l, r)
-}
-/// Build `l <= r` (signed less-or-equal).
-pub fn int_sle(l: Build, r: Build) -> Build {
-    int_cmp(IntCmpOp::SlessEqual, l, r)
-}
+decl_cmp_ops!(int_cmp, IntCmpOp, [
+    /// Build `l == r` (integer equality).
+    (int_eq, Equal),
+    /// Build `l < r` (unsigned less-than).
+    (int_lt, Less),
+    /// Build `l < r` (signed less-than).
+    (int_slt, Sless),
+    /// Build `l <= r` (unsigned less-or-equal).
+    (int_le, LessEqual),
+    /// Build `l <= r` (signed less-or-equal).
+    (int_sle, SlessEqual),
+]);
 
 // Bool binary ops
 fn bool_binary(op: BoolBinaryOp, l: Build, r: Build) -> Build {
     Build::BoolBinary(op, Arc::new(l), Arc::new(r))
 }
 
-/// Build `l && r` (boolean and).
-pub fn bool_and(l: Build, r: Build) -> Build {
-    bool_binary(BoolBinaryOp::And, l, r)
-}
-/// Build `l || r` (boolean or).
-pub fn bool_or(l: Build, r: Build) -> Build {
-    bool_binary(BoolBinaryOp::Or, l, r)
-}
-/// Build `l ^ r` (boolean xor).
-pub fn bool_xor(l: Build, r: Build) -> Build {
-    bool_binary(BoolBinaryOp::Xor, l, r)
-}
+decl_binary_ops!(bool_binary, BoolBinaryOp, [
+    /// Build `l && r` (boolean and).
+    (bool_and, And),
+    /// Build `l || r` (boolean or).
+    (bool_or, Or),
+    /// Build `l ^ r` (boolean xor).
+    (bool_xor, Xor),
+]);
 
 // Bool unary ops
 /// Build `!x` (boolean negation).
@@ -205,74 +210,52 @@ fn float_binary(op: FloatBinaryOp, l: Build, r: Build) -> Build {
     Build::FloatBinary(op, Arc::new(l), Arc::new(r))
 }
 
-/// Build float `l + r`.
-pub fn float_add(l: Build, r: Build) -> Build {
-    float_binary(FloatBinaryOp::Add, l, r)
-}
-/// Build float `l - r`.
-pub fn float_sub(l: Build, r: Build) -> Build {
-    float_binary(FloatBinaryOp::Sub, l, r)
-}
-/// Build float `l * r`.
-pub fn float_mul(l: Build, r: Build) -> Build {
-    float_binary(FloatBinaryOp::Mul, l, r)
-}
-/// Build float `l / r`.
-pub fn float_div(l: Build, r: Build) -> Build {
-    float_binary(FloatBinaryOp::Div, l, r)
-}
+decl_binary_ops!(float_binary, FloatBinaryOp, [
+    /// Build float `l + r`.
+    (float_add, Add),
+    /// Build float `l - r`.
+    (float_sub, Sub),
+    /// Build float `l * r`.
+    (float_mul, Mul),
+    /// Build float `l / r`.
+    (float_div, Div),
+]);
 
 // Float unary ops
 fn float_unary(op: FloatUnaryOp, x: Build) -> Build {
     Build::FloatUnary(op, Arc::new(x))
 }
 
-/// Build `-x` (float).
-pub fn float_neg(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Neg, x)
-}
-/// Build `|x|` (float absolute value).
-pub fn float_abs(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Abs, x)
-}
-/// Build `sqrt(x)`.
-pub fn float_sqrt(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Sqrt, x)
-}
-/// Build `round(x)`.
-pub fn float_round(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Round, x)
-}
-/// Build `floor(x)`.
-pub fn float_floor(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Floor, x)
-}
-/// Build `ceil(x)`.
-pub fn float_ceil(x: Build) -> Build {
-    float_unary(FloatUnaryOp::Ceil, x)
-}
+decl_unary_ops!(float_unary, FloatUnaryOp, [
+    /// Build `-x` (float).
+    (float_neg, Neg),
+    /// Build `|x|` (float absolute value).
+    (float_abs, Abs),
+    /// Build `sqrt(x)`.
+    (float_sqrt, Sqrt),
+    /// Build `round(x)`.
+    (float_round, Round),
+    /// Build `floor(x)`.
+    (float_floor, Floor),
+    /// Build `ceil(x)`.
+    (float_ceil, Ceil),
+]);
 
 // Float cmp ops
 fn float_cmp(op: FloatCmpOp, l: Build, r: Build) -> Build {
     Build::FloatCmp(op, Arc::new(l), Arc::new(r))
 }
 
-/// Build float `l == r`.
-pub fn float_eq(l: Build, r: Build) -> Build {
-    float_cmp(FloatCmpOp::Equal, l, r)
-}
-/// Build float `l < r`.
-pub fn float_lt(l: Build, r: Build) -> Build {
-    float_cmp(FloatCmpOp::Less, l, r)
-}
-/// Build float `l <= r`.
-pub fn float_le(l: Build, r: Build) -> Build {
-    float_cmp(FloatCmpOp::LessEqual, l, r)
-}
-/// Build float `l != r`.
-pub fn float_ne(l: Build, r: Build) -> Build {
-    float_cmp(FloatCmpOp::NotEqual, l, r)
-}
+decl_cmp_ops!(float_cmp, FloatCmpOp, [
+    /// Build float `l == r`.
+    (float_eq, Equal),
+    /// Build float `l < r`.
+    (float_lt, Less),
+    /// Build float `l <= r`.
+    (float_le, LessEqual),
+    /// Build float `l != r`.
+    (float_ne, NotEqual),
+]);
 
 // Variant-from-var helpers
 
