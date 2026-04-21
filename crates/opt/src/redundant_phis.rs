@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;

@@ -6,7 +6,7 @@ use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp,
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
-    FunctionBuilder::new(vec![], &[], &[], &[])
+    FunctionBuilder::new(vec![], &[], &[], &[], None, 0)
 }
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -477,7 +477,7 @@ fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
 
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -651,5 +651,87 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
     // `hi_int` consumes the float, so it must be a CastToInt node.
     let hi_int_node = b.graph().get_node_from_output(hi_int);
     assert_eq!(*b.graph().node_kind(hi_int_node), NodeKind::CastToInt);
+    Ok(())
+}
+
+// ── post-call SP adjust ─────────────────────────────────────────────────
+
+/// Fake 8-byte stack pointer varnode in the REGISTER space.
+fn sp_vn_u64() -> rsleigh::Vn {
+    rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x20,
+        },
+        size: 8,
+    }
+}
+
+/// After `build_call` returns, SP must be rebound to
+/// `Add(pre_call_SP, IntConst(ret_stack_pop))` — the caller-visible effect
+/// of the callee's `ret` on stack-push ISAs.
+#[test]
+fn build_call_emits_post_call_sp_adjust() -> Result<()> {
+    let sp = sp_vn_u64();
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[], &[], Some(sp), 8)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let pre_sp = b.read_variable(&sp)?;
+    let target = b.build_int_const(0x1000, NodeOutputType::U64);
+    b.build_call(target)?;
+
+    let post_sp = b.read_variable(&sp)?;
+    assert_ne!(
+        pre_sp, post_sp,
+        "SP must be rebound after Call when ret_stack_pop != 0"
+    );
+
+    // The new SP must be an Add node.
+    let add_node = b.graph().get_node_from_output(post_sp);
+    assert_eq!(
+        b.graph().node_kind(add_node),
+        &NodeKind::IntBinaryOp(IntBinaryOp::Add)
+    );
+
+    let inputs: Vec<NodeOutputId> = b.graph().node_inputs(add_node).into_iter().collect();
+    assert_eq!(inputs.len(), 2, "Add has two inputs");
+
+    // One input is the pre-call SP; the other is an IntConst(8).
+    let (lhs, rhs) = (inputs[0], inputs[1]);
+    assert_eq!(lhs, pre_sp, "Add consumes the pre-call SP output");
+    let rhs_kind = *b.graph().node_kind(b.graph().get_node_from_output(rhs));
+    assert_eq!(
+        rhs_kind,
+        NodeKind::IntConst(8),
+        "rhs must be IntConst(ret_stack_pop) = 8"
+    );
+    Ok(())
+}
+
+/// When `ret_stack_pop == 0` (link-register ISAs) no SP-adjust node is
+/// emitted — SP flows through the `Call` unchanged via the usual
+/// `PostCallVarState` clobber path (or, when SP is excluded from the
+/// clobbered set but ret_stack_pop is 0, remains bound to its pre-call
+/// value).
+#[test]
+fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
+    let sp = sp_vn_u64();
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[], &[], Some(sp), 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let pre_sp = b.read_variable(&sp)?;
+    let target = b.build_int_const(0x1000, NodeOutputType::U64);
+    b.build_call(target)?;
+
+    let post_sp = b.read_variable(&sp)?;
+    // No Add node was emitted — SP is unchanged.
+    assert_eq!(
+        pre_sp, post_sp,
+        "ret_stack_pop = 0 must not introduce a new Add node"
+    );
     Ok(())
 }

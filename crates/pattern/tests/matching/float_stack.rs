@@ -10,7 +10,7 @@ use super::common::*;
 
 #[test]
 fn lzcount_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -30,7 +30,7 @@ fn lzcount_pattern_matches() -> ir::Result<()> {
 /// `float_add(1.0f64, 2.0f64)` — basic binary float pattern match.
 #[test]
 fn float_add_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -57,7 +57,7 @@ fn float_add_pattern_matches() -> ir::Result<()> {
 /// Float `mul` is commutative: `float_mul(a, b)` should also match with reversed operands.
 #[test]
 fn float_mul_commutative_pattern() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -91,7 +91,7 @@ fn float_mul_commutative_pattern() -> ir::Result<()> {
 /// Float `sub` is NOT commutative: wrong order must fail.
 #[test]
 fn float_sub_not_commutative() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -120,7 +120,7 @@ fn float_sub_not_commutative() -> ir::Result<()> {
 /// Float comparison (`float_eq`) produces a `Bool` output.
 #[test]
 fn float_eq_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -149,7 +149,7 @@ fn float_eq_pattern_matches() -> ir::Result<()> {
 /// `float_neg` unary pattern match.
 #[test]
 fn float_unary_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -171,7 +171,7 @@ fn float_unary_pattern_matches() -> ir::Result<()> {
 /// `any_float_const` captures the float constant bits.
 #[test]
 fn any_float_const_captures_bits() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -191,7 +191,7 @@ fn any_float_const_captures_bits() -> ir::Result<()> {
 /// `int_bits_to_float` bitcast pattern match.
 #[test]
 fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -217,7 +217,7 @@ fn int_bits_to_float_pattern_matches() -> ir::Result<()> {
 /// `float_bits_to_int` bitcast pattern match.
 #[test]
 fn float_bits_to_int_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -237,7 +237,7 @@ fn float_bits_to_int_pattern_matches() -> ir::Result<()> {
 /// `int_to_float`, `float_to_int`, `float_to_float` conversion patterns.
 #[test]
 fn float_conversion_patterns_match() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -258,7 +258,7 @@ fn float_conversion_patterns_match() -> ir::Result<()> {
 /// `.ordered()` on `float_add` prevents commutative fallback.
 #[test]
 fn float_add_ordered_no_commutative_fallback() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -294,7 +294,7 @@ fn float_add_ordered_no_commutative_fallback() -> ir::Result<()> {
 /// `cast_to_float` pattern matches a `CastToFloat` node.
 #[test]
 fn cast_to_float_pattern_matches() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -319,7 +319,7 @@ fn cast_to_float_pattern_matches() -> ir::Result<()> {
 /// `StackStore { offset: -4 }`.
 fn graph_with_stack_store() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let sp = make_reg_vn(0x20, 4);
-    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -367,7 +367,7 @@ fn stack_store_matches_offset_and_data() -> ir::Result<()> {
 /// node with offsets `[-4, -8]`.
 fn graph_with_stack_store_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let sp = make_reg_vn(0x20, 4);
-    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
     let entry = b.create_region()?;
     let a = b.create_region()?;
     let bb = b.create_region()?;
@@ -433,7 +433,7 @@ fn stack_store_phi_matches_offsets() -> ir::Result<()> {
 /// as positional stack args.
 fn graph_cdecl_call_with_stack_args() -> ir::Result<ir::BuiltFunctionGraph> {
     let sp = make_reg_vn(0x20, 4);
-    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[])?;
+    let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);

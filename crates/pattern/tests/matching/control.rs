@@ -603,7 +603,7 @@ fn call_arg_capture_and_extract() -> ir::Result<()> {
 
 /// Two CallOther sites: op-id 1 with arg 0xAA, op-id 2 with arg 0xBB, then ret.
 fn graph_two_call_others_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = ir::FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = ir::FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);

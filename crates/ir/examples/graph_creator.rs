@@ -28,9 +28,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rbx = regs.name_to_vn("RBX").unwrap();
     let vns = vec![rax, rbx];
 
-    // FunctionBuilder::new takes (all_vars, arg_regs, callee_saved, ret_regs).
+    // FunctionBuilder::new takes
+    // (all_vars, arg_regs, callee_saved, ret_regs, stack_ptr_vn, ret_stack_pop).
     // build_entry() is called automatically inside new().
-    let mut builder = FunctionBuilder::new(vns.clone(), &[], &[rbx], &[rax])?;
+    let mut builder = FunctionBuilder::new(vns.clone(), &[], &[rbx], &[rax], None, 0)?;
 
     // Create regions (formerly "blocks").
     let entry_region = builder.create_region()?;

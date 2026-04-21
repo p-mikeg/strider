@@ -1,6 +1,7 @@
 use super::FunctionBuilder;
 use crate::error::{ErrorKind, Result};
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::ops::IntBinaryOp;
 use smallvec::SmallVec;
 
 impl FunctionBuilder {
@@ -38,6 +39,15 @@ impl FunctionBuilder {
             return Err(ErrorKind::ExpectedValue(call_address, addr_kind).into());
         }
 
+        // Snapshot the pre-call SP before creating the `Call` node, so the
+        // post-call adjust consumes the caller's SP as of the call site.
+        let sp_pre_call = match self.stack_ptr_vn {
+            Some(sp) if self.ret_stack_pop != 0 => {
+                self.read_variable_optional(&sp)?.map(|out| (sp, out))
+            }
+            _ => None,
+        };
+
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
@@ -49,6 +59,18 @@ impl FunctionBuilder {
         self.advance_cur_region_memory(call_outputs[1])?;
         for (variable, new_val) in core::iter::zip(clobbered, call_outputs.iter().skip(2)) {
             self.write_variable(&variable, *new_val)?;
+        }
+
+        // Model the caller-visible effect of the callee's `ret` on SP: on
+        // stack-push ISAs `ret` pops the return-address word, so the
+        // caller's post-call SP is `pre_call_SP + ret_stack_pop`.  On
+        // link-register ISAs `ret_stack_pop == 0` and we skip this entirely.
+        if let Some((sp, pre)) = sp_pre_call {
+            let sp_ty: NodeOutputType = sp.size.try_into()?;
+            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty);
+            let adjusted =
+                self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
+            self.write_variable(&sp, adjusted)?;
         }
         Ok(())
     }

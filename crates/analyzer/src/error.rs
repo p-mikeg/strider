@@ -49,9 +49,6 @@ strider_error::define_error! {
         #[error("unsupported float varnode size {0} bytes (expected 4 or 8)")]
         UnsupportedFloatSize(u32),
 
-        #[error("stack pointer register {0:?} must be listed in callee_saved_regs")]
-        StackPtrNotCalleeSaved(&'static str),
-
         #[error("opcode {0:?} expects a CONST input at position {1}")]
         ExpectedConstInput(rsleigh::Opcode, usize),
 

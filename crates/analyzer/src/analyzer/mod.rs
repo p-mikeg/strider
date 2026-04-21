@@ -34,6 +34,8 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             &analyzer.calling_convention.arg_passing_regs,
             &analyzer.calling_convention.callee_saved_regs,
             &analyzer.calling_convention.ret_val_regs,
+            Some(analyzer.calling_convention.stack_ptr_vn),
+            analyzer.calling_convention.ret_stack_pop,
         )?;
 
         Ok(Self {

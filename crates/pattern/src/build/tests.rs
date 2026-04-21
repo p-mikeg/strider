@@ -14,7 +14,7 @@ use ir::{FunctionBuilder, IntBinaryOp};
 fn graph_add_x_plus_zero()
 -> ir::Result<(ir::BuiltFunctionGraph, NodeId, NodeOutputId)> {
     use ir::IntBinaryOp;
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -151,7 +151,7 @@ fn int_const_with_popcount_rewrite() -> Result<()> {
     use crate::pat::{any_int_const, popcount};
     use crate::var::IntVar;
 
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -213,7 +213,7 @@ fn int_const_with_int_binary_any_add() -> Result<()> {
     use crate::pat::int_binary_any;
     use crate::var::{IntBinaryOpVar, IntVar};
 
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -285,7 +285,7 @@ fn bool_const_with_not_rewrite() -> Result<()> {
     use crate::var::BoolVar;
     use ir::BoolUnaryOp;
 
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -334,7 +334,7 @@ fn float_const_with_signbit_flip() -> Result<()> {
 
     // Minimal graph: return a FloatConst(1.0, F64).  The rule fires on
     // the `FloatConst` root directly.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -380,7 +380,7 @@ fn int_const_with_closure_error_surfaces_via_result() -> Result<()> {
     use crate::pat::{any_int_const, popcount};
     use crate::var::IntVar;
 
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -422,7 +422,7 @@ fn int_const_with_skip_returns_ok_false() -> Result<()> {
     use crate::pat::{any_int_const, popcount};
     use crate::var::IntVar;
 
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);

@@ -8,7 +8,7 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binary_path = "binary_tests/out/arm/test.elf";
+    let binary_path = "binary_tests/out/x86/test.elf";
 
     let obj = reader::load_elf(binary_path)?;
 
@@ -18,12 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let parsed = object::File::parse(&*data)?;
     let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)?;
 
-    let arch = analyzer::SleighArch::arm();
+    let arch = analyzer::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
     let analyzer = analyzer::Analyzer::new(
         arch,
         sleigh.regs()?,
-        analyzer::CallingConvention::arm_aapcs(),
+        analyzer::CallingConvention::x86_cdecl(),
     )?;
 
     let cfg_options = cfg::OptionsBuilder::new()
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let addr = obj
-        .symbol_by_name("hard_func")
+        .symbol_by_name("stack_test")
         .ok_or("'fib' symbol not found in binary")?
         .address();
 
@@ -49,9 +49,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_dot("graph.dot")?;
 
     analyzer.build_optimizer_pipeline().run(&mut function)?;
+    println!("dumping opt IR graph...");
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
-    println!("dumping opt IR graph...");
     std::fs::write("graph-opt.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph-opt.dot")?;
 

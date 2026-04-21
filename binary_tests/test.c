@@ -1,3 +1,4 @@
+#include <stddef.h>
 /*
  * test.c — exercise binary to stress-test the analyzer pipeline.
  *
@@ -124,6 +125,17 @@ int __attribute__((noinline)) hard_func(int a, int b, int c) {
     }
     array_fill(&a, 1, b);
     return g(a, b);
+}
+
+
+int __attribute__((noinline)) stack_test(int a, int b, int c) {
+    int d = fib(a);
+    char buf[16] = { 0 };
+    for(size_t i = 0; i < 16; i++) {
+        buf[i] = (d + b + c + i) & 0xff;
+    }
+    return array_sum((int*)buf, 16) * c;
+
 }
 
 /* ── jump-table candidates ─────────────────────────────────────────── */

@@ -30,10 +30,21 @@ pub struct FunctionBuilder {
     pub(crate) cur_region: Option<crate::region::RegionId>,
     pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
     pub(crate) variable_to_id: HashMap<rsleigh::Vn, VarId>,
-    /// Variables clobbered by any call instruction (everything not callee-saved).
+    /// Variables clobbered by any call instruction (everything not
+    /// callee-saved, and excluding the stack pointer which is rebound
+    /// separately with the `ret_stack_pop` adjust).
     pub(crate) call_cloberred_variables: Vec<rsleigh::Vn>,
     /// Variables used to pass arguments according to the calling convention.
     pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
+    /// Stack pointer varnode — when present, it is excluded from the
+    /// `call_cloberred_variables` set and rebound at every `Call` to
+    /// `Add(pre_call_sp, IntConst(ret_stack_pop))`.  `None` in synthetic
+    /// tests that don't model stack-aware calling conventions.
+    pub(crate) stack_ptr_vn: Option<rsleigh::Vn>,
+    /// Net byte change the callee's `ret` inflicts on the caller's stack
+    /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
+    /// Ignored when `stack_ptr_vn` is `None`.
+    pub(crate) ret_stack_pop: i64,
 }
 
 impl FunctionBuilder {
@@ -70,12 +81,16 @@ impl FunctionBuilder {
     ///
     /// `all_used_variables` is the complete set of varnodes (registers /
     /// unique temporaries) that appear in the function.  Variables not in
-    /// `callee_saved_vars` are recorded as call-clobbered.
+    /// `callee_saved_vars` (and not the stack pointer itself) are recorded
+    /// as call-clobbered; SP is rebound at each call site via an explicit
+    /// `Add(sp, ret_stack_pop)` node.
     pub fn new(
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
         callee_saved_vars: &[rsleigh::Vn],
         _ret_vars: &[rsleigh::Vn],
+        stack_ptr_vn: Option<rsleigh::Vn>,
+        ret_stack_pop: i64,
     ) -> Result<Self> {
         // For register varnodes, keep only the largest enclosing register.
         // e.g. if both `rdi` and `edi` are clobbered, drop `edi` because
@@ -98,7 +113,7 @@ impl FunctionBuilder {
             .collect();
         let call_cloberred_variables: Vec<_> = all_variables
             .iter()
-            .filter(|v| !callee_saved_vars.contains(v))
+            .filter(|v| !callee_saved_vars.contains(v) && Some(**v) != stack_ptr_vn)
             .copied()
             .collect();
         let mut variables = PrimaryMap::new();
@@ -121,6 +136,8 @@ impl FunctionBuilder {
             variable_to_id,
             arg_passing_vars,
             call_cloberred_variables,
+            stack_ptr_vn,
+            ret_stack_pop,
         };
         fb.build_entry()?;
         Ok(fb)

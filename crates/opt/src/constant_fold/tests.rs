@@ -12,7 +12,7 @@ fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
 {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -159,7 +159,7 @@ fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(ir::BuiltFunctionGraph,
 where
     F: FnOnce(&mut FunctionBuilder, ir::Value) -> Result<ir::Value>,
 {
-    let mut b = FunctionBuilder::new(vec![vn], &[vn], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![vn], &[vn], &[], &[], None, 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -407,7 +407,7 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     let xv = reg_vn(0x1000, 8);
     let yv = reg_vn(0x1008, 8);
     let zv = reg_vn(0x1010, 8);
-    let mut b = FunctionBuilder::new(vec![xv, yv, zv], &[xv, yv, zv], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![xv, yv, zv], &[xv, yv, zv], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -434,7 +434,7 @@ fn distribution_rewrite() -> Result<()> {
     //           = (a & 0xF0) | (b & 0x0F)  — changed=true.
     let av = reg_vn(0x1000, 8);
     let bv = reg_vn(0x1008, 8);
-    let mut b = FunctionBuilder::new(vec![av, bv], &[av, bv], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![av, bv], &[av, bv], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);

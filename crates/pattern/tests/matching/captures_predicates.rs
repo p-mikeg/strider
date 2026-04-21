@@ -70,7 +70,7 @@ fn same_var_twice_matches_when_operands_are_equal() -> ir::Result<()> {
     // Build a graph with add(c, c) where both inputs are the same node.
     // Because constants are deduplicated, build_int_const(5,U64) twice
     // returns the same NodeOutputId.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -326,7 +326,7 @@ fn capture_output_of_add_node() -> ir::Result<()> {
 #[test]
 fn capture_nested_field_via_var() -> ir::Result<()> {
     // Capture the address of a load by passing var(v) as the addr sub-pattern.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -350,7 +350,7 @@ fn capture_nested_field_via_var() -> ir::Result<()> {
 #[test]
 fn capture_via_when_on_load_addr() -> ir::Result<()> {
     // Use any().capture(v) as sub-pattern to capture the load's address output.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -428,7 +428,7 @@ fn when_predicate_rejection() -> ir::Result<()> {
 #[test]
 fn predicate_in_field_position() -> ir::Result<()> {
     // predicate(f) passed as load's addr sub-pattern.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[])?;
+    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
