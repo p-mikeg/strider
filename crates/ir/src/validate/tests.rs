@@ -529,3 +529,47 @@ fn layer_a_wrong_input_count() {
         "got: {errs:?}"
     );
 }
+
+/// Layer C: two `FunctionArg` nodes sharing the same `index` are a
+/// construction/optimization bug — the validator must catch it.
+#[test]
+fn layer_c_duplicate_function_arg_index_detected() {
+    use crate::node::FunctionArgSource;
+
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+    let reg = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x38,
+        },
+        size: 8,
+    };
+    let _a = graph.create_node(
+        NodeKind::FunctionArg {
+            source: FunctionArgSource::Register(reg),
+            index: 0,
+        },
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let _b = graph.create_node(
+        NodeKind::FunctionArg {
+            source: FunctionArgSource::Register(reg),
+            index: 0,
+        },
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::DuplicateFunctionArg { index: 0, .. }
+        )),
+        "expected DuplicateFunctionArg, got: {errs:?}"
+    );
+}

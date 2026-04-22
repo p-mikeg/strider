@@ -35,6 +35,7 @@ mod pipeline;
 pub use error::{Error, ErrorKind, Result};
 mod constant_fold;
 mod dead_branch;
+mod function_args;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
@@ -42,6 +43,7 @@ mod stack_store;
 
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
+pub use function_args::FunctionArgDetect;
 pub use known_bits::KnownBits;
 pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;

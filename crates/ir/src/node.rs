@@ -372,6 +372,26 @@ impl NodeInput {
     }
 }
 
+/// Where a function argument originates in the calling convention.
+///
+/// Used inside [`NodeKind::FunctionArg`] to capture whether the argument was
+/// passed in a register (e.g. RDI on x86_64 System V) or on the stack at a
+/// positional offset from the entry stack pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FunctionArgSource {
+    /// The argument was passed in the given register varnode.  This is always
+    /// the full-width container register (e.g. `RDI`, not `EDI`) so that
+    /// sub-register reads can be expressed as `Truncate(FunctionArg)`.
+    Register(rsleigh::Vn),
+    /// The argument was passed on the stack at byte offset `offset` from the
+    /// entry-time stack pointer (`InitialVar(sp)`).  `space` is the address
+    /// space of the stack (typically the architecture's RAM space).
+    Stack {
+        space: rsleigh::VnSpace,
+        offset: i64,
+    },
+}
+
 /// The operation or role of a node in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
@@ -383,6 +403,24 @@ pub enum NodeKind {
     /// Initial value of varnode `Vn` at the function entry.  Produces a
     /// value output of the appropriate integer type.
     InitialVar(rsleigh::Vn),
+    /// Canonical marker for a function argument at position `index` in the
+    /// calling convention.  Introduced by
+    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args.rs) which
+    /// replaces register-passed arg reads (`InitialVar(arg_reg)`) and
+    /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
+    ///
+    /// The per-graph invariant is that at most one `FunctionArg` node exists
+    /// per `index` (enforced by [`crate::validate::layer_c`]).  Source nodes
+    /// may become unreferenced after rewiring; `FunctionArg` itself is not
+    /// cacheable, since identity matters for the uniqueness invariant.
+    ///
+    /// Inputs: `[]`.  Outputs: `[value]` of a width determined by `source`
+    /// (register width for `Register`; the widest observed load width for
+    /// `Stack`).
+    FunctionArg {
+        source: FunctionArgSource,
+        index: u32,
+    },
 
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
@@ -565,6 +603,7 @@ impl NodeKind {
             Self::Entry
                 | Self::InitialMemory
                 | Self::InitialVar(..)
+                | Self::FunctionArg { .. }
                 | Self::Return
                 | Self::ControlState
                 | Self::MemPhi

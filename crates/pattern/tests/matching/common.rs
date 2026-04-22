@@ -453,3 +453,25 @@ pub(crate) fn resolve_int_const(
     }
 }
 
+// ── FunctionArg helpers ───────────────────────────────────────────────────────
+
+/// Reads `reg` once and returns it.  After `FunctionArgDetect::new([reg], sp, [])`
+/// runs, the graph contains one `FunctionArg { Register(reg), 0 }` node.
+pub(crate) fn graph_with_function_arg_reg() -> (ir::BuiltFunctionGraph, rsleigh::Vn) {
+    use opt::{FunctionArgDetect, Optimizer};
+    let reg = make_reg_vn(0x38, 8);
+    let sp = make_reg_vn(0x20, 8);
+    let mut b = FunctionBuilder::new_raw(vec![reg, sp], &[], &[reg], &[reg], None, 0)
+        .expect("FunctionBuilder::new_raw");
+    let r = b.create_region().expect("create_region");
+    b.set_entry_region(r).expect("set_entry_region");
+    b.set_region(r);
+    let v = b.read_variable(&reg).expect("read_variable");
+    b.build_return(Some(v), &[]).expect("build_return");
+    let mut g = b.build().expect("build");
+    FunctionArgDetect::new(vec![reg], sp, vec![])
+        .optimize(&mut g)
+        .expect("FunctionArgDetect::optimize");
+    (g, reg)
+}
+

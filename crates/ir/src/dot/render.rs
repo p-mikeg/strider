@@ -2,7 +2,28 @@ use rsleigh::MemReader;
 use std::collections::HashMap;
 
 use super::{GraphDotDumper, GraphDotDumperState, edge_style, node_fillcolor, node_shape};
-use crate::node::NodeKind;
+use crate::graph::Graph;
+use crate::node::{NodeId, NodeKind};
+
+/// Returns `true` when every use of `node`'s single output is the SP input of
+/// a `StackStore`/`StackStorePhi`, which the renderer inlines as a per-consumer
+/// virtual node.  Also `true` when the output has no uses at all — either
+/// way, drawing the standalone node leaves an edgeless island beside the
+/// graph.
+fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
+    let outputs = graph.node_outputs(node);
+    if outputs.len() != 1 {
+        return false;
+    }
+    let out = outputs[0];
+    graph.output_uses(out).all(|(consumer, idx)| {
+        idx == 1
+            && matches!(
+                graph.node_kind(consumer),
+                NodeKind::StackStore { .. } | NodeKind::StackStorePhi { .. }
+            )
+    })
+}
 
 impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
     type Node = crate::node::NodeId;
@@ -32,6 +53,17 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
         }
 
         let kind = self.graph.node_kind(node);
+
+        // An `InitialVar` whose sole consumer is a `StackStore`/`StackStorePhi`
+        // SP input is rendered inline as a virtual copy beside each consumer
+        // (see `inline_initial_var` below).  Emitting the real node in that
+        // case leaves it floating edgeless, so skip it.
+        if matches!(kind, NodeKind::InitialVar(_))
+            && all_uses_go_through_inline(self.graph, node)
+        {
+            return Ok(());
+        }
+
         let cur_id = state.get_dot_id(self.graph, node);
         let shape = node_shape(kind);
         let fc = node_fillcolor(kind);

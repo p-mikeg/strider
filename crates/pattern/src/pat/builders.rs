@@ -266,6 +266,24 @@ define_pat_builder! {
     }
 }
 
+// ── Builder: FunctionArgPat ───────────────────────────────────────────────────
+
+define_pat_builder! {
+    /// Builder for `FunctionArg` node patterns.  Created by
+    /// [`crate::pat::function_arg`], [`crate::pat::function_arg_any`],
+    /// [`crate::pat::function_arg_reg`], [`crate::pat::function_arg_stack`].
+    pub struct FunctionArgPat => PatKind::FunctionArg {
+        /// Restrict the match to a specific ABI source (register or stack slot).
+        opt source: ir::node::FunctionArgSource;
+        /// Restrict the match to a specific argument index.
+        opt index: u32;
+        /// Bind the arg's value output (`NodeOutputId`) to `v`.
+        opt output_var: Var as capture_output;
+        /// Bind the arg's `NodeId` to `nv`.
+        opt node_var: NodeVar as capture_node;
+    }
+}
+
 // ── Builder: IfPat ────────────────────────────────────────────────────────────
 
 define_pat_builder! {

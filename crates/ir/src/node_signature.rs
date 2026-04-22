@@ -291,6 +291,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
         NodeKind::InitialVar(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        NodeKind::FunctionArg { .. } => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // ControlState: one Control input per predecessor (variadic).

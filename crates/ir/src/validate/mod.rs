@@ -25,8 +25,8 @@ mod tests;
 use layer_a::check_layer_a;
 use layer_b::check_layer_b;
 use layer_c::{
-    check_layer_c_control_state, check_layer_c_phis, check_layer_c_postcall_producer,
-    check_layer_c_postcall_uniqueness, check_layer_c_uniqueness,
+    check_layer_c_control_state, check_layer_c_function_arg_uniqueness, check_layer_c_phis,
+    check_layer_c_postcall_producer, check_layer_c_postcall_uniqueness, check_layer_c_uniqueness,
 };
 
 /// Validates the structural invariants of `graph` starting from `entry`.
@@ -63,6 +63,8 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_layer_c_postcall_producer(graph, &mut errs);
 
     check_layer_c_postcall_uniqueness(graph, &mut errs);
+
+    check_layer_c_function_arg_uniqueness(graph, &mut errs);
 
     if errs.is_empty() {
         Ok(())
@@ -231,6 +233,13 @@ pub enum ValidationError {
     DuplicatePostCallVarState {
         call: NodeId,
         vn: rsleigh::Vn,
+        first: NodeId,
+        second: NodeId,
+    },
+
+    #[error("duplicate FunctionArg at index {index}: {first:?} and {second:?}")]
+    DuplicateFunctionArg {
+        index: u32,
         first: NodeId,
         second: NodeId,
     },

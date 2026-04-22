@@ -69,6 +69,45 @@ pub(super) fn match_phi(
             true
         }
 
+        PatKind::FunctionArg {
+            source,
+            index,
+            output_var,
+            node_var,
+        } => {
+            let NodeKind::FunctionArg {
+                source: actual_source,
+                index: actual_index,
+            } = kind
+            else {
+                return Some(false);
+            };
+            if let Some(s) = source
+                && actual_source != s
+            {
+                return Some(false);
+            }
+            if let Some(i) = index
+                && actual_index != i
+            {
+                return Some(false);
+            }
+            let snap = bindings.clone();
+            if let Some(v) = output_var
+                && !bindings.bind_var(*v, output)
+            {
+                *bindings = snap;
+                return Some(false);
+            }
+            if let Some(nv) = node_var
+                && !bindings.bind_node_var(*nv, node)
+            {
+                *bindings = snap;
+                return Some(false);
+            }
+            true
+        }
+
         _ => return None,
     };
     Some(result)

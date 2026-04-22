@@ -15,8 +15,8 @@ use crate::var::{
 mod builders;
 mod ctor;
 pub use builders::{
-    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, IfPat, IntBinaryOpPat, LoadPat,
-    PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
+    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
+    IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
 };
 pub use ctor::*;
 
@@ -415,6 +415,16 @@ pub enum PatKind {
     // ── Function-entry values ─────────────────────────────────────────────────
     /// Matches `NodeKind::InitialVar(vn)`.  `vn = None` matches any.
     InitialVar { vn: Option<rsleigh::Vn> },
+
+    /// Matches `NodeKind::FunctionArg { source, index }`.  Any `None` field
+    /// matches all values for that field.  `output_var` / `node_var` bind the
+    /// value output / `NodeId` respectively.
+    FunctionArg {
+        source: Option<ir::node::FunctionArgSource>,
+        index: Option<u32>,
+        output_var: Option<Var>,
+        node_var: Option<NodeVar>,
+    },
 
     // ── Control-level nodes ───────────────────────────────────────────────────
     /// `Call`: inputs = [ctrl(0), mem(1), target(2), arg0(3), arg1(4)…];

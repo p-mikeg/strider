@@ -19,7 +19,7 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// `InitialVar(sp)` or a `ControlPhi(sp)` node whose predecessors couldn't be
 /// fully reduced — e.g. a loop-header self-reference).  Tracking the base
 /// explicitly keeps stores taken from different SP versions distinct.
-enum SpExpr {
+pub(crate) enum SpExpr {
     /// `base + offset`, where `base` is an SP-rooted node.
     Terminal { base: NodeOutputId, offset: i64 },
     /// `ControlPhi(stack_ptr)` where every predecessor resolves to
@@ -67,7 +67,7 @@ fn int_const_signed(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
 ///
 /// `visiting` guards against data-flow cycles through `ControlPhi` back-edges
 /// (e.g. a loop-header phi whose predecessor is `sp_phi - 4`).
-fn decompose_sp(
+pub(crate) fn decompose_sp(
     fg: &BuiltFunctionGraph,
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,

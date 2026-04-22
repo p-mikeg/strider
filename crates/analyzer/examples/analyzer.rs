@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let addr = obj
-        .symbol_by_name("global_test")
+        .symbol_by_name("struct_test")
         .ok_or("'fib' symbol not found in binary")?
         .address();
 

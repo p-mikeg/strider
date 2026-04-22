@@ -211,3 +211,31 @@ pub(super) fn check_layer_c_postcall_uniqueness(graph: &Graph, errs: &mut Vec<Va
         }
     }
 }
+
+/// Layer C: at most one [`NodeKind::FunctionArg`] per `index`.  The
+/// [`opt::FunctionArgDetect`] pass emits one canonical node per argument
+/// index; having two would mean patterns keyed by `matcher.function_arg(i)`
+/// become ambiguous.
+pub(super) fn check_layer_c_function_arg_uniqueness(
+    graph: &Graph,
+    errs: &mut Vec<ValidationError>,
+) {
+    use std::collections::HashMap;
+
+    let mut by_index: HashMap<u32, NodeId> = HashMap::new();
+    for node in graph.nodes.keys() {
+        let index = match *graph.node_kind(node) {
+            NodeKind::FunctionArg { index, .. } => index,
+            _ => continue,
+        };
+        if let Some(&first) = by_index.get(&index) {
+            errs.push(ValidationError::DuplicateFunctionArg {
+                index,
+                first,
+                second: node,
+            });
+        } else {
+            by_index.insert(index, node);
+        }
+    }
+}

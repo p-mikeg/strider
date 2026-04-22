@@ -1,6 +1,8 @@
 //! Phi / function-entry / call / return / branch / region-search constructors.
 
-use crate::pat::{CallOtherPat, CallPat, IfPat, Pat, PatKind, PhiPat, RetPat};
+use ir::node::FunctionArgSource;
+
+use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PatKind, PhiPat, RetPat};
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
@@ -22,6 +24,30 @@ pub fn initial_var() -> Pat {
 /// Matches the `InitialVar` node for the specific varnode `vn`.
 pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
     Pat::new(PatKind::InitialVar { vn: Some(vn) })
+}
+
+// ── Function-argument constructors ────────────────────────────────────────────
+
+/// Matches a `FunctionArg` node for argument index `i` regardless of source
+/// (register or stack).
+pub fn function_arg(i: u32) -> FunctionArgPat {
+    FunctionArgPat::new().index(i)
+}
+
+/// Matches any `FunctionArg` node regardless of index or source.
+pub fn function_arg_any() -> FunctionArgPat {
+    FunctionArgPat::new()
+}
+
+/// Matches a `FunctionArg` node whose source is the register varnode `vn`.
+pub fn function_arg_reg(vn: rsleigh::Vn) -> FunctionArgPat {
+    FunctionArgPat::new().source(FunctionArgSource::Register(vn))
+}
+
+/// Matches a `FunctionArg` node whose source is a stack slot at SP-relative
+/// `offset` bytes (in address space `space`).
+pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64) -> FunctionArgPat {
+    FunctionArgPat::new().source(FunctionArgSource::Stack { space, offset })
 }
 
 // ── Control nodes ─────────────────────────────────────────────────────────────

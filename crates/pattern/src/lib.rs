@@ -83,6 +83,7 @@ pub use pat::{
     // Builder types
     CallPat,
     FloatBinaryOpPat,
+    FunctionArgPat,
     IfPat,
     IntBinaryOpPat,
     // Const-capture overload traits
@@ -153,6 +154,11 @@ pub use pat::{
     float_to_int,
     float_unary,
     float_unary_any,
+    // Function arguments
+    function_arg,
+    function_arg_any,
+    function_arg_reg,
+    function_arg_stack,
     if_node,
     // Entry values
     initial_var,

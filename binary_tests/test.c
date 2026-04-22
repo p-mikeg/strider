@@ -144,8 +144,25 @@ int __attribute__((noinline, optimize("O0"))) global_test(int a, int b, int c) {
     } else {
         return a - b - c;
     }
+}
+
+struct test_struct {
+    int x;
+    short y;
+    char z;
+    long long w;
+};
+
+int __attribute__((noinline, optimize("O0"))) struct_test(
+    struct test_struct* a, int b) {
+    if(str[0] < 'x') {
+        return  a->y + b - a->w;
+    } else {
+        return a->z * b;
+    }
 
 }
+
 /* ── jump-table candidates ─────────────────────────────────────────── */
 
 /*

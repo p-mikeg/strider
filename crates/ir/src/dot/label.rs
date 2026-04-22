@@ -80,6 +80,20 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let label = match kind {
             // ── entry / structural ────────────────────────────────────────────
             NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
+            NodeKind::FunctionArg { source, index } => match source {
+                crate::node::FunctionArgSource::Register(reg) => {
+                    format!("arg[{}] ← {}", index, self.vn_to_name(reg)?)
+                }
+                crate::node::FunctionArgSource::Stack { space, offset } => {
+                    let space = self.pretty_vnspace(*space);
+                    format!(
+                        "arg[{}] ← {}[sp{}]",
+                        index,
+                        space,
+                        signed_offset(*offset)
+                    )
+                }
+            },
             NodeKind::MemPhi => "φ Mem".to_string(),
             NodeKind::ControlPhi(var) => format!("φ {}", self.vn_to_name(var)?),
             NodeKind::PostCallVarState(var) => format!("post-call\n{}", self.vn_to_name(var)?),

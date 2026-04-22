@@ -838,3 +838,89 @@ fn when_match_commutative_fallthrough_accepts_swapped_order() -> ir::Result<()> 
     Ok(())
 }
 
+// ── function_arg() patterns ───────────────────────────────────────────────────
+
+#[test]
+fn function_arg_any_matches_reg_arg() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&function_arg_any().into());
+    assert_eq!(hits.len(), 1, "exactly one FunctionArg node");
+    assert!(matches!(
+        g.graph.node_kind(hits[0].root),
+        NodeKind::FunctionArg { .. }
+    ));
+}
+
+#[test]
+fn function_arg_by_index_matches() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&function_arg(0).into());
+    assert_eq!(hits.len(), 1, "FunctionArg with index 0 exists");
+}
+
+#[test]
+fn function_arg_by_wrong_index_no_match() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&function_arg(7).into());
+    assert!(hits.is_empty(), "no FunctionArg with index 7 in this graph");
+}
+
+#[test]
+fn function_arg_capture_output_binds_value() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let v = Var::new();
+    let hits = m.find_all(&function_arg(0).capture(v));
+    assert_eq!(hits.len(), 1);
+    let out = hits[0].get(v).expect("v must bind");
+    let node = g.graph.get_node_from_output(out);
+    assert!(matches!(
+        g.graph.node_kind(node),
+        NodeKind::FunctionArg { index: 0, .. }
+    ));
+}
+
+// ── Matcher::function_arg / function_arg_count / function_args ────────────────
+
+#[test]
+fn matcher_function_arg_returns_handle() {
+    let (g, reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let h = m.function_arg(0).expect("arg 0 should exist");
+    assert_eq!(h.index(), 0);
+    assert!(matches!(
+        g.graph.node_kind(h.node_id()),
+        NodeKind::FunctionArg { index: 0, .. }
+    ));
+    // Source should be the register.
+    assert!(matches!(
+        h.source(),
+        ir::node::FunctionArgSource::Register(r) if r == reg
+    ));
+}
+
+#[test]
+fn matcher_function_arg_missing_returns_none() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    assert!(m.function_arg(7).is_none());
+}
+
+#[test]
+fn matcher_function_arg_count_reflects_max_index() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    assert_eq!(m.function_arg_count(), 1);
+}
+
+#[test]
+fn matcher_function_args_iterates_all() {
+    let (g, _reg) = graph_with_function_arg_reg();
+    let m = Matcher::new(&g);
+    let collected: Vec<u32> = m.function_args().map(|(i, _)| i).collect();
+    assert_eq!(collected, vec![0]);
+}
+

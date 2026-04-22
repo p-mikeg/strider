@@ -45,12 +45,17 @@ impl Analyzer {
     ///    convention's stack-pointer varnode.
     /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after
     ///    convergence), using the convention's positional stack-arg offsets.
+    /// 4. [`opt::FunctionArgDetect`] as a post-pass, canonicalising
+    ///    register- and stack-passed argument reads into `FunctionArg` nodes.
     pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::default_pipeline();
         p.add(opt::StackStoreDetect::from_convention(
             &self.calling_convention,
         ));
         p.add_post_pass(opt::CallStackArgCollect::from_convention(
+            &self.calling_convention,
+        ));
+        p.add_post_pass(opt::FunctionArgDetect::from_convention(
             &self.calling_convention,
         ));
         p

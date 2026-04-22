@@ -1,7 +1,13 @@
+use std::collections::HashMap;
+
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::pat::{Pat, PatKind};
+
+mod function_arg_handle;
+
+pub use function_arg_handle::FunctionArgHandle;
 
 mod bindings;
 mod commutativity;
@@ -28,6 +34,11 @@ struct NodeIndex {
     call_other_nodes: Vec<NodeId>,
     return_nodes: Vec<NodeId>,
     if_nodes: Vec<NodeId>,
+    function_arg_nodes: Vec<NodeId>,
+    /// `NodeId` of the canonical `FunctionArg` for each argument index.  Layer
+    /// C enforces at most one `FunctionArg` per index, so at most one entry
+    /// exists per key.
+    function_args: HashMap<u32, NodeId>,
     all_nodes: Vec<NodeId>,
 }
 
@@ -59,6 +70,8 @@ impl<'g> Matcher<'g> {
             let mut call_other_nodes = Vec::new();
             let mut return_nodes = Vec::new();
             let mut if_nodes = Vec::new();
+            let mut function_arg_nodes = Vec::new();
+            let mut function_args: HashMap<u32, NodeId> = HashMap::new();
             let mut all_nodes = Vec::new();
 
             for node in self.fn_graph.preorder() {
@@ -68,6 +81,10 @@ impl<'g> Matcher<'g> {
                     NodeKind::CallOther { .. } => call_other_nodes.push(node),
                     NodeKind::Return => return_nodes.push(node),
                     NodeKind::If => if_nodes.push(node),
+                    NodeKind::FunctionArg { index, .. } => {
+                        function_arg_nodes.push(node);
+                        function_args.insert(*index, node);
+                    }
                     _ => {}
                 }
             }
@@ -77,6 +94,8 @@ impl<'g> Matcher<'g> {
                 call_other_nodes,
                 return_nodes,
                 if_nodes,
+                function_arg_nodes,
+                function_args,
                 all_nodes,
             }
         })
@@ -95,6 +114,7 @@ impl<'g> Matcher<'g> {
             PatKind::CallOther { .. } => &idx.call_other_nodes,
             PatKind::Return { .. } => &idx.return_nodes,
             PatKind::If { .. } => &idx.if_nodes,
+            PatKind::FunctionArg { .. } => &idx.function_arg_nodes,
             _ => &idx.all_nodes,
         };
 
@@ -128,6 +148,57 @@ impl<'g> Matcher<'g> {
         } else {
             None
         }
+    }
+
+    // ── FunctionArg query API ─────────────────────────────────────────────────
+
+    /// Returns a [`FunctionArgHandle`] for the `FunctionArg` node at argument
+    /// position `index`, if the `FunctionArgDetect` pass emitted one.
+    pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'g>> {
+        let idx = self.index();
+        let node_id = *idx.function_args.get(&index)?;
+        self.make_function_arg_handle(node_id)
+    }
+
+    /// Returns `max(index) + 1` across all `FunctionArg` nodes in the graph,
+    /// or `0` if the graph has none.  Equivalent to "the declared arg count
+    /// that `FunctionArgDetect` was able to identify."
+    pub fn function_arg_count(&self) -> usize {
+        let idx = self.index();
+        match idx.function_args.keys().max() {
+            Some(&m) => (m as usize) + 1,
+            None => 0,
+        }
+    }
+
+    /// Iterates over every `FunctionArg` node, yielding `(index, handle)`
+    /// pairs sorted ascending by index.
+    pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
+        let idx = self.index();
+        let mut pairs: Vec<(u32, NodeId)> =
+            idx.function_args.iter().map(|(&k, &v)| (k, v)).collect();
+        pairs.sort_by_key(|(k, _)| *k);
+        pairs.into_iter().filter_map(move |(k, node_id)| {
+            self.make_function_arg_handle(node_id).map(|h| (k, h))
+        })
+    }
+
+    /// Builds a [`FunctionArgHandle`] from `node_id`, pulling `source` and
+    /// `index` out of the node's `NodeKind`.  Returns `None` if the node is
+    /// not actually a `FunctionArg` — the index-map only contains such nodes
+    /// by construction, so this never fires in practice, but preserves the
+    /// "no-panic" discipline.
+    fn make_function_arg_handle(&self, node_id: NodeId) -> Option<FunctionArgHandle<'g>> {
+        let NodeKind::FunctionArg { source, index } = *self.fn_graph.graph.node_kind(node_id)
+        else {
+            return None;
+        };
+        Some(FunctionArgHandle {
+            fn_graph: self.fn_graph,
+            node_id,
+            source,
+            index,
+        })
     }
 
     // ── delegating shells ─────────────────────────────────────────────────────
