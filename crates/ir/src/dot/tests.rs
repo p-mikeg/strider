@@ -29,6 +29,7 @@ fn render(graph: &Graph, entry: NodeId) -> String {
         graph,
         sleigh: &sleigh,
         call_clobbered: &[],
+        ret_val_regs: &[],
     };
     use dot::GraphDot;
     GraphDot::new(dumper, dot::DotStyle::empty())
@@ -329,6 +330,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         graph: &graph,
         sleigh: &sleigh,
         call_clobbered: &[],
+        ret_val_regs: &[],
     };
 
     let style = dot::DotStyle::empty();

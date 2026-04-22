@@ -317,6 +317,26 @@ pub(crate) fn graph_call_with_arg() -> ir::Result<(ir::BuiltFunctionGraph, rslei
     Ok((b.build()?, arg_vn))
 }
 
+/// Call at `0xABCD`, then return the value left in `ret_reg` after the call.
+///
+/// Mimics an x86_64-style function that yields `rax`: the single ret reg is
+/// the calling convention's slot-0 return register.  The Call node has a
+/// value output at slot 2 representing the post-call value of `ret_reg`, and
+/// the `Return` node pulls that value in its slot-2 input.
+pub(crate) fn graph_call_then_return_ret_reg()
+-> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
+    let ret_reg = make_reg_vn(0, 8);
+    let mut b = FunctionBuilder::new_raw(vec![ret_reg], &[], &[], &[ret_reg], None, 0)?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let tgt = b.build_uint64_const(0xABCD);
+    b.build_call(tgt)?;
+    // The caller returns whatever the callee left in the ABI ret-reg.
+    b.build_return(None, &[ret_reg])?;
+    Ok((b.build()?, ret_reg))
+}
+
 /// Graph with one variable (register varnode), returned as the result.
 /// Produces an `InitialVar` node.
 pub(crate) fn graph_with_initial_var() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {

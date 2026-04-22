@@ -217,6 +217,15 @@ define_pat_builder! {
         pat target;
         /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
         vec_pat args push arg;
+        /// Capture or constrain the Call's return-value output at ABI position
+        /// `idx` — e.g. `.ret_output(0, var(v))` binds `v` to the `NodeOutputId`
+        /// of the calling convention's first return register (`rax` on x86_64,
+        /// `x0` on AArch64).  The inner pattern should be `var(v)` or `any()`;
+        /// richer patterns are matched against the value output but will
+        /// typically fail because the Call itself produces the value.  If the
+        /// ret reg at `idx` is callee-saved, it does not appear as a Call
+        /// output and the match fails.
+        vec_pat ret_outputs push ret_output;
         /// Bind the matched `Call` node to `nv`.
         opt node_var: NodeVar as capture;
     }

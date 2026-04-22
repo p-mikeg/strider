@@ -167,6 +167,12 @@ impl<'a, R: MemReader> dot::GraphDotDumper for GraphDotDumper<'a, R> {
                 Some(format!("arg{}", idx - 2))
             } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
                 Some(format!("ref{idx}"))
+            } else if matches!(kind, NodeKind::Return) && idx >= 2 {
+                // Return ret-val input slots (2..) carry the calling
+                // convention's return registers in ABI order.  Label with
+                // the vn name if we know it; fall back to the signature's
+                // generic "ret" label otherwise.
+                self.return_ret_name(idx)?
             } else {
                 None
             };

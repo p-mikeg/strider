@@ -417,10 +417,17 @@ pub enum PatKind {
     InitialVar { vn: Option<rsleigh::Vn> },
 
     // ── Control-level nodes ───────────────────────────────────────────────────
-    /// `Call`: inputs = [ctrl(0), mem(1), target(2), arg0(3), arg1(4)…]
+    /// `Call`: inputs = [ctrl(0), mem(1), target(2), arg0(3), arg1(4)…];
+    /// outputs = [ctrl(0), mem(1), retval0(2), retval1(3), …, other_clobbered(N), …]
+    /// where `retval_i` corresponds to the calling convention's i-th return
+    /// register.  `ret_outputs` matches patterns against the Call's output at
+    /// slot `2 + idx`, so `.ret_output(0, var(v))` captures the value flowing
+    /// out of (e.g.) `rax` on x86_64.  A ret reg that is callee-saved does not
+    /// appear as a Call output, and the match fails for that slot.
     Call {
         target: Option<Pat>,
         args: Vec<(usize, Pat)>,
+        ret_outputs: Vec<(usize, Pat)>,
         node_var: Option<NodeVar>,
     },
     /// `CallOther`: inputs = [ctrl(0), mem(1), arg0(2), arg1(3)…].

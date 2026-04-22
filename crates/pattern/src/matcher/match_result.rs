@@ -144,4 +144,36 @@ impl Match {
             _ => None,
         }
     }
+
+    /// Returns the [`rsleigh::Vn`] associated with the `NodeOutputId` bound to
+    /// `v`, if one can be determined.  The output-to-varnode mapping is
+    /// well-defined only for a handful of producer kinds:
+    ///
+    /// * `InitialVar(vn)` — the varnode whose function-entry value is read
+    /// * `Call` outputs at slot `2 + i` (i.e. matched via
+    ///   [`crate::pat::CallPat::ret_output`] or any other consumer) — the
+    ///   varnode at `BuiltFunctionGraph::call_clobbered[i]`.  Since the
+    ///   clobbered list is front-loaded with the calling convention's return
+    ///   registers, indices `0..ret_val_regs.len()` correspond to the ABI
+    ///   return registers in order.
+    ///
+    /// For any other producer (`IntConst`, `Load`, `Phi`, binary ops, …), the
+    /// notion of "the varnode this value represents" is not meaningful and the
+    /// function returns `None`.  It also returns `None` if `v` is unbound.
+    pub fn get_vn(
+        &self,
+        v: Var,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<rsleigh::Vn> {
+        let out = self.bindings.get(v)?;
+        let (node, slot) = graph.graph.output_definition(out);
+        match graph.graph.node_kind(node) {
+            NodeKind::InitialVar(vn) => Some(*vn),
+            NodeKind::Call if slot >= 2 => {
+                let idx = (slot - 2) as usize;
+                graph.call_clobbered.get(idx).copied()
+            }
+            _ => None,
+        }
+    }
 }

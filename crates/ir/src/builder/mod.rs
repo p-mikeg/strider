@@ -36,6 +36,12 @@ pub struct FunctionBuilder {
     pub(crate) call_cloberred_variables: Vec<rsleigh::Vn>,
     /// Variables used to pass arguments according to the calling convention.
     pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
+    /// Varnodes used to return values according to the calling convention,
+    /// in ABI order (e.g. `[rax, rdx]` on x86_64).  The first `ret_val_vars.len()`
+    /// value-typed outputs of every `Call` (output indices 2..) correspond to
+    /// these varnodes in order; `Return` input slots 2.. correspond to these
+    /// varnodes in order.
+    pub(crate) ret_val_vars: Vec<rsleigh::Vn>,
     /// Stack pointer varnode — when present, it is excluded from the
     /// `call_cloberred_variables` set and rebound at every `Call` to
     /// `Add(pre_call_sp, IntConst(ret_stack_pop))`.  `None` in synthetic
@@ -106,7 +112,7 @@ impl FunctionBuilder {
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
         callee_saved_vars: &[rsleigh::Vn],
-        _ret_vars: &[rsleigh::Vn],
+        ret_vars: &[rsleigh::Vn],
         stack_ptr_vn: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Result<Self> {
@@ -129,11 +135,25 @@ impl FunctionBuilder {
             })
             .copied()
             .collect();
-        let call_cloberred_variables: Vec<_> = all_variables
-            .iter()
-            .filter(|v| !callee_saved_vars.contains(v) && Some(**v) != stack_ptr_vn)
-            .copied()
-            .collect();
+        // `call_cloberred_variables` is emitted as the Call node's value
+        // outputs in order (slot `i + 2` ↔ `call_cloberred_variables[i]`).
+        // Front-load it with the calling convention's return registers so
+        // `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
+        // then append the remaining caller-clobbered registers.
+        let call_cloberred_variables: Vec<_> = {
+            let is_clobbered = |v: &rsleigh::Vn| {
+                !callee_saved_vars.contains(v) && Some(*v) != stack_ptr_vn
+            };
+            let ret_prefix = ret_vars
+                .iter()
+                .copied()
+                .filter(|v| all_variables.contains(v) && is_clobbered(v));
+            let rest = all_variables
+                .iter()
+                .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
+                .copied();
+            ret_prefix.chain(rest).collect()
+        };
         let mut variables = PrimaryMap::new();
         let mut variable_to_id = HashMap::new();
         for variable in all_variables {
@@ -141,6 +161,11 @@ impl FunctionBuilder {
             variable_to_id.insert(variable, var_id);
         }
         let arg_passing_vars: Vec<_> = arg_passing_vars
+            .iter()
+            .copied()
+            .filter(|vn| variable_to_id.contains_key(vn))
+            .collect();
+        let ret_val_vars: Vec<_> = ret_vars
             .iter()
             .copied()
             .filter(|vn| variable_to_id.contains_key(vn))
@@ -153,6 +178,7 @@ impl FunctionBuilder {
             variables,
             variable_to_id,
             arg_passing_vars,
+            ret_val_vars,
             call_cloberred_variables,
             stack_ptr_vn,
             ret_stack_pop,
@@ -188,6 +214,12 @@ impl FunctionBuilder {
         self.variable_to_id.keys()
     }
 
+    /// Returns the calling convention's return-value registers, in ABI order.
+    /// Empty for synthetic test builds that didn't supply a convention.
+    pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
+        &self.ret_val_vars
+    }
+
     /// Finalises and returns the completed [`BuiltFunctionGraph`], after running
     /// structural validation on the built graph.
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
@@ -196,6 +228,7 @@ impl FunctionBuilder {
             entry: self.function.entry,
             variables: self.variables,
             call_clobbered: self.call_cloberred_variables.into_boxed_slice(),
+            ret_val_regs: self.ret_val_vars.into_boxed_slice(),
         };
         crate::validate::validate(&built.graph, built.entry)?;
         Ok(built)

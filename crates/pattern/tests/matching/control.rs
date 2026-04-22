@@ -599,6 +599,51 @@ fn call_arg_capture_and_extract() -> ir::Result<()> {
     Ok(())
 }
 
+// ── call().ret_output + ret().ret_val + Match::get_vn ────────────────────────
+
+#[test]
+fn call_ret_output_captures_abi_return_slot() -> ir::Result<()> {
+    let (g, ret_reg) = graph_call_then_return_ret_reg()?;
+    let m = Matcher::new(&g);
+    let v = Var::new();
+    let hits = m.find_all(&call().ret_output(0, var(v)).into());
+    assert_eq!(hits.len(), 1, "one call with a ret-reg output");
+    let bound = hits[0].get(v).expect("v must be bound");
+    // The captured output must sit at slot 2 of the Call (the first ABI
+    // return register).
+    let (node, slot) = g.graph.output_definition(bound);
+    assert!(matches!(g.graph.node_kind(node), NodeKind::Call));
+    assert_eq!(slot, 2, "ret_output(0) corresponds to Call output slot 2");
+    // Match::get_vn should resolve the captured output to the ret reg vn.
+    assert_eq!(hits[0].get_vn(v, &g), Some(ret_reg));
+    Ok(())
+}
+
+#[test]
+fn ret_val_index_zero_matches_ret_reg_input() -> ir::Result<()> {
+    let (g, ret_reg) = graph_call_then_return_ret_reg()?;
+    let m = Matcher::new(&g);
+    let v = Var::new();
+    let hits = m.find_all(&ret().ret_val(0, var(v)).into());
+    assert_eq!(hits.len(), 1);
+    // The Return's slot-2 input is the Call's slot-2 output, i.e. the
+    // post-call value of the ret reg.
+    assert_eq!(hits[0].get_vn(v, &g), Some(ret_reg));
+    Ok(())
+}
+
+#[test]
+fn get_vn_returns_none_for_non_vn_producers() -> ir::Result<()> {
+    // An IntConst producer has no associated vn — get_vn must return None.
+    let g = graph_add_return()?;
+    let m = Matcher::new(&g);
+    let v = Var::new();
+    let hits = m.find_all(&ret().ret_val(0, var(v)).into());
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].get_vn(v, &g), None);
+    Ok(())
+}
+
 // ── call_other() pattern ──────────────────────────────────────────────────────
 
 /// Two CallOther sites: op-id 1 with arg 0xAA, op-id 2 with arg 0xBB, then ret.

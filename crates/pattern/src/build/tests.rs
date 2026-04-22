@@ -193,8 +193,8 @@ fn int_const_with_popcount_rewrite() -> Result<()> {
     };
     let ret_inputs: Vec<NodeOutputId> =
         fg.graph.node_inputs(ret_node).into_iter().collect();
-    // Return inputs = [ctrl(0), retval0(1), …]
-    let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+    // Return inputs = [ctrl(0), mem(1), retval0(2), …]
+    let retval = ret_inputs.get(2).copied().ok_or_else(|| {
         ErrorKind::AssertionFailed("Return node missing retval input".into())
     })?;
     let producer = fg.graph.get_node_from_output(retval);
@@ -265,7 +265,7 @@ fn int_const_with_int_binary_any_add() -> Result<()> {
         .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
     let ret_inputs: Vec<NodeOutputId> =
         fg.graph.node_inputs(ret_node).into_iter().collect();
-    let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+    let retval = ret_inputs.get(2).copied().ok_or_else(|| {
         ErrorKind::AssertionFailed("Return node missing retval".into())
     })?;
     let producer = fg.graph.get_node_from_output(retval);
@@ -313,7 +313,7 @@ fn bool_const_with_not_rewrite() -> Result<()> {
         .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
     let ret_inputs: Vec<NodeOutputId> =
         fg.graph.node_inputs(ret_node).into_iter().collect();
-    let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+    let retval = ret_inputs.get(2).copied().ok_or_else(|| {
         ErrorKind::AssertionFailed("Return node missing retval".into())
     })?;
     let producer = fg.graph.get_node_from_output(retval);
@@ -360,7 +360,7 @@ fn float_const_with_signbit_flip() -> Result<()> {
         .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
     let ret_inputs: Vec<NodeOutputId> =
         fg.graph.node_inputs(ret_node).into_iter().collect();
-    let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+    let retval = ret_inputs.get(2).copied().ok_or_else(|| {
         ErrorKind::AssertionFailed("Return node missing retval".into())
     })?;
     let producer = fg.graph.get_node_from_output(retval);
@@ -453,7 +453,7 @@ fn int_const_with_skip_returns_ok_false() -> Result<()> {
         .ok_or_else(|| ErrorKind::AssertionFailed("no Return node".into()))?;
     let ret_inputs: Vec<NodeOutputId> =
         fg.graph.node_inputs(ret_node).into_iter().collect();
-    let retval = ret_inputs.get(1).copied().ok_or_else(|| {
+    let retval = ret_inputs.get(2).copied().ok_or_else(|| {
         ErrorKind::AssertionFailed("Return node missing retval".into())
     })?;
     let producer = fg.graph.get_node_from_output(retval);

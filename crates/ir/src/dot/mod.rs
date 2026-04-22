@@ -127,6 +127,10 @@ pub struct GraphDotDumper<'a, R: MemReader> {
     pub(crate) graph: &'a Graph,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     pub(crate) call_clobbered: &'a [rsleigh::Vn],
+    /// Calling convention's return-value registers in ABI order.  Used to
+    /// label `Return` input edges at slots 2.. with the register name so
+    /// visualising the graph shows which vn each return slot carries.
+    pub(crate) ret_val_regs: &'a [rsleigh::Vn],
 }
 
 pub struct GraphDotDumperState {

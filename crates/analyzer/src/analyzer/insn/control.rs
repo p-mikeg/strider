@@ -38,18 +38,18 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     }
 
     pub(super) fn handle_return(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let regs: Vec<_> = self
-            .builder
-            .variables()
-            .copied()
-            .filter(|vn| vn.addr.space == rsleigh::VnSpace::REGISTER)
-            .collect();
-        if !insn.inputs.is_empty() {
-            let ret_val = self.read_vn(&insn.inputs[0])?;
-            self.builder.build_return(Some(ret_val), &regs)?;
-        } else {
-            self.builder.build_return(None, &regs)?;
-        }
+        // Emit the calling convention's return-value registers in ABI order —
+        // Return inputs become `[ctrl, mem, ret_val_regs[0], ret_val_regs[1], …]`,
+        // so pattern queries like `ret.ret_val(0, …)` line up with the ABI's
+        // first return register (e.g. rax on x86_64).  The explicit `value`
+        // parameter of `build_return` is reserved for synthetic test builds
+        // that don't resolve against a real calling convention.
+        let ret_regs = self.builder.ret_val_vars().to_vec();
+        // Ignore the p-code `return` op's explicit input: on real targets the
+        // lifter fabricates one (e.g. the popped return-address value) that
+        // does not correspond to any ABI return-value slot.
+        let _ = insn;
+        self.builder.build_return(None, &ret_regs)?;
         Ok(())
     }
 

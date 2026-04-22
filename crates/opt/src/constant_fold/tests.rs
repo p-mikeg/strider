@@ -22,13 +22,13 @@ where
 }
 
 /// Returns the output id that the Return node receives as its value
-/// argument (input[1]: input[0] is the control edge).
+/// argument (input[2]: input[0] is the control edge, input[1] is memory).
 fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
         .ok_or(ErrorKind::NoReturnNode)?;
-    Ok(fg.graph.node_inputs(ret)[1])
+    Ok(fg.graph.node_inputs(ret)[2])
 }
 
 /// Returns the `NodeKind` of the node that produces the return value.

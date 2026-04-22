@@ -324,4 +324,19 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
         let vn = &self.call_clobbered[i];
         self.vn_to_name(vn)
     }
+
+    /// Returns the register name for a `Return` input at the given input
+    /// slot.  Return inputs are `[ctrl(0), mem(1), ret_val_regs[0](2), …]`
+    /// so slot `i + 2` corresponds to `ret_val_regs[i]`.  Returns `None` if
+    /// the slot is out of range of the stored calling-convention ret regs
+    /// (e.g. synthetic test graphs that don't carry a convention).
+    pub(super) fn return_ret_name(&self, input_slot: usize) -> io::Result<Option<String>> {
+        let Some(i) = input_slot.checked_sub(2) else {
+            return Ok(None);
+        };
+        let Some(vn) = self.ret_val_regs.get(i) else {
+            return Ok(None);
+        };
+        self.vn_to_name(vn).map(Some)
+    }
 }

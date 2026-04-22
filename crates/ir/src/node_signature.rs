@@ -313,8 +313,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         ),
         NodeKind::PostCallMemState => sig!(inputs: [CTRL], outputs: [MEM]),
         NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [INT_VAL]),
-        // Return: [control, ...return values].  No memory input.
-        NodeKind::Return => sig!(inputs: [CTRL]; in_tail: RET, outputs: []),
+        // Return: [control, memory, ...return values]. Return values are the
+        // calling convention's ret_val_regs when built by the analyzer; synthetic
+        // test builds may supply a single explicit value via `build_return`.
+        NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
 
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
@@ -478,7 +480,10 @@ mod tests {
     #[test]
     fn expected_signature_return() {
         let (inputs, outputs) = kinds(&NodeKind::Return);
-        assert_eq!(inputs, vec![ExpectedOutputKind::Control]);
+        assert_eq!(
+            inputs,
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Memory]
+        );
         assert_eq!(outputs, vec![]);
     }
 
@@ -599,9 +604,10 @@ mod tests {
     #[test]
     fn return_input_tail_is_ret() {
         let sig = expected_signature(&NodeKind::Return);
-        assert_eq!(sig.inputs.head_len(), 1);
+        assert_eq!(sig.inputs.head_len(), 2);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
-        assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Ret);
+        assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
+        assert_eq!(sig.inputs.at(2).unwrap().role, SlotRole::Ret);
         assert_eq!(sig.inputs.at(99).unwrap().role, SlotRole::Ret);
     }
 

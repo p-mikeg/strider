@@ -101,7 +101,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
             .ok_or(ErrorKind::NoReturnNode)?;
-        let val = fg.graph.node_inputs(ret)[1];
+        let val = fg.graph.node_inputs(ret)[2];
         Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
     }
 

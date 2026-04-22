@@ -28,6 +28,7 @@ pub(super) fn match_node_id(
         PatKind::Call {
             target,
             args,
+            ret_outputs,
             node_var,
         } => {
             if !matches!(kind, NodeKind::Call) {
@@ -54,6 +55,24 @@ pub(super) fn match_node_id(
                 if !matcher.match_output(arg_out, arg_pat, bindings) {
                     *bindings = snap;
                     return false;
+                }
+            }
+
+            // Call outputs: [ctrl(0), mem(1), retval0(2), retval1(3), …,
+            // other_clobbered(N), …].  `ret_output(idx, …)` matches the
+            // value output at slot `2 + idx`, which corresponds to the
+            // calling convention's i-th return register.
+            if !ret_outputs.is_empty() {
+                let outputs = matcher.fn_graph.graph.node_outputs(node);
+                for (idx, out_pat) in ret_outputs {
+                    let Some(&ret_out) = outputs.get(2 + idx) else {
+                        *bindings = snap;
+                        return false;
+                    };
+                    if !matcher.match_output(ret_out, out_pat, bindings) {
+                        *bindings = snap;
+                        return false;
+                    }
                 }
             }
 
@@ -126,10 +145,11 @@ pub(super) fn match_node_id(
                 }
             }
 
-            // Return inputs: [ctrl(0), retval0(1), retval1(2), …]
-            // There is no memory edge on Return — only ctrl then the return values.
+            // Return inputs: [ctrl(0), mem(1), retval0(2), retval1(3), …]
+            // where retval_i corresponds to the calling convention's i-th
+            // return register.
             for (idx, rv_pat) in ret_vals {
-                let Some(&rv_out) = inputs.get(1 + idx) else {
+                let Some(&rv_out) = inputs.get(2 + idx) else {
                     *bindings = snap;
                     return false;
                 };

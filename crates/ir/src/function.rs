@@ -51,7 +51,17 @@ pub struct BuiltFunctionGraph {
     /// Ordered list of varnodes clobbered by every `Call` node.
     /// The i-th clobbered output of any Call (output index `i + 2`) corresponds
     /// to `call_clobbered[i]`.  The list is the same for all calls.
+    ///
+    /// The first `ret_val_regs.len()` entries are the calling convention's
+    /// return registers in ABI order (see [`BuiltFunctionGraph::ret_val_regs`]);
+    /// the rest are remaining caller-clobbered registers.
     pub call_clobbered: Box<[rsleigh::Vn]>,
+    /// The calling convention's return-value registers, in ABI order.
+    /// Matches the first `ret_val_regs.len()` entries of
+    /// [`BuiltFunctionGraph::call_clobbered`] when those regs are caller-clobbered
+    /// (they normally are — callee-saved ret regs are unusual), and matches
+    /// `Return` node input slots `2..2+ret_val_regs.len()`.
+    pub ret_val_regs: Box<[rsleigh::Vn]>,
 }
 
 impl BuiltFunctionGraph {
@@ -80,6 +90,7 @@ impl BuiltFunctionGraph {
             graph: &self.graph,
             sleigh,
             call_clobbered: &self.call_clobbered,
+            ret_val_regs: &self.ret_val_regs,
         }
     }
 }

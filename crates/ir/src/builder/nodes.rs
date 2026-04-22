@@ -340,11 +340,15 @@ impl FunctionBuilder {
         if !ctrl_kind.is_control() {
             return Err(ErrorKind::ExpectedControl(res.control, ctrl_kind).into());
         }
+        let mem_kind = self.graph().output_kind(res.memory);
+        if !mem_kind.is_memory() {
+            return Err(ErrorKind::ExpectedMemory(res.memory, mem_kind).into());
+        }
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
             NodeKind::Return,
-            core::iter::once(res.control).chain(ret_inputs),
+            [res.control, res.memory].into_iter().chain(ret_inputs),
             [],
         );
         Ok(())
