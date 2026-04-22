@@ -282,7 +282,7 @@ mod tests {
     where
         F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
     {
-        let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

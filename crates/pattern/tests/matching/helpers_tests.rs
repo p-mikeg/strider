@@ -11,7 +11,7 @@ use super::common::*;
 #[test]
 fn deduplicated_constants_yield_single_match() -> ir::Result<()> {
     // Building two int_const(5, U64) returns the same node due to deduplication.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);

@@ -29,7 +29,7 @@ pub(crate) fn make_reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 /// `add(5, 3)`, then return the result.
 /// Shape: Entry → region[add(5,3), return(add_result)]
 pub(crate) fn graph_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -42,7 +42,7 @@ pub(crate) fn graph_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// `and(4, 7)`, `add(and_result, 1)`, return.
 pub(crate) fn graph_and_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -57,7 +57,7 @@ pub(crate) fn graph_and_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// Call at target `0x1234`, then return.
 pub(crate) fn graph_call_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -69,7 +69,7 @@ pub(crate) fn graph_call_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// Two calls (`0x1111`, `0x2222`) in sequence, then return.
 pub(crate) fn graph_two_calls_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -85,7 +85,7 @@ pub(crate) fn graph_two_calls_return() -> ir::Result<ir::BuiltFunctionGraph> {
 ///   true  branch → return 10
 ///   false branch → return 20
 pub(crate) fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -112,7 +112,7 @@ pub(crate) fn graph_if_branches() -> ir::Result<ir::BuiltFunctionGraph> {
 ///   true branch → Call at 0x2345, then return
 ///   false branch → return
 pub(crate) fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -139,7 +139,7 @@ pub(crate) fn graph_if_with_call_in_true_branch() -> ir::Result<ir::BuiltFunctio
 ///   true branch → return
 ///   false branch → Call at 0x5678, then return
 pub(crate) fn graph_if_with_call_in_false_branch() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -164,7 +164,7 @@ pub(crate) fn graph_if_with_call_in_false_branch() -> ir::Result<ir::BuiltFuncti
 
 /// neg(add(5, 3)), then return.
 pub(crate) fn graph_neg_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -178,7 +178,7 @@ pub(crate) fn graph_neg_add_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// not(bool_const(true)), then return.
 pub(crate) fn graph_bool_not_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -192,7 +192,7 @@ pub(crate) fn graph_bool_not_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// bool_and(true, false), then return.
 pub(crate) fn graph_bool_and_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -206,7 +206,7 @@ pub(crate) fn graph_bool_and_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// zero_extend(add(1, 2) : U32 → U64), then return.
 pub(crate) fn graph_zero_extend_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -220,7 +220,7 @@ pub(crate) fn graph_zero_extend_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// truncate(add(1u64, 2u64) → U8), then return.
 pub(crate) fn graph_truncate_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -234,7 +234,7 @@ pub(crate) fn graph_truncate_return() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// add(add(1, 2), 3) nested three levels, return.
 pub(crate) fn graph_nested_add() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -252,7 +252,7 @@ pub(crate) fn graph_nested_add() -> ir::Result<ir::BuiltFunctionGraph> {
 /// The Store's memory output flows into Load (which consumes it as input[0]),
 /// making the Store node reachable via the preorder walk from Return.
 pub(crate) fn graph_store_then_load() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -267,7 +267,7 @@ pub(crate) fn graph_store_then_load() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// load(addr=0x100) in RAM space, return the loaded value.
 pub(crate) fn graph_load_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -283,7 +283,7 @@ pub(crate) fn graph_load_return() -> ir::Result<ir::BuiltFunctionGraph> {
 /// The Store's memory is threaded into the Call (via cur_region_memory), so
 /// the Store is reachable from the Return through the Call's inputs.
 pub(crate) fn graph_store_then_call() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -304,7 +304,7 @@ pub(crate) fn graph_store_then_call() -> ir::Result<ir::BuiltFunctionGraph> {
 pub(crate) fn graph_call_with_arg() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let arg_vn = make_reg_vn(0, 8); // 8-byte register at offset 0
     // Register it as both tracked and arg-passing.
-    let mut b = FunctionBuilder::new(vec![arg_vn], &[arg_vn], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![arg_vn], &[arg_vn], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -321,7 +321,7 @@ pub(crate) fn graph_call_with_arg() -> ir::Result<(ir::BuiltFunctionGraph, rslei
 /// Produces an `InitialVar` node.
 pub(crate) fn graph_with_initial_var() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let vn = make_reg_vn(0, 8);
-    let mut b = FunctionBuilder::new(vec![vn], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![vn], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -335,7 +335,7 @@ pub(crate) fn graph_with_two_initial_vars()
 -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn, rsleigh::Vn)> {
     let vn_a = make_reg_vn(0, 8);
     let vn_b = make_reg_vn(8, 8);
-    let mut b = FunctionBuilder::new(vec![vn_a, vn_b], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![vn_a, vn_b], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -352,7 +352,7 @@ pub(crate) fn graph_with_two_initial_vars()
 #[allow(dead_code)]
 pub(crate) fn graph_if_with_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh::Vn)> {
     let flag = make_reg_vn(0, 8);
-    let mut b = FunctionBuilder::new(vec![flag], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0)?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -376,7 +376,7 @@ pub(crate) fn graph_if_with_phi() -> ir::Result<(ir::BuiltFunctionGraph, rsleigh
 
 /// Graph: `add(5, 3)` — note: 5 is lhs, 3 is rhs.
 pub(crate) fn graph_add_5_3() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -389,7 +389,7 @@ pub(crate) fn graph_add_5_3() -> ir::Result<ir::BuiltFunctionGraph> {
 
 /// Graph: `sub(5, 3)`.
 pub(crate) fn graph_sub_5_3() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -409,7 +409,7 @@ pub(crate) fn add_node_in_add_graph(g: &ir::BuiltFunctionGraph) -> ir::node::Nod
 
 /// Build a small graph that returns `bool_const(true)` cast to int.
 pub(crate) fn graph_bool_const_return() -> ir::Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);

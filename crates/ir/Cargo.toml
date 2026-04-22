@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rsleigh.workspace = true
+target.workspace = true
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
 smallvec.workspace = true

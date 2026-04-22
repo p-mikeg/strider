@@ -31,12 +31,9 @@
 //! - [`CallingConvention`] — describes which registers are caller-saved
 
 mod analyzer;
-mod arch;
-mod calling_convention;
 pub mod error;
 mod utils;
 
 pub use analyzer::Analyzer;
-pub use arch::SleighArch;
-pub use calling_convention::CallingConvention;
 pub use error::{Error, ErrorKind, Result};
+pub use target::{BuiltCallingConvention, CallingConvention, Endianess, SleighArch};

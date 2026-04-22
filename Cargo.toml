@@ -17,6 +17,7 @@ cfg = { path = "crates/cfg" }
 reader = { path = "crates/reader" }
 ir = { path = "crates/ir" }
 opt = { path = "crates/opt" }
+target = { path = "crates/target" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
 strider-error = { path = "crates/strider-error" }

@@ -1,4 +1,4 @@
-use crate::{ErrorKind, Result};
+use crate::error::{ErrorKind, Result};
 
 /// Converts a slice of register name strings into their corresponding varnode
 /// representations using the provided Sleigh register map.

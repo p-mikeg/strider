@@ -37,7 +37,7 @@ fn example_arithmetic() {
     separator("Arithmetic patterns");
 
     // Build: add(and(4, 7), 1), return result
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
@@ -77,7 +77,7 @@ fn example_arithmetic() {
     }
 
     // ── Query 5: extend / truncate ────────────────────────────────────────────
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
@@ -102,7 +102,7 @@ fn example_arithmetic() {
     ); // 0
 
     // ── Query 6: bool operations ──────────────────────────────────────────────
-    let mut b3 = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b3 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r3 = b3.create_region().expect("build");
     b3.set_entry_region(r3).expect("build");
     b3.set_region(r3);
@@ -149,7 +149,7 @@ fn example_calls_and_returns() {
     separator("Call and return patterns");
 
     // Build: call(0x1000), call(0x2000), return
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
@@ -230,7 +230,7 @@ fn example_if_branches() {
     //   if (5 == 1):
     //     true branch  → call(0xAAAA), return
     //     false branch → return
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let entry = b.create_region().expect("build");
     let true_r = b.create_region().expect("build");
     let false_r = b.create_region().expect("build");
@@ -292,7 +292,7 @@ fn example_captures() {
     separator("Capture variables");
 
     // Build: if (x == 0): return 10; else: return 20;
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let entry = b.create_region().expect("build");
     let true_r = b.create_region().expect("build");
     let false_r = b.create_region().expect("build");
@@ -346,7 +346,7 @@ fn example_captures() {
     // ── Enforce equality: same var used twice ─────────────────────────────────
     let x = Var::new();
     // add(x, x) only matches nodes where both inputs are the *same* output.
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
@@ -374,7 +374,7 @@ fn example_load_store() {
 
     // ── Load ──────────────────────────────────────────────────────────────────
     // Build: load(0x100, RAM), return loaded value
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
@@ -420,7 +420,7 @@ fn example_load_store() {
     // ── Store ─────────────────────────────────────────────────────────────────
     // Build: store(addr=0x200, data=42, RAM), then load to make store reachable,
     //        return the loaded value.
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[], None, 0).expect("build");
+    let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
@@ -472,7 +472,7 @@ fn example_load_store() {
             space: rsleigh::VnSpace::REGISTER,
         },
     };
-    let mut b3 = FunctionBuilder::new(vec![arg_vn], &[arg_vn], &[], &[], None, 0).expect("build");
+    let mut b3 = FunctionBuilder::new_raw(vec![arg_vn], &[arg_vn], &[], &[], None, 0).expect("build");
     let r3 = b3.create_region().expect("build");
     b3.set_entry_region(r3).expect("build");
     b3.set_region(r3);
@@ -524,7 +524,7 @@ fn example_initial_vars() {
     };
 
     // Build: rax + rbx, return result
-    let mut b = FunctionBuilder::new(vec![rax_vn, rbx_vn], &[], &[], &[], None, 0).expect("build");
+    let mut b = FunctionBuilder::new_raw(vec![rax_vn, rbx_vn], &[], &[], &[], None, 0).expect("build");
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);

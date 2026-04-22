@@ -29,14 +29,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let all_vns = analyzer.find_all_unique_vns(cfg);
 
         // Create the builder to create the ir graph
-        let builder = ir::FunctionBuilder::new(
-            all_vns,
-            &analyzer.calling_convention.arg_passing_regs,
-            &analyzer.calling_convention.callee_saved_regs,
-            &analyzer.calling_convention.ret_val_regs,
-            Some(analyzer.calling_convention.stack_ptr_vn),
-            analyzer.calling_convention.ret_stack_pop,
-        )?;
+        let builder = ir::FunctionBuilder::new(all_vns, &analyzer.calling_convention)?;
 
         Ok(Self {
             analyzer,

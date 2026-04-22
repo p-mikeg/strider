@@ -6,7 +6,7 @@ use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp,
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
-    FunctionBuilder::new(vec![], &[], &[], &[], None, 0)
+    FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
 }
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -477,7 +477,7 @@ fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
 
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -673,7 +673,7 @@ fn sp_vn_u64() -> rsleigh::Vn {
 #[test]
 fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new(vec![sp], &[], &[], &[], Some(sp), 8)?;
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 8)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -718,7 +718,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new(vec![sp], &[], &[], &[], Some(sp), 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 0)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);

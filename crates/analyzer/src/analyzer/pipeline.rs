@@ -9,7 +9,7 @@ use super::IrAnalyzer;
 /// convention.  Create one `Analyzer` per architecture/ABI combination and
 /// reuse it to analyse multiple functions.
 pub struct Analyzer {
-    pub(super) calling_convention: crate::calling_convention::BuiltCallingConvention,
+    pub(super) calling_convention: crate::BuiltCallingConvention,
     pub(super) arch: crate::SleighArch,
 }
 
@@ -32,7 +32,7 @@ impl Analyzer {
     }
 
     /// Returns the resolved calling convention this analyzer was built with.
-    pub fn calling_convention(&self) -> &crate::calling_convention::BuiltCallingConvention {
+    pub fn calling_convention(&self) -> &crate::BuiltCallingConvention {
         &self.calling_convention
     }
 
@@ -47,11 +47,11 @@ impl Analyzer {
     ///    convergence), using the convention's positional stack-arg offsets.
     pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::default_pipeline();
-        p.add(opt::StackStoreDetect::new(
-            self.calling_convention.stack_ptr_vn,
+        p.add(opt::StackStoreDetect::from_convention(
+            &self.calling_convention,
         ));
-        p.add_post_pass(opt::CallStackArgCollect::new(
-            self.calling_convention.stack_arg_offsets.clone(),
+        p.add_post_pass(opt::CallStackArgCollect::from_convention(
+            &self.calling_convention,
         ));
         p
     }

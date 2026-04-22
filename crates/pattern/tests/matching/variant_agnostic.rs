@@ -172,7 +172,7 @@ fn int_cmp_any_no_match_in_add_only_graph() -> ir::Result<()> {
 #[test]
 fn bool_binary_any_captures_or_variant() -> ir::Result<()> {
     // Build bool_or(cast_to_bool(any_add), true) so the Or cannot be folded.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -243,7 +243,7 @@ fn bool_unary_any_no_match_in_add_only_graph() -> ir::Result<()> {
 /// Positive match: `float_binary_any` on `FloatAdd(1.0, 2.0)` captures Add.
 #[test]
 fn float_binary_any_captures_add_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -268,7 +268,7 @@ fn float_binary_any_captures_add_variant() -> ir::Result<()> {
 /// Positive match: `float_binary_any` on `FloatDiv` captures Div.
 #[test]
 fn float_binary_any_captures_div_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -293,7 +293,7 @@ fn float_binary_any_captures_div_variant() -> ir::Result<()> {
 /// Commutativity: `float_binary_any(op, c2, c1)` matches `FloatAdd(c1, c2)`.
 #[test]
 fn float_binary_any_commutative_add_reversed() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -321,7 +321,7 @@ fn float_binary_any_commutative_add_reversed() -> ir::Result<()> {
 /// Positive match: `float_unary_any` on `FloatNeg(2.0)` captures Neg.
 #[test]
 fn float_unary_any_captures_neg_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -358,7 +358,7 @@ fn float_unary_any_no_match_in_int_only_graph() -> ir::Result<()> {
 /// Positive match: `float_cmp_any` on `FloatCmp::Less(3.0, 4.0)` captures Less.
 #[test]
 fn float_cmp_any_captures_less_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -384,7 +384,7 @@ fn float_cmp_any_captures_less_variant() -> ir::Result<()> {
 #[test]
 fn float_cmp_any_equal_vs_less_distinguished() -> ir::Result<()> {
     // Graph with FloatCmp::Equal.
-    let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -401,7 +401,7 @@ fn float_cmp_any_equal_vs_less_distinguished() -> ir::Result<()> {
     assert_eq!(hits_eq[0].get_float_cmp_op(op_var), Some(FloatCmpOp::Equal));
 
     // Graph with FloatCmp::Less.
-    let mut b2 = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+    let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
     let r2 = b2.create_region()?;
     b2.set_entry_region(r2)?;
     b2.set_region(r2);

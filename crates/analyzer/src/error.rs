@@ -10,8 +10,8 @@ strider_error::define_error! {
         #[error("generic sleigh error {0:?}")]
         GenericSleighError(String),
 
-        #[error("unknown register name by sleign {0:?}")]
-        UnknownRegName(String),
+        #[error(transparent)]
+        TargetError(target::ErrorKind),
 
         #[error("no region {0:?} in cfg")]
         CfgNoRegion(cfg::RegionId),
@@ -97,6 +97,18 @@ impl From<opt::Error> for Error {
         let (kind, fields) = e.decompose();
         Error {
             kind: Box::new(ErrorKind::OptError(*kind)),
+            fields: fields.push_caller(),
+        }
+    }
+}
+
+/// Hand-rolled bridge from `target::Error`.
+impl From<target::Error> for Error {
+    #[track_caller]
+    fn from(e: target::Error) -> Self {
+        let (kind, fields) = e.decompose();
+        Error {
+            kind: Box::new(ErrorKind::TargetError(*kind)),
             fields: fields.push_caller(),
         }
     }

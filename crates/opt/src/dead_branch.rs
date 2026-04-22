@@ -145,7 +145,7 @@ mod tests {
 
     /// Build a function with `if(cond)`, two branches each ending in `return`.
     fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
-        let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
         let entry = b.create_region()?;
         let true_region = b.create_region()?;
         let false_region = b.create_region()?;
@@ -218,7 +218,7 @@ mod tests {
     fn dead_branch_non_const_no_change() -> Result<()> {
         // Build if(x) where x is a non-const boolean.
         let mut fg = {
-            let mut b = FunctionBuilder::new(vec![], &[], &[], &[], None, 0)?;
+            let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
             let entry = b.create_region()?;
             let true_r = b.create_region()?;
             let false_r = b.create_region()?;

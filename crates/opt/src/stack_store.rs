@@ -256,6 +256,12 @@ impl StackStoreDetect {
     pub fn new(stack_ptr_vn: rsleigh::Vn) -> Self {
         Self { stack_ptr_vn }
     }
+
+    /// Creates a new pass whose stack-pointer varnode is taken from the
+    /// supplied calling convention.
+    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+        Self::new(cc.stack_ptr_vn)
+    }
 }
 
 impl Optimizer for StackStoreDetect {
@@ -409,6 +415,12 @@ impl CallStackArgCollect {
     pub fn new(stack_arg_offsets: Vec<i64>) -> Self {
         Self { stack_arg_offsets }
     }
+
+    /// Creates a new pass whose positional stack-arg offset table is taken
+    /// from the supplied calling convention.
+    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+        Self::new(cc.stack_arg_offsets.clone())
+    }
 }
 
 impl Optimizer for CallStackArgCollect {
@@ -460,7 +472,7 @@ mod tests {
     #[test]
     fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -501,7 +513,7 @@ mod tests {
     #[test]
     fn phi_sp_collapses_to_stack_store() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         // Two regions: entry → body.  Body reads sp (which is a phi of the
         // single entry predecessor) and stores at sp + 0.
         let entry = b.create_region()?;
@@ -538,7 +550,7 @@ mod tests {
     #[test]
     fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;
@@ -607,7 +619,7 @@ mod tests {
     #[test]
     fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let entry = b.create_region()?;
         let a = b.create_region()?;
         let bb = b.create_region()?;
@@ -678,7 +690,7 @@ mod tests {
     #[test]
     fn buf_init_does_not_leak_into_args() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -791,7 +803,7 @@ mod tests {
     #[test]
     fn non_stack_store_is_untouched() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -831,7 +843,7 @@ mod tests {
     #[test]
     fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -895,7 +907,7 @@ mod tests {
     #[test]
     fn missing_slot_zero_skips_collection() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -938,7 +950,7 @@ mod tests {
     #[test]
     fn call_with_no_stack_stores_unchanged() -> Result<()> {
         let sp = sp_vn();
-        let mut b = FunctionBuilder::new(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

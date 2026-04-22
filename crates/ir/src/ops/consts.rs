@@ -85,7 +85,7 @@ mod tests {
     use crate::FunctionBuilder;
 
     fn empty_built() -> BuiltFunctionGraph {
-        FunctionBuilder::new(vec![], &[], &[], &[], None, 0)
+        FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
             .unwrap()
             .build()
             .unwrap()

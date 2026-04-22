@@ -76,15 +76,33 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Creates a new [`FunctionBuilder`] with the given variable set and
-    /// calling-convention registers.
+    /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
     ///
     /// `all_used_variables` is the complete set of varnodes (registers /
-    /// unique temporaries) that appear in the function.  Variables not in
-    /// `callee_saved_vars` (and not the stack pointer itself) are recorded
-    /// as call-clobbered; SP is rebound at each call site via an explicit
+    /// unique temporaries) that appear in the function.  The convention
+    /// supplies the argument-passing, callee-saved, and stack-pointer sets;
+    /// every variable not callee-saved (and not SP) is recorded as
+    /// call-clobbered; SP is rebound at each call site via an explicit
     /// `Add(sp, ret_stack_pop)` node.
     pub fn new(
+        all_used_variables: Vec<rsleigh::Vn>,
+        cc: &target::BuiltCallingConvention,
+    ) -> Result<Self> {
+        Self::new_raw(
+            all_used_variables,
+            &cc.arg_passing_regs,
+            &cc.callee_saved_regs,
+            &cc.ret_val_regs,
+            Some(cc.stack_ptr_vn),
+            cc.ret_stack_pop,
+        )
+    }
+
+    /// Low-level constructor that takes the convention-derived data as
+    /// unpacked slices.  Used by synthetic tests that don't resolve a real
+    /// calling convention against a Sleigh register table — production code
+    /// should use [`FunctionBuilder::new`] with a [`target::BuiltCallingConvention`].
+    pub fn new_raw(
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
         callee_saved_vars: &[rsleigh::Vn],
