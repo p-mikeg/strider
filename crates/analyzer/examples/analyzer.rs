@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let obj = reader::load_elf(binary_path)?;
     let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
+    let rom = reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = analyzer::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
@@ -43,7 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    analyzer.build_optimizer_pipeline().run(&mut function)?;
+    let mut pipeline = analyzer.build_optimizer_pipeline();
+    pipeline.add(opt::LoadReadOnly(rom));
+    pipeline.run(&mut function)?;
     println!("dumping opt IR graph...");
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());

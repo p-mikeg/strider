@@ -137,9 +137,9 @@ int __attribute__((noinline)) stack_test(int a, int b, int c) {
     return array_sum((int*)buf, 16) * c;
 
 }
-
+const char* const str = "abc";      // both readonly
 int __attribute__((noinline, optimize("O0"))) global_test(int a, int b, int c) {
-    if("abc"[0] > 'x') {
+    if(str[0] > 'x') {
         return  a + b + c;
     } else {
         return a - b - c;

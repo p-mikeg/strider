@@ -29,6 +29,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "strider-error",
+ "target",
  "thiserror",
 ]
 
@@ -282,6 +283,7 @@ dependencies = [
  "rsleigh",
  "smallvec",
  "strider-error",
+ "target",
  "thiserror",
 ]
 
@@ -373,8 +375,10 @@ version = "0.1.0"
 dependencies = [
  "ir",
  "pattern",
+ "reader",
  "rsleigh",
  "strider-error",
+ "target",
  "thiserror",
 ]
 
@@ -631,6 +635,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "target"
+version = "0.1.0"
+dependencies = [
+ "rsleigh",
+ "strider-error",
+ "thiserror",
 ]
 
 [[package]]
