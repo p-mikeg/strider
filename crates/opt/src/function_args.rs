@@ -1148,4 +1148,56 @@ mod tests {
         );
         Ok(())
     }
+
+    /// `sub rsp, 0xFFFFFFFFFFFFFFFC` is an alternate encoding of `add rsp, 4`:
+    /// when the constant is sign-extended from its U64 bit width it becomes
+    /// `-4`, and `Sub(sp, -4) = sp + 4`.  `FunctionArgDetect` must recognise
+    /// the resulting `Load` as a candidate for stack-arg offset `+4` via
+    /// `int_const_signed`'s sign extension — without `ConstantFold`
+    /// rewriting the address into its canonical form first.
+    #[test]
+    fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
+        use crate::{OptimizerPipeline, RedundantPhis};
+
+        let sp = sp_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
+        let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFC, NodeOutputType::U64);
+        let addr = b.build_int_binary_operation(
+            sp_val,
+            neg_four,
+            IntBinaryOp::Sub,
+            NodeOutputType::U64,
+        )?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        // Omit `ConstantFold` so the alternate encoding reaches
+        // `decompose_sp` as-lifted.
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(RedundantPhis);
+        pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+        pipeline.run(&mut fg)?;
+
+        let fa = count(&fg, |k| {
+            matches!(
+                k,
+                NodeKind::FunctionArg {
+                    source: FunctionArgSource::Stack { offset: 4, .. },
+                    index: 0,
+                }
+            )
+        });
+        assert_eq!(
+            fa, 1,
+            "Sub(sp, 0xFFFFFFFFFFFFFFFC_U64) must decompose to offset +4 and be recognised as stack arg 0",
+        );
+        Ok(())
+    }
 }

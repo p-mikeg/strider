@@ -51,20 +51,13 @@ pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) 
 
 /// Reads an integer-constant output as a signed 64-bit value, sign-extended
 /// from its declared bit width.  Returns `None` if `out` is not an integer
-/// constant.  SP arithmetic happens modulo `2^width`, so a constant like
-/// `0xFFFFFFF8` in a U32 slot represents `-8`, not `4294967288`.
+/// constant or its type isn't one of `U8`/`U16`/`U32`/`U64`.  SP arithmetic
+/// happens modulo `2^width`, so a constant like `0xFFFFFFF8` in a U32 slot
+/// represents `-8`, not `4294967288` — `NodeOutputType::get_signed_int` is the
+/// single source of truth for that mapping.
 fn int_const_signed(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
     let c = fg.int_const_val(out)?;
-    let ty = fg.graph.output_kind(out).as_value()?;
-    let bits = ty.bit_width() as u32;
-    if bits == 0 || bits > 64 {
-        return None;
-    }
-    if bits == 64 {
-        return Some(c as i64);
-    }
-    let shift = 64 - bits;
-    Some(((c as i64) << shift) >> shift)
+    fg.graph.output_kind(out).as_value()?.get_signed_int(c)
 }
 
 /// Recursively decomposes `out` into `InitialVar(sp) + K` or the per-branch
@@ -511,6 +504,50 @@ mod tests {
             .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Store(_)))
             .count();
         assert_eq!(reachable_stores, 0, "no reachable Store must remain");
+        Ok(())
+    }
+
+    /// `add esp, 0xFFFFFFFC` and `sub esp, 4` are two encodings of the same
+    /// SP adjustment.  `decompose_sp` must recognise `Add(sp, 0xFFFFFFFC_U32)`
+    /// as `sp + (-4)` via `int_const_signed`'s bit-width-aware sign extension,
+    /// producing a `StackStore { offset: -4 }` directly — without relying on
+    /// `ConstantFold` to reassociate the address first.
+    #[test]
+    fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
+        let sp = sp_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        // 0xFFFFFFFC_U32 == -4 when sign-extended.
+        let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        let addr = b.build_int_binary_operation(
+            sp_val,
+            neg_four,
+            IntBinaryOp::Add,
+            NodeOutputType::U32,
+        )?;
+        let data = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        // Intentionally omit `ConstantFold` so the test exercises
+        // `decompose_sp`'s handling of the alternate encoding in isolation.
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let stack_stores = count(&fg, |k| {
+            matches!(k, NodeKind::StackStore { offset: -4, .. })
+        });
+        assert_eq!(
+            stack_stores, 1,
+            "Add(sp, 0xFFFFFFFC_U32) must decompose to offset -4 without ConstantFold",
+        );
         Ok(())
     }
 

@@ -118,6 +118,22 @@ fn resolve(
             if k == offset {
                 if data_ty == load_ty {
                     Some(data)
+                } else if data_ty.is_integer()
+                    && load_ty.is_integer()
+                    && load_ty.byte_size() < data_ty.byte_size()
+                {
+                    // Narrow-load-from-wider-store at matching offset: on
+                    // little-endian targets the load's bytes are exactly the
+                    // low `load_size` bytes of the stored value, so a
+                    // `Truncate` captures them.  Every calling-convention
+                    // preset currently wired to this pass is LE; if a BE
+                    // preset is added, this arm must be gated on endianness.
+                    let trunc = fg.graph.create_node(
+                        NodeKind::Truncate,
+                        [data],
+                        [NodeOutputKind::OutputType(load_ty)],
+                    );
+                    fg.graph.node_outputs(trunc).into_iter().next()
                 } else {
                     None
                 }
@@ -669,6 +685,168 @@ mod tests {
         assert_eq!(
             reachable_value_phis, 0,
             "identical branch values must skip the ValuePhi synthesis"
+        );
+        Ok(())
+    }
+
+    /// Stores via `Sub(sp, 4)` and loads back via `Add(sp, 0xFFFFFFFC_U32)`.
+    /// Both forms must normalise to offset `-4` so the forwarder pipes the
+    /// stored value straight into the return — even without `ConstantFold`
+    /// running to canonicalise the encodings first.
+    #[test]
+    fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
+        use crate::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let store_addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x4242, NodeOutputType::U32);
+        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+
+        let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        let load_addr =
+            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        // Intentionally omit `ConstantFold` so both encodings reach
+        // `decompose_sp` as-lifted.
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 0,
+            "Load[Add(sp, 0xFFFFFFFC)] must be forwarded from Store[Sub(sp, 4)]",
+        );
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .expect("return node exists");
+        let ret_inputs = fg.graph.node_inputs(ret);
+        // Return inputs: [ctrl, mem, val_0, ...].
+        let val_producer = fg.graph.get_node_from_output(ret_inputs[2]);
+        assert!(
+            matches!(fg.graph.node_kind(val_producer), NodeKind::IntConst(0x4242)),
+            "forwarded value must be the stored constant 0x4242 — got {:?}",
+            fg.graph.node_kind(val_producer),
+        );
+        Ok(())
+    }
+
+    /// Real-world pattern from `binary_tests/test.c::struct_test` at `-O0 -m32`:
+    /// the prologue spills a callee-saved register / arg to a 4-byte stack slot
+    /// via `StackStore u32`, then the body reads a single byte of that slot via
+    /// `Load u8` at the same SP offset.  The load is narrower than the store,
+    /// but its bytes are fully contained in the stored value — forwarding must
+    /// emit a `Truncate(stored_u32, u8)` (which `ConstantFold` then folds to a
+    /// byte constant when the stored value is itself a constant).
+    #[test]
+    fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let eight = b.build_int_const(8, NodeOutputType::U32);
+        let addr =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        // Store the full 4-byte value, then load only the low byte.
+        let wide = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32);
+        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 0,
+            "Load u8 at matching offset must be forwarded as the low byte of the u32 store",
+        );
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .expect("return node exists");
+        let ret_inputs = fg.graph.node_inputs(ret);
+        // `int_const_val` applies the output type's mask, so for a U8 output it
+        // returns the low byte even when the backing `IntConst` node still
+        // carries the full u32 bit-pattern internally.
+        let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+        assert_eq!(val_ty, Some(NodeOutputType::U8));
+        assert_eq!(
+            fg.int_const_val(ret_inputs[2]),
+            Some(0xEF),
+            "forwarded narrow load must fold to the low byte 0xEF",
+        );
+        Ok(())
+    }
+
+    /// As above but the load takes two bytes: `Load u16` at the matching
+    /// offset of a `StackStore u32`.  Folds to the low 16 bits of the stored
+    /// constant — `0xBEEF` for `0xDEADBEEF`.  Guards the u16 case independently
+    /// because the analyzer emits both for `struct_test`'s short/char reads.
+    #[test]
+    fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let twelve = b.build_int_const(12, NodeOutputType::U32);
+        let addr =
+            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let wide = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32);
+        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U16)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
+        let ret = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .expect("return node exists");
+        let ret_inputs = fg.graph.node_inputs(ret);
+        let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+        assert_eq!(val_ty, Some(NodeOutputType::U16));
+        assert_eq!(
+            fg.int_const_val(ret_inputs[2]),
+            Some(0xBEEF),
+            "forwarded u16 load must fold to low 16 bits 0xBEEF",
         );
         Ok(())
     }

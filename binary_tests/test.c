@@ -154,9 +154,9 @@ struct test_struct {
 };
 
 int __attribute__((noinline, optimize("O0"))) struct_test(
-    struct test_struct* a, int b) {
+    struct test_struct* a, char b, short c, unsigned long long d) {
     if(str[0] < 'x') {
-        return  a->y + b - a->w;
+        return  a->y + b - a->w * c + (d << 1);
     } else {
         return a->z * b;
     }
