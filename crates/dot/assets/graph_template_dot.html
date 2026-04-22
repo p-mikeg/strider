@@ -253,7 +253,7 @@ document.getElementById("dotSrc").value=ORIG;
 const KINDS=[
   [/\bEntry\b/i,               "nk-entry","Entry",       "#3a7ee8"],
   [/\bControlState\b/i,        "nk-ctrl", "ControlState","#7c3aed"],
-  [/\b(ControlPhi|MemPhi)\b/i,"nk-phi","Phi","#0e7490"],
+  [/\b(ControlPhi|MemPhi|ValuePhi)\b/i,"nk-phi","Phi","#0e7490"],
   [/\bconst\b/i,               "nk-const","Const",       "#15803d"],
   [/\b(Add|Sub|Mul|Div|Rem|Xor|And|Or|Shift|Negate|Not|Popcount|Extend|Truncate|Cast)\b/i,"nk-arith","Arith","#b45309"],
   [/\b(Load|Store|InitialMemory)\b/i,"nk-mem","Memory","#be123c"],

@@ -431,6 +431,15 @@ pub enum NodeKind {
     /// Control phi: selects the value of varnode `Vn` at a join point,
     /// corresponding to the SSA φ-function from the literature.
     ControlPhi(rsleigh::Vn),
+    /// Value phi not tied to any source varnode.  Synthesized by
+    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward.rs) when
+    /// forwarding a `Load[sp+K]` across a `MemPhi`: each predecessor
+    /// resolves to a stored value, and those values are merged here.  Shape
+    /// matches `ControlPhi` — inputs `[phi_token, val_0, val_1, …]`, output
+    /// is a single value — but without a `Vn` tag since the merged value
+    /// has no source-level register/memory identity.  Non-cacheable for the
+    /// same reason as `ControlPhi`/`MemPhi`: phi identity matters.
+    ValuePhi,
 
     // ── Conditional branch ─────────────────────────────────────────────────────
     /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
@@ -608,6 +617,7 @@ impl NodeKind {
                 | Self::ControlState
                 | Self::MemPhi
                 | Self::ControlPhi(..)
+                | Self::ValuePhi
                 | Self::Call
                 | Self::CallOther { .. }
                 | Self::CPoolRef
@@ -617,12 +627,16 @@ impl NodeKind {
     }
 
     /// Returns `true` for any phi node kind: [`NodeKind::ControlPhi`],
-    /// [`NodeKind::MemPhi`], or [`NodeKind::StackStorePhi`].
+    /// [`NodeKind::MemPhi`], [`NodeKind::StackStorePhi`], or
+    /// [`NodeKind::ValuePhi`].
     #[inline]
     pub fn is_phi(&self) -> bool {
         matches!(
             self,
-            Self::ControlPhi(_) | Self::MemPhi | Self::StackStorePhi { .. }
+            Self::ControlPhi(_)
+                | Self::MemPhi
+                | Self::StackStorePhi { .. }
+                | Self::ValuePhi
         )
     }
 }
@@ -802,6 +816,7 @@ mod tests {
             NodeKind::Return,
             NodeKind::ControlState,
             NodeKind::MemPhi,
+            NodeKind::ValuePhi,
             NodeKind::Call,
             NodeKind::StackStorePhi { space },
         ];
@@ -956,6 +971,7 @@ mod tests {
         };
         assert!(NodeKind::ControlPhi(phi_vn).is_phi());
         assert!(NodeKind::MemPhi.is_phi());
+        assert!(NodeKind::ValuePhi.is_phi());
         let space = rsleigh::VnSpace::RAM;
         assert!(NodeKind::StackStorePhi { space }.is_phi());
     }

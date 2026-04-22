@@ -77,7 +77,10 @@ pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>)
     for node in graph.nodes.keys() {
         let is_phi = matches!(
             graph.node_kind(node),
-            NodeKind::ControlPhi(_) | NodeKind::MemPhi | NodeKind::StackStorePhi { .. }
+            NodeKind::ControlPhi(_)
+                | NodeKind::MemPhi
+                | NodeKind::StackStorePhi { .. }
+                | NodeKind::ValuePhi
         );
         if !is_phi {
             continue;

@@ -42,6 +42,13 @@ impl SpExpr {
     }
 }
 
+/// True when `[a_off, a_off + a_size)` and `[b_off, b_off + b_size)` do not
+/// overlap.  Used by shadow / forward walks in both
+/// [`crate::stack_load_forward`] and [`crate::function_args`].
+pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
+    a_off + a_size <= b_off || b_off + b_size <= a_off
+}
+
 /// Reads an integer-constant output as a signed 64-bit value, sign-extended
 /// from its declared bit width.  Returns `None` if `out` is not an integer
 /// constant.  SP arithmetic happens modulo `2^width`, so a constant like

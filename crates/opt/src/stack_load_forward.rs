@@ -1,0 +1,675 @@
+//! Forwards the value of a `StackStore{offset: K}` to a subsequent
+//! `Load[sp + K]` when the load's memory input traces back to that store with
+//! no aliasing writes in between.  When a `MemPhi` sits between store and
+//! load and every predecessor resolves to a store at the same offset, the
+//! load is replaced with a synthesized [`NodeKind::ValuePhi`] sharing the
+//! `MemPhi`'s phi-token.
+//!
+//! Must be wired into the pipeline with the calling convention's stack-pointer
+//! varnode (see [`StackLoadForward::new`]).
+
+use ir::BuiltFunctionGraph;
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+
+use crate::error::Result;
+use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::stack_store::{SpExpr, decompose_sp, ranges_disjoint};
+
+/// Store-to-load forwarding for SP-relative stack slots.
+///
+/// Runs inside the main fixed-point loop so that specializations produced by
+/// `StackStoreDetect` become visible to the walker on subsequent iterations,
+/// and so that forwarded constants fed into expressions are in turn
+/// simplified by `ConstantFold` / `KnownBits`.
+pub struct StackLoadForward {
+    /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
+    pub stack_ptr_vn: rsleigh::Vn,
+}
+
+impl StackLoadForward {
+    /// Creates a new pass for the given stack-pointer varnode.
+    pub fn new(stack_ptr_vn: rsleigh::Vn) -> Self {
+        Self { stack_ptr_vn }
+    }
+
+    /// Creates a new pass whose stack-pointer varnode is taken from the
+    /// supplied calling convention.
+    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
+        Self::new(cc.stack_ptr_vn)
+    }
+}
+
+impl Optimizer for StackLoadForward {
+    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+        let loads: Vec<NodeId> = function
+            .preorder()
+            .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Load(_)))
+            .collect();
+        let mut result = OptimizationResult::NoChange;
+        for load in loads {
+            result |= try_forward_load(function, load, self.stack_ptr_vn)?;
+        }
+        Ok(result)
+    }
+}
+
+/// Tries to forward a single `Load[sp + K]` to the value of a matching
+/// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
+/// were rewired.
+fn try_forward_load(
+    fg: &mut BuiltFunctionGraph,
+    load: NodeId,
+    sp_vn: rsleigh::Vn,
+) -> Result<OptimizationResult> {
+    // Load inputs: [memory, addr].
+    let [mem, addr] = fg.graph.node_inputs_exact::<2>(load)?;
+    let [load_out] = fg.graph.node_outputs_exact::<1>(load)?;
+    let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
+        return Ok(OptimizationResult::NoChange);
+    };
+
+    let mut visiting = std::collections::HashSet::new();
+    let Some(SpExpr::Terminal { base: _, offset }) = decompose_sp(fg, addr, sp_vn, &mut visiting)
+    else {
+        return Ok(OptimizationResult::NoChange);
+    };
+
+    let load_size = load_ty.byte_size() as i64;
+    let mut visited = std::collections::HashSet::new();
+    let Some(forwarded) = resolve(fg, mem, offset, load_size, load_ty, &mut visited) else {
+        return Ok(OptimizationResult::NoChange);
+    };
+
+    let changed = fg.replace_all_uses(load_out, forwarded)?;
+    if changed {
+        fg.graph.detach_node_inputs(load);
+    }
+    Ok(OptimizationResult::from_changed(changed))
+}
+
+/// Walks memory backward from `mem` looking for a provable source of the
+/// bytes `[offset, offset + load_size)` at type `load_ty`.  Returns
+/// `Some(value_output)` when we can pin them to a stored value; `None`
+/// otherwise (conservative bail).  When the walk crosses a [`NodeKind::MemPhi`]
+/// and every predecessor resolves to a value, a fresh [`NodeKind::ValuePhi`]
+/// is synthesized sharing the `MemPhi`'s phi-token and returned.
+fn resolve(
+    fg: &mut BuiltFunctionGraph,
+    mem: NodeOutputId,
+    offset: i64,
+    load_size: i64,
+    load_ty: ir::node::NodeOutputType,
+    visited: &mut std::collections::HashSet<NodeOutputId>,
+) -> Option<NodeOutputId> {
+    let node = fg.graph.get_node_from_output(mem);
+    match *fg.graph.node_kind(node) {
+        NodeKind::StackStore {
+            offset: k,
+            space: _,
+        } => {
+            // StackStore inputs: [MEM, SP, DATA].
+            let inputs = fg.graph.node_inputs(node);
+            if inputs.len() < 3 {
+                return None;
+            }
+            let data = inputs[2];
+            let data_ty = fg.graph.output_kind(data).as_value()?;
+            let store_size = data_ty.byte_size() as i64;
+            if k == offset {
+                if data_ty == load_ty {
+                    Some(data)
+                } else {
+                    None
+                }
+            } else if ranges_disjoint(k, store_size, offset, load_size) {
+                let prev_mem = inputs[0];
+                resolve(fg, prev_mem, offset, load_size, load_ty, visited)
+            } else {
+                None
+            }
+        }
+        NodeKind::MemPhi => {
+            // Cycle guard: loop-header MemPhis feed their own region
+            // indirectly.  Guard only at MemPhi boundaries — other memory
+            // nodes walk backward to strictly earlier producers and cannot
+            // cycle on their own, and guarding them would prevent sibling
+            // branches from re-reaching a shared upstream node.
+            if !visited.insert(mem) {
+                return None;
+            }
+            // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
+            let inputs_vec: Vec<NodeOutputId> = fg.graph.node_inputs(node).into_iter().collect();
+            if inputs_vec.len() < 2 {
+                return None;
+            }
+            let phi_token = inputs_vec[0];
+            let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(inputs_vec.len() - 1);
+            for pred_mem in &inputs_vec[1..] {
+                let v = resolve(fg, *pred_mem, offset, load_size, load_ty, visited)?;
+                resolved.push(v);
+            }
+            // Dedup: if all per-predecessor results are identical, skip the
+            // ValuePhi — returning the common value directly keeps the graph
+            // smaller and exposes it to later passes more cleanly.
+            if resolved.iter().all(|v| *v == resolved[0]) {
+                return Some(resolved[0]);
+            }
+            // Synthesize a ValuePhi [phi_token, val_0, val_1, ...].
+            let value_phi = fg.graph.create_node(
+                NodeKind::ValuePhi,
+                std::iter::once(phi_token).chain(resolved),
+                [NodeOutputKind::OutputType(load_ty)],
+            );
+            let outputs = fg.graph.node_outputs(value_phi);
+            Some(outputs.into_iter().next()?)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir::node::{NodeKind, NodeOutputType};
+    use ir::{FunctionBuilder, IntBinaryOp};
+
+    /// Fake 4-byte SP varnode (x86-cdecl-like).
+    fn sp32_vn() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x20,
+            },
+            size: 4,
+        }
+    }
+
+    /// 8-byte SP for aarch64/x86-64-like scenarios.
+    fn sp64_vn() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x40,
+            },
+            size: 8,
+        }
+    }
+
+    fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
+        let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+        fg.all_node_ids()
+            .filter(|n| reachable.contains(n))
+            .filter(|&n| pred(fg.graph.node_kind(n)))
+            .count()
+    }
+
+    /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
+    /// and the return sources from the stored constant.
+    #[test]
+    fn forward_basic() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
+        Ok(())
+    }
+
+    /// A non-aliasing store at a different offset sits between the target
+    /// store and the load.  The walker must step past it and still forward
+    /// the earlier `StackStore{+4}`'s value to the load.
+    #[test]
+    fn forward_skips_non_aliasing_store() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let twelve = b.build_int_const(12, NodeOutputType::U32);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let addr12 =
+            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAA, NodeOutputType::U32);
+        let b_val = b.build_int_const(0xBB, NodeOutputType::U32);
+        // Order: store at +4 first, then +12, then load +4.  The load's
+        // memory input chain is store12 -> store4 -> InitialMemory.
+        b.build_store(addr4, b_val, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr12, a, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 0,
+            "Load[sp+4] should forward past the non-aliasing StackStore{{+12}}"
+        );
+        Ok(())
+    }
+
+    /// Overlap case: `*(sp+0) = U64(...); return *(sp+4) as U32` — the store
+    /// covers `[0, 8)` which intersects the load's `[4, 8)`, so forwarding
+    /// must bail and the load must remain.
+    #[test]
+    fn bail_on_overlapping_store() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp64_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U64);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
+        // Store U64 at sp+0 (covers [0,8)), then load U32 from sp+4 ([4,8)).
+        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABE, NodeOutputType::U64);
+        b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 1,
+            "overlapping store must prevent forwarding"
+        );
+        Ok(())
+    }
+
+    /// Type-mismatch at matching offset: `*(sp+0) = U32(...); return *(sp+0) as U64`.
+    /// Offsets agree but widths differ, so the stored bytes don't fully back
+    /// the load — bail.
+    #[test]
+    fn bail_on_type_mismatch() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp64_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let narrow = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
+        Ok(())
+    }
+
+    /// An intervening `Store(_)` whose address is *not* SP-relative cannot be
+    /// proven non-aliasing in general — conservatively bail even though in
+    /// practice it can't overlap the stack slot.
+    #[test]
+    fn bail_on_opaque_store_between() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAA, NodeOutputType::U32);
+        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
+        // Opaque store to a non-SP address (a compile-time constant address).
+        let heap_addr = b.build_int_const(0x1000, NodeOutputType::U32);
+        let other = b.build_int_const(0xBB, NodeOutputType::U32);
+        b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 1,
+            "opaque intervening Store must prevent forwarding"
+        );
+        Ok(())
+    }
+
+    /// A call between store and load clobbers memory (via `PostCallMemState`);
+    /// forwarding across it is unsafe, so the load must remain.  Uses a
+    /// link-register-style convention (ret_stack_pop=0) so SP stays stable
+    /// through the call, keeping the load's address decomposable.
+    #[test]
+    fn bail_on_call_between() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp64_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], Some(sp), 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U64);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let data = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000, NodeOutputType::U64);
+        b.build_call(target)?;
+        // SP did not shift (ret_stack_pop=0), so sp+4 is still the same slot.
+        let sp_val2 = b.read_variable(&sp)?;
+        let addr4b =
+            b.build_int_binary_operation(sp_val2, four, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr4b, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 1,
+            "Call on memory chain must prevent forwarding"
+        );
+        Ok(())
+    }
+
+    /// If/else diamond where each arm stores a distinct constant at `sp+4`,
+    /// then the merge loads `sp+4`.  After the pass the load must be gone
+    /// and a single `ValuePhi` synthesized in its place; the phi-token of
+    /// that `ValuePhi` must be the same token fed into the underlying
+    /// `MemPhi` (i.e. the merge `ControlState`'s dispatch output).
+    #[test]
+    fn phi_both_branches_store_same_offset() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let entry = b.create_region()?;
+        let then_r = b.create_region()?;
+        let else_r = b.create_region()?;
+        let merge = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        // entry: if const(true) { then } else { else }
+        b.set_region(entry);
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, then_r, else_r)?;
+
+        // then: *(sp+4) = 0xAA; goto merge
+        b.set_region(then_r);
+        let sp_t = b.read_variable(&sp)?;
+        let four_t = b.build_int_const(4, NodeOutputType::U32);
+        let addr_t =
+            b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAA, NodeOutputType::U32);
+        b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // else: *(sp+4) = 0xBB; goto merge
+        b.set_region(else_r);
+        let sp_e = b.read_variable(&sp)?;
+        let four_e = b.build_int_const(4, NodeOutputType::U32);
+        let addr_e =
+            b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let bval = b.build_int_const(0xBB, NodeOutputType::U32);
+        b.build_store(addr_e, bval, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // merge: return *(sp+4)
+        b.set_region(merge);
+        let sp_m = b.read_variable(&sp)?;
+        let four_m = b.build_int_const(4, NodeOutputType::U32);
+        let addr_m =
+            b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        // Skip DeadBranchElimination so the `If(const true)` diamond survives
+        // through the pass — otherwise both arms would collapse and there'd
+        // be no MemPhi to synthesize a ValuePhi from.
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 0,
+            "Load at merge must be forwarded via synthesized ValuePhi"
+        );
+        let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+        assert_eq!(
+            reachable_value_phis, 1,
+            "exactly one ValuePhi must be synthesized"
+        );
+
+        // The ValuePhi's phi-token (input 0) must come from the same
+        // ControlState as the MemPhi's phi-token.
+        let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+        let value_phi = fg
+            .all_node_ids()
+            .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::ValuePhi))
+            .expect("ValuePhi found above");
+        let mem_phi = fg
+            .all_node_ids()
+            .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::MemPhi))
+            .expect("MemPhi survived to the merge");
+        let vp_token = fg.graph.node_inputs(value_phi)[0];
+        let mp_token = fg.graph.node_inputs(mem_phi)[0];
+        assert_eq!(
+            vp_token, mp_token,
+            "ValuePhi's phi-token must match the MemPhi's phi-token"
+        );
+        Ok(())
+    }
+
+    /// If/else diamond where only the then-arm stores at `sp+4`, then the
+    /// merge loads `sp+4`.  The else-branch reaches the merge with a stale
+    /// memory (InitialMemory), so the walk through the MemPhi must fail on
+    /// that predecessor and the entire forward must bail — the load stays.
+    #[test]
+    fn phi_missing_store_on_one_branch_bails() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let entry = b.create_region()?;
+        let then_r = b.create_region()?;
+        let else_r = b.create_region()?;
+        let merge = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        b.set_region(entry);
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, then_r, else_r)?;
+
+        // then: *(sp+4) = 0xAA
+        b.set_region(then_r);
+        let sp_t = b.read_variable(&sp)?;
+        let four_t = b.build_int_const(4, NodeOutputType::U32);
+        let addr_t =
+            b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAA, NodeOutputType::U32);
+        b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // else: no store — falls through with unchanged memory
+        b.set_region(else_r);
+        b.build_branch(merge)?;
+
+        b.set_region(merge);
+        let sp_m = b.read_variable(&sp)?;
+        let four_m = b.build_int_const(4, NodeOutputType::U32);
+        let addr_m =
+            b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(
+            reachable_loads, 1,
+            "missing-store branch must prevent forwarding"
+        );
+        let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+        assert_eq!(
+            reachable_value_phis, 0,
+            "no ValuePhi should be synthesized when a branch bails"
+        );
+        Ok(())
+    }
+
+    /// If/else diamond where both arms store at *different* non-aliasing
+    /// offsets but share an earlier store at `sp+4` in the entry block.
+    /// This forces the MemPhi at the merge to have distinct per-predecessor
+    /// memory inputs (so it can't collapse into a single value) while both
+    /// resolver walks still bottom out on the same `StackStore{+4}`'s data.
+    /// The dedup path in `resolve()` must then skip the ValuePhi synthesis
+    /// and return the shared data output directly.
+    #[test]
+    fn phi_identical_values_no_new_phi() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let entry = b.create_region()?;
+        let then_r = b.create_region()?;
+        let else_r = b.create_region()?;
+        let merge = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        // entry: *(sp+4) = 0xAA; then if(true) goto then else goto else
+        b.set_region(entry);
+        let sp_e = b.read_variable(&sp)?;
+        let four_e = b.build_int_const(4, NodeOutputType::U32);
+        let addr_e =
+            b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let shared = b.build_int_const(0xAA, NodeOutputType::U32);
+        b.build_store(addr_e, shared, rsleigh::VnSpace::RAM)?;
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, then_r, else_r)?;
+
+        // then: *(sp+8) = 0xBB; branch merge
+        b.set_region(then_r);
+        let sp_t = b.read_variable(&sp)?;
+        let eight_t = b.build_int_const(8, NodeOutputType::U32);
+        let addr_t =
+            b.build_int_binary_operation(sp_t, eight_t, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let bt = b.build_int_const(0xBB, NodeOutputType::U32);
+        b.build_store(addr_t, bt, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // else: *(sp+12) = 0xCC; branch merge
+        b.set_region(else_r);
+        let sp_l = b.read_variable(&sp)?;
+        let twelve_l = b.build_int_const(12, NodeOutputType::U32);
+        let addr_l =
+            b.build_int_binary_operation(sp_l, twelve_l, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let cc = b.build_int_const(0xCC, NodeOutputType::U32);
+        b.build_store(addr_l, cc, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // merge: return *(sp+4)
+        b.set_region(merge);
+        let sp_m = b.read_variable(&sp)?;
+        let four_m = b.build_int_const(4, NodeOutputType::U32);
+        let addr_m =
+            b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add(StackLoadForward::new(sp));
+        pipeline.run(&mut fg)?;
+
+        let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+        assert_eq!(reachable_loads, 0, "Load must be forwarded");
+        let reachable_value_phis = reachable_count(&fg, |k| matches!(k, NodeKind::ValuePhi));
+        assert_eq!(
+            reachable_value_phis, 0,
+            "identical branch values must skip the ValuePhi synthesis"
+        );
+        Ok(())
+    }
+}

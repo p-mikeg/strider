@@ -36,7 +36,7 @@ use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::stack_store::{SpExpr, decompose_sp};
+use crate::stack_store::{SpExpr, decompose_sp, ranges_disjoint};
 
 /// Replaces register-passed and stack-passed argument reads with canonical
 /// [`NodeKind::FunctionArg`][ir::node::NodeKind::FunctionArg] nodes.  Intended
@@ -189,6 +189,11 @@ fn detect_stack_args(
             continue;
         }
         let [memory, addr] = fg.graph.node_inputs_exact::<2>(node_id)?;
+        let [load_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
+        let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
+            continue;
+        };
+        let load_size = load_ty.byte_size() as i64;
         let mut visiting = std::collections::HashSet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(fg, addr, sp_vn, &mut visiting)
@@ -202,7 +207,7 @@ fn detect_stack_args(
             continue;
         }
         let mut seen = std::collections::HashSet::new();
-        if mem_chain_is_dirty(fg, memory, offset, &mut seen) {
+        if mem_chain_is_dirty(fg, memory, offset, load_size, &mut seen) {
             disqualified.insert(j);
             groups.remove(&j);
             continue;
@@ -278,21 +283,25 @@ fn detect_stack_args(
     Ok(result)
 }
 
-/// DFS through memory predecessors looking for a store that may shadow slot
-/// `offset`.  Treats `MemPhi` as a fork where **every** value predecessor must
-/// be clean; `Call`/`PostCallMemState`/`CallOther` as pass-throughs (a caller
-/// cannot alias the callee's incoming stack-arg area through a nested call).
+/// DFS through memory predecessors looking for a store that may shadow the
+/// byte range `[offset, offset + load_size)`.  Treats `MemPhi` as a fork
+/// where **every** value predecessor must be clean; `Call` / `PostCallMemState`
+/// / `CallOther` as pass-throughs (a caller cannot alias the callee's
+/// incoming stack-arg area through a nested call).
 ///
-/// Returns `true` if any path through the chain *may* overwrite `offset`.
+/// Returns `true` if any path through the chain *may* overwrite bytes in the
+/// load's range.  A `StackStore` or `StackStorePhi` whose byte range overlaps
+/// the load's is treated as a shadow; one whose range is strictly disjoint is
+/// walked past.
 ///
 /// `StackStorePhi` offsets are per-predecessor and stored in
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
-/// construction (the only place that populates them is `StackStoreDetect`),
-/// so comparing directly against `offset` is sound.
+/// construction (the only place that populates them is `StackStoreDetect`).
 fn mem_chain_is_dirty(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     offset: i64,
+    load_size: i64,
     seen: &mut std::collections::HashSet<NodeOutputId>,
 ) -> bool {
     if !seen.insert(mem) {
@@ -304,28 +313,37 @@ fn mem_chain_is_dirty(
     match *fg.graph.node_kind(node) {
         NodeKind::InitialMemory => false,
         NodeKind::StackStore { offset: k, .. } => {
-            if k == offset {
-                return true;
-            }
             let inputs = fg.graph.node_inputs(node);
             // StackStore inputs: [MEM, SP, DATA].
-            if inputs.is_empty() {
-                false
-            } else {
-                mem_chain_is_dirty(fg, inputs[0], offset, seen)
+            if inputs.len() < 3 {
+                return false;
             }
-        }
-        NodeKind::StackStorePhi { .. } => {
-            if fg.graph.stack_phi_offsets(node).contains(&offset) {
+            let Some(store_size) = value_byte_size(fg, inputs[2]) else {
+                return true;
+            };
+            if !ranges_disjoint(k, store_size, offset, load_size) {
                 return true;
             }
+            mem_chain_is_dirty(fg, inputs[0], offset, load_size, seen)
+        }
+        NodeKind::StackStorePhi { .. } => {
             let inputs = fg.graph.node_inputs(node);
             // StackStorePhi inputs: [PHI, MEM, DATA].
-            if inputs.len() < 2 {
-                false
-            } else {
-                mem_chain_is_dirty(fg, inputs[1], offset, seen)
+            if inputs.len() < 3 {
+                return false;
             }
+            let Some(store_size) = value_byte_size(fg, inputs[2]) else {
+                return true;
+            };
+            let any_overlap = fg
+                .graph
+                .stack_phi_offsets(node)
+                .iter()
+                .any(|&k| !ranges_disjoint(k, store_size, offset, load_size));
+            if any_overlap {
+                return true;
+            }
+            mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen)
         }
         NodeKind::Store(_) => true,
         NodeKind::MemPhi => {
@@ -335,7 +353,7 @@ fn mem_chain_is_dirty(
             inputs
                 .into_iter()
                 .skip(1)
-                .any(|pred| mem_chain_is_dirty(fg, pred, offset, seen))
+                .any(|pred| mem_chain_is_dirty(fg, pred, offset, load_size, seen))
         }
         NodeKind::Call | NodeKind::CallOther { .. } => {
             // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
@@ -343,7 +361,7 @@ fn mem_chain_is_dirty(
             if inputs.len() < 2 {
                 false
             } else {
-                mem_chain_is_dirty(fg, inputs[1], offset, seen)
+                mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen)
             }
         }
         NodeKind::PostCallMemState => {
@@ -360,7 +378,7 @@ fn mem_chain_is_dirty(
                     if call_inputs.len() < 2 {
                         false
                     } else {
-                        mem_chain_is_dirty(fg, call_inputs[1], offset, seen)
+                        mem_chain_is_dirty(fg, call_inputs[1], offset, load_size, seen)
                     }
                 }
                 // Unexpected producer for PostCallMemState's CTRL — be
@@ -371,6 +389,12 @@ fn mem_chain_is_dirty(
         // Any other memory-producing node we don't recognise: be conservative.
         _ => true,
     }
+}
+
+/// Byte size of a value output, or `None` if it is not a value-typed output
+/// (e.g. `Control` / `Memory`).
+fn value_byte_size(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
+    fg.graph.output_kind(out).as_value().map(|t| t.byte_size() as i64)
 }
 
 /// Locates the unique `InitialVar(reg)` node in the graph, if any.
@@ -925,6 +949,174 @@ mod tests {
         assert_eq!(fa_reg0, 1, "rdi → FunctionArg index 0");
         assert_eq!(fa_reg1, 1, "rsi → FunctionArg index 1");
         assert_eq!(fa_stack2, 1, "sp+8 → FunctionArg index 2");
+        Ok(())
+    }
+
+    /// Byte-range overlap: a `StackStore` at a *different* offset whose byte
+    /// range nevertheless overlaps the load's must shadow it.  Exact-offset
+    /// comparison would miss this.
+    ///
+    /// `*(sp+0) = U64(X); return *(sp+4) as U64` — store covers `[0,8)`, load
+    /// covers `[4,12)`.  With the byte-range overlap check the load is
+    /// disqualified; with the old `k == offset` check it is mis-labelled as a
+    /// function arg.
+    #[test]
+    fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp64_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        // *(sp+0) = U64(0xDEAD_BEEF_CAFE_BABE)
+        let sp_val = b.read_variable(&sp)?;
+        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABE, NodeOutputType::U64);
+        b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
+
+        // return *(sp+4) as U64
+        let four = b.build_int_const(4, NodeOutputType::U64);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+        pipeline.run(&mut fg)?;
+
+        let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+        assert_eq!(
+            any_fa, 0,
+            "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must be shadowed"
+        );
+        Ok(())
+    }
+
+    /// Regression guard for the dual of
+    /// `overlapping_stackstore_at_different_offset_shadows`: a nearby
+    /// `StackStore` whose range is *disjoint* from the load's must NOT shadow.
+    ///
+    /// `*(sp+0) = U32(X); return *(sp+4) as U32` — store covers `[0,4)`, load
+    /// covers `[4,8)`.  No overlap ⇒ the sp+4 slot is still a valid arg 0.
+    #[test]
+    fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+
+        // *(sp+0) = U32(0x11) — covers [0,4).
+        let sp_val = b.read_variable(&sp)?;
+        let a = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
+
+        // return *(sp+4) as U32 — covers [4,8); disjoint from store.
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+        pipeline.run(&mut fg)?;
+
+        let fa_at_4 = count(&fg, |k| {
+            matches!(
+                k,
+                NodeKind::FunctionArg {
+                    source: FunctionArgSource::Stack { offset: 4, .. },
+                    index: 0,
+                }
+            )
+        });
+        assert_eq!(
+            fa_at_4, 1,
+            "disjoint StackStore{{+0, size=4}} must not shadow Load[sp+4]"
+        );
+        Ok(())
+    }
+
+    /// Byte-range overlap through a `MemPhi`: one arm of the diamond stores
+    /// at an offset whose range overlaps the load's; the other arm's store is
+    /// disjoint.  Under `any()` semantics for MemPhi any overlapping predecessor
+    /// is a shadow, so the load must be disqualified — but the old exact-offset
+    /// check misses the overlap on the overlapping arm and mis-labels the load.
+    ///
+    /// then: `*(sp+2) = U32` covers `[2,6)` — overlaps load `[4,8)`.
+    /// else: `*(sp+8) = U32` covers `[8,12)` — disjoint from load `[4,8)`.
+    /// merge: `return *(sp+4) as U32`.
+    #[test]
+    fn memphi_partial_overlap_shadows() -> Result<()> {
+        use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+        let sp = sp32_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let entry = b.create_region()?;
+        let then_r = b.create_region()?;
+        let else_r = b.create_region()?;
+        let merge = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        b.set_region(entry);
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, then_r, else_r)?;
+
+        // then: *(sp + 2) = U32(0x11)  — StackStore{+2, size 4} covers [2,6).
+        b.set_region(then_r);
+        let sp_t = b.read_variable(&sp)?;
+        let two_t = b.build_int_const(2, NodeOutputType::U32);
+        let addr_t =
+            b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data_t = b.build_int_const(0x11, NodeOutputType::U32);
+        b.build_store(addr_t, data_t, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // else: *(sp + 8) = U32(0x22)  — StackStore{+8, size 4} covers [8,12).
+        b.set_region(else_r);
+        let sp_e = b.read_variable(&sp)?;
+        let eight_e = b.build_int_const(8, NodeOutputType::U32);
+        let addr_e =
+            b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data_e = b.build_int_const(0x22, NodeOutputType::U32);
+        b.build_store(addr_e, data_e, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        // merge: return *(sp + 4) as U32  — covers [4,8).
+        b.set_region(merge);
+        let sp_m = b.read_variable(&sp)?;
+        let four_m = b.build_int_const(4, NodeOutputType::U32);
+        let addr_m =
+            b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        let mut fg = b.build()?;
+
+        let mut pipeline = OptimizerPipeline::new();
+        pipeline.add(ConstantFold);
+        pipeline.add(RedundantPhis);
+        pipeline.add(StackStoreDetect::new(sp));
+        pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+        pipeline.run(&mut fg)?;
+
+        let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+        assert_eq!(
+            any_fa, 0,
+            "MemPhi with an overlapping-range StackStore predecessor must disqualify Load[sp+4]"
+        );
         Ok(())
     }
 

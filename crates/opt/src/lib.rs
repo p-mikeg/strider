@@ -39,6 +39,7 @@ mod function_args;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
+mod stack_load_forward;
 mod stack_store;
 
 pub use constant_fold::ConstantFold;
@@ -49,6 +50,7 @@ pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
+pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 
 /// Builds the default optimizer pipeline containing all built-in passes.

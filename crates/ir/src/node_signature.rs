@@ -300,6 +300,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // ControlPhi: [phi_token, ...per-predecessor values].
         NodeKind::ControlPhi(_) => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL]),
+        // ValuePhi: [phi_token, ...per-predecessor values].  Same shape as
+        // ControlPhi but not tied to a source varnode.
+        NodeKind::ValuePhi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL]),
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),

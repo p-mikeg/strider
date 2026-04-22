@@ -52,6 +52,9 @@ impl Analyzer {
         p.add(opt::StackStoreDetect::from_convention(
             &self.calling_convention,
         ));
+        p.add(opt::StackLoadForward::from_convention(
+            &self.calling_convention,
+        ));
         p.add_post_pass(opt::CallStackArgCollect::from_convention(
             &self.calling_convention,
         ));
