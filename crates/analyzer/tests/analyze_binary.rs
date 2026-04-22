@@ -65,10 +65,7 @@ macro_rules! analyzer_arch_tests {
                     .ok_or_else(|| format!("symbol '{}' not found in {:?}", fn_name, path))?;
                 let addr = sym.address();
 
-                let data: Vec<u8> = std::fs::read(&path)?;
-                let leaked = Box::leak(data.into_boxed_slice());
-                let parsed = object::File::parse(&*leaked)?;
-                let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)?;
+                let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
 
                 let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
 

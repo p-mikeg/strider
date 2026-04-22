@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 ir.workspace = true
 pattern.workspace = true
+reader.workspace = true
 rsleigh.workspace = true
 target.workspace = true
 strider-error.workspace = true

@@ -48,7 +48,7 @@ macro_rules! arch_tests {
             use super::helpers::*;
             use super::helpers;
 
-            fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader<'static, 'static>> {
+            fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
                 let p = super::binary($arch);
                 helpers::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
             }

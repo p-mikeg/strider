@@ -11,12 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let binary_path = "binary_tests/out/x86/test.elf";
 
     let obj = reader::load_elf(binary_path)?;
-
-    // Build a short-lived ELF reader for the Sleigh context.
-    let data: Vec<u8> = std::fs::read(binary_path)?;
-    let data = Box::leak(data.into_boxed_slice());
-    let parsed = object::File::parse(&*data)?;
-    let mem_reader = reader::ElfFileMemReader::from_elf_sections(&parsed)?;
+    let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = analyzer::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;

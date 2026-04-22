@@ -8,43 +8,52 @@
     )
 )]
 
-//! ELF binary memory reader for rsleigh.
+//! Memory readers for the Strider binary analysis framework.
 //!
-//! This crate bridges ELF files (parsed by `object`) and rsleigh's
-//! [`MemReader`] trait so that the Sleigh disassembler can read instruction
-//! bytes directly from ELF sections or segments.
+//! The crate provides:
+//!   * Generic region-based memory storage ([`MemRegion`],
+//!     [`MemRegionsLookupTable`], [`RegionsMemReader`]) that any reader
+//!     backend can compose.
+//!   * The [`ReadOnlyMemory`] trait used by the optimizer's `LoadReadOnly`
+//!     pass to resolve compile-time-constant loads.
+//!   * An ELF backend in the [`elf`] module that implements both
+//!     [`rsleigh::MemReader`] (for Sleigh instruction fetch) and
+//!     [`ReadOnlyMemory`] from the same underlying regions.
 //!
-//! # Architecture
-//!
-//! ```text
-//! ELF file on disk
-//!   └── object::File (parsed)
-//!         ├── sections / segments  ──►  Vec<MemRegion>
-//!         │                                  │
-//!         │                                  ▼
-//!         │                        MemRegionsLookupTable (BTreeMap)
-//!         │                                  │
-//!         │                                  ▼
-//!         └── ElfFileMemReader ──── RegionsMemReader ──► rsleigh::MemReader
-//! ```
-//!
-//! The typical entry point is [`ElfFileMemReader::from_elf_sections`], which
-//! maps all executable ELF sections into memory and hands the reader to
-//! `rsleigh::Sleigh::new`.
+//! New reader backends (raw blobs, PE, Mach-O, …) can live alongside `elf`
+//! and implement the same traits so they plug interchangeably into the
+//! pipeline.
 
 use std::collections::BTreeMap;
 
-use object::{Object, ObjectSection, ObjectSegment};
-
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
+
+pub mod elf;
+pub use elf::{ElfFileMemReader, load_elf};
+
+// ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
+
+/// Provides read access to a statically-known region of memory (e.g. a
+/// binary's `.rodata` or `.text` section).
+///
+/// The optimizer uses this trait to resolve `Load` nodes whose address is a
+/// compile-time constant into the corresponding constant values, eliminating
+/// the load entirely.
+pub trait ReadOnlyMemory: Send + Sync {
+    /// Returns the value at `addr` in `space` as an unsigned integer of `size`
+    /// bytes, or `None` if the address is not part of read-only memory or the
+    /// read cannot be satisfied.
+    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64>;
+}
 
 // ── MemRegion ─────────────────────────────────────────────────────────────────
 
 /// A contiguous range of bytes loaded at a fixed virtual address.
 ///
-/// Corresponds to one ELF section or segment mapped into the virtual address
-/// space of the target binary.
+/// Corresponds to one backend-specific mapping (e.g. an ELF section or an
+/// entry from a raw blob manifest) into the virtual address space of the
+/// target binary.
 #[derive(Clone, Debug)]
 pub struct MemRegion {
     /// First virtual address covered by this region.
@@ -138,7 +147,7 @@ impl MemRegionsLookupTable {
 /// method for convenient use in higher-level code.
 ///
 /// [`ElfFileMemReader`] uses this internally; most callers should interact
-/// with `ElfFileMemReader` directly.
+/// with a concrete backend (like `ElfFileMemReader`) directly.
 #[derive(Debug)]
 pub struct RegionsMemReader {
     lookup: MemRegionsLookupTable,
@@ -156,166 +165,6 @@ impl RegionsMemReader {
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         self.lookup.read(addr, out)
     }
-}
-
-// ── ELF → MemRegion converters ────────────────────────────────────────────────
-
-/// Converts a single ELF segment into a [`MemRegion`].
-pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
-    Ok(MemRegion::new(segment.address(), segment.data()?.to_vec()))
-}
-
-/// Converts a single ELF section into a [`MemRegion`].
-pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
-    Ok(MemRegion::new(section.address(), section.data()?.to_vec()))
-}
-
-/// Collects ELF segments into [`MemRegion`]s, keeping only those for which
-/// `filter` returns `true`.
-///
-/// Segments with empty data are always skipped.  If two segments share the
-/// same start address, the last one encountered is kept.
-pub fn elf_segments_to_mem_regions(
-    obj: &object::File<'_>,
-    filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
-) -> Result<Vec<MemRegion>> {
-    let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
-
-    for seg in obj.segments() {
-        let Ok(data) = seg.data() else { continue };
-        if data.is_empty() || !filter(&seg) {
-            continue;
-        }
-        let region = elf_segment_to_mem_region(&seg)?;
-        by_start.insert(region.start_addr, region);
-    }
-
-    Ok(by_start.into_values().collect())
-}
-
-/// Collects ELF sections into [`MemRegion`]s, keeping only those for which
-/// `filter` returns `true`.
-///
-/// If two sections share the same start address, the last one encountered is
-/// kept.
-pub fn elf_sections_to_mem_regions(
-    obj: &object::File<'_>,
-    filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
-) -> Result<Vec<MemRegion>> {
-    let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
-
-    for sec in obj.sections() {
-        if !filter(&sec) {
-            continue;
-        }
-        let region = elf_section_to_mem_region(&sec)?;
-        by_start.insert(region.start_addr, region);
-    }
-
-    Ok(by_start.into_values().collect())
-}
-
-// ── Executable-only helpers ───────────────────────────────────────────────────
-
-/// Returns all executable ELF segments (i.e. those with the `PF_X` flag set)
-/// as [`MemRegion`]s.
-pub fn elf_get_executable_segments_as_mem_regions(
-    obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>> {
-    elf_segments_to_mem_regions(obj, |seg| {
-        matches!(
-            seg.flags(),
-            object::read::SegmentFlags::Elf { p_flags }
-                if p_flags & object::elf::PF_X != 0
-        )
-    })
-}
-
-/// Returns all executable ELF sections (i.e. those with `SHF_EXECINSTR` set)
-/// as [`MemRegion`]s.
-pub fn elf_get_executable_sections_as_mem_regions(
-    obj: &object::File<'_>,
-) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, |sec| {
-        matches!(
-            sec.flags(),
-            object::read::SectionFlags::Elf { sh_flags }
-                if sh_flags & object::elf::SHF_EXECINSTR as u64 != 0
-        )
-    })
-}
-
-// ── ElfFileMemReader ──────────────────────────────────────────────────────────
-
-/// An rsleigh [`MemReader`] backed by an ELF file's sections or segments.
-///
-/// Holds a reference to the parsed [`object::File`] (for symbol lookups etc.)
-/// alongside the loaded memory regions used for instruction reads.
-///
-/// # Lifetimes
-/// - `'a` — lifetime of the borrow of the `object::File`.
-/// - `'data` — lifetime of the underlying byte buffer that `object::File`
-///   parses from.
-#[derive(Debug)]
-pub struct ElfFileMemReader<'a, 'data> {
-    /// The parsed ELF object.  Available for symbol resolution after the
-    /// reader is constructed.
-    pub obj: &'a object::File<'data>,
-    /// In-memory representation of the mapped regions.
-    pub regions_mem_reader: RegionsMemReader,
-}
-
-impl<'a, 'data> ElfFileMemReader<'a, 'data> {
-    /// Creates a reader from the executable **segments** of `obj`.
-    ///
-    /// Segments correspond to the runtime layout (PT_LOAD entries); use this
-    /// when the binary is not stripped and segments are available.
-    pub fn from_elf_segments(obj: &'a object::File<'data>) -> Result<Self> {
-        let regions = elf_get_executable_segments_as_mem_regions(obj)?;
-        let lookup = MemRegionsLookupTable::new(regions);
-        Ok(Self {
-            obj,
-            regions_mem_reader: RegionsMemReader::new(lookup),
-        })
-    }
-
-    /// Creates a reader from the executable **sections** of `obj`.
-    ///
-    /// Sections provide finer-grained granularity than segments and work even
-    /// when PT_LOAD entries are absent.  This is the recommended constructor
-    /// for most use-cases.
-    pub fn from_elf_sections(obj: &'a object::File<'data>) -> Result<Self> {
-        let regions = elf_get_executable_sections_as_mem_regions(obj)?;
-        let lookup = MemRegionsLookupTable::new(regions);
-        Ok(Self {
-            obj,
-            regions_mem_reader: RegionsMemReader::new(lookup),
-        })
-    }
-}
-
-impl<'a, 'data> rsleigh::MemReader for ElfFileMemReader<'a, 'data> {
-    type Err = Error;
-
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize> {
-        self.regions_mem_reader
-            .read(addr.off, out_buf)
-            .ok_or_else(|| error::ErrorKind::NotMapped(addr.off).into())
-    }
-}
-
-// ── load_elf ──────────────────────────────────────────────────────────────────
-
-/// Loads and parses an ELF file from `path`, returning a `'static` reference.
-///
-/// The file bytes are read into a `Box<[u8]>` that is then intentionally
-/// **leaked** so the returned `object::File<'static>` remains valid for the
-/// lifetime of the process.  This is suitable for tests and short-lived CLI
-/// tools where the cost of a one-time leak is acceptable.
-pub fn load_elf(path: &str) -> Result<object::File<'static>> {
-    let data = std::fs::read(path)?;
-    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
-    Ok(object::File::parse(leaked)?)
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

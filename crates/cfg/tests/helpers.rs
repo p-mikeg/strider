@@ -35,22 +35,18 @@ pub fn symbol_addr(binary_path: &str, fn_name: &str) -> u64 {
 
 /// Builds a CFG for the named function using `sla_spec`/`pspec` to decode.
 ///
-/// The ELF is loaded from `binary_path`. Both the raw bytes and the parsed
-/// object are leaked to produce `'static` lifetimes for the memory reader.
+/// The ELF is loaded from `binary_path`. The returned reader owns its backing
+/// regions, so no leak or `'static` lifetime gymnastics are required.
 pub fn build_cfg(
     binary_path: &str,
     fn_name: &str,
     sla_spec: rsleigh::sla_spec::SlaSpec,
     pspec: rsleigh::pspec::PSpec,
-) -> Cfg<reader::ElfFileMemReader<'static, 'static>> {
+) -> Cfg<reader::ElfFileMemReader> {
     let addr = symbol_addr(binary_path, fn_name);
 
-    let data: Vec<u8> = std::fs::read(binary_path).expect("read binary");
-    let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
-    let parsed: &'static object::File<'static> =
-        Box::leak(Box::new(object::File::parse(leaked).expect("parse ELF")));
     let mem_reader =
-        reader::ElfFileMemReader::from_elf_sections(parsed).expect("build ElfFileMemReader");
+        reader::ElfFileMemReader::from_path(binary_path).expect("build ElfFileMemReader");
 
     let sleigh = rsleigh::Sleigh::new(sla_spec, pspec, mem_reader).expect("create Sleigh");
 

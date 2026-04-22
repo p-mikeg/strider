@@ -1,22 +1,8 @@
 use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
+use reader::ReadOnlyMemory;
 
 use crate::pipeline::{OptimizationResult, Optimizer};
-
-// ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
-
-/// Provides read access to a statically-known region of memory (e.g. a binary's
-/// `.rodata` or `.text` section).
-///
-/// The optimizer uses this trait to resolve `Load` nodes whose address is a
-/// compile-time constant into the corresponding constant values, eliminating
-/// the load entirely.
-pub trait ReadOnlyMemory: Send + Sync {
-    /// Returns the value at `addr` in `space` as an unsigned integer of `size`
-    /// bytes, or `None` if the address is not part of read-only memory or the
-    /// read cannot be satisfied.
-    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64>;
-}
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
