@@ -138,6 +138,14 @@ int __attribute__((noinline)) stack_test(int a, int b, int c) {
 
 }
 
+int __attribute__((noinline, optimize("O0"))) global_test(int a, int b, int c) {
+    if("abc"[0] > 'x') {
+        return  a + b + c;
+    } else {
+        return a - b - c;
+    }
+
+}
 /* ── jump-table candidates ─────────────────────────────────────────── */
 
 /*

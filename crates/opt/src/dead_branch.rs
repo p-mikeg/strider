@@ -57,12 +57,6 @@ fn try_eliminate_dead_branch(
     // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
     fg.replace_all_uses(live_ctrl, ctrl_in)?;
 
-    if dead_uses.is_empty() {
-        // No successor for the dead branch — still report Changed if we
-        // successfully rerouted the live branch.
-        return Ok(OptimizationResult::Changed);
-    }
-
     // ── Step 3: remove dead ctrl inputs from successor ControlState(s) ───────
     for (cs_node, dead_idx) in dead_uses {
         if !matches!(*fg.graph.node_kind(cs_node), NodeKind::ControlState) {
@@ -101,6 +95,12 @@ fn try_eliminate_dead_branch(
             fg.graph.remove_node_input(cs_node, dead_idx)?;
         }
     }
+
+    // ── Step 4: detach the If's own inputs so the pre-order walker no longer
+    // reaches it via `ctrl_in`. Without this the fixed-point loop would spin
+    // forever: the If's outputs have no users but its inputs still tie it to
+    // the reachable subgraph, so the walker re-visits it on every iteration.
+    fg.graph.detach_node_inputs(node_id);
 
     Ok(OptimizationResult::Changed)
 }
