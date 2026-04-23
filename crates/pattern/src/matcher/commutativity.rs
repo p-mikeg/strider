@@ -9,7 +9,7 @@ pub(crate) fn is_commutative_int_op(op: IntBinaryOp) -> bool {
     )
 }
 
-pub(super) fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
+pub(crate) fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
     matches!(op, BoolBinaryOp::And | BoolBinaryOp::Or | BoolBinaryOp::Xor)
 }
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use ir::node::NodeKind;
 use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 
-use crate::matcher::commutativity::is_commutative_int_op;
+use crate::matcher::commutativity::{is_commutative_bool_op, is_commutative_int_op};
 use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{Pat, PatKind, int_const};
 use crate::pat_macros::define_pat_builder;
@@ -87,6 +87,15 @@ pub struct BoolBinaryOpPat {
 }
 
 impl BoolBinaryOpPat {
+    pub(crate) fn new(op: BoolBinaryOp, lhs: Pat, rhs: Pat) -> Self {
+        Self {
+            op,
+            lhs,
+            rhs,
+            ordered: false,
+        }
+    }
+
     /// Force the pattern to match operands in the stated order only.
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
@@ -96,12 +105,22 @@ impl BoolBinaryOpPat {
 
 impl From<BoolBinaryOpPat> for Pat {
     fn from(b: BoolBinaryOpPat) -> Pat {
-        Pat::new(PatKind::BoolBinaryOp {
-            op: b.op,
-            lhs: b.lhs,
-            rhs: b.rhs,
-            ordered: b.ordered,
-        })
+        let op = b.op;
+        let commutative_at_construction = !b.ordered && is_commutative_bool_op(op);
+        let inputs = if commutative_at_construction {
+            InputsSpec::fixed_commutative(b.lhs, b.rhs)
+        } else {
+            InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
+        };
+        Pat::from_dyn(Arc::new(NodePat {
+            kind_match: Arc::new(move |ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(x) if *x == op)
+            }),
+            inputs,
+            post_match: None,
+            output_var: None,
+            node_var: None,
+        }))
     }
 }
 

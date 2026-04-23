@@ -2,11 +2,10 @@ use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
-use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    FloatVar, IntVar, NodeVar, Var,
+    BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar, FloatVar, IntVar, NodeVar, Var,
 };
 
 mod builders;
@@ -290,32 +289,7 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Bool ops ──────────────────────────────────────────────────────────────
-    /// Matches a boolean binary operation node.
-    /// When `ordered` is `false` and the op is commutative, both orderings are
-    /// tried automatically.
-    BoolBinaryOp {
-        op: BoolBinaryOp,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches a boolean unary operation node.
-    BoolUnaryOp { op: BoolUnaryOp, operand: Pat },
-
-    // ── Variant-agnostic bool / float op patterns ────────────────────────────
-    /// Matches **any** boolean binary operation, binding the actual operator
-    /// variant to `op`.  When `ordered` is `false` and the matched op is
-    /// commutative, both operand orderings are tried automatically.
-    BoolBinaryAny {
-        op: BoolBinaryOpVar,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches **any** boolean unary operation, binding the actual operator
-    /// variant to `op`.
-    BoolUnaryAny { op: BoolUnaryOpVar, operand: Pat },
+    // ── Variant-agnostic float op patterns ───────────────────────────────────
     /// Matches **any** float binary operation, binding the actual operator
     /// variant to `op`.  When `ordered` is `false` and the matched op is
     /// commutative (`Add`, `Mul`), both operand orderings are tried.

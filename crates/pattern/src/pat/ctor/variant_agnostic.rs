@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use ir::node::NodeKind;
 
-use crate::matcher::commutativity::{is_commutative_int_cmp_op, is_commutative_int_op};
+use crate::matcher::commutativity::{
+    is_commutative_bool_op, is_commutative_int_cmp_op, is_commutative_int_op,
+};
 use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{Pat, PatKind};
 use crate::var::{
@@ -98,22 +100,46 @@ pub fn int_cmp_any(op_var: IntCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>
 ///
 /// Commutative ops (`And`, `Or`, `Xor`) try both operand orderings
 /// automatically.
-pub fn bool_binary_any(op: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::BoolBinaryAny {
-        op,
-        lhs: lhs.into(),
-        rhs: rhs.into(),
-        ordered: false,
-    })
+pub fn bool_binary_any(op_var: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
+        match ctx.graph.graph.node_kind(node) {
+            NodeKind::BoolBinaryOp(op) => is_commutative_bool_op(*op),
+            _ => false,
+        }
+    });
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(|ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(_))
+        }),
+        inputs,
+        post_match: Some(Arc::new(move |ctx, node, b| {
+            match ctx.graph.graph.node_kind(node) {
+                NodeKind::BoolBinaryOp(op) => b.bind_bool_binary_op(op_var, *op),
+                _ => false,
+            }
+        })),
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches **any** boolean unary operation and binds the actual operator
 /// variant to `op`.
-pub fn bool_unary_any(op: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::BoolUnaryAny {
-        op,
-        operand: operand.into(),
-    })
+pub fn bool_unary_any(op_var: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(|ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(_))
+        }),
+        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
+        post_match: Some(Arc::new(move |ctx, node, b| {
+            match ctx.graph.graph.node_kind(node) {
+                NodeKind::BoolUnaryOp(op) => b.bind_bool_unary_op(op_var, *op),
+                _ => false,
+            }
+        })),
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches **any** float binary operation and binds the actual operator
