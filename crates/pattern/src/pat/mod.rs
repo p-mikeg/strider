@@ -2,11 +2,9 @@ use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
-use ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use ir::ExtendOp;
 
-use crate::var::{
-    BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar, FloatVar, IntVar, NodeVar, Var,
-};
+use crate::var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
 
 mod builders;
 mod ctor;
@@ -289,32 +287,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Variant-agnostic float op patterns ───────────────────────────────────
-    /// Matches **any** float binary operation, binding the actual operator
-    /// variant to `op`.  When `ordered` is `false` and the matched op is
-    /// commutative (`Add`, `Mul`), both operand orderings are tried.
-    FloatBinaryAny {
-        op: FloatBinaryOpVar,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches **any** float unary operation, binding the actual operator
-    /// variant to `op`.
-    FloatUnaryAny { op: FloatUnaryOpVar, operand: Pat },
-    /// Matches **any** float comparison, binding the actual operator variant
-    /// to `op`.  When `ordered` is `false`, no automatic commutative retry is
-    /// applied (no float cmp op is commutative in the existing helper).
-    FloatCmpAny {
-        op: FloatCmpOpVar,
-        lhs: Pat,
-        rhs: Pat,
-        /// Retained for API symmetry with the other `*Any` variants; no float
-        /// comparison operator is commutative so this field has no matcher effect.
-        #[allow(dead_code)]
-        ordered: bool,
-    },
-
     // ── Casts / coercions (single value input) ────────────────────────────────
     /// Matches a `CastToBool` node (non-zero integer → `true`).
     CastToBool { operand: Pat },
@@ -329,30 +301,6 @@ pub enum PatKind {
     /// Matches a `Lzcount` node (counts leading zero bits).
     Lzcount { operand: Pat },
 
-    // ── Float ops ─────────────────────────────────────────────────────────────
-    /// Matches a float binary operation node.
-    /// When `ordered` is `false` and the op is commutative (`Add`, `Mul`), both
-    /// operand orderings are tried automatically.
-    FloatBinaryOp {
-        op: FloatBinaryOp,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches a float unary operation node.
-    FloatUnaryOp { op: FloatUnaryOp, operand: Pat },
-    /// Matches a float comparison node (produces a `Bool` output).
-    FloatCmpOp { op: FloatCmpOp, lhs: Pat, rhs: Pat },
-    /// Matches an `IntToFloat` value-conversion node.
-    IntToFloat { operand: Pat },
-    /// Matches a `FloatToInt` value-conversion node.
-    FloatToInt { operand: Pat },
-    /// Matches a `FloatToFloat` precision-conversion node.
-    FloatToFloat { operand: Pat },
-    /// Matches an `IntBitsToFloat` bitcast node.
-    IntBitsToFloat { operand: Pat },
-    /// Matches a `FloatBitsToInt` bitcast node.
-    FloatBitsToInt { operand: Pat },
     /// Matches a `CastToFloat` generic-cast node.
     CastToFloat { operand: Pat },
 

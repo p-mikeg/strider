@@ -8,10 +8,11 @@ use std::sync::Arc;
 use ir::node::NodeKind;
 
 use crate::matcher::commutativity::{
-    is_commutative_bool_op, is_commutative_int_cmp_op, is_commutative_int_op,
+    is_commutative_bool_op, is_commutative_float_op, is_commutative_int_cmp_op,
+    is_commutative_int_op,
 };
+use crate::pat::Pat;
 use crate::pat::node_pat::{InputsSpec, NodePat};
-use crate::pat::{Pat, PatKind};
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar,
@@ -146,22 +147,50 @@ pub fn bool_unary_any(op_var: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
 /// variant to `op`.
 ///
 /// Commutative ops (`Add`, `Mul`) try both operand orderings automatically.
-pub fn float_binary_any(op: FloatBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::FloatBinaryAny {
-        op,
-        lhs: lhs.into(),
-        rhs: rhs.into(),
-        ordered: false,
-    })
+pub fn float_binary_any(
+    op_var: FloatBinaryOpVar,
+    lhs: impl Into<Pat>,
+    rhs: impl Into<Pat>,
+) -> Pat {
+    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
+        match ctx.graph.graph.node_kind(node) {
+            NodeKind::FloatBinaryOp(op) => is_commutative_float_op(*op),
+            _ => false,
+        }
+    });
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(|ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(_))
+        }),
+        inputs,
+        post_match: Some(Arc::new(move |ctx, node, b| {
+            match ctx.graph.graph.node_kind(node) {
+                NodeKind::FloatBinaryOp(op) => b.bind_float_binary_op(op_var, *op),
+                _ => false,
+            }
+        })),
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches **any** float unary operation and binds the actual operator
 /// variant to `op`.
-pub fn float_unary_any(op: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::FloatUnaryAny {
-        op,
-        operand: operand.into(),
-    })
+pub fn float_unary_any(op_var: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat {
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(|ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(_))
+        }),
+        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
+        post_match: Some(Arc::new(move |ctx, node, b| {
+            match ctx.graph.graph.node_kind(node) {
+                NodeKind::FloatUnaryOp(op) => b.bind_float_unary_op(op_var, *op),
+                _ => false,
+            }
+        })),
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches **any** float comparison and binds the actual operator variant
@@ -169,11 +198,19 @@ pub fn float_unary_any(op: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat {
 ///
 /// No float comparison operators are currently treated as commutative, so no
 /// automatic operand-swap retry is attempted.
-pub fn float_cmp_any(op: FloatCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::FloatCmpAny {
-        op,
-        lhs: lhs.into(),
-        rhs: rhs.into(),
-        ordered: false,
-    })
+pub fn float_cmp_any(op_var: FloatCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(|ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(_))
+        }),
+        inputs: InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
+        post_match: Some(Arc::new(move |ctx, node, b| {
+            match ctx.graph.graph.node_kind(node) {
+                NodeKind::FloatCmpOp(op) => b.bind_float_cmp_op(op_var, *op),
+                _ => false,
+            }
+        })),
+        output_var: None,
+        node_var: None,
+    }))
 }

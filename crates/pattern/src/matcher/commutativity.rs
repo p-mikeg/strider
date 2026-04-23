@@ -13,7 +13,7 @@ pub(crate) fn is_commutative_bool_op(op: BoolBinaryOp) -> bool {
     matches!(op, BoolBinaryOp::And | BoolBinaryOp::Or | BoolBinaryOp::Xor)
 }
 
-pub(super) fn is_commutative_float_op(op: FloatBinaryOp) -> bool {
+pub(crate) fn is_commutative_float_op(op: FloatBinaryOp) -> bool {
     matches!(op, FloatBinaryOp::Add | FloatBinaryOp::Mul)
 }
 

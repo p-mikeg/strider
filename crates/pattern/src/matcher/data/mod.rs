@@ -8,7 +8,6 @@
 //! every family in priority order.
 //!
 //! Families (remaining on the Legacy path):
-//! * `float`     — float binary / unary / cmp ops + int ↔ float conversions
 //! * `casts`     — value-preserving casts + bit-level truncate / extend / popcount / lzcount
 //! * `memory`    — Load / Store / StackStore / StackStorePhi
 //! * `phi`       — Phi / InitialVar
@@ -16,8 +15,10 @@
 //! Wildcards + constants + guards migrated to the trait-based engine in
 //! Phase 2.1; the Int family (binary/unary/cmp + *Any variants) migrated in
 //! Phase 2.2; the Bool family (binary/unary + *Any variants) migrated in
-//! Phase 2.3.  Those pats never reach this dispatcher (they go through
-//! [`crate::pat::traits::DataPattern`] via [`Matcher::match_output`]).
+//! Phase 2.3; the Float family (binary/unary/cmp + *Any variants + int↔float
+//! conversions) migrated in Phase 2.4.  Those pats never reach this
+//! dispatcher (they go through [`crate::pat::traits::DataPattern`] via
+//! [`Matcher::match_output`]).
 //!
 //! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
 //! match in a data context — the dispatcher returns `false` for them,
@@ -30,7 +31,6 @@ use super::bindings::Bindings;
 use crate::pat::{Pat, PatKind};
 
 mod casts;
-mod float;
 mod memory;
 mod phi;
 
@@ -44,9 +44,6 @@ pub(super) fn match_output(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = float::match_float(matcher, output, pat, bindings) {
-        return r;
-    }
     if let Some(r) = casts::match_casts(matcher, output, pat, bindings) {
         return r;
     }
@@ -108,30 +105,3 @@ where
     }
 }
 
-/// Check that `node` satisfies `kind_ok`, fetch its two inputs, and try
-/// matching `lhs`/`rhs` in order.  Backtracks on failure.
-pub(super) fn match_binary_op<F>(
-    matcher: &Matcher,
-    node: NodeId,
-    lhs: &Pat,
-    rhs: &Pat,
-    bindings: &mut Bindings,
-    kind_ok: F,
-) -> bool
-where
-    F: FnOnce(&NodeKind) -> bool,
-{
-    if !kind_ok(matcher.fn_graph.graph.node_kind(node)) {
-        return false;
-    }
-    let Ok([l, r]) = matcher.fn_graph.graph.node_inputs_exact::<2>(node) else {
-        return false;
-    };
-    let snap = bindings.clone();
-    if matcher.match_output(l, lhs, bindings) && matcher.match_output(r, rhs, bindings) {
-        true
-    } else {
-        *bindings = snap;
-        false
-    }
-}
