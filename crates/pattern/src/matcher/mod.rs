@@ -12,7 +12,6 @@ pub use function_arg_handle::FunctionArgHandle;
 mod bindings;
 pub(crate) mod commutativity;
 mod control;
-mod data;
 mod match_result;
 mod traversal;
 
@@ -222,22 +221,24 @@ impl<'g> Matcher<'g> {
         }
     }
 
-    /// Match a `NodeOutputId` (data edge) against a pattern.  Legacy
-    /// `PatKind`-backed pats route through the existing family dispatcher;
-    /// trait-backed pats call [`DataPattern::try_match`] directly.
+    /// Match a `NodeOutputId` (data edge) against a pattern.  All data-level
+    /// pattern kinds have migrated to the trait-based engine; the remaining
+    /// `Legacy` variants are control-level (`Call` / `CallOther` / `Return`
+    /// / `If` / `Contains`) which cannot match in a data context and return
+    /// `false` here.  Phase 3 will migrate those, after which the `Legacy`
+    /// branch goes away entirely.
     pub(super) fn match_output(
         &self,
         output: NodeOutputId,
         pat: &Pat,
         bindings: &mut Bindings,
     ) -> bool {
-        if pat.as_legacy().is_some() {
-            data::match_output(self, output, pat, bindings)
-        } else if let Some(d) = pat.as_dyn() {
+        if let Some(d) = pat.as_dyn() {
             let ctx = self.ctx();
             d.try_match(&ctx, output, bindings)
         } else {
-            // Unreachable: `Pat` always has exactly one inner variant.
+            // Legacy variants here are all control-level; they never match
+            // against a data output.
             false
         }
     }
