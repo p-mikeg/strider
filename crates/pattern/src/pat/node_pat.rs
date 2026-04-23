@@ -5,8 +5,10 @@
 //! Phase 2.1 wired up the wildcard-and-constant constructors (via
 //! `InputsSpec::None`); Phase 2.2 extends the use to the Int family, which
 //! introduces `InputsSpec::Fixed` with arity 1 (unary) and arity 2
-//! (binary/cmp, possibly commutative).  The `InputsSpec::Indexed` variant is
-//! still unused until a later phase migrates `Phi` / `Call` args.
+//! (binary/cmp, possibly commutative).  Phase 2.6 wires up
+//! `InputsSpec::Indexed` via the Memory family (sparse positional matching
+//! for `Load` / `Store` / `StackStore` / `StackStorePhi`); Phase 2.7 adds
+//! `Phi`.
 
 use std::sync::Arc;
 
@@ -60,9 +62,10 @@ pub enum InputsSpec {
         pats: Vec<crate::pat::Pat>,
         commutative: CommutativeDecider,
     },
-    /// Sparse positional constraints — used by `Phi`, `Call` args, etc.
-    /// Unused until the memory/phi/control families migrate in later phases.
-    #[allow(dead_code)]
+    /// Sparse positional constraints: only the listed input indices are
+    /// matched against their sub-patterns; unlisted slots are unconstrained.
+    /// Used by memory patterns (addr / data at specific indices) and phi
+    /// patterns (per-predecessor constraints).
     Indexed(Vec<(usize, crate::pat::Pat)>),
 }
 
