@@ -1,14 +1,18 @@
 //! Wildcard, capture, and constant-literal pattern constructors.
 
-use ir::BuiltFunctionGraph;
-use ir::node::{NodeOutputId, NodeOutputType};
+use std::sync::Arc;
 
-use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, Pat, PatKind};
+use ir::BuiltFunctionGraph;
+use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
+
+use crate::pat::any::AnyPat;
+use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, Pat};
 use crate::var::Var;
 
 /// Matches any single output unconditionally.
 pub fn any() -> Pat {
-    Pat::new(PatKind::Any)
+    Pat::from_dyn(Arc::new(AnyPat))
 }
 
 /// Matches any output and binds it to `v`.
@@ -16,22 +20,46 @@ pub fn any() -> Pat {
 /// If `v` is already bound the output must equal the stored binding.
 /// Shorthand for `any().capture(v)`.
 pub fn var(v: Var) -> Pat {
-    Pat::new(PatKind::Capture(v))
+    any().capture(v)
 }
 
 /// Matches an `IntConst` node with value exactly `v`.
 pub fn int_const(v: u64) -> Pat {
-    Pat::new(PatKind::IntConst(v))
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(move |ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(c) if *c == v)
+        }),
+        inputs: InputsSpec::None,
+        post_match: None,
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches a `BoolConst` node with value exactly `v`.
 pub fn bool_const(v: bool) -> Pat {
-    Pat::new(PatKind::BoolConst(v))
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(move |ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(c) if *c == v)
+        }),
+        inputs: InputsSpec::None,
+        post_match: None,
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
 pub fn float_const(bits: u64) -> Pat {
-    Pat::new(PatKind::FloatConst(bits))
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(move |ctx, node, _b| {
+            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(c) if *c == bits)
+        }),
+        inputs: InputsSpec::None,
+        post_match: None,
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 /// Matches any `IntConst` node and binds either the output (for a [`Var`]) or

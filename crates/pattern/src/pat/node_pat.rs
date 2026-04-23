@@ -3,7 +3,9 @@
 //! closure, an `InputsSpec`, and optional post-match / capture hooks.
 //!
 //! Dead code until Phase 2 flips the family constructors over to emit
-//! `Pat::Dyn(Arc::new(NodePat { ... }))`.
+//! `Pat::Dyn(Arc::new(NodePat { ... }))`.  Phase 2.1 wires up the
+//! wildcard-and-constant constructors (see `ctor/wildcards.rs`); the op
+//! families migrate in Phase 2.2+.
 
 #![allow(dead_code)]
 

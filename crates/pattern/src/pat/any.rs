@@ -1,11 +1,9 @@
 //! Small wildcard / capture combinators.
 
-#![allow(dead_code)]
-
 use ir::node::NodeOutputId;
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{DataPattern, DynDataPat, MatchCtx};
+use crate::pat::traits::{DataPattern, MatchCtx};
 use crate::var::Var;
 
 /// Matches any output unconditionally.
@@ -20,16 +18,30 @@ impl DataPattern for AnyPat {
 /// Matches `inner`, then additionally binds the matched output to `var`.
 /// (`Pat::capture_impl` today wraps via `PatKind::WithCapture` — this is the
 /// trait-based replacement.)
+///
+/// `inner` is stored as a [`Pat`](crate::pat::Pat) rather than a `DynDataPat`
+/// so it can wrap either Legacy- or trait-backed patterns during the
+/// migration; dispatch goes through [`crate::matcher::Matcher::match_output`].
 pub struct CapturePat {
-    pub(crate) inner: DynDataPat,
+    pub(crate) inner: crate::pat::Pat,
     pub(crate) var: Var,
 }
 
 impl DataPattern for CapturePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        if !self.inner.try_match(ctx, target, b) {
+        // Snapshot so that a failed `bind_var` after a successful inner match
+        // leaves the bindings untouched — matches the legacy
+        // `matcher::data::constants::PatKind::Capture` semantics where the
+        // bind was the only mutation, so any failure left bindings clean.
+        let snap = b.clone();
+        if !ctx.matcher.match_output(target, &self.inner, b) {
             return false;
         }
-        b.bind_var(self.var, target)
+        if b.bind_var(self.var, target) {
+            true
+        } else {
+            *b = snap;
+            false
+        }
     }
 }

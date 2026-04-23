@@ -7,15 +7,17 @@
 //! `Some(b)` with the match result otherwise.  The dispatcher below chains
 //! every family in priority order.
 //!
-//! Families:
-//! * `constants` — wildcards + constant-shaped patterns (Any, Capture, IntConst, …)
-//! * `guards`    — post-match guards (WithCapture, WithPredicate, WithMatchPredicate)
+//! Families (remaining on the Legacy path):
 //! * `int`       — integer binary / unary / cmp ops (both concrete and *Any variants)
 //! * `bool_`     — boolean binary / unary ops
 //! * `float`     — float binary / unary / cmp ops + int ↔ float conversions
 //! * `casts`     — value-preserving casts + bit-level truncate / extend / popcount / lzcount
 //! * `memory`    — Load / Store / StackStore / StackStorePhi
 //! * `phi`       — Phi / InitialVar
+//!
+//! Wildcards + constants + guards migrated to the trait-based engine in
+//! Phase 2.1 — those pats never reach this dispatcher (they go through
+//! [`crate::pat::traits::DataPattern`] via [`Matcher::match_output`]).
 //!
 //! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
 //! match in a data context — the dispatcher returns `false` for them,
@@ -32,9 +34,7 @@ use crate::pat::{Pat, PatKind};
 // every call site, which is uglier than the suffix.
 mod bool_;
 mod casts;
-mod constants;
 mod float;
-mod guards;
 mod int;
 mod memory;
 mod phi;
@@ -49,12 +49,6 @@ pub(super) fn match_output(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = constants::match_constants(matcher, output, pat, bindings) {
-        return r;
-    }
-    if let Some(r) = guards::match_guards(matcher, output, pat, bindings) {
-        return r;
-    }
     if let Some(r) = int::match_int(matcher, output, pat, bindings) {
         return r;
     }

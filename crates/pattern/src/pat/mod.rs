@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeOutputId, NodeOutputType};
+use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
@@ -27,11 +27,13 @@ pub use builders::{
 };
 pub use ctor::*;
 
-/// Predicate function type used in [`PatKind::WithPredicate`].
+/// Predicate function type used by the `WhenPat` combinator (produced by
+/// [`IntoPat::when`] / [`Pat::when_impl`]).
 pub type PredicateFn =
     Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
 
-/// Predicate function type used in [`PatKind::WithMatchPredicate`].
+/// Predicate function type used by the `WhenMatchPat` combinator (produced by
+/// [`Pat::when_match`]).
 ///
 /// Unlike [`PredicateFn`], this variant sees the full capture [`crate::matcher::Bindings`]
 /// map, not just the single matched output — useful for guards that
@@ -52,13 +54,33 @@ pub trait IntoAnyIntConst: sealed::SealedAnyIntConst {
 
 impl IntoAnyIntConst for Var {
     fn into_any_int_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyIntConst(self))
+        // Match any IntConst; bind the output to `self` via NodePat.output_var.
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(_))
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: Some(self),
+            node_var: None,
+        }))
     }
 }
 
 impl IntoAnyIntConst for IntVar {
     fn into_any_int_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyIntConstTyped(self))
+        // Match any IntConst; bind the concrete value to the IntVar.
+        let iv = self;
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
+                NodeKind::IntConst(v) => b.bind_int(iv, *v),
+                _ => false,
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: None,
+            node_var: None,
+        }))
     }
 }
 
@@ -71,13 +93,31 @@ pub trait IntoAnyBoolConst: sealed::SealedAnyBoolConst {
 
 impl IntoAnyBoolConst for Var {
     fn into_any_bool_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyBoolConst(self))
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(_))
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: Some(self),
+            node_var: None,
+        }))
     }
 }
 
 impl IntoAnyBoolConst for BoolVar {
     fn into_any_bool_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyBoolConstTyped(self))
+        let bv = self;
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
+                NodeKind::BoolConst(v) => b.bind_bool(bv, *v),
+                _ => false,
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: None,
+            node_var: None,
+        }))
     }
 }
 
@@ -90,13 +130,31 @@ pub trait IntoAnyFloatConst: sealed::SealedAnyFloatConst {
 
 impl IntoAnyFloatConst for Var {
     fn into_any_float_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyFloatConst(self))
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(_))
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: Some(self),
+            node_var: None,
+        }))
     }
 }
 
 impl IntoAnyFloatConst for FloatVar {
     fn into_any_float_const_pat(self) -> Pat {
-        Pat::new(PatKind::AnyFloatConstTyped(self))
+        let fv = self;
+        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
+                NodeKind::FloatConst(bits) => b.bind_float(fv, *bits),
+                _ => false,
+            }),
+            inputs: crate::pat::node_pat::InputsSpec::None,
+            post_match: None,
+            output_var: None,
+            node_var: None,
+        }))
     }
 }
 
@@ -171,10 +229,10 @@ impl Pat {
     /// output to `v`.  If `v` is already bound the output must equal the
     /// stored binding, otherwise the match fails.
     fn capture_impl(self, v: Var) -> Pat {
-        Pat::new(PatKind::WithCapture {
+        Pat::from_dyn(Arc::new(crate::pat::any::CapturePat {
             inner: self,
             var: v,
-        })
+        }))
     }
 
     /// After this pattern matches successfully, additionally run `f` against
@@ -183,10 +241,10 @@ impl Pat {
     where
         F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
-        Pat::new(PatKind::WithPredicate {
+        Pat::from_dyn(Arc::new(crate::pat::guards::WhenPat {
             inner: self,
             func: Arc::new(f),
-        })
+        }))
     }
 
     /// After this pattern matches successfully, additionally run `f` with
@@ -200,10 +258,10 @@ impl Pat {
             + Sync
             + 'static,
     {
-        Pat::new(PatKind::WithMatchPredicate {
+        Pat::from_dyn(Arc::new(crate::pat::guards::WhenMatchPat {
             inner: self,
             func: Arc::new(f),
-        })
+        }))
     }
 }
 
@@ -235,36 +293,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Wildcards ─────────────────────────────────────────────────────────────
-    /// Matches any single `NodeOutputId` unconditionally.
-    Any,
-    /// Matches any output and binds it to `v`.  If `v` is already bound the
-    /// output must equal the stored binding.
-    Capture(Var),
-
-    // ── Constants ─────────────────────────────────────────────────────────────
-    /// Matches an `IntConst` node whose value equals the given literal.
-    IntConst(u64),
-    /// Matches a `BoolConst` node whose value equals the given literal.
-    BoolConst(bool),
-    /// Matches any `IntConst` node and binds its output to `v`.  Fails if the
-    /// producing node is not an `IntConst`.  Use `m.get_int_const(v, graph)` to
-    /// read the concrete value after matching.
-    AnyIntConst(Var),
-    /// Matches any `BoolConst` node and binds its output to `v`.
-    AnyBoolConst(Var),
-
-    /// Matches any `IntConst` node and binds the **concrete constant value**
-    /// (`u64`) to `v`.  Same structural match as [`PatKind::AnyIntConst`] but
-    /// the capture is typed so rewrite-rule closures can read the value
-    /// directly via `FromCtx` without a graph lookup.
-    AnyIntConstTyped(IntVar),
-    /// Matches any `BoolConst` node and binds its value to `v`.
-    AnyBoolConstTyped(BoolVar),
-    /// Matches any `FloatConst` node and binds its IEEE 754 bit pattern to
-    /// `v`.
-    AnyFloatConstTyped(FloatVar),
-
     // ── Integer ops ───────────────────────────────────────────────────────────
     /// Matches an integer binary operation node.
     /// When `ordered` is `false` and the op is commutative, both operand
@@ -369,10 +397,6 @@ pub enum PatKind {
     Lzcount { operand: Pat },
 
     // ── Float ops ─────────────────────────────────────────────────────────────
-    /// Matches a `FloatConst` node whose raw bit representation equals `v`.
-    FloatConst(u64),
-    /// Matches any `FloatConst` node and binds its output to `v`.
-    AnyFloatConst(Var),
     /// Matches a float binary operation node.
     /// When `ordered` is `false` and the op is commutative (`Add`, `Mul`), both
     /// operand orderings are tried automatically.
@@ -509,15 +533,5 @@ pub enum PatKind {
     // ── Region search ─────────────────────────────────────────────────────────
     /// Forward walk along a ctrl chain, searching for a node matching `inner`.
     Contains(Pat),
-
-    // ── Post-match guards ─────────────────────────────────────────────────────
-    /// Matches `inner`, then additionally binds the matched output to `var`.
-    WithCapture { inner: Pat, var: Var },
-    /// Matches `inner`, then additionally runs `func` — fails if it returns false.
-    WithPredicate { inner: Pat, func: PredicateFn },
-    /// Matches `inner`, then additionally runs `func` with the full capture
-    /// bindings.  Fails (returning `false`) rejects the current operand
-    /// ordering and lets commutative backtracks retry.
-    WithMatchPredicate { inner: Pat, func: MatchPredicateFn },
 }
 

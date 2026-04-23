@@ -7,7 +7,7 @@
 
 use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 
-use crate::pat::{Pat, PatKind};
+use crate::pat::{Pat, PatKind, int_const};
 use crate::pat_macros::define_pat_builder;
 use crate::var::{NodeVar, Var};
 
@@ -232,7 +232,7 @@ define_pat_builder! {
     extra {
         /// Constrain the call target to the literal address `addr`.
         pub fn at(self, addr: u64) -> Self {
-            self.target(Pat::new(PatKind::IntConst(addr)))
+            self.target(int_const(addr))
         }
     }
 }

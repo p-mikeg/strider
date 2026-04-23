@@ -14,14 +14,18 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId};
 
-use crate::matcher::Bindings;
+use crate::matcher::{Bindings, Matcher};
 
-/// Context passed through every `try_match` call. Holds a borrow of the
-/// built function graph so patterns can read node kinds, inputs, outputs,
-/// and graph side-tables (e.g. `stack_phi_offsets`).
+/// Context passed through every `try_match` call. Carries the graph (for
+/// reading node kinds / inputs / outputs / side-tables) and a back-reference
+/// to the [`Matcher`] (needed by combinators like `CapturePat`/`WhenPat` that
+/// wrap an inner `Pat` — the inner pattern may still be on the transitional
+/// Legacy path, so dispatch must go through [`Matcher::match_output`] or
+/// [`Matcher::match_node_id`]).
 #[derive(Clone, Copy)]
-pub struct MatchCtx<'g> {
+pub struct MatchCtx<'g, 'm> {
     pub graph: &'g BuiltFunctionGraph,
+    pub(crate) matcher: &'m Matcher<'g>,
 }
 
 /// A pattern that matches against a single `NodeOutputId` (data edge).

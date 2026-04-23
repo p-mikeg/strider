@@ -211,6 +211,18 @@ impl<'g> Matcher<'g> {
     // shells keep the `&self.match_output(...)` / `&self.match_node_id(...)`
     // call-sites stable for submodule callers that already hold a `&Matcher`.
 
+    /// Build a [`MatchCtx`](crate::pat::traits::MatchCtx) that carries both
+    /// the graph and a back-reference to this matcher.  Combinators call this
+    /// to dispatch through [`Self::match_output`] / [`Self::match_node_id`]
+    /// when their inner pattern might still be on the transitional Legacy
+    /// path.
+    pub(crate) fn ctx(&self) -> crate::pat::traits::MatchCtx<'g, '_> {
+        crate::pat::traits::MatchCtx {
+            graph: self.fn_graph,
+            matcher: self,
+        }
+    }
+
     /// Match a `NodeOutputId` (data edge) against a pattern.  Legacy
     /// `PatKind`-backed pats route through the existing family dispatcher;
     /// trait-backed pats call [`DataPattern::try_match`] directly.
@@ -223,9 +235,7 @@ impl<'g> Matcher<'g> {
         if pat.as_legacy().is_some() {
             data::match_output(self, output, pat, bindings)
         } else if let Some(d) = pat.as_dyn() {
-            let ctx = crate::pat::traits::MatchCtx {
-                graph: self.fn_graph,
-            };
+            let ctx = self.ctx();
             d.try_match(&ctx, output, bindings)
         } else {
             // Unreachable: `Pat` always has exactly one inner variant.
@@ -242,9 +252,7 @@ impl<'g> Matcher<'g> {
         if pat.as_legacy().is_some() {
             control::match_node_id(self, node, pat, bindings)
         } else if let Some(d) = pat.as_dyn() {
-            let ctx = crate::pat::traits::MatchCtx {
-                graph: self.fn_graph,
-            };
+            let ctx = self.ctx();
             for out in self.fn_graph.graph.node_outputs(node).into_iter() {
                 let snap = bindings.clone();
                 if d.try_match(&ctx, out, bindings) {
