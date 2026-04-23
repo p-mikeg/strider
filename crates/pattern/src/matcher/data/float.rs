@@ -137,17 +137,8 @@ pub(super) fn match_float(
             op: op_var,
             lhs,
             rhs,
-            ordered,
+            ordered: _,
         } => {
-            // The `ordered` flag is read here only to keep the field "live"
-            // from rustc's dead-code perspective; no float comparison
-            // operator is commutative in the existing helpers, so the swap
-            // path below is never actually exercised.
-            let _ = ordered;
-            // No float comparison operators are commutative in the existing
-            // helpers, so the `ordered` flag has no effect here — the swap
-            // path is never taken.  The field is retained for API symmetry
-            // with the other binary-any variants.
             let NodeKind::FloatCmpOp(actual_op) = kind else {
                 return Some(false);
             };

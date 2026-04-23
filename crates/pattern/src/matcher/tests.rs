@@ -139,12 +139,14 @@ fn dyn_pat_dispatch_routes_via_data_pattern() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(&pat);
 
-    // At minimum we should match the IntConst(5), IntConst(3), and IntBinaryOp
-    // output — three data outputs exist on the graph.  The exact count depends
-    // on node layout, so assert only non-empty.
+    // At minimum the three value-producing outputs (IntConst(5), IntConst(3),
+    // the Add output) must match.  AnyPat succeeds on every output tried, so
+    // the real count is larger (includes control/memory outputs), but ≥3 is
+    // the stable lower bound.
     assert!(
-        !hits.is_empty(),
-        "Pat::Dyn → DataPattern::try_match path should yield ≥1 match"
+        hits.len() >= 3,
+        "Pat::Dyn → DataPattern::try_match should yield ≥3 matches, got {}",
+        hits.len()
     );
     Ok(())
 }

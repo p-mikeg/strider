@@ -348,6 +348,9 @@ pub enum PatKind {
         op: FloatCmpOpVar,
         lhs: Pat,
         rhs: Pat,
+        /// Retained for API symmetry with the other `*Any` variants; no float
+        /// comparison operator is commutative so this field has no matcher effect.
+        #[allow(dead_code)]
         ordered: bool,
     },
 
