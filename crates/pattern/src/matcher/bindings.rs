@@ -48,7 +48,7 @@ pub struct Bindings {
 }
 
 impl Bindings {
-    pub(super) fn bind_var(&mut self, v: Var, out: NodeOutputId) -> bool {
+    pub(crate) fn bind_var(&mut self, v: Var, out: NodeOutputId) -> bool {
         if let Some(&existing) = self.vars.get(&v) {
             existing == out
         } else {
@@ -57,7 +57,7 @@ impl Bindings {
         }
     }
 
-    pub(super) fn bind_node_var(&mut self, nv: NodeVar, node: NodeId) -> bool {
+    pub(crate) fn bind_node_var(&mut self, nv: NodeVar, node: NodeId) -> bool {
         if let Some(&existing) = self.node_vars.get(&nv) {
             existing == node
         } else {
