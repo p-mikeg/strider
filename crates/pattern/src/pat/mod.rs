@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
-use ir::ExtendOp;
 
 use crate::var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
 
@@ -287,23 +286,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Casts / coercions (single value input) ────────────────────────────────
-    /// Matches a `CastToBool` node (non-zero integer → `true`).
-    CastToBool { operand: Pat },
-    /// Matches a `CastToInt` node (`bool` → `0` or `1`).
-    CastToInt { operand: Pat },
-    /// Matches a `Truncate` node (narrows an integer to fewer bits).
-    Truncate { operand: Pat },
-    /// Matches an `Extend` node (widens an integer).
-    Extend { op: ExtendOp, operand: Pat },
-    /// Matches a `Popcount` node (counts set bits).
-    Popcount { operand: Pat },
-    /// Matches a `Lzcount` node (counts leading zero bits).
-    Lzcount { operand: Pat },
-
-    /// Matches a `CastToFloat` generic-cast node.
-    CastToFloat { operand: Pat },
-
     // ── Memory ops ────────────────────────────────────────────────────────────
     /// `Load(space)`: inputs = [mem(0), addr(1)] → value output.
     Load {

@@ -8,7 +8,6 @@
 //! every family in priority order.
 //!
 //! Families (remaining on the Legacy path):
-//! * `casts`     — value-preserving casts + bit-level truncate / extend / popcount / lzcount
 //! * `memory`    — Load / Store / StackStore / StackStorePhi
 //! * `phi`       — Phi / InitialVar
 //!
@@ -16,21 +15,22 @@
 //! Phase 2.1; the Int family (binary/unary/cmp + *Any variants) migrated in
 //! Phase 2.2; the Bool family (binary/unary + *Any variants) migrated in
 //! Phase 2.3; the Float family (binary/unary/cmp + *Any variants + int↔float
-//! conversions) migrated in Phase 2.4.  Those pats never reach this
-//! dispatcher (they go through [`crate::pat::traits::DataPattern`] via
+//! conversions) migrated in Phase 2.4; the Casts family (CastToBool /
+//! CastToInt / CastToFloat / Truncate / Extend / Popcount / Lzcount)
+//! migrated in Phase 2.5.  Those pats never reach this dispatcher (they go
+//! through [`crate::pat::traits::DataPattern`] via
 //! [`Matcher::match_output`]).
 //!
 //! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
 //! match in a data context — the dispatcher returns `false` for them,
 //! preserving the original behaviour of `match_output`.
 
-use ir::node::{NodeId, NodeKind, NodeOutputId};
+use ir::node::NodeOutputId;
 
 use super::Matcher;
 use super::bindings::Bindings;
 use crate::pat::{Pat, PatKind};
 
-mod casts;
 mod memory;
 mod phi;
 
@@ -44,9 +44,6 @@ pub(super) fn match_output(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = casts::match_casts(matcher, output, pat, bindings) {
-        return r;
-    }
     if let Some(r) = memory::match_memory(matcher, output, pat, bindings) {
         return r;
     }
@@ -73,35 +70,3 @@ pub(super) fn match_output(
         _ => false,
     }
 }
-
-// ── shared helpers ────────────────────────────────────────────────────────
-
-/// Check that `node` satisfies `kind_ok`, fetch its single input, and recurse
-/// on `operand`.  Returns `false` (with bindings unchanged) if the kind check
-/// or input-count check fails; otherwise propagates the result of
-/// `match_output`.
-pub(super) fn match_unary_op<F>(
-    matcher: &Matcher,
-    node: NodeId,
-    operand: &Pat,
-    bindings: &mut Bindings,
-    kind_ok: F,
-) -> bool
-where
-    F: FnOnce(&NodeKind) -> bool,
-{
-    if !kind_ok(matcher.fn_graph.graph.node_kind(node)) {
-        return false;
-    }
-    let Ok([inp]) = matcher.fn_graph.graph.node_inputs_exact::<1>(node) else {
-        return false;
-    };
-    let snap = bindings.clone();
-    if matcher.match_output(inp, operand, bindings) {
-        true
-    } else {
-        *bindings = snap;
-        false
-    }
-}
-
