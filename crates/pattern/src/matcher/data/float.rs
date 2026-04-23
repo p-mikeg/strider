@@ -6,8 +6,9 @@
 //! * int ↔ float conversions: `IntToFloat`, `FloatToInt`, `FloatToFloat`,
 //!   `IntBitsToFloat`, `FloatBitsToInt`
 //!
-//! `FloatConst` / `AnyFloatConst` / `AnyFloatConstTyped` live in
-//! `constants.rs`; `CastToFloat` lives in `casts.rs`.
+//! Float constants (`FloatConst` / `AnyFloatConst` / `AnyFloatConstTyped`)
+//! migrated to the trait engine in Phase 2.1 and do not dispatch through
+//! this file anymore; `CastToFloat` still lives in `casts.rs`.
 
 use ir::node::{NodeKind, NodeOutputId};
 
