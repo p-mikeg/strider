@@ -1,14 +1,12 @@
-//! Generic node-level data pattern. Absorbs the majority of the legacy
-//! `PatKind` variants into a single struct parameterised by a kind-match
-//! closure, an `InputsSpec`, and optional post-match / capture hooks.
+//! Generic node-level data pattern. Covers the vast majority of data-level
+//! patterns with a single struct parameterised by a kind-match closure, an
+//! `InputsSpec`, and optional post-match / capture hooks.
 //!
-//! Phase 2.1 wired up the wildcard-and-constant constructors (via
-//! `InputsSpec::None`); Phase 2.2 extends the use to the Int family, which
-//! introduces `InputsSpec::Fixed` with arity 1 (unary) and arity 2
-//! (binary/cmp, possibly commutative).  Phase 2.6 wires up
-//! `InputsSpec::Indexed` via the Memory family (sparse positional matching
-//! for `Load` / `Store` / `StackStore` / `StackStorePhi`); Phase 2.7 adds
-//! `Phi`.
+//! `InputsSpec::None` handles zero-input patterns (constants, `InitialVar`,
+//! `FunctionArg`); `InputsSpec::Fixed` covers unary / binary / cmp ops with
+//! optional commutative retry; `InputsSpec::Indexed` covers sparse
+//! positional matching for memory ops (`Load` / `Store` / `StackStore` /
+//! `StackStorePhi`) and `Phi`.
 
 use std::sync::Arc;
 
@@ -29,7 +27,7 @@ pub(crate) type NodeKindCheck =
 pub(crate) type CommutativeDecider =
     Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
 
-/// A generic node-level data pattern. Covers every `PatKind` that has the
+/// A generic node-level data pattern. Covers every data pattern with the
 /// shape "check node kind, match inputs in some arrangement, optionally
 /// bind output/node captures".
 pub struct NodePat {
@@ -56,8 +54,8 @@ pub enum InputsSpec {
     /// tried.
     ///
     /// Sub-patterns are held as [`crate::pat::Pat`] (not `DynDataPat`) so
-    /// they can wrap either Legacy- or trait-backed patterns during the
-    /// migration; dispatch goes through [`crate::matcher::Matcher::match_output`].
+    /// the fluent builder API (`impl Into<Pat>`) can compose them uniformly;
+    /// dispatch goes through [`crate::matcher::Matcher::match_output`].
     Fixed {
         pats: Vec<crate::pat::Pat>,
         commutative: CommutativeDecider,
@@ -199,7 +197,7 @@ fn try_once(
         return false;
     }
 
-    // (c) output/node captures (order matches the legacy code: output first)
+    // (c) output/node captures — output_var first, then node_var
     if let Some(v) = pat.output_var
         && !b.bind_var(v, target)
     {

@@ -16,12 +16,13 @@ impl DataPattern for AnyPat {
 }
 
 /// Matches `inner`, then additionally binds the matched output to `var`.
-/// (`Pat::capture_impl` today wraps via `PatKind::WithCapture` — this is the
-/// trait-based replacement.)
+/// Produced by [`crate::pat::IntoPat::capture`] /
+/// [`crate::pat::Pat::capture_impl`].
 ///
 /// `inner` is stored as a [`Pat`](crate::pat::Pat) rather than a `DynDataPat`
-/// so it can wrap either Legacy- or trait-backed patterns during the
-/// migration; dispatch goes through [`crate::matcher::Matcher::match_output`].
+/// so the fluent builder API (`impl Into<Pat>`) can wrap either a data or
+/// control pattern uniformly; dispatch goes through
+/// [`crate::matcher::Matcher::match_output`].
 pub struct CapturePat {
     pub(crate) inner: crate::pat::Pat,
     pub(crate) var: Var,
@@ -29,10 +30,8 @@ pub struct CapturePat {
 
 impl DataPattern for CapturePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        // Snapshot so that a failed `bind_var` after a successful inner match
-        // leaves the bindings untouched — matches the legacy
-        // `matcher::data::constants::PatKind::Capture` semantics where the
-        // bind was the only mutation, so any failure left bindings clean.
+        // Snapshot so that a failed `bind_var` after a successful inner
+        // match leaves the bindings untouched.
         let snap = b.clone();
         if !ctx.matcher.match_output(target, &self.inner, b) {
             return false;

@@ -208,17 +208,17 @@ impl<'g> Matcher<'g> {
         })
     }
 
-    // ── delegating shells ─────────────────────────────────────────────────────
+    // ── Dispatch entry points ────────────────────────────────────────────────
     //
-    // The real per-family dispatch lives in `data/` and `control.rs`; these
-    // shells keep the `&self.match_output(...)` / `&self.match_node_id(...)`
-    // call-sites stable for submodule callers that already hold a `&Matcher`.
+    // `match_output` / `match_node_id` are the single entry points combinators
+    // call (via `MatchCtx.matcher`) when recursing into an inner `Pat`.  They
+    // forward directly to the pattern's `DataPattern::try_match` /
+    // `ControlPattern::try_match` impl.
 
     /// Build a [`MatchCtx`](crate::pat::traits::MatchCtx) that carries both
-    /// the graph and a back-reference to this matcher.  Combinators call this
-    /// to dispatch through [`Self::match_output`] / [`Self::match_node_id`]
-    /// when their inner pattern might still be on the transitional Legacy
-    /// path.
+    /// the graph and a back-reference to this matcher.  Combinators clone it
+    /// and pass it through their inner [`Self::match_output`] /
+    /// [`Self::match_node_id`] dispatch.
     pub(crate) fn ctx(&self) -> crate::pat::traits::MatchCtx<'g, '_> {
         crate::pat::traits::MatchCtx {
             graph: self.fn_graph,
@@ -226,12 +226,8 @@ impl<'g> Matcher<'g> {
         }
     }
 
-    /// Match a `NodeOutputId` (data edge) against a pattern.  All data-level
-    /// pattern kinds have migrated to the trait-based engine; the remaining
-    /// `Legacy` variants are control-level (`Call` / `CallOther` / `Return`
-    /// / `If` / `Contains`) which cannot match in a data context and return
-    /// `false` here.  Phase 3 will migrate those, after which the `Legacy`
-    /// branch goes away entirely.
+    /// Match a `NodeOutputId` (data edge) against a pattern.  Control
+    /// patterns cannot match in a data context and return `false`.
     pub(super) fn match_output(
         &self,
         output: NodeOutputId,
@@ -239,11 +235,9 @@ impl<'g> Matcher<'g> {
         bindings: &mut Bindings,
     ) -> bool {
         if let Some(d) = pat.as_dyn() {
-            let ctx = self.ctx();
-            d.try_match(&ctx, output, bindings)
+            d.try_match(&self.ctx(), output, bindings)
         } else {
-            // Legacy variants here are all control-level; they never match
-            // against a data output.
+            // Ctrl patterns cannot match in a data context.
             false
         }
     }
@@ -253,27 +247,26 @@ impl<'g> Matcher<'g> {
     /// Dispatch:
     /// * `Ctrl(d)` — direct [`crate::pat::traits::ControlPattern::try_match`]
     ///   on the node.
-    /// * `Dyn(d)` — mirror the legacy fallthrough: try each output of
-    ///   `node` against the data pattern.
-    ///
-    /// `PatKind` has zero variants after Phase 3.1, so `pat.as_legacy()` is
-    /// always `None`; the explicit branch is elided.
+    /// * `Dyn(d)` — a data pattern used as a root candidate: try each output
+    ///   of the node against the data pattern.
     pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
+        let ctx = self.ctx();
         if let Some(c) = pat.as_ctrl() {
-            let ctx = self.ctx();
-            c.try_match(&ctx, node, bindings)
-        } else if let Some(d) = pat.as_dyn() {
-            let ctx = self.ctx();
-            for out in self.fn_graph.graph.node_outputs(node).into_iter() {
-                let snap = bindings.clone();
-                if d.try_match(&ctx, out, bindings) {
-                    return true;
-                }
-                *bindings = snap;
-            }
-            false
-        } else {
-            false
+            return c.try_match(&ctx, node, bindings);
         }
+        // `Pat` has exactly two variants (Dyn and Ctrl); if it isn't Ctrl it
+        // must be Dyn.  A data pattern used as a root candidate tries each
+        // output of the node against the data pattern.
+        let Some(d) = pat.as_dyn() else {
+            return false;
+        };
+        for out in self.fn_graph.graph.node_outputs(node).into_iter() {
+            let snap = bindings.clone();
+            if d.try_match(&ctx, out, bindings) {
+                return true;
+            }
+            *bindings = snap;
+        }
+        false
     }
 }

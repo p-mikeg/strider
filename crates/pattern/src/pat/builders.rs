@@ -895,8 +895,9 @@ impl From<IfPat> for Pat {
 // data-vs-control distinction at its boundary, but the fluent builders
 // accept `impl Into<Pat>` for source compatibility.  These lifts wrap a
 // `Pat` into an adapter that re-enters the dispatch through
-// `Matcher::match_output` or `Matcher::match_node_id`, preserving every
-// variant (Legacy / Dyn / Ctrl) that the caller might supply.
+// `Matcher::match_output` or `Matcher::match_node_id`, so a caller passing
+// (say) a data pattern to `if_node().true_branch(...)` still gets the
+// "try each output of the control node" fallthrough.
 
 fn pat_to_data(p: Pat) -> crate::pat::traits::DynDataPat {
     Arc::new(PatAsData(p))

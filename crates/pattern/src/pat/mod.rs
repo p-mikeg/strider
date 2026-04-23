@@ -175,64 +175,41 @@ pub struct Pat(PatInner);
 
 /// Internal representation of a [`Pat`].
 ///
-/// Transitional enum: the crate is migrating from the legacy `PatKind`-enum
-/// dispatch to a trait-based dispatch.  Data patterns implement
-/// [`DataPattern`](crate::pat::traits::DataPattern) and are held in
-/// [`PatInner::Dyn`]; control patterns implement
-/// [`ControlPattern`](crate::pat::traits::ControlPattern) and are held in
-/// [`PatInner::Ctrl`].  After Phase 3.1 the Legacy variant is uninhabited
-/// (PatKind has zero variants) — Phase 4.1 removes both.
+/// Every pattern is either a data-level pattern (implements
+/// [`DataPattern`](crate::pat::traits::DataPattern), held in
+/// [`PatInner::Dyn`]) or a control-level pattern (implements
+/// [`ControlPattern`](crate::pat::traits::ControlPattern), held in
+/// [`PatInner::Ctrl`]).
 #[derive(Clone)]
 pub(crate) enum PatInner {
-    #[allow(dead_code)] // empty enum placeholder; Phase 4.1 removes the variant along with PatKind
-    Legacy(Arc<PatKind>),
     Dyn(crate::pat::traits::DynDataPat),
     Ctrl(crate::pat::traits::DynCtrlPat),
 }
 
 impl Pat {
-    #[allow(dead_code)]
-    pub(crate) fn new(kind: PatKind) -> Self {
-        Self(PatInner::Legacy(Arc::new(kind)))
-    }
-
-    /// Constructor for the new trait-based dispatch path.  Phase 2+ will use
-    /// this as constructors migrate one family at a time.
-    #[allow(dead_code)]
+    /// Constructor for data-level trait-based patterns.
     pub(crate) fn from_dyn(d: crate::pat::traits::DynDataPat) -> Self {
         Self(PatInner::Dyn(d))
     }
 
-    /// Constructor for control-level trait-based patterns (Phase 3.1+).
+    /// Constructor for control-level trait-based patterns.
     pub(crate) fn from_ctrl(d: crate::pat::traits::DynCtrlPat) -> Self {
         Self(PatInner::Ctrl(d))
     }
 
-    /// Legacy accessor: `Some(kind)` if this pat is still on the legacy path,
-    /// `None` if it has migrated to the trait-based path.  Phase 4 will
-    /// delete this method along with `PatKind`.
-    #[allow(dead_code)] // Phase 4.1 removes this alongside PatKind
-    pub(crate) fn as_legacy(&self) -> Option<&PatKind> {
-        match &self.0 {
-            PatInner::Legacy(k) => Some(k),
-            PatInner::Dyn(_) | PatInner::Ctrl(_) => None,
-        }
-    }
-
-    /// New accessor for the trait-based data path.
-    #[allow(dead_code)]
+    /// Accessor for the trait-based data path.
     pub(crate) fn as_dyn(&self) -> Option<&crate::pat::traits::DynDataPat> {
         match &self.0 {
             PatInner::Dyn(d) => Some(d),
-            PatInner::Legacy(_) | PatInner::Ctrl(_) => None,
+            PatInner::Ctrl(_) => None,
         }
     }
 
-    /// Accessor for the trait-based control path (Phase 3.1+).
+    /// Accessor for the trait-based control path.
     pub(crate) fn as_ctrl(&self) -> Option<&crate::pat::traits::DynCtrlPat> {
         match &self.0 {
             PatInner::Ctrl(d) => Some(d),
-            PatInner::Legacy(_) | PatInner::Dyn(_) => None,
+            PatInner::Dyn(_) => None,
         }
     }
 
@@ -300,12 +277,4 @@ pub trait IntoPat: Into<Pat> + Sized {
 }
 
 impl<T: Into<Pat>> IntoPat for T {}
-
-// ── PatKind ───────────────────────────────────────────────────────────────────
-//
-// After Phase 3.1 every legacy variant has been migrated to the trait-based
-// engine. The enum is kept as an uninhabited placeholder until Phase 4.1
-// deletes it (along with `PatInner::Legacy` and the `as_legacy` accessor).
-#[allow(dead_code)]
-pub enum PatKind {}
 

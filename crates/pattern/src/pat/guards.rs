@@ -1,5 +1,9 @@
-//! Post-match guard combinators. Replace the legacy `PatKind::WithPredicate`
-//! and `PatKind::WithMatchPredicate` arms.
+//! Post-match guard combinators.
+//!
+//! [`WhenPat`] runs a predicate that sees only the matched output;
+//! [`WhenMatchPat`] runs a predicate with access to the full capture
+//! bindings.  Produced by [`crate::pat::IntoPat::when`] and
+//! [`crate::pat::Pat::when_match`] respectively.
 
 use ir::node::NodeOutputId;
 
@@ -7,10 +11,10 @@ use crate::matcher::Bindings;
 use crate::pat::traits::{DataPattern, MatchCtx};
 
 /// Post-match predicate that sees only the matched output.
-/// Replaces `PatKind::WithPredicate`.
 ///
-/// `inner` is a [`Pat`](crate::pat::Pat) (not `DynDataPat`) so it can wrap
-/// both Legacy- and trait-backed patterns — dispatch goes through
+/// `inner` is a [`Pat`](crate::pat::Pat) (not `DynDataPat`) so the fluent
+/// builder API (`impl Into<Pat>`) can wrap either a data or control pattern
+/// uniformly; dispatch goes through
 /// [`crate::matcher::Matcher::match_output`].
 pub struct WhenPat {
     pub(crate) inner: crate::pat::Pat,
@@ -37,7 +41,6 @@ impl DataPattern for WhenPat {
 }
 
 /// Post-match predicate that sees the full capture bindings.
-/// Replaces `PatKind::WithMatchPredicate`.
 pub struct WhenMatchPat {
     pub(crate) inner: crate::pat::Pat,
     pub(crate) func: crate::pat::MatchPredicateFn,

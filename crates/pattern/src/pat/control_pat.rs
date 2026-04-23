@@ -1,11 +1,7 @@
 //! Generic control-level pattern. Covers `Call`, `CallOther`, `Return`, and
-//! `If` — the four legacy `PatKind` variants whose target is a control-level
-//! `NodeId` rather than a data `NodeOutputId`.
-//!
-//! Phase 3.1: the body mirrors the dispatch previously in
-//! `matcher/control.rs`. Per-kind behavior is kept byte-identical with the
-//! legacy code (input/output slot indices, snapshot/restore discipline,
-//! `node_var` binding order).
+//! `If` — the four control-level patterns whose target is a `NodeId` rather
+//! than a data `NodeOutputId`.  A single [`ControlNodePat`] struct tagged by
+//! [`CtrlKind`] dispatches all four.
 
 use std::collections::HashSet;
 
@@ -253,7 +249,7 @@ impl ControlPattern for ControlNodePat {
 }
 
 /// Dispatch a data-level sub-pattern against a `NodeOutputId`.  Wraps the
-/// `DynDataPat` in a transitional [`Pat`] so the existing
+/// `DynDataPat` in a [`Pat`] so the existing
 /// [`crate::matcher::Matcher::match_output`] routing handles it uniformly.
 fn match_data(
     ctx: &MatchCtx,

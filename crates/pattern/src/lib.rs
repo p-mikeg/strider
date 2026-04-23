@@ -34,7 +34,7 @@
 //!
 //! # Key types
 //!
-//! - [`Pat`] / [`PatKind`] — pattern values (cheap to clone, reference-counted)
+//! - [`Pat`] — pattern values (cheap to clone, reference-counted)
 //! - [`Var`] / [`NodeVar`] — capture variables for data outputs / control nodes
 //! - [`Matcher`] — executes a pattern against an [`ir::BuiltFunctionGraph`]
 //! - [`Match`] — result of one successful match; exposes captured bindings
@@ -66,7 +66,6 @@ pub use error::{Error, ErrorKind, Result};
 mod macros;
 mod matcher;
 mod pat;
-mod pat_macros;
 mod var;
 
 pub use build::{
