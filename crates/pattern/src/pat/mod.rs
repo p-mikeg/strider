@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::var::{BoolVar, FloatVar, IntVar, NodeVar, Var};
+use crate::var::{BoolVar, FloatVar, IntVar, Var};
 
 mod builders;
 mod ctor;
@@ -175,19 +175,23 @@ pub struct Pat(PatInner);
 
 /// Internal representation of a [`Pat`].
 ///
-/// Phase 1.1 transitional enum: the crate is migrating from the legacy
-/// `PatKind`-enum dispatch to a trait-based dispatch rooted on
-/// [`DataPattern`](crate::pat::traits::DataPattern).  Existing constructors
-/// keep emitting [`PatInner::Legacy`]; new constructors added in Phase 2+
-/// will emit [`PatInner::Dyn`].  Both variants coexist until Phase 4 deletes
-/// the legacy path.
+/// Transitional enum: the crate is migrating from the legacy `PatKind`-enum
+/// dispatch to a trait-based dispatch.  Data patterns implement
+/// [`DataPattern`](crate::pat::traits::DataPattern) and are held in
+/// [`PatInner::Dyn`]; control patterns implement
+/// [`ControlPattern`](crate::pat::traits::ControlPattern) and are held in
+/// [`PatInner::Ctrl`].  After Phase 3.1 the Legacy variant is uninhabited
+/// (PatKind has zero variants) — Phase 4.1 removes both.
 #[derive(Clone)]
 pub(crate) enum PatInner {
+    #[allow(dead_code)] // empty enum placeholder; Phase 4.1 removes the variant along with PatKind
     Legacy(Arc<PatKind>),
     Dyn(crate::pat::traits::DynDataPat),
+    Ctrl(crate::pat::traits::DynCtrlPat),
 }
 
 impl Pat {
+    #[allow(dead_code)]
     pub(crate) fn new(kind: PatKind) -> Self {
         Self(PatInner::Legacy(Arc::new(kind)))
     }
@@ -199,22 +203,36 @@ impl Pat {
         Self(PatInner::Dyn(d))
     }
 
+    /// Constructor for control-level trait-based patterns (Phase 3.1+).
+    pub(crate) fn from_ctrl(d: crate::pat::traits::DynCtrlPat) -> Self {
+        Self(PatInner::Ctrl(d))
+    }
+
     /// Legacy accessor: `Some(kind)` if this pat is still on the legacy path,
     /// `None` if it has migrated to the trait-based path.  Phase 4 will
     /// delete this method along with `PatKind`.
+    #[allow(dead_code)] // Phase 4.1 removes this alongside PatKind
     pub(crate) fn as_legacy(&self) -> Option<&PatKind> {
         match &self.0 {
             PatInner::Legacy(k) => Some(k),
-            PatInner::Dyn(_) => None,
+            PatInner::Dyn(_) | PatInner::Ctrl(_) => None,
         }
     }
 
-    /// New accessor for the trait-based path.
+    /// New accessor for the trait-based data path.
     #[allow(dead_code)]
     pub(crate) fn as_dyn(&self) -> Option<&crate::pat::traits::DynDataPat> {
         match &self.0 {
-            PatInner::Legacy(_) => None,
             PatInner::Dyn(d) => Some(d),
+            PatInner::Legacy(_) | PatInner::Ctrl(_) => None,
+        }
+    }
+
+    /// Accessor for the trait-based control path (Phase 3.1+).
+    pub(crate) fn as_ctrl(&self) -> Option<&crate::pat::traits::DynCtrlPat> {
+        match &self.0 {
+            PatInner::Ctrl(d) => Some(d),
+            PatInner::Legacy(_) | PatInner::Dyn(_) => None,
         }
     }
 
@@ -284,45 +302,10 @@ pub trait IntoPat: Into<Pat> + Sized {
 impl<T: Into<Pat>> IntoPat for T {}
 
 // ── PatKind ───────────────────────────────────────────────────────────────────
-
-pub enum PatKind {
-    // ── Control-level nodes ───────────────────────────────────────────────────
-    /// `Call`: inputs = [ctrl(0), mem(1), target(2), arg0(3), arg1(4)…];
-    /// outputs = [ctrl(0), mem(1), retval0(2), retval1(3), …, other_clobbered(N), …]
-    /// where `retval_i` corresponds to the calling convention's i-th return
-    /// register.  `ret_outputs` matches patterns against the Call's output at
-    /// slot `2 + idx`, so `.ret_output(0, var(v))` captures the value flowing
-    /// out of (e.g.) `rax` on x86_64.  A ret reg that is callee-saved does not
-    /// appear as a Call output, and the match fails for that slot.
-    Call {
-        target: Option<Pat>,
-        args: Vec<(usize, Pat)>,
-        ret_outputs: Vec<(usize, Pat)>,
-        node_var: Option<NodeVar>,
-    },
-    /// `CallOther`: inputs = [ctrl(0), mem(1), arg0(2), arg1(3)…].
-    /// `user_op_id = None` matches any user-op id.
-    CallOther {
-        user_op_id: Option<u64>,
-        args: Vec<(usize, Pat)>,
-        node_var: Option<NodeVar>,
-    },
-    /// `Return`: inputs = [ctrl(0), mem(1), retval0(2)…]
-    Return {
-        preceded_by: Option<Pat>,
-        ret_vals: Vec<(usize, Pat)>,
-        node_var: Option<NodeVar>,
-    },
-    /// `If`: inputs = [ctrl(0), cond(1)]; outputs = [true_ctrl(0), false_ctrl(1)]
-    If {
-        cond: Option<Pat>,
-        true_branch: Option<Pat>,
-        false_branch: Option<Pat>,
-        node_var: Option<NodeVar>,
-    },
-
-    // ── Region search ─────────────────────────────────────────────────────────
-    /// Forward walk along a ctrl chain, searching for a node matching `inner`.
-    Contains(Pat),
-}
+//
+// After Phase 3.1 every legacy variant has been migrated to the trait-based
+// engine. The enum is kept as an uninhabited placeholder until Phase 4.1
+// deletes it (along with `PatInner::Legacy` and the `as_legacy` accessor).
+#[allow(dead_code)]
+pub enum PatKind {}
 

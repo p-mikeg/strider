@@ -11,10 +11,25 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use super::Matcher;
 use super::bindings::Bindings;
-use crate::pat::{Pat, PatKind};
+use crate::pat::Pat;
 
 /// Forward walk along a ctrl chain.  Tries `inner_pat` against each node
 /// encountered until a match is found or the chain ends.
+///
+/// Exposed as `pub(crate)` under the `_from_pat` alias so callers outside
+/// this module (namely [`crate::pat::control_pat`] and
+/// [`crate::pat::contains`]) can reuse the same walker without duplicating
+/// the cycle-safe traversal.
+pub(crate) fn match_contains_from_pat(
+    matcher: &Matcher,
+    ctrl_output: NodeOutputId,
+    inner_pat: &Pat,
+    bindings: &mut Bindings,
+    visited: &mut HashSet<NodeId>,
+) -> bool {
+    match_contains(matcher, ctrl_output, inner_pat, bindings, visited)
+}
+
 pub(super) fn match_contains(
     matcher: &Matcher,
     ctrl_output: NodeOutputId,
@@ -23,12 +38,14 @@ pub(super) fn match_contains(
     visited: &mut HashSet<NodeId>,
 ) -> bool {
     // Peel a `Contains` shell — this function *is* the forward search, so
-    // the wrapper adds no extra semantics here.  Only applies on the legacy
-    // path; trait-based pats go through `match_node_id` unchanged.
-    let inner_pat = match inner_pat.as_legacy() {
-        Some(PatKind::Contains(p)) => p,
-        _ => inner_pat,
-    };
+    // the wrapper adds no extra semantics here.  Handles nested
+    // `contains(contains(...))` and any other case where a `Contains`
+    // appears as an inner pattern.
+    let peeled = inner_pat
+        .as_ctrl()
+        .and_then(|c| c.contains_inner())
+        .cloned();
+    let inner_pat = peeled.as_ref().unwrap_or(inner_pat);
 
     let consumers: Vec<(NodeId, u32)> =
         matcher.fn_graph.graph.output_uses(ctrl_output).collect();
@@ -67,6 +84,17 @@ pub(super) fn match_contains(
         }
     }
     false
+}
+
+/// Crate-visible re-export of [`preceded_by_search`] for callers outside
+/// this module (used by [`crate::pat::control_pat`]).
+pub(crate) fn preceded_by_search_from_pat(
+    matcher: &Matcher,
+    ctrl_output: NodeOutputId,
+    call_pat: &Pat,
+    bindings: &mut Bindings,
+) -> bool {
+    preceded_by_search(matcher, ctrl_output, call_pat, bindings)
 }
 
 /// Backward walk from a ctrl input to find the preceding Call node.

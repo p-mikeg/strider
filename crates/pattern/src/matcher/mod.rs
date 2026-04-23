@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
-use crate::pat::{Pat, PatKind};
+use crate::pat::Pat;
 
 mod function_arg_handle;
 
@@ -11,9 +11,8 @@ pub use function_arg_handle::FunctionArgHandle;
 
 mod bindings;
 pub(crate) mod commutativity;
-mod control;
 mod match_result;
-mod traversal;
+pub(crate) mod traversal;
 
 #[cfg(test)]
 mod tests;
@@ -100,24 +99,30 @@ impl<'g> Matcher<'g> {
     /// for each.
     ///
     /// The search is exhaustive: every node is tried as a potential root.
-    /// Top-level `Call`, `Return`, and `If` patterns use the pre-indexed node
-    /// lists (built lazily on first call) and skip the others.
+    /// Top-level `Call`, `CallOther`, `Return`, and `If` patterns use the
+    /// pre-indexed node lists (built lazily on first call) and skip the
+    /// others — routing is done through
+    /// [`crate::pat::traits::ControlPattern::candidate_kind`].
+    ///
+    /// Data patterns (NodePat) currently have no fast-path routing and fall
+    /// through to `all_nodes`. A later optimization could add
+    /// `candidate_kind` to [`crate::pat::traits::DataPattern`] to bring back
+    /// the `function_arg_nodes` fast path — deferred for now.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let idx = self.index();
-        // Control-level candidate routing still peeks the legacy `PatKind`
-        // when the pat is on the legacy path.  When the pat migrates to
-        // `Dyn`, routing falls back to `all_nodes` (Phase 3 will replace this
-        // with `ControlPattern::candidate_kind`).
-        let candidates: &[NodeId] = match pat.as_legacy() {
-            Some(PatKind::Call { .. }) => &idx.call_nodes,
-            Some(PatKind::CallOther { .. }) => &idx.call_other_nodes,
-            Some(PatKind::Return { .. }) => &idx.return_nodes,
-            Some(PatKind::If { .. }) => &idx.if_nodes,
-            // FunctionArg migrated to the trait-based engine in Phase 2.7 —
-            // it no longer has a `PatKind` variant, so the pat is `Dyn` and
-            // falls through to `all_nodes`.  Phase 3 will restore the
-            // fast-path via `ControlPattern::candidate_kind`.
-            _ => &idx.all_nodes,
+        let candidates: &[NodeId] = if let Some(ctrl) = pat.as_ctrl() {
+            match ctrl.candidate_kind() {
+                Some(crate::pat::traits::CandidateKind::Call) => &idx.call_nodes,
+                Some(crate::pat::traits::CandidateKind::CallOther) => &idx.call_other_nodes,
+                Some(crate::pat::traits::CandidateKind::Return) => &idx.return_nodes,
+                Some(crate::pat::traits::CandidateKind::If) => &idx.if_nodes,
+                // `FunctionArg` is a data pattern, not a control pattern —
+                // reaching this arm would be a bug in a ControlPattern impl.
+                // Fall through to `all_nodes` defensively.
+                Some(crate::pat::traits::CandidateKind::FunctionArg) | None => &idx.all_nodes,
+            }
+        } else {
+            &idx.all_nodes
         };
 
         candidates
@@ -243,14 +248,20 @@ impl<'g> Matcher<'g> {
         }
     }
 
-    /// Match a `NodeId` (control-level node) against a pattern.  Legacy
-    /// `PatKind`-backed pats route through the existing control dispatcher.
-    /// Trait-backed data pats mirror the legacy fallthrough: try each output
-    /// of `node` against the data pattern.  (Phase 3 will add a dedicated
-    /// `ControlPattern` path here.)
-    pub(super) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
-        if pat.as_legacy().is_some() {
-            control::match_node_id(self, node, pat, bindings)
+    /// Match a `NodeId` (control-level node) against a pattern.
+    ///
+    /// Dispatch:
+    /// * `Ctrl(d)` — direct [`crate::pat::traits::ControlPattern::try_match`]
+    ///   on the node.
+    /// * `Dyn(d)` — mirror the legacy fallthrough: try each output of
+    ///   `node` against the data pattern.
+    ///
+    /// `PatKind` has zero variants after Phase 3.1, so `pat.as_legacy()` is
+    /// always `None`; the explicit branch is elided.
+    pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
+        if let Some(c) = pat.as_ctrl() {
+            let ctx = self.ctx();
+            c.try_match(&ctx, node, bindings)
         } else if let Some(d) = pat.as_dyn() {
             let ctx = self.ctx();
             for out in self.fn_graph.graph.node_outputs(node).into_iter() {

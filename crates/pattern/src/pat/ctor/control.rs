@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use ir::node::{FunctionArgSource, NodeKind};
 
+use crate::pat::contains::ContainsPat;
 use crate::pat::node_pat::{InputsSpec, NodePat};
-use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PatKind, PhiPat, RetPat};
+use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PhiPat, RetPat};
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
@@ -104,5 +105,5 @@ pub fn if_node() -> IfPat {
 /// Transparent to `ControlState`, `IfCase`, and `Call` nodes; stops at `If`
 /// and `Return` terminators.
 pub fn contains(p: impl Into<Pat>) -> Pat {
-    Pat::new(PatKind::Contains(p.into()))
+    Pat::from_ctrl(Arc::new(ContainsPat { inner: p.into() }))
 }

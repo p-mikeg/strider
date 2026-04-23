@@ -37,6 +37,10 @@
 /// Generates a `Pat` builder struct, its fluent setters, and the
 /// `From<Builder> for Pat` glue.  See the module-level docs for the field
 /// syntax.
+///
+/// After Phase 3.1 every builder is hand-rolled so this macro is unused;
+/// Phase 4.1 deletes the file entirely.
+#[allow(unused_macros)]
 macro_rules! define_pat_builder {
     (
         $(#[$struct_attr:meta])*
@@ -241,4 +245,5 @@ macro_rules! __pat_builder_parse {
     };
 }
 
+#[allow(unused_imports)]
 pub(crate) use {__pat_builder_parse, define_pat_builder};

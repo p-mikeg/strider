@@ -5,9 +5,8 @@
 //! and control-level patterns implement [`ControlPattern`] (matching a
 //! `NodeId`).
 //!
-//! Phase 1.1 wires `Pat::Dyn` into the matcher dispatch — `DataPattern` and
-//! `MatchCtx` are live; `ControlPattern` and `CandidateKind` remain unused
-//! until Phase 3.
+//! Phase 3.1 wires `Pat::Ctrl` into the matcher dispatch alongside Phase 1.1's
+//! `Pat::Dyn` data path.
 
 use std::sync::Arc;
 
@@ -34,10 +33,6 @@ pub trait DataPattern: Send + Sync {
 }
 
 /// A pattern that matches against a control-level `NodeId`.
-///
-/// Unused until Phase 3 migrates Call / CallOther / Return / If to the
-/// trait-based engine.  Kept alive as part of the Phase 0 skeleton.
-#[allow(dead_code)]
 pub trait ControlPattern: Send + Sync {
     fn try_match(&self, ctx: &MatchCtx, target: NodeId, b: &mut Bindings) -> bool;
 
@@ -45,6 +40,15 @@ pub trait ControlPattern: Send + Sync {
     /// instead of scanning every node. Return `None` to fall back to the
     /// full-graph scan.
     fn candidate_kind(&self) -> Option<CandidateKind> {
+        None
+    }
+
+    /// If this pattern is a `Contains` shell, return its inner.  The default
+    /// implementation returns `None`; only [`crate::pat::contains::ContainsPat`]
+    /// overrides.  Used by `ControlNodePat` when setting up
+    /// `If.true_branch` / `If.false_branch` / `Return.preceded_by` to avoid
+    /// a double forward-walk.
+    fn contains_inner(&self) -> Option<&crate::pat::Pat> {
         None
     }
 }
