@@ -153,13 +153,16 @@ fn try_once(
             }
             if swap {
                 // only valid for arity 2
+                let (Some(&i0), Some(&i1)) = (inputs.get(0), inputs.get(1)) else {
+                    return false;
+                };
                 if pats.len() != 2 {
                     return false;
                 }
-                if !match_one(ctx, inputs[1], &pats[0], b) {
+                if !match_one(ctx, i1, &pats[0], b) {
                     return false;
                 }
-                if !match_one(ctx, inputs[0], &pats[1], b) {
+                if !match_one(ctx, i0, &pats[1], b) {
                     return false;
                 }
             } else {
