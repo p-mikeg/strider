@@ -1,29 +1,22 @@
 //! Data-level pattern dispatch: `match_output`.
 //!
-//! `match_output` matches a `NodeOutputId` (data edge) against a `Pat`.  The
-//! bulk of the logic is split into per-family submodules — each submodule
-//! exposes a `match_<family>(matcher, output, pat, bindings) -> Option<bool>`
-//! that returns `None` if the `PatKind` doesn't belong to that family, or
-//! `Some(b)` with the match result otherwise.  The dispatcher below chains
-//! every family in priority order.
+//! All data-level `PatKind` families have migrated to the trait-based engine.
+//! This dispatcher only exists as the Legacy fallthrough for `Pat`s that are
+//! still on the `PatKind` path — today that's exclusively the control-level
+//! variants (Call / CallOther / Return / If / Contains), which cannot match
+//! in a data context and therefore return `false` here.
 //!
-//! Families (remaining on the Legacy path):
-//! * `phi`       — Phi / InitialVar
+//! Phase 2.1 migrated wildcards + constants + guards; Phase 2.2 the Int
+//! family (binary/unary/cmp + *Any variants); Phase 2.3 the Bool family;
+//! Phase 2.4 the Float family (incl. int↔float conversions); Phase 2.5 the
+//! Casts family (CastToBool / CastToInt / CastToFloat / Truncate / Extend /
+//! Popcount / Lzcount); Phase 2.6 the Memory family (Load / Store /
+//! StackStore / StackStorePhi); Phase 2.7 the Phi / InitialVar / FunctionArg
+//! trio.  Those pats never reach this dispatcher (they go through
+//! [`crate::pat::traits::DataPattern`] via [`Matcher::match_output`]).
 //!
-//! Wildcards + constants + guards migrated to the trait-based engine in
-//! Phase 2.1; the Int family (binary/unary/cmp + *Any variants) migrated in
-//! Phase 2.2; the Bool family (binary/unary + *Any variants) migrated in
-//! Phase 2.3; the Float family (binary/unary/cmp + *Any variants + int↔float
-//! conversions) migrated in Phase 2.4; the Casts family (CastToBool /
-//! CastToInt / CastToFloat / Truncate / Extend / Popcount / Lzcount)
-//! migrated in Phase 2.5; the Memory family (Load / Store / StackStore /
-//! StackStorePhi) migrated in Phase 2.6.  Those pats never reach this
-//! dispatcher (they go through [`crate::pat::traits::DataPattern`] via
-//! [`Matcher::match_output`]).
-//!
-//! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
-//! match in a data context — the dispatcher returns `false` for them,
-//! preserving the original behaviour of `match_output`.
+//! Phase 3 will migrate the remaining control-level variants, after which
+//! this file can be deleted entirely.
 
 use ir::node::NodeOutputId;
 
@@ -31,22 +24,16 @@ use super::Matcher;
 use super::bindings::Bindings;
 use crate::pat::{Pat, PatKind};
 
-mod phi;
-
 /// Match a `NodeOutputId` (data edge) against a pattern.
 ///
 /// Returns `true` and updates `bindings` on success.  On failure returns
 /// `false`; the caller is responsible for restoring `bindings` if needed.
 pub(super) fn match_output(
-    matcher: &Matcher,
-    output: NodeOutputId,
+    _matcher: &Matcher,
+    _output: NodeOutputId,
     pat: &Pat,
-    bindings: &mut Bindings,
+    _bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = phi::match_phi(matcher, output, pat, bindings) {
-        return r;
-    }
-
     // Control-level patterns in a data context → no match.  Preserves the
     // original behaviour of the single-file `match_output`.  A `Pat` that
     // has migrated off the legacy path (i.e. `as_legacy()` returns `None`)
@@ -58,11 +45,10 @@ pub(super) fn match_output(
         | Some(PatKind::Return { .. })
         | Some(PatKind::If { .. })
         | Some(PatKind::Contains(_)) => false,
-        // Every `PatKind` constructible today is covered by one of the
-        // families above or by the control fallthrough — no further arms
-        // exist.  A future variant that slipped through would match here
-        // and be treated as a non-match, preserving the prior catch-all
-        // semantics.
+        // Every `PatKind` constructible today is covered by the control
+        // fallthrough above — no further arms exist.  A future variant that
+        // slipped through would match here and be treated as a non-match,
+        // preserving the prior catch-all semantics.
         _ => false,
     }
 }

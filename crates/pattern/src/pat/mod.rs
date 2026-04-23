@@ -286,32 +286,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Phi nodes ─────────────────────────────────────────────────────────────
-    /// `ControlPhi(vn)`: inputs = [phi_token(0), pred_val(1), pred_val(2)…].
-    /// `vn = None` matches any phi; `inputs` constrains specific predecessor slots.
-    Phi {
-        vn: Option<rsleigh::Vn>,
-        inputs: Vec<(usize, Pat)>,
-        /// Bind the phi's output `NodeOutputId` to this variable.
-        output_var: Option<Var>,
-        /// Bind the phi's `NodeId` to this variable.
-        node_var: Option<NodeVar>,
-    },
-
-    // ── Function-entry values ─────────────────────────────────────────────────
-    /// Matches `NodeKind::InitialVar(vn)`.  `vn = None` matches any.
-    InitialVar { vn: Option<rsleigh::Vn> },
-
-    /// Matches `NodeKind::FunctionArg { source, index }`.  Any `None` field
-    /// matches all values for that field.  `output_var` / `node_var` bind the
-    /// value output / `NodeId` respectively.
-    FunctionArg {
-        source: Option<ir::node::FunctionArgSource>,
-        index: Option<u32>,
-        output_var: Option<Var>,
-        node_var: Option<NodeVar>,
-    },
-
     // ── Control-level nodes ───────────────────────────────────────────────────
     /// `Call`: inputs = [ctrl(0), mem(1), target(2), arg0(3), arg1(4)…];
     /// outputs = [ctrl(0), mem(1), retval0(2), retval1(3), …, other_clobbered(N), …]

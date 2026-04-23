@@ -1,7 +1,10 @@
 //! Phi / function-entry / call / return / branch / region-search constructors.
 
-use ir::node::FunctionArgSource;
+use std::sync::Arc;
 
+use ir::node::{FunctionArgSource, NodeKind};
+
+use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PatKind, PhiPat, RetPat};
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
@@ -19,11 +22,31 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
 
 /// Matches any `InitialVar` node (function-entry value of any varnode).
 pub fn initial_var() -> Pat {
-    Pat::new(PatKind::InitialVar { vn: None })
+    initial_var_impl(None)
 }
 /// Matches the `InitialVar` node for the specific varnode `vn`.
 pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
-    Pat::new(PatKind::InitialVar { vn: Some(vn) })
+    initial_var_impl(Some(vn))
+}
+
+fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
+    Pat::from_dyn(Arc::new(NodePat {
+        kind_match: Arc::new(move |ctx, node, _b| {
+            let NodeKind::InitialVar(actual_vn) = ctx.graph.graph.node_kind(node) else {
+                return false;
+            };
+            if let Some(expected) = vn
+                && *actual_vn != expected
+            {
+                return false;
+            }
+            true
+        }),
+        inputs: InputsSpec::None,
+        post_match: None,
+        output_var: None,
+        node_var: None,
+    }))
 }
 
 // ── Function-argument constructors ────────────────────────────────────────────

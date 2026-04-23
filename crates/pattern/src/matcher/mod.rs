@@ -34,7 +34,6 @@ struct NodeIndex {
     call_other_nodes: Vec<NodeId>,
     return_nodes: Vec<NodeId>,
     if_nodes: Vec<NodeId>,
-    function_arg_nodes: Vec<NodeId>,
     /// `NodeId` of the canonical `FunctionArg` for each argument index.  Layer
     /// C enforces at most one `FunctionArg` per index, so at most one entry
     /// exists per key.
@@ -70,7 +69,6 @@ impl<'g> Matcher<'g> {
             let mut call_other_nodes = Vec::new();
             let mut return_nodes = Vec::new();
             let mut if_nodes = Vec::new();
-            let mut function_arg_nodes = Vec::new();
             let mut function_args: HashMap<u32, NodeId> = HashMap::new();
             let mut all_nodes = Vec::new();
 
@@ -82,7 +80,6 @@ impl<'g> Matcher<'g> {
                     NodeKind::Return => return_nodes.push(node),
                     NodeKind::If => if_nodes.push(node),
                     NodeKind::FunctionArg { index, .. } => {
-                        function_arg_nodes.push(node);
                         function_args.insert(*index, node);
                     }
                     _ => {}
@@ -94,7 +91,6 @@ impl<'g> Matcher<'g> {
                 call_other_nodes,
                 return_nodes,
                 if_nodes,
-                function_arg_nodes,
                 function_args,
                 all_nodes,
             }
@@ -118,7 +114,10 @@ impl<'g> Matcher<'g> {
             Some(PatKind::CallOther { .. }) => &idx.call_other_nodes,
             Some(PatKind::Return { .. }) => &idx.return_nodes,
             Some(PatKind::If { .. }) => &idx.if_nodes,
-            Some(PatKind::FunctionArg { .. }) => &idx.function_arg_nodes,
+            // FunctionArg migrated to the trait-based engine in Phase 2.7 —
+            // it no longer has a `PatKind` variant, so the pat is `Dyn` and
+            // falls through to `all_nodes`.  Phase 3 will restore the
+            // fast-path via `ControlPattern::candidate_kind`.
             _ => &idx.all_nodes,
         };
 
