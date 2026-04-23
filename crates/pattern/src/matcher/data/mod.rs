@@ -8,7 +8,6 @@
 //! every family in priority order.
 //!
 //! Families (remaining on the Legacy path):
-//! * `memory`    — Load / Store / StackStore / StackStorePhi
 //! * `phi`       — Phi / InitialVar
 //!
 //! Wildcards + constants + guards migrated to the trait-based engine in
@@ -17,8 +16,9 @@
 //! Phase 2.3; the Float family (binary/unary/cmp + *Any variants + int↔float
 //! conversions) migrated in Phase 2.4; the Casts family (CastToBool /
 //! CastToInt / CastToFloat / Truncate / Extend / Popcount / Lzcount)
-//! migrated in Phase 2.5.  Those pats never reach this dispatcher (they go
-//! through [`crate::pat::traits::DataPattern`] via
+//! migrated in Phase 2.5; the Memory family (Load / Store / StackStore /
+//! StackStorePhi) migrated in Phase 2.6.  Those pats never reach this
+//! dispatcher (they go through [`crate::pat::traits::DataPattern`] via
 //! [`Matcher::match_output`]).
 //!
 //! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
@@ -31,7 +31,6 @@ use super::Matcher;
 use super::bindings::Bindings;
 use crate::pat::{Pat, PatKind};
 
-mod memory;
 mod phi;
 
 /// Match a `NodeOutputId` (data edge) against a pattern.
@@ -44,9 +43,6 @@ pub(super) fn match_output(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = memory::match_memory(matcher, output, pat, bindings) {
-        return r;
-    }
     if let Some(r) = phi::match_phi(matcher, output, pat, bindings) {
         return r;
     }

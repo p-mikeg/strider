@@ -286,52 +286,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Memory ops ────────────────────────────────────────────────────────────
-    /// `Load(space)`: inputs = [mem(0), addr(1)] → value output.
-    Load {
-        space: Option<rsleigh::VnSpace>,
-        addr: Option<Pat>,
-        /// Bind the load's output `NodeOutputId` to this variable.
-        output_var: Option<Var>,
-        /// Bind the load's `NodeId` to this variable.
-        node_var: Option<NodeVar>,
-    },
-    /// `Store(space)`: inputs = [mem(0), addr(1), data(2)] → mem output.
-    Store {
-        space: Option<rsleigh::VnSpace>,
-        addr: Option<Pat>,
-        data: Option<Pat>,
-        /// Bind the store's memory output `NodeOutputId` to this variable.
-        output_var: Option<Var>,
-        /// Bind the store's `NodeId` to this variable.
-        node_var: Option<NodeVar>,
-    },
-    /// `StackStore { space, offset }`: inputs = [mem(0), data(1)] → mem output.
-    /// Produced by the `StackStoreDetect` optimization pass when a store's
-    /// address resolves to `InitialVar(stack_ptr) + offset`.
-    StackStore {
-        space: Option<rsleigh::VnSpace>,
-        offset: Option<i64>,
-        data: Option<Pat>,
-        /// Bind the stack-store's memory output `NodeOutputId` to this variable.
-        output_var: Option<Var>,
-        /// Bind the stack-store's `NodeId` to this variable.
-        node_var: Option<NodeVar>,
-    },
-    /// `StackStorePhi { space }`: inputs = [phi_token(0), mem(1), data(2)] → mem output.
-    /// Per-branch offsets are stored as a side map on the graph; see
-    /// [`ir::Graph::stack_phi_offsets`].  `offsets` (if supplied) matches the
-    /// sorted-ascending list of per-branch offsets exactly.
-    StackStorePhi {
-        space: Option<rsleigh::VnSpace>,
-        offsets: Option<Vec<i64>>,
-        data: Option<Pat>,
-        /// Bind the stack-store-phi's memory output to this variable.
-        output_var: Option<Var>,
-        /// Bind the stack-store-phi's `NodeId` to this variable.
-        node_var: Option<NodeVar>,
-    },
-
     // ── Phi nodes ─────────────────────────────────────────────────────────────
     /// `ControlPhi(vn)`: inputs = [phi_token(0), pred_val(1), pred_val(2)…].
     /// `vn = None` matches any phi; `inputs` constrains specific predecessor slots.
