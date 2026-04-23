@@ -120,16 +120,51 @@ mod sealed {
 
 /// A graph pattern.  Cheap to clone — the inner data is reference-counted.
 #[derive(Clone)]
-pub struct Pat(Arc<PatKind>);
+pub struct Pat(PatInner);
+
+/// Internal representation of a [`Pat`].
+///
+/// Phase 1.1 transitional enum: the crate is migrating from the legacy
+/// `PatKind`-enum dispatch to a trait-based dispatch rooted on
+/// [`DataPattern`](crate::pat::traits::DataPattern).  Existing constructors
+/// keep emitting [`PatInner::Legacy`]; new constructors added in Phase 2+
+/// will emit [`PatInner::Dyn`].  Both variants coexist until Phase 4 deletes
+/// the legacy path.
+#[derive(Clone)]
+pub(crate) enum PatInner {
+    Legacy(Arc<PatKind>),
+    Dyn(crate::pat::traits::DynDataPat),
+}
 
 impl Pat {
     pub(crate) fn new(kind: PatKind) -> Self {
-        Self(Arc::new(kind))
+        Self(PatInner::Legacy(Arc::new(kind)))
     }
 
-    /// Returns a reference to the underlying [`PatKind`].
-    pub fn inner(&self) -> &PatKind {
-        &self.0
+    /// Constructor for the new trait-based dispatch path.  Phase 2+ will use
+    /// this as constructors migrate one family at a time.
+    #[allow(dead_code)]
+    pub(crate) fn from_dyn(d: crate::pat::traits::DynDataPat) -> Self {
+        Self(PatInner::Dyn(d))
+    }
+
+    /// Legacy accessor: `Some(kind)` if this pat is still on the legacy path,
+    /// `None` if it has migrated to the trait-based path.  Phase 4 will
+    /// delete this method along with `PatKind`.
+    pub(crate) fn as_legacy(&self) -> Option<&PatKind> {
+        match &self.0 {
+            PatInner::Legacy(k) => Some(k),
+            PatInner::Dyn(_) => None,
+        }
+    }
+
+    /// New accessor for the trait-based path.
+    #[allow(dead_code)]
+    pub(crate) fn as_dyn(&self) -> Option<&crate::pat::traits::DynDataPat> {
+        match &self.0 {
+            PatInner::Legacy(_) => None,
+            PatInner::Dyn(d) => Some(d),
+        }
     }
 
     /// After this pattern matches successfully, additionally bind the matched

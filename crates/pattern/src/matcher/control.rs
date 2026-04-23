@@ -24,7 +24,13 @@ pub(super) fn match_node_id(
     let inputs: Vec<NodeOutputId> =
         matcher.fn_graph.graph.node_inputs(node).into_iter().collect();
 
-    match pat.inner() {
+    // `match_node_id` is only called on Legacy-backed pats from
+    // `Matcher::match_node_id`; a non-legacy pat would be routed through the
+    // `DataPattern::try_match` path there.  The `None` arm is defensive.
+    let Some(pat_kind) = pat.as_legacy() else {
+        return false;
+    };
+    match pat_kind {
         PatKind::Call {
             target,
             args,

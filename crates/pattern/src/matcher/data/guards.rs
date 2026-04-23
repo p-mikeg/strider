@@ -16,7 +16,7 @@ pub(super) fn match_guards(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> Option<bool> {
-    let result = match pat.inner() {
+    let result = match pat.as_legacy()? {
         PatKind::WithCapture { inner, var } => {
             let snap = bindings.clone();
             if !matcher.match_output(output, inner, bindings) {

@@ -18,7 +18,7 @@ pub(super) fn match_casts(
 ) -> Option<bool> {
     let node = matcher.fn_graph.graph.get_node_from_output(output);
 
-    let result = match pat.inner() {
+    let result = match pat.as_legacy()? {
         PatKind::CastToBool { operand } => super::match_unary_op(
             matcher,
             node,

@@ -25,7 +25,7 @@ pub(super) fn match_float(
     let node = matcher.fn_graph.graph.get_node_from_output(output);
     let kind = matcher.fn_graph.graph.node_kind(node);
 
-    let result = match pat.inner() {
+    let result = match pat.as_legacy()? {
         PatKind::FloatBinaryOp {
             op,
             lhs,
@@ -137,8 +137,13 @@ pub(super) fn match_float(
             op: op_var,
             lhs,
             rhs,
-            ordered: _,
+            ordered,
         } => {
+            // The `ordered` flag is read here only to keep the field "live"
+            // from rustc's dead-code perspective; no float comparison
+            // operator is commutative in the existing helpers, so the swap
+            // path below is never actually exercised.
+            let _ = ordered;
             // No float comparison operators are commutative in the existing
             // helpers, so the `ordered` flag has no effect here — the swap
             // path is never taken.  The field is retained for API symmetry

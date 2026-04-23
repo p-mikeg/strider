@@ -75,13 +75,16 @@ pub(super) fn match_output(
     }
 
     // Control-level patterns in a data context → no match.  Preserves the
-    // original behaviour of the single-file `match_output`.
-    match pat.inner() {
-        PatKind::Call { .. }
-        | PatKind::CallOther { .. }
-        | PatKind::Return { .. }
-        | PatKind::If { .. }
-        | PatKind::Contains(_) => false,
+    // original behaviour of the single-file `match_output`.  A `Pat` that
+    // has migrated off the legacy path (i.e. `as_legacy()` returns `None`)
+    // is never routed here by `Matcher::match_output`, so the `None` arm
+    // only appears for defensive completeness.
+    match pat.as_legacy() {
+        Some(PatKind::Call { .. })
+        | Some(PatKind::CallOther { .. })
+        | Some(PatKind::Return { .. })
+        | Some(PatKind::If { .. })
+        | Some(PatKind::Contains(_)) => false,
         // Every `PatKind` constructible today is covered by one of the
         // families above or by the control fallthrough — no further arms
         // exist.  A future variant that slipped through would match here

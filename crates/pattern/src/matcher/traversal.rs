@@ -23,9 +23,10 @@ pub(super) fn match_contains(
     visited: &mut HashSet<NodeId>,
 ) -> bool {
     // Peel a `Contains` shell — this function *is* the forward search, so
-    // the wrapper adds no extra semantics here.
-    let inner_pat = match inner_pat.inner() {
-        PatKind::Contains(p) => p,
+    // the wrapper adds no extra semantics here.  Only applies on the legacy
+    // path; trait-based pats go through `match_node_id` unchanged.
+    let inner_pat = match inner_pat.as_legacy() {
+        Some(PatKind::Contains(p)) => p,
         _ => inner_pat,
     };
 

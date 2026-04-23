@@ -106,6 +106,49 @@ fn float_var_conflict_fails() {
 
 // ── IDs are globally unique across types ──────────────────────────────────
 
+// ── Phase 1.1: Pat::Dyn dispatch smoke test ───────────────────────────────
+//
+// Constructs a `Pat::from_dyn` wrapping an `AnyPat` and confirms that
+// `Matcher::find_all` routes through the `DataPattern::try_match` path —
+// i.e. the new engine produces at least one match against a tiny graph.
+
+#[test]
+fn dyn_pat_dispatch_routes_via_data_pattern() -> ir::Result<()> {
+    use std::sync::Arc;
+
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+
+    use crate::pat::Pat;
+    use crate::pat::any::AnyPat;
+
+    // Tiny graph: add(5, 3) then return.
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c5 = b.build_int_const(5, NodeOutputType::U64);
+    let c3 = b.build_int_const(3, NodeOutputType::U64);
+    let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
+    b.build_return(Some(sum), &[])?;
+    let g = b.build()?;
+
+    // AnyPat matches every data output; wrap in Pat::from_dyn to go through
+    // the new dispatch path.
+    let pat = Pat::from_dyn(Arc::new(AnyPat));
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&pat);
+
+    // At minimum we should match the IntConst(5), IntConst(3), and IntBinaryOp
+    // output — three data outputs exist on the graph.  The exact count depends
+    // on node layout, so assert only non-empty.
+    assert!(
+        !hits.is_empty(),
+        "Pat::Dyn → DataPattern::try_match path should yield ≥1 match"
+    );
+    Ok(())
+}
+
 #[test]
 fn capture_ids_are_globally_unique() {
     // Each call to ::new() increments the shared counter.  The only

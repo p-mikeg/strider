@@ -109,12 +109,16 @@ impl<'g> Matcher<'g> {
     /// lists (built lazily on first call) and skip the others.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let idx = self.index();
-        let candidates: &[NodeId] = match pat.inner() {
-            PatKind::Call { .. } => &idx.call_nodes,
-            PatKind::CallOther { .. } => &idx.call_other_nodes,
-            PatKind::Return { .. } => &idx.return_nodes,
-            PatKind::If { .. } => &idx.if_nodes,
-            PatKind::FunctionArg { .. } => &idx.function_arg_nodes,
+        // Control-level candidate routing still peeks the legacy `PatKind`
+        // when the pat is on the legacy path.  When the pat migrates to
+        // `Dyn`, routing falls back to `all_nodes` (Phase 3 will replace this
+        // with `ControlPattern::candidate_kind`).
+        let candidates: &[NodeId] = match pat.as_legacy() {
+            Some(PatKind::Call { .. }) => &idx.call_nodes,
+            Some(PatKind::CallOther { .. }) => &idx.call_other_nodes,
+            Some(PatKind::Return { .. }) => &idx.return_nodes,
+            Some(PatKind::If { .. }) => &idx.if_nodes,
+            Some(PatKind::FunctionArg { .. }) => &idx.function_arg_nodes,
             _ => &idx.all_nodes,
         };
 
@@ -207,20 +211,50 @@ impl<'g> Matcher<'g> {
     // shells keep the `&self.match_output(...)` / `&self.match_node_id(...)`
     // call-sites stable for submodule callers that already hold a `&Matcher`.
 
-    /// Match a `NodeOutputId` (data edge) against a pattern.  Delegates to
-    /// [`data::match_output`].
+    /// Match a `NodeOutputId` (data edge) against a pattern.  Legacy
+    /// `PatKind`-backed pats route through the existing family dispatcher;
+    /// trait-backed pats call [`DataPattern::try_match`] directly.
     pub(super) fn match_output(
         &self,
         output: NodeOutputId,
         pat: &Pat,
         bindings: &mut Bindings,
     ) -> bool {
-        data::match_output(self, output, pat, bindings)
+        if pat.as_legacy().is_some() {
+            data::match_output(self, output, pat, bindings)
+        } else if let Some(d) = pat.as_dyn() {
+            let ctx = crate::pat::traits::MatchCtx {
+                graph: self.fn_graph,
+            };
+            d.try_match(&ctx, output, bindings)
+        } else {
+            // Unreachable: `Pat` always has exactly one inner variant.
+            false
+        }
     }
 
-    /// Match a `NodeId` (control-level node) against a pattern.  Delegates to
-    /// [`control::match_node_id`].
+    /// Match a `NodeId` (control-level node) against a pattern.  Legacy
+    /// `PatKind`-backed pats route through the existing control dispatcher.
+    /// Trait-backed data pats mirror the legacy fallthrough: try each output
+    /// of `node` against the data pattern.  (Phase 3 will add a dedicated
+    /// `ControlPattern` path here.)
     pub(super) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
-        control::match_node_id(self, node, pat, bindings)
+        if pat.as_legacy().is_some() {
+            control::match_node_id(self, node, pat, bindings)
+        } else if let Some(d) = pat.as_dyn() {
+            let ctx = crate::pat::traits::MatchCtx {
+                graph: self.fn_graph,
+            };
+            for out in self.fn_graph.graph.node_outputs(node).into_iter() {
+                let snap = bindings.clone();
+                if d.try_match(&ctx, out, bindings) {
+                    return true;
+                }
+                *bindings = snap;
+            }
+            false
+        } else {
+            false
+        }
     }
 }

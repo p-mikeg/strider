@@ -19,7 +19,7 @@ pub(super) fn match_constants(
     let node = matcher.fn_graph.graph.get_node_from_output(output);
     let kind = matcher.fn_graph.graph.node_kind(node);
 
-    let result = match pat.inner() {
+    let result = match pat.as_legacy()? {
         PatKind::Any => true,
 
         PatKind::Capture(v) => bindings.bind_var(*v, output),
