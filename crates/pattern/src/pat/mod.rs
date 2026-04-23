@@ -2,14 +2,11 @@ use std::sync::Arc;
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
-use ir::{
-    BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp,
-};
+use ir::{BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
+    FloatVar, IntVar, NodeVar, Var,
 };
 
 mod builders;
@@ -293,23 +290,6 @@ impl<T: Into<Pat>> IntoPat for T {}
 // ── PatKind ───────────────────────────────────────────────────────────────────
 
 pub enum PatKind {
-    // ── Integer ops ───────────────────────────────────────────────────────────
-    /// Matches an integer binary operation node.
-    /// When `ordered` is `false` and the op is commutative, both operand
-    /// orderings are tried automatically.
-    IntBinaryOp {
-        op: IntBinaryOp,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches an integer unary operation node.
-    IntUnaryOp { op: IntUnaryOp, operand: Pat },
-    /// Matches an integer comparison node (produces a `Bool` output).
-    /// When `ordered` is `false` and the op is commutative (`Equal`, `Carry`,
-    /// `Scarry`), both operand orderings are tried automatically.
-    IntCmpOp { op: IntCmpOp, lhs: Pat, rhs: Pat, ordered: bool },
-
     // ── Bool ops ──────────────────────────────────────────────────────────────
     /// Matches a boolean binary operation node.
     /// When `ordered` is `false` and the op is commutative, both orderings are
@@ -323,28 +303,7 @@ pub enum PatKind {
     /// Matches a boolean unary operation node.
     BoolUnaryOp { op: BoolUnaryOp, operand: Pat },
 
-    // ── Variant-agnostic integer op patterns ─────────────────────────────────
-    /// Matches **any** integer binary operation, binding the actual operator
-    /// variant to `op`.  When `ordered` is `false` and the matched op is
-    /// commutative, both operand orderings are tried automatically.
-    IntBinaryAny {
-        op: IntBinaryOpVar,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
-    /// Matches **any** integer unary operation, binding the actual operator
-    /// variant to `op`.
-    IntUnaryAny { op: IntUnaryOpVar, operand: Pat },
-    /// Matches **any** integer comparison, binding the actual operator variant
-    /// to `op`.  When `ordered` is `false` and the matched op is commutative
-    /// (`Equal`, `Carry`, `Scarry`), both operand orderings are tried.
-    IntCmpAny {
-        op: IntCmpOpVar,
-        lhs: Pat,
-        rhs: Pat,
-        ordered: bool,
-    },
+    // ── Variant-agnostic bool / float op patterns ────────────────────────────
     /// Matches **any** boolean binary operation, binding the actual operator
     /// variant to `op`.  When `ordered` is `false` and the matched op is
     /// commutative, both operand orderings are tried automatically.

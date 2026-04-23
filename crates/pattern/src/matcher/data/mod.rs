@@ -8,7 +8,6 @@
 //! every family in priority order.
 //!
 //! Families (remaining on the Legacy path):
-//! * `int`       — integer binary / unary / cmp ops (both concrete and *Any variants)
 //! * `bool_`     — boolean binary / unary ops
 //! * `float`     — float binary / unary / cmp ops + int ↔ float conversions
 //! * `casts`     — value-preserving casts + bit-level truncate / extend / popcount / lzcount
@@ -16,7 +15,8 @@
 //! * `phi`       — Phi / InitialVar
 //!
 //! Wildcards + constants + guards migrated to the trait-based engine in
-//! Phase 2.1 — those pats never reach this dispatcher (they go through
+//! Phase 2.1; the Int family (binary/unary/cmp + *Any variants) migrated in
+//! Phase 2.2.  Those pats never reach this dispatcher (they go through
 //! [`crate::pat::traits::DataPattern`] via [`Matcher::match_output`]).
 //!
 //! Control-level patterns (Call / CallOther / Return / If / Contains) cannot
@@ -35,7 +35,6 @@ use crate::pat::{Pat, PatKind};
 mod bool_;
 mod casts;
 mod float;
-mod int;
 mod memory;
 mod phi;
 
@@ -49,9 +48,6 @@ pub(super) fn match_output(
     pat: &Pat,
     bindings: &mut Bindings,
 ) -> bool {
-    if let Some(r) = int::match_int(matcher, output, pat, bindings) {
-        return r;
-    }
     if let Some(r) = bool_::match_bool(matcher, output, pat, bindings) {
         return r;
     }

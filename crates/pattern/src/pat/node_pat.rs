@@ -2,24 +2,30 @@
 //! `PatKind` variants into a single struct parameterised by a kind-match
 //! closure, an `InputsSpec`, and optional post-match / capture hooks.
 //!
-//! Dead code until Phase 2 flips the family constructors over to emit
-//! `Pat::Dyn(Arc::new(NodePat { ... }))`.  Phase 2.1 wires up the
-//! wildcard-and-constant constructors (see `ctor/wildcards.rs`); the op
-//! families migrate in Phase 2.2+.
-
-#![allow(dead_code)]
+//! Phase 2.1 wired up the wildcard-and-constant constructors (via
+//! `InputsSpec::None`); Phase 2.2 extends the use to the Int family, which
+//! introduces `InputsSpec::Fixed` with arity 1 (unary) and arity 2
+//! (binary/cmp, possibly commutative).  The `InputsSpec::Indexed` variant is
+//! still unused until a later phase migrates `Phi` / `Call` args.
 
 use std::sync::Arc;
 
 use ir::node::{NodeId, NodeOutputId};
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{DataPattern, DynDataPat, MatchCtx};
+use crate::pat::traits::{DataPattern, MatchCtx};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
+
+/// Runtime decider for whether an arity-2 [`InputsSpec::Fixed`] match should
+/// retry with swapped operands.  Concrete ops fix the answer at construction
+/// (`|_, _| true` or `|_, _| false`); `*Any` patterns inspect the matched op
+/// variant to decide per-match.
+pub(crate) type CommutativeDecider =
+    Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
 
 /// A generic node-level data pattern. Covers every `PatKind` that has the
 /// shape "check node kind, match inputs in some arrangement, optionally
@@ -43,14 +49,54 @@ pub struct NodePat {
 pub enum InputsSpec {
     /// Arity 0: constants, `InitialVar`, `FunctionArg`.
     None,
-    /// Arity N with ordered operand matching. When `commutative` is true and
-    /// the node has exactly 2 inputs, both orderings are tried.
+    /// Arity N with ordered operand matching. When `commutative(ctx, node)`
+    /// returns true and the node has exactly 2 inputs, both orderings are
+    /// tried.
+    ///
+    /// Sub-patterns are held as [`crate::pat::Pat`] (not `DynDataPat`) so
+    /// they can wrap either Legacy- or trait-backed patterns during the
+    /// migration; dispatch goes through [`crate::matcher::Matcher::match_output`].
     Fixed {
-        pats: Vec<DynDataPat>,
-        commutative: bool,
+        pats: Vec<crate::pat::Pat>,
+        commutative: CommutativeDecider,
     },
     /// Sparse positional constraints — used by `Phi`, `Call` args, etc.
-    Indexed(Vec<(usize, DynDataPat)>),
+    /// Unused until the memory/phi/control families migrate in later phases.
+    #[allow(dead_code)]
+    Indexed(Vec<(usize, crate::pat::Pat)>),
+}
+
+impl InputsSpec {
+    /// Fixed arity, never commutative.
+    pub(crate) fn fixed_ordered(pats: Vec<crate::pat::Pat>) -> Self {
+        Self::Fixed {
+            pats,
+            commutative: Arc::new(|_ctx, _node| false),
+        }
+    }
+
+    /// Fixed arity-2, always commutative (concrete op is known to be so).
+    pub(crate) fn fixed_commutative(lhs: crate::pat::Pat, rhs: crate::pat::Pat) -> Self {
+        Self::Fixed {
+            pats: vec![lhs, rhs],
+            commutative: Arc::new(|_ctx, _node| true),
+        }
+    }
+
+    /// Fixed arity-2, commutative decided at match time by `f(ctx, node)`.
+    pub(crate) fn fixed_maybe_commutative<F>(
+        lhs: crate::pat::Pat,
+        rhs: crate::pat::Pat,
+        f: F,
+    ) -> Self
+    where
+        F: Fn(&MatchCtx, NodeId) -> bool + Send + Sync + 'static,
+    {
+        Self::Fixed {
+            pats: vec![lhs, rhs],
+            commutative: Arc::new(f),
+        }
+    }
 }
 
 impl DataPattern for NodePat {
@@ -73,10 +119,10 @@ impl DataPattern for NodePat {
             return true;
         }
 
-        // Commutative retry (arity-2 Fixed only, commutative=true).
+        // Commutative retry (arity-2 Fixed only, commutative decider true).
         if let InputsSpec::Fixed { pats, commutative } = &self.inputs
-            && *commutative
             && pats.len() == 2
+            && commutative(ctx, node)
         {
             *b = after_kind;
             if try_once(self, ctx, node, target, b, true) {
@@ -162,6 +208,6 @@ fn try_once(
     true
 }
 
-fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &DynDataPat, b: &mut Bindings) -> bool {
-    pat.try_match(ctx, out, b)
+fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pat::Pat, b: &mut Bindings) -> bool {
+    ctx.matcher.match_output(out, pat, b)
 }

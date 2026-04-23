@@ -10,7 +10,7 @@ mod function_arg_handle;
 pub use function_arg_handle::FunctionArgHandle;
 
 mod bindings;
-mod commutativity;
+pub(crate) mod commutativity;
 mod control;
 mod data;
 mod match_result;
