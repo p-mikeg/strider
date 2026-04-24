@@ -60,7 +60,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// - **Absolute** (default code space): the target is a raw virtual
     ///   address; the pcode index is implicitly 0 (start of machine insn).
     fn decode_branch_target(
-        &mut self,
+        &self,
         branch_target_var: rsleigh::Vn,
         branch_insn_addr: PcodeInsnAddr,
     ) -> Result<PcodeInsnAddr> {
@@ -109,7 +109,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     ///   `allow_code_before_start_addr` is `false`, **OR**
     /// - `fn_max_size` is set AND the target lies at or beyond
     ///   `start_addr + fn_max_size`.
-    pub(super) fn is_branch_tail_call_nocheck(&mut self, branch_target_addr: PcodeInsnAddr) -> bool {
+    pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         // Only the machine insn address matters for bounds checking; the pcode
         // insn index is irrelevant here.
         let addr = branch_target_addr.machine_addr;
@@ -139,7 +139,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// machine instruction (`insn_index == 0`).  A branch whose address bounds
     /// indicate a tail call but whose `insn_index != 0` is malformed and
     /// returns [`ErrorKind::InvalidTailCall`].
-    pub(super) fn is_branch_tail_call(&mut self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
+    pub(super) fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
 
         if is_tail_call {
@@ -400,20 +400,20 @@ pub mod test_api {
 
         /// Checks whether `target` is a tail call without validating `insn_index`.
         #[must_use]
-        pub fn is_branch_tail_call_nocheck(&mut self, target: PcodeInsnAddr) -> bool {
+        pub fn is_branch_tail_call_nocheck(&self, target: PcodeInsnAddr) -> bool {
             self.inner.is_branch_tail_call_nocheck(target)
         }
 
         /// # Errors
         /// Propagates errors from the underlying tail-call check.
-        pub fn is_branch_tail_call(&mut self, target: PcodeInsnAddr) -> Result<bool> {
+        pub fn is_branch_tail_call(&self, target: PcodeInsnAddr) -> Result<bool> {
             self.inner.is_branch_tail_call(target)
         }
 
         /// # Errors
         /// Propagates errors from the underlying branch-target decode.
         pub fn decode_branch_target(
-            &mut self,
+            &self,
             vn: rsleigh::Vn,
             at: PcodeInsnAddr,
         ) -> Result<PcodeInsnAddr> {
