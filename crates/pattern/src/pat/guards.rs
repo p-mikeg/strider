@@ -6,7 +6,7 @@
 //! [`GuardFn`] enum for the closure signature.  Produced by
 //! [`crate::pat::IntoPat::when`] and [`crate::pat::Pat::when_match`].
 
-use ir::node::NodeOutputId;
+use ir::node::{NodeId, NodeOutputId};
 
 use crate::matcher::Bindings;
 use crate::pat::traits::{MatchCtx, Pattern};
@@ -58,5 +58,24 @@ impl Pattern for GuardPat {
             b.restore(mark);
             false
         }
+    }
+
+    fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
+        // A `GuardPat` predicate sees the matched value output.  For
+        // zero-output nodes there's nothing to pass to the predicate, so
+        // fail explicitly instead of letting the default outputs-iterator
+        // report a silent miss.
+        let outputs = ctx.graph.graph.node_outputs(node);
+        if outputs.is_empty() {
+            return false;
+        }
+        for out in outputs {
+            let mark = b.mark();
+            if self.try_match(ctx, out, b) {
+                return true;
+            }
+            b.restore(mark);
+        }
+        false
     }
 }

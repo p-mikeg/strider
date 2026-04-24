@@ -201,7 +201,14 @@ impl Pat {
 /// for free.  Import this trait to call `.capture(v)` / `.when(f)` on builder
 /// types.
 pub trait IntoPat: Into<Pat> + Sized {
-    /// After matching, bind the matched output to `v`.
+    /// After matching, bind the matched **value** output to `v`.
+    ///
+    /// **Only meaningful on value-producing patterns.**  Control-flow
+    /// builders (`CallPat`, `IfPat`, `RetPat`, `CallOtherPat`) expose
+    /// `.capture_node(nv)` instead — calling `.capture(v)` on one of those
+    /// compiles (via this blanket impl) but the resulting pattern never
+    /// matches, because `Var` refers to a data edge and those nodes have
+    /// no value output to bind.
     fn capture(self, v: Var) -> Pat {
         self.into().capture_impl(v)
     }

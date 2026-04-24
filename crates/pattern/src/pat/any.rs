@@ -1,6 +1,6 @@
 //! Small wildcard / capture combinators.
 
-use ir::node::NodeOutputId;
+use ir::node::{NodeId, NodeOutputId};
 
 use crate::error::{ErrorKind, Result};
 use crate::matcher::Bindings;
@@ -93,6 +93,27 @@ impl Pattern for CapturePat {
             b.restore(mark);
             false
         }
+    }
+
+    fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
+        // A `CapturePat` binds the matched value output.  For zero-output
+        // nodes (e.g. `Return`) there is no value slot to bind, so fail
+        // explicitly instead of letting the default outputs-iterator
+        // report a silent miss.  This also means a control-flow pattern
+        // wrapped in `.capture(Var)` is a clear no-match, not an
+        // indeterminate fall-through.
+        let outputs = ctx.graph.graph.node_outputs(node);
+        if outputs.is_empty() {
+            return false;
+        }
+        for out in outputs {
+            let mark = b.mark();
+            if self.try_match(ctx, out, b) {
+                return true;
+            }
+            b.restore(mark);
+        }
+        false
     }
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
