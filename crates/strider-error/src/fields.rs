@@ -53,6 +53,10 @@ impl ErrorFields {
     /// format that `define_error!`-generated Debug impls (and `dot::Error<E>`)
     /// use. Callers must already have written the kind's own representation
     /// (typically one `writeln!(f, "{}", kind)` line before this call).
+    ///
+    /// # Errors
+    ///
+    /// Propagates any `fmt::Error` raised by the underlying formatter.
     pub fn fmt_chain_and_backtrace(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, loc) in self.locations.iter().enumerate() {
             writeln!(
