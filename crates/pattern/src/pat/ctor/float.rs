@@ -8,7 +8,7 @@ use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
 use crate::pat::FloatBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
 
 /// Matches a float binary operation with the given `op`.
 ///
@@ -35,19 +35,14 @@ decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
 
 /// Matches a float unary operation with the given `op`.
 pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatUnaryOp(op)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(x) if *x == op)
         }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::fixed_ordered(vec![operand.into()]),
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::FloatUnaryOp(op))))
+    .into_pat()
 }
 
 decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
@@ -67,19 +62,15 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 
 /// Matches a float comparison node with the given `op`.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatCmpOp(op)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(x) if *x == op)
         }),
-        inputs: InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::FloatCmpOp(op))))
+    .with_build_ty(BuildTy::Fixed(ir::node::NodeOutputType::Bool))
+    .into_pat()
 }
 
 decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
@@ -93,83 +84,36 @@ decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
     (float_le, LessEqual),
 ]);
 
+/// Helper for the five unit-variant float conversions (IntToFloat,
+/// FloatToInt, FloatToFloat, IntBitsToFloat, FloatBitsToInt).
+fn unit_conv(variant_match: impl Fn(&NodeKind) -> bool + Send + Sync + 'static,
+             build_kind: NodeKind,
+             operand: impl Into<Pat>) -> Pat {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| variant_match(ctx.graph.graph.node_kind(node))),
+        InputsSpec::fixed_ordered(vec![operand.into()]),
+    )
+    .with_build(Arc::new(move |_b| Ok(build_kind)))
+    .into_pat()
+}
+
 /// Matches an `IntToFloat` value-conversion node.
 pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(|_b| Ok(NodeKind::IntToFloat))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntToFloat)
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    unit_conv(|k| matches!(k, NodeKind::IntToFloat), NodeKind::IntToFloat, operand)
 }
 /// Matches a `FloatToInt` value-conversion node.
 pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatToInt))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatToInt)
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    unit_conv(|k| matches!(k, NodeKind::FloatToInt), NodeKind::FloatToInt, operand)
 }
 /// Matches a `FloatToFloat` precision-conversion node.
 pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatToFloat))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatToFloat)
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    unit_conv(|k| matches!(k, NodeKind::FloatToFloat), NodeKind::FloatToFloat, operand)
 }
 /// Matches an `IntBitsToFloat` bitcast node.
 pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(|_b| Ok(NodeKind::IntBitsToFloat))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBitsToFloat)
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    unit_conv(|k| matches!(k, NodeKind::IntBitsToFloat), NodeKind::IntBitsToFloat, operand)
 }
 /// Matches a `FloatBitsToInt` bitcast node.
 pub fn float_bits_to_int(operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatBitsToInt))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBitsToInt)
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    unit_conv(|k| matches!(k, NodeKind::FloatBitsToInt), NodeKind::FloatBitsToInt, operand)
 }

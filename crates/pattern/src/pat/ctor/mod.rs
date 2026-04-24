@@ -12,7 +12,6 @@ pub(crate) mod consts;
 mod control;
 mod float;
 mod int;
-mod memory;
 mod variant_agnostic;
 mod wildcards;
 
@@ -21,6 +20,5 @@ pub use casts::*;
 pub use control::*;
 pub use float::*;
 pub use int::*;
-pub use memory::*;
 pub use variant_agnostic::*;
 pub use wildcards::*;

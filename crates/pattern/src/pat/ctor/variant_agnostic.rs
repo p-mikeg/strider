@@ -1,7 +1,10 @@
 //! Variant-agnostic ("`*_any`") op constructors.
 //!
 //! These patterns match **any** variant of an op family (int binary, bool
-//! unary, …) and bind the actual operator variant to a typed capture variable.
+//! unary, …) and bind the actual operator variant to a typed capture
+//! variable.  All eight constructors share the same shape — a single
+//! `impl_variant_any!` macro produces each, picking between binary/unary/cmp
+//! input layouts and InheritRoot/Fixed(Bool) result type.
 
 use std::sync::Arc;
 
@@ -12,277 +15,163 @@ use crate::matcher::commutativity::{
     is_commutative_int_op,
 };
 use crate::pat::Pat;
-use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar,
 };
 
-/// Matches **any** integer binary operation and binds the actual operator
-/// variant to `op`.
-///
-/// Commutative ops (`Add`, `Mul`, `And`, `Or`, `Xor`) will try both operand
-/// orderings automatically.  Because `int_binary_any` returns a `Pat` directly
-/// rather than a builder, there is no `.ordered()` method.
-pub fn int_binary_any(op_var: IntBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    // At construction time: match any IntBinaryOp node; at match time decide
-    // commutativity based on the concrete op variant observed on the node.
-    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-        match ctx.graph.graph.node_kind(node) {
-            NodeKind::IntBinaryOp(op) => is_commutative_int_op(*op),
-            _ => false,
+// `binary` / `cmp` / `unary` tags select the ctor's input layout + arity.
+// Commutativity deciders and missing-binding messages are derived from the
+// enum / Var names.
+macro_rules! impl_variant_any {
+    // Binary-arity ($ctor) with a runtime commutativity decider.
+    (binary, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+     $commutative:path, $build_ty:expr, $missing:literal, $doc:literal) => {
+        #[doc = $doc]
+        pub fn $fn_name(op_var: $op_var, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+            let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
+                match ctx.graph.graph.node_kind(node) {
+                    NodeKind::$op_enum(op) => $commutative(*op),
+                    _ => false,
+                }
+            });
+            NodePat::matcher(
+                Arc::new(|ctx, node, _b| {
+                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
+                }),
+                inputs,
+            )
+            .with_build(Arc::new(move |ctx| {
+                let op = ctx
+                    .bindings
+                    .$get(op_var)
+                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                Ok(NodeKind::$op_enum(op))
+            }))
+            .with_build_ty($build_ty)
+            .with_post_match(Arc::new(move |ctx, node, b| {
+                match ctx.graph.graph.node_kind(node) {
+                    NodeKind::$op_enum(op) => b.$bind(op_var, *op),
+                    _ => false,
+                }
+            }))
+            .into_pat()
         }
-    });
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_int_binary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("IntBinaryOpVar"))?;
-            Ok(NodeKind::IntBinaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(_))
-        }),
-        inputs,
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::IntBinaryOp(op) => b.bind_int_binary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
-
-/// Matches **any** integer unary operation and binds the actual operator
-/// variant to `op`.
-pub fn int_unary_any(op_var: IntUnaryOpVar, operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_int_unary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("IntUnaryOpVar"))?;
-            Ok(NodeKind::IntUnaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntUnaryOp(_))
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::IntUnaryOp(op) => b.bind_int_unary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
-
-/// Matches **any** integer comparison and binds the actual operator variant
-/// to `op`.
-///
-/// Commutative comparisons (`Equal`, `Carry`, `Scarry`) try both operand
-/// orderings automatically.
-pub fn int_cmp_any(op_var: IntCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-        match ctx.graph.graph.node_kind(node) {
-            NodeKind::IntCmpOp(op) => is_commutative_int_cmp_op(*op),
-            _ => false,
+    };
+    // Cmp-arity: two inputs, no commutativity retry.
+    (cmp, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+     $build_ty:expr, $missing:literal, $doc:literal) => {
+        #[doc = $doc]
+        pub fn $fn_name(op_var: $op_var, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+            NodePat::matcher(
+                Arc::new(|ctx, node, _b| {
+                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
+                }),
+                InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
+            )
+            .with_build(Arc::new(move |ctx| {
+                let op = ctx
+                    .bindings
+                    .$get(op_var)
+                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                Ok(NodeKind::$op_enum(op))
+            }))
+            .with_build_ty($build_ty)
+            .with_post_match(Arc::new(move |ctx, node, b| {
+                match ctx.graph.graph.node_kind(node) {
+                    NodeKind::$op_enum(op) => b.$bind(op_var, *op),
+                    _ => false,
+                }
+            }))
+            .into_pat()
         }
-    });
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_int_cmp_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("IntCmpOpVar"))?;
-            Ok(NodeKind::IntCmpOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntCmpOp(_))
-        }),
-        inputs,
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::IntCmpOp(op) => b.bind_int_cmp_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
-
-/// Matches **any** boolean binary operation and binds the actual operator
-/// variant to `op`.
-///
-/// Commutative ops (`And`, `Or`, `Xor`) try both operand orderings
-/// automatically.
-pub fn bool_binary_any(op_var: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-        match ctx.graph.graph.node_kind(node) {
-            NodeKind::BoolBinaryOp(op) => is_commutative_bool_op(*op),
-            _ => false,
+    };
+    // Unary-arity: one input.
+    (unary, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+     $build_ty:expr, $missing:literal, $doc:literal) => {
+        #[doc = $doc]
+        pub fn $fn_name(op_var: $op_var, operand: impl Into<Pat>) -> Pat {
+            NodePat::matcher(
+                Arc::new(|ctx, node, _b| {
+                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
+                }),
+                InputsSpec::fixed_ordered(vec![operand.into()]),
+            )
+            .with_build(Arc::new(move |ctx| {
+                let op = ctx
+                    .bindings
+                    .$get(op_var)
+                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                Ok(NodeKind::$op_enum(op))
+            }))
+            .with_build_ty($build_ty)
+            .with_post_match(Arc::new(move |ctx, node, b| {
+                match ctx.graph.graph.node_kind(node) {
+                    NodeKind::$op_enum(op) => b.$bind(op_var, *op),
+                    _ => false,
+                }
+            }))
+            .into_pat()
         }
-    });
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_bool_binary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("BoolBinaryOpVar"))?;
-            Ok(NodeKind::BoolBinaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(_))
-        }),
-        inputs,
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::BoolBinaryOp(op) => b.bind_bool_binary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
+    };
 }
 
-/// Matches **any** boolean unary operation and binds the actual operator
-/// variant to `op`.
-pub fn bool_unary_any(op_var: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_bool_unary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("BoolUnaryOpVar"))?;
-            Ok(NodeKind::BoolUnaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(_))
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::BoolUnaryOp(op) => b.bind_bool_unary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
+// Shorthands for each family's constant result type.
+fn bool_ty() -> BuildTy { BuildTy::Fixed(ir::node::NodeOutputType::Bool) }
 
-/// Matches **any** float binary operation and binds the actual operator
-/// variant to `op`.
-///
-/// Commutative ops (`Add`, `Mul`) try both operand orderings automatically.
-pub fn float_binary_any(
-    op_var: FloatBinaryOpVar,
-    lhs: impl Into<Pat>,
-    rhs: impl Into<Pat>,
-) -> Pat {
-    let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-        match ctx.graph.graph.node_kind(node) {
-            NodeKind::FloatBinaryOp(op) => is_commutative_float_op(*op),
-            _ => false,
-        }
-    });
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_float_binary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("FloatBinaryOpVar"))?;
-            Ok(NodeKind::FloatBinaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(_))
-        }),
-        inputs,
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::FloatBinaryOp(op) => b.bind_float_binary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
+impl_variant_any!(
+    binary, int_binary_any, IntBinaryOp, IntBinaryOpVar,
+    bind_int_binary_op, get_int_binary_op,
+    is_commutative_int_op, BuildTy::InheritRoot, "IntBinaryOpVar",
+    "Matches **any** integer binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`Add`, `Mul`, `And`, `Or`, `Xor`) will try both operand orderings automatically."
+);
 
-/// Matches **any** float unary operation and binds the actual operator
-/// variant to `op`.
-pub fn float_unary_any(op_var: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_float_unary_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("FloatUnaryOpVar"))?;
-            Ok(NodeKind::FloatUnaryOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(_))
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::FloatUnaryOp(op) => b.bind_float_unary_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
+impl_variant_any!(
+    unary, int_unary_any, IntUnaryOp, IntUnaryOpVar,
+    bind_int_unary_op, get_int_unary_op,
+    BuildTy::InheritRoot, "IntUnaryOpVar",
+    "Matches **any** integer unary operation and binds the actual operator variant to `op`."
+);
 
-/// Matches **any** float comparison and binds the actual operator variant
-/// to `op`.
-///
-/// No float comparison operators are currently treated as commutative, so no
-/// automatic operand-swap retry is attempted.
-pub fn float_cmp_any(op_var: FloatCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let op = ctx.bindings
-                .get_float_cmp_op(op_var)
-                .ok_or(crate::error::ErrorKind::MissingBinding("FloatCmpOpVar"))?;
-            Ok(NodeKind::FloatCmpOp(op))
-        })),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(_))
-        }),
-        inputs: InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
-        post_match: Some(Arc::new(move |ctx, node, b| {
-            match ctx.graph.graph.node_kind(node) {
-                NodeKind::FloatCmpOp(op) => b.bind_float_cmp_op(op_var, *op),
-                _ => false,
-            }
-        })),
-        output_var: None,
-        node_var: None,
-    }))
-}
+impl_variant_any!(
+    binary, int_cmp_any, IntCmpOp, IntCmpOpVar,
+    bind_int_cmp_op, get_int_cmp_op,
+    is_commutative_int_cmp_op, bool_ty(), "IntCmpOpVar",
+    "Matches **any** integer comparison and binds the actual operator variant to `op`.\n\nCommutative comparisons (`Equal`, `Carry`, `Scarry`) try both operand orderings automatically."
+);
+
+impl_variant_any!(
+    binary, bool_binary_any, BoolBinaryOp, BoolBinaryOpVar,
+    bind_bool_binary_op, get_bool_binary_op,
+    is_commutative_bool_op, bool_ty(), "BoolBinaryOpVar",
+    "Matches **any** boolean binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically."
+);
+
+impl_variant_any!(
+    unary, bool_unary_any, BoolUnaryOp, BoolUnaryOpVar,
+    bind_bool_unary_op, get_bool_unary_op,
+    bool_ty(), "BoolUnaryOpVar",
+    "Matches **any** boolean unary operation and binds the actual operator variant to `op`."
+);
+
+impl_variant_any!(
+    binary, float_binary_any, FloatBinaryOp, FloatBinaryOpVar,
+    bind_float_binary_op, get_float_binary_op,
+    is_commutative_float_op, BuildTy::InheritRoot, "FloatBinaryOpVar",
+    "Matches **any** float binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`Add`, `Mul`) try both operand orderings automatically."
+);
+
+impl_variant_any!(
+    unary, float_unary_any, FloatUnaryOp, FloatUnaryOpVar,
+    bind_float_unary_op, get_float_unary_op,
+    BuildTy::InheritRoot, "FloatUnaryOpVar",
+    "Matches **any** float unary operation and binds the actual operator variant to `op`."
+);
+
+impl_variant_any!(
+    cmp, float_cmp_any, FloatCmpOp, FloatCmpOpVar,
+    bind_float_cmp_op, get_float_cmp_op,
+    bool_ty(), "FloatCmpOpVar",
+    "Matches **any** float comparison and binds the actual operator variant to `op`.\n\nNo float comparison operators are currently treated as commutative, so no automatic operand-swap retry is attempted."
+);

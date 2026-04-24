@@ -25,9 +25,12 @@ impl<'g> FunctionArgHandle<'g> {
     }
 
     /// The `NodeOutputId` of this `FunctionArg`'s single value output.
-    pub fn output(&self) -> NodeOutputId {
-        let outs = self.fn_graph.graph.node_outputs(self.node_id);
-        outs[0]
+    ///
+    /// Returns `None` if the node has no outputs — this cannot happen for a
+    /// correctly-constructed `FunctionArg`, but the method signature surfaces
+    /// the possibility rather than panicking.
+    pub fn output(&self) -> Option<NodeOutputId> {
+        self.fn_graph.graph.node_outputs(self.node_id).into_iter().next()
     }
 
     /// The argument's ABI source (register or stack slot).
@@ -46,7 +49,7 @@ impl<'g> FunctionArgHandle<'g> {
     /// happen for a correctly-constructed `FunctionArg`, but the method
     /// signature surfaces the possibility rather than panicking.
     pub fn width(&self) -> Option<NodeOutputType> {
-        match self.fn_graph.graph.output_kind(self.output()) {
+        match self.fn_graph.graph.output_kind(self.output()?) {
             NodeOutputKind::OutputType(t) => Some(t),
             _ => None,
         }

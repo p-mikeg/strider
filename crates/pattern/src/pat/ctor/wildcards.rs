@@ -5,8 +5,8 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::pat::any::AnyPat;
-use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::any::{AnyPat, VarPat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
 use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, Pat};
 use crate::var::Var;
 
@@ -18,9 +18,11 @@ pub fn any() -> Pat {
 /// Matches any output and binds it to `v`.
 ///
 /// If `v` is already bound the output must equal the stored binding.
-/// Shorthand for `any().capture(v)`.
+/// Equivalent in behavior to `any().capture(v)`, but constructs a dedicated
+/// [`VarPat`] rather than wrapping [`AnyPat`] in a [`CapturePat`] — one
+/// fewer vtable hop and no backtracking snapshot per match.
 pub fn var(v: Var) -> Pat {
-    any().capture(v)
+    Pat::from_dyn(Arc::new(VarPat { var: v }))
 }
 
 /// Matches an `IntConst` node with value exactly `v`.
@@ -28,53 +30,39 @@ pub fn var(v: Var) -> Pat {
 /// In build position (RHS of a rewrite rule), constructs an `IntConst(v)`
 /// node at the root type.
 pub fn int_const(v: u64) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::IntConst(v)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(c) if *c == v)
         }),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::None,
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::IntConst(v))))
+    .into_pat()
 }
 
 /// Matches a `BoolConst` node with value exactly `v`.
 pub fn bool_const(v: bool) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::BoolConst(v)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(c) if *c == v)
         }),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::None,
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::BoolConst(v))))
+    .with_build_ty(BuildTy::Fixed(NodeOutputType::Bool))
+    .into_pat()
 }
 
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
 pub fn float_const(bits: u64) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatConst(bits)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(c) if *c == bits)
         }),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::None,
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::FloatConst(bits))))
+    .into_pat()
 }
 
 /// Matches any `IntConst` node and binds either the output (for a [`Var`]) or

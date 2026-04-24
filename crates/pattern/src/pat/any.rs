@@ -16,6 +16,30 @@ impl Pattern for AnyPat {
     }
 }
 
+/// Matches any output and binds it to `var`.  Dedicated type so the very
+/// common `var(v)` path avoids the double dispatch + snapshot of the
+/// general-purpose [`CapturePat`] wrapping [`AnyPat`].  Produced only by
+/// [`crate::pat::var`]; `any().capture(v)` still yields a `CapturePat`.
+pub struct VarPat {
+    pub(crate) var: Var,
+}
+
+impl Pattern for VarPat {
+    fn try_match(&self, _: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
+        // `bind_var` is self-contained: it returns false on conflict without
+        // mutating, so no snapshot is needed.
+        b.bind_var(self.var, target)
+    }
+
+    fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
+        let out = ctx
+            .bindings
+            .get(self.var)
+            .ok_or(ErrorKind::MissingBinding("Var"))?;
+        Ok(BuildOutcome::Out(out))
+    }
+}
+
 /// Matches `inner`, then additionally binds the matched output to `var`.
 /// Produced by [`crate::pat::IntoPat::capture`] /
 /// [`crate::pat::Pat::capture_impl`].

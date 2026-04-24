@@ -13,8 +13,8 @@ pub(crate) mod node_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
-    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
-    IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
+    BoolBinaryOpPat, CallOtherPat, CallPat, CaptureBuilder, FloatBinaryOpPat, FunctionArgPat,
+    IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
 };
 pub use ctor::*;
 
@@ -34,160 +34,81 @@ pub type MatchPredicateFn = Arc<
 >;
 
 // ── Const-capture overloading traits ──────────────────────────────────────────
+//
+// Three near-identical pairs (Int/Bool/Float × `Var` / typed `*Var`) — the
+// macro below expands each to the ~30-line pattern that was open-coded
+// before.  `Var` impls match "any foo-const node" and bind the matched
+// output; typed-Var impls additionally bind the concrete value and (in build
+// position) emit a fresh const node from the captured value.
 
-/// Sealed trait used by [`any_int_const`] to accept either a [`Var`] (binds
-/// the matched `NodeOutputId`) or an [`IntVar`] (binds the concrete
-/// constant value as `u64`).
-pub trait IntoAnyIntConst: sealed::SealedAnyIntConst {
-    #[doc(hidden)]
-    fn into_any_int_const_pat(self) -> Pat;
+macro_rules! decl_any_const {
+    (
+        trait $trait:ident, sealed $sealed:ident, method $method:ident,
+        variant $variant:ident, $build_ty:expr,
+        typed $typed:ty, $bind:ident, $get:ident, $missing:literal
+    ) => {
+        #[doc = concat!(
+            "Sealed trait used by `any_",
+            stringify!($variant),
+            "` to accept either a [`Var`] (binds the matched `NodeOutputId`) or a typed capture that binds the concrete constant value."
+        )]
+        pub trait $trait: sealed::$sealed {
+            #[doc(hidden)]
+            fn $method(self) -> Pat;
+        }
+
+        impl $trait for Var {
+            fn $method(self) -> Pat {
+                crate::pat::node_pat::NodePat::matcher(
+                    Arc::new(|ctx, node, _b| {
+                        matches!(ctx.graph.graph.node_kind(node), NodeKind::$variant(_))
+                    }),
+                    crate::pat::node_pat::InputsSpec::None,
+                )
+                .with_output_var(Some(self))
+                .into_pat()
+            }
+        }
+
+        impl $trait for $typed {
+            fn $method(self) -> Pat {
+                let tv = self;
+                crate::pat::node_pat::NodePat::matcher(
+                    Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
+                        NodeKind::$variant(v) => b.$bind(tv, *v),
+                        _ => false,
+                    }),
+                    crate::pat::node_pat::InputsSpec::None,
+                )
+                .with_build(Arc::new(move |ctx| {
+                    let v = ctx
+                        .bindings
+                        .$get(tv)
+                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                    Ok(NodeKind::$variant(v))
+                }))
+                .with_build_ty($build_ty)
+                .into_pat()
+            }
+        }
+    };
 }
 
-impl IntoAnyIntConst for Var {
-    fn into_any_int_const_pat(self) -> Pat {
-        // Match any IntConst; bind the output to `self` via NodePat.output_var.
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: None,
-            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(|ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(_))
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: Some(self),
-            node_var: None,
-        }))
-    }
-}
-
-impl IntoAnyIntConst for IntVar {
-    fn into_any_int_const_pat(self) -> Pat {
-        // Match any IntConst; bind the concrete value to the IntVar.
-        // In build position, emit `IntConst(bindings[iv])` at the root type.
-        let iv = self;
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: Some(Arc::new(move |ctx| {
-                let v = ctx.bindings
-                    .get_int(iv)
-                    .ok_or(crate::error::ErrorKind::MissingBinding("IntVar"))?;
-                Ok(NodeKind::IntConst(v))
-            })),
-            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
-                NodeKind::IntConst(v) => b.bind_int(iv, *v),
-                _ => false,
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: None,
-            node_var: None,
-        }))
-    }
-}
-
-/// Sealed trait used by [`any_bool_const`] to accept either a [`Var`] or a
-/// [`BoolVar`].
-pub trait IntoAnyBoolConst: sealed::SealedAnyBoolConst {
-    #[doc(hidden)]
-    fn into_any_bool_const_pat(self) -> Pat;
-}
-
-impl IntoAnyBoolConst for Var {
-    fn into_any_bool_const_pat(self) -> Pat {
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: None,
-            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(|ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(_))
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: Some(self),
-            node_var: None,
-        }))
-    }
-}
-
-impl IntoAnyBoolConst for BoolVar {
-    fn into_any_bool_const_pat(self) -> Pat {
-        let bv = self;
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: Some(Arc::new(move |ctx| {
-                let v = ctx.bindings
-                    .get_bool(bv)
-                    .ok_or(crate::error::ErrorKind::MissingBinding("BoolVar"))?;
-                Ok(NodeKind::BoolConst(v))
-            })),
-            build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
-                NodeKind::BoolConst(v) => b.bind_bool(bv, *v),
-                _ => false,
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: None,
-            node_var: None,
-        }))
-    }
-}
-
-/// Sealed trait used by [`any_float_const`] to accept either a [`Var`] or a
-/// [`FloatVar`].
-pub trait IntoAnyFloatConst: sealed::SealedAnyFloatConst {
-    #[doc(hidden)]
-    fn into_any_float_const_pat(self) -> Pat;
-}
-
-impl IntoAnyFloatConst for Var {
-    fn into_any_float_const_pat(self) -> Pat {
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: None,
-            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(|ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(_))
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: Some(self),
-            node_var: None,
-        }))
-    }
-}
-
-impl IntoAnyFloatConst for FloatVar {
-    fn into_any_float_const_pat(self) -> Pat {
-        let fv = self;
-        Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
-            kind_build: Some(Arc::new(move |ctx| {
-                let bits = ctx.bindings
-                    .get_float_bits(fv)
-                    .ok_or(crate::error::ErrorKind::MissingBinding("FloatVar"))?;
-                Ok(NodeKind::FloatConst(bits))
-            })),
-            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-            outputs: crate::pat::node_pat::OutputsSpec::None,
-            consumers: crate::pat::node_pat::ConsumersSpec::None,
-            kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
-                NodeKind::FloatConst(bits) => b.bind_float(fv, *bits),
-                _ => false,
-            }),
-            inputs: crate::pat::node_pat::InputsSpec::None,
-            post_match: None,
-            output_var: None,
-            node_var: None,
-        }))
-    }
-}
+decl_any_const!(
+    trait IntoAnyIntConst, sealed SealedAnyIntConst, method into_any_int_const_pat,
+    variant IntConst, crate::pat::node_pat::BuildTy::InheritRoot,
+    typed IntVar, bind_int, get_int, "IntVar"
+);
+decl_any_const!(
+    trait IntoAnyBoolConst, sealed SealedAnyBoolConst, method into_any_bool_const_pat,
+    variant BoolConst, crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
+    typed BoolVar, bind_bool, get_bool, "BoolVar"
+);
+decl_any_const!(
+    trait IntoAnyFloatConst, sealed SealedAnyFloatConst, method into_any_float_const_pat,
+    variant FloatConst, crate::pat::node_pat::BuildTy::InheritRoot,
+    typed FloatVar, bind_float, get_float_bits, "FloatVar"
+);
 
 mod sealed {
     use crate::var::{BoolVar, FloatVar, IntVar, Var};

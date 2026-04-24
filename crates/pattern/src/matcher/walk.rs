@@ -15,11 +15,12 @@ use super::Matcher;
 /// multiple consumers. We refuse to pick arbitrarily when a control output
 /// forks, so callers see a clean no-match rather than an unpredictable one.
 pub(crate) fn next_control_node(matcher: &Matcher, out: NodeOutputId) -> Option<NodeId> {
-    let consumers: Vec<_> = matcher.fn_graph.graph.output_uses(out).collect();
-    if consumers.len() != 1 {
+    let mut uses = matcher.fn_graph.graph.output_uses(out);
+    let first = uses.next()?;
+    if uses.next().is_some() {
         return None;
     }
-    Some(consumers[0].0)
+    Some(first.0)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

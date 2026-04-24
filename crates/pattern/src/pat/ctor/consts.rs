@@ -41,26 +41,22 @@ pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
     }
 }
 
+/// Match-only-false kind_match shared by every `*_const_with_fn` — these
+/// patterns are build-only; landing one on an LHS is a silent no-match
+/// rather than a panic.
+fn never_match_kind() -> crate::pat::node_pat::NodeKindCheck {
+    Arc::new(|_ctx, _node, _b| false)
+}
+
 /// Builds an `IntConst` node whose value is computed by `f` at build time.
 pub fn int_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let v = f(ctx)?;
-            Ok(NodeKind::IntConst(v))
-        })),
-        build_result_ty: BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|_ctx, _node, _b| false),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    NodePat::matcher(never_match_kind(), InputsSpec::None)
+        .with_build(Arc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?))))
+        .into_pat()
 }
 
 /// Builds a `BoolConst` node whose value is computed by `f` at build time.
@@ -69,20 +65,10 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
 {
     let f: BuildValueFn<bool> = Arc::new(f);
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let v = f(ctx)?;
-            Ok(NodeKind::BoolConst(v))
-        })),
-        build_result_ty: BuildTy::Fixed(NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|_ctx, _node, _b| false),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    NodePat::matcher(never_match_kind(), InputsSpec::None)
+        .with_build(Arc::new(move |ctx| Ok(NodeKind::BoolConst(f(ctx)?))))
+        .with_build_ty(BuildTy::Fixed(NodeOutputType::Bool))
+        .into_pat()
 }
 
 /// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed by
@@ -92,20 +78,9 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |ctx| {
-            let bits = f(ctx)?;
-            Ok(NodeKind::FloatConst(bits))
-        })),
-        build_result_ty: BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(|_ctx, _node, _b| false),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+    NodePat::matcher(never_match_kind(), InputsSpec::None)
+        .with_build(Arc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?))))
+        .into_pat()
 }
 
 /// Extract a typed value from a [`BuildCtx`] given a capture variable.

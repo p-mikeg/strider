@@ -12,7 +12,7 @@ use ir::{BoolBinaryOp, BoolUnaryOp};
 use crate::macros::{decl_pat_binary_ops, decl_pat_unary_ops};
 use crate::pat::BoolBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
 
 /// Matches a boolean binary operation with the given `op`.
 ///
@@ -32,19 +32,15 @@ decl_pat_binary_ops!(bool_binary, BoolBinaryOp, BoolBinaryOpPat, [
 
 /// Matches a boolean unary operation with the given `op`.
 pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::BoolUnaryOp(op)))),
-        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(x) if *x == op)
         }),
-        inputs: InputsSpec::fixed_ordered(vec![operand.into()]),
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::fixed_ordered(vec![operand.into()]),
+    )
+    .with_build(Arc::new(move |_b| Ok(NodeKind::BoolUnaryOp(op))))
+    .with_build_ty(BuildTy::Fixed(ir::node::NodeOutputType::Bool))
+    .into_pat()
 }
 
 decl_pat_unary_ops!(bool_unary, BoolUnaryOp, Pat, [

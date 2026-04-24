@@ -109,14 +109,27 @@ impl<'g> Matcher<'g> {
         self.make_function_arg_handle(node_id)
     }
 
-    /// Returns `max(index) + 1` across all `FunctionArg` nodes in the graph,
-    /// or `0` if the graph has none.  Equivalent to "the declared arg count
-    /// that `FunctionArgDetect` was able to identify."
+    /// Returns the **highest observed** argument index plus one, or `0` if
+    /// the graph has no `FunctionArg` nodes.
+    ///
+    /// `FunctionArgDetect` does not enforce contiguous indices — a function
+    /// that reads only `rdx` (the third x86_64 arg) will yield a
+    /// `FunctionArg { index: 2, .. }` with no entries at indices 0 or 1.
+    /// In that case this method returns `3` but `function_arg(0)` and
+    /// `function_arg(1)` both return `None`.  Use [`Self::function_arg_len`]
+    /// for the actual population count.
     pub fn function_arg_count(&self) -> usize {
         match self.function_arg_index().0.keys().max() {
             Some(&m) => (m as usize) + 1,
             None => 0,
         }
+    }
+
+    /// Returns the number of distinct `FunctionArg` nodes in the graph.
+    /// Unlike [`Self::function_arg_count`] this is insensitive to gaps in
+    /// the index space.
+    pub fn function_arg_len(&self) -> usize {
+        self.function_arg_index().0.len()
     }
 
     /// Iterates over every `FunctionArg` node, yielding `(index, handle)`

@@ -169,6 +169,13 @@ impl Match {
         let (node, slot) = graph.graph.output_definition(out);
         match graph.graph.node_kind(node) {
             NodeKind::InitialVar(vn) => Some(*vn),
+            // Call output layout (fixed by `node_signature::expected_signature`
+            // for `NodeKind::Call`): slot 0 = Control, slot 1 = Memory,
+            // slots 2.. = value returns corresponding to
+            // `call_clobbered[0..]`.  The ABI return regs are front-loaded in
+            // `call_clobbered` so `slot = 2 + i` maps to
+            // `call_clobbered[i]`.  If this invariant ever shifts the
+            // signature table is the place to audit.
             NodeKind::Call if slot >= 2 => {
                 let idx = (slot - 2) as usize;
                 graph.call_clobbered.get(idx).copied()

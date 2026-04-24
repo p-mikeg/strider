@@ -1,11 +1,36 @@
-//! Phi / function-entry / call / return / branch constructors.
+//! Memory / phi / function-entry / call / return / branch constructors.
+//!
+//! These are the "structural" pattern ctors — all of them are thin
+//! forwards to the builder types in [`super::super::builders`].  Grouped
+//! in one file rather than scattered across tiny per-family files
+//! (memory.rs, control.rs) because each ctor is a one-liner; the file as
+//! a whole is still under 120 lines.
 
 use std::sync::Arc;
 
 use ir::node::{FunctionArgSource, NodeKind};
 
 use crate::pat::node_pat::{InputsSpec, NodePat};
-use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PhiPat, RetPat};
+use crate::pat::{
+    CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, Pat, PhiPat, RetPat, StackStorePat,
+    StackStorePhiPat, StorePat,
+};
+
+// ── Memory ops ────────────────────────────────────────────────────────────────
+
+/// Starts building a `Load` pattern.  Chain `.addr()` / `.space()` to add
+/// constraints.
+pub fn load() -> LoadPat { LoadPat::new() }
+/// Starts building a `Store` pattern.  Chain `.addr()` / `.data()` / `.space()`
+/// to add constraints.
+pub fn store() -> StorePat { StorePat::new() }
+/// Starts building a `StackStore` pattern.  Chain `.offset()` / `.data()` /
+/// `.space()` to add constraints.
+pub fn stack_store() -> StackStorePat { StackStorePat::new() }
+/// Starts building a `StackStorePhi` pattern.  Chain `.offsets(…)` /
+/// `.data()` / `.space()` to add constraints.
+pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
+
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
@@ -30,27 +55,16 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
 }
 
 fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
-    Pat::from_dyn(Arc::new(NodePat {
-        kind_build: None,
-        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
-        outputs: crate::pat::node_pat::OutputsSpec::None,
-        consumers: crate::pat::node_pat::ConsumersSpec::None,
-        kind_match: Arc::new(move |ctx, node, _b| {
+    NodePat::matcher(
+        Arc::new(move |ctx, node, _b| {
             let NodeKind::InitialVar(actual_vn) = ctx.graph.graph.node_kind(node) else {
                 return false;
             };
-            if let Some(expected) = vn
-                && *actual_vn != expected
-            {
-                return false;
-            }
-            true
+            vn.is_none_or(|expected| *actual_vn == expected)
         }),
-        inputs: InputsSpec::None,
-        post_match: None,
-        output_var: None,
-        node_var: None,
-    }))
+        InputsSpec::None,
+    )
+    .into_pat()
 }
 
 // ── Function-argument constructors ────────────────────────────────────────────

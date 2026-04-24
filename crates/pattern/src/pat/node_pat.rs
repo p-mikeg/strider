@@ -27,6 +27,19 @@ use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
+///
+/// # Follow-up: `KindMatch` enum
+///
+/// Today every candidate node hits a dynamic closure just to compare a
+/// `NodeKind` discriminant (and occasionally embedded data like an op
+/// variant or space).  An `enum KindMatch { Exact(NodeKind),
+/// IntBinaryAny, FloatCmpAny, …, Custom(Arc<dyn Fn>) }` would let the hot
+/// path do a branch-and-discriminant compare instead of a vtable call,
+/// *and* enable `Matcher::find_all` to pre-filter candidate nodes by the
+/// root pattern's expected kind family (most rewrite rules have a
+/// concrete root — `add`, `load`, `call` — so the walk becomes
+/// `O(matching nodes)` instead of `O(all nodes)`).  The escape-hatch
+/// `Custom` variant preserves today's full flexibility.
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
 
@@ -59,6 +72,15 @@ pub struct NodePat {
     /// Checks the node's kind (and any kind-embedded data — e.g. constants,
     /// varnodes, spaces, offsets, phi offsets). May bind typed-constant
     /// values or operator variants.
+    ///
+    /// **Invariant** — when `inputs` is `InputsSpec::Fixed { pats, commutative }`
+    /// with `pats.len() == 2` and `commutative(...)` can return `true`, this
+    /// closure must NOT perform bindings that could vary between the forward
+    /// and swapped attempt.  The commutative retry path restores bindings to
+    /// the post-`kind_match` snapshot and re-runs input matching only — if
+    /// `kind_match` could bind differently on re-entry the snapshot would not
+    /// be restored.  Patterns that need to bind should do so in `post_match`
+    /// instead (see `variant_agnostic.rs` for the canonical example).
     pub(crate) kind_match: NodeKindCheck,
     /// Build-side counterpart to `kind_match`: produces the [`NodeKind`] to
     /// materialize.  `None` means "match-only" (default for wildcards,
@@ -205,6 +227,62 @@ impl Pattern for NodePat {
 }
 
 impl NodePat {
+    /// Minimal matcher-only `NodePat` with every build-side / capture-side
+    /// field set to its default.  Chain `.with_*` setters to populate only
+    /// the fields a particular ctor actually uses.
+    pub(crate) fn matcher(kind_match: NodeKindCheck, inputs: InputsSpec) -> Self {
+        Self {
+            kind_match,
+            kind_build: None,
+            build_result_ty: BuildTy::InheritRoot,
+            inputs,
+            outputs: OutputsSpec::None,
+            consumers: ConsumersSpec::None,
+            post_match: None,
+            output_var: None,
+            node_var: None,
+        }
+    }
+
+    pub(crate) fn with_build(mut self, b: NodeKindBuilder) -> Self {
+        self.kind_build = Some(b);
+        self
+    }
+
+    pub(crate) fn with_build_ty(mut self, t: BuildTy) -> Self {
+        self.build_result_ty = t;
+        self
+    }
+
+    pub(crate) fn with_outputs(mut self, o: OutputsSpec) -> Self {
+        self.outputs = o;
+        self
+    }
+
+    pub(crate) fn with_consumers(mut self, c: ConsumersSpec) -> Self {
+        self.consumers = c;
+        self
+    }
+
+    pub(crate) fn with_post_match(mut self, pm: NodeKindCheck) -> Self {
+        self.post_match = Some(pm);
+        self
+    }
+
+    pub(crate) fn with_output_var(mut self, v: Option<crate::var::Var>) -> Self {
+        self.output_var = v;
+        self
+    }
+
+    pub(crate) fn with_node_var(mut self, nv: Option<crate::var::NodeVar>) -> Self {
+        self.node_var = nv;
+        self
+    }
+
+    pub(crate) fn into_pat(self) -> crate::pat::Pat {
+        crate::pat::Pat::from_dyn(Arc::new(self))
+    }
+
     /// Core match pipeline shared by output-rooted (`try_match`) and
     /// node-rooted (`try_match_node` for zero-output nodes) entry points.
     /// `target` is the `NodeOutputId` the match started from, if any — it
@@ -216,13 +294,20 @@ impl NodePat {
         target: Option<NodeOutputId>,
         b: &mut Bindings,
     ) -> bool {
-        let snap = b.clone();
-
+        // Fail-fast before any snapshot.  `kind_match` contract: must not
+        // mutate `b` on a false return.  All current implementations satisfy
+        // this — they either do a pure `matches!` check or call a `bind_*`
+        // helper, and the binders are themselves no-ops on conflict.  For a
+        // preorder walk most candidate nodes miss here, so skipping the clone
+        // on the miss path is the dominant win.
         if !(self.kind_match)(ctx, node, b) {
-            *b = snap;
             return false;
         }
 
+        // Single snapshot used for both the commutative retry and the
+        // total-failure rollback.  Taken after `kind_match` so any bindings
+        // it performed (e.g. `IntVar` capture in `IntoAnyIntConst`) survive
+        // a commutative retry of the input arm.
         let after_kind = b.clone();
 
         if try_once(self, ctx, node, target, b, false) {
@@ -233,13 +318,13 @@ impl NodePat {
             && pats.len() == 2
             && commutative(ctx, node)
         {
-            *b = after_kind;
+            *b = after_kind.clone();
             if try_once(self, ctx, node, target, b, true) {
                 return true;
             }
         }
 
-        *b = snap;
+        *b = after_kind;
         false
     }
 }
@@ -260,27 +345,19 @@ fn try_once(
             if inputs.len() != pats.len() {
                 return false;
             }
-            if swap {
-                let (Some(&i0), Some(&i1)) = (inputs.get(0), inputs.get(1)) else {
+            // `swap` is only ever true when `pats.len() == 2` (enforced by
+            // caller) — but re-assert defensively: the swapped arm would
+            // otherwise read stale pat indices.
+            if swap && pats.len() != 2 {
+                return false;
+            }
+            for (pat_idx, sub_pat) in pats.iter().enumerate() {
+                let inp_idx = if swap { 1 - pat_idx } else { pat_idx };
+                let Some(&inp) = inputs.get(inp_idx) else {
                     return false;
                 };
-                if pats.len() != 2 {
+                if !match_one(ctx, inp, sub_pat, b) {
                     return false;
-                }
-                if !match_one(ctx, i1, &pats[0], b) {
-                    return false;
-                }
-                if !match_one(ctx, i0, &pats[1], b) {
-                    return false;
-                }
-            } else {
-                for (i, sub_pat) in pats.iter().enumerate() {
-                    let Some(&inp) = inputs.get(i) else {
-                        return false;
-                    };
-                    if !match_one(ctx, inp, sub_pat, b) {
-                        return false;
-                    }
                 }
             }
         }
@@ -297,9 +374,12 @@ fn try_once(
         }
     }
 
-    // (b) match outputs by index (NodeOutputId sub-patterns)
-    if let OutputsSpec::Indexed(items) = &pat.outputs {
-        let outputs = ctx.graph.graph.node_outputs(node);
+    // (b,c) outputs + consumers — both index into the same slice, fetch once.
+    let needs_outputs = matches!(pat.outputs, OutputsSpec::Indexed(_))
+        || matches!(pat.consumers, ConsumersSpec::Indexed(_));
+    let outputs = needs_outputs.then(|| ctx.graph.graph.node_outputs(node));
+
+    if let (OutputsSpec::Indexed(items), Some(outputs)) = (&pat.outputs, &outputs) {
         for (i, p) in items {
             let Some(&out) = outputs.get(*i) else {
                 return false;
@@ -310,9 +390,7 @@ fn try_once(
         }
     }
 
-    // (c) match single consumer of outputs by index
-    if let ConsumersSpec::Indexed(items) = &pat.consumers {
-        let outputs = ctx.graph.graph.node_outputs(node);
+    if let (ConsumersSpec::Indexed(items), Some(outputs)) = (&pat.consumers, &outputs) {
         for (i, p) in items {
             let Some(&out) = outputs.get(*i) else {
                 return false;
