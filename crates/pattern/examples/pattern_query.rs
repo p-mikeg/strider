@@ -176,7 +176,7 @@ fn example_calls_and_returns() {
 
     // ── Capture the call node id ──────────────────────────────────────────────
     let cv = NodeVar::new();
-    let hits = m.find_all(&call().at(0x2000).capture(cv).into());
+    let hits = m.find_all(&call().at(0x2000).capture_node(cv).into());
     if let Some(hit) = hits.first() {
         let nid = hit.get_node(cv).unwrap();
         println!("Captured call node kind: {:?}", graph.graph.node_kind(nid)); // Call
@@ -207,7 +207,7 @@ fn example_calls_and_returns() {
     let rv = NodeVar::new();
     let hits = m.find_all(
         &ret()
-            .preceded_by(call().target(var(addr)).capture(rv))
+            .preceded_by(call().target(var(addr)).capture_node(rv))
             .into(),
     );
     if let Some(hit) = hits.first() {
@@ -277,7 +277,7 @@ fn example_if_branches() {
 
     // ── Capture the If node id ────────────────────────────────────────────────
     let iv = NodeVar::new();
-    let hits = m.find_all(&if_node().capture(iv).into());
+    let hits = m.find_all(&if_node().capture_node(iv).into());
     if let Some(hit) = hits.first() {
         println!(
             "If node kind: {:?}",
@@ -331,7 +331,7 @@ fn example_captures() {
     // ── Match a return with a specific value and capture it ───────────────────
     let val_v = Var::new();
     let ret_v = NodeVar::new();
-    let hits = m.find_all(&ret().ret_val(0, var(val_v)).capture(ret_v).into());
+    let hits = m.find_all(&ret().ret_val(0, var(val_v)).capture_node(ret_v).into());
     println!("Returns with a value: {}", hits.len()); // 2 (one per branch)
     for hit in &hits {
         let val_node = graph.graph.get_node_from_output(hit.get(val_v).unwrap());

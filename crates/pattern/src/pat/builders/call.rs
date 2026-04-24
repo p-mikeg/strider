@@ -45,7 +45,7 @@ impl CallPat {
         self
     }
     /// Bind the matched `Call` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
+    pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
     }
@@ -103,7 +103,7 @@ impl CallOtherPat {
         self
     }
     /// Bind the matched `CallOther` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
+    pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
     }

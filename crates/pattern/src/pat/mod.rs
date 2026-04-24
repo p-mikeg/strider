@@ -13,8 +13,8 @@ pub(crate) mod node_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
-    BoolBinaryOpPat, CallOtherPat, CallPat, CaptureBuilder, FloatBinaryOpPat, FunctionArgPat,
-    IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
+    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
+    IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
 };
 pub use ctor::*;
 
@@ -63,8 +63,8 @@ macro_rules! decl_any_const {
                     crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
                     crate::pat::node_pat::InputsSpec::None,
                 )
-                .with_output_var(Some(self))
                 .into_pat()
+                .capture(self)
             }
         }
 

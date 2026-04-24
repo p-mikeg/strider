@@ -1,15 +1,18 @@
 //! Memory-access builders: `LoadPat`, `StorePat`, `StackStorePat`,
 //! `StackStorePhiPat`.  All use `InputsSpec::Indexed` for sparse positional
 //! sub-pattern constraints.
+//!
+//! Capture the matched output with `.capture(v)` from
+//! [`crate::pat::IntoPat`].  Value-kind filtering at bind time (see
+//! [`crate::pat::any::CapturePat`]) ensures the captured `NodeOutputId`
+//! refers to the node's value output, not its memory / control slots.
 
 use std::sync::Arc;
 
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
-use crate::pat::builders::CaptureBuilder;
 use crate::pat::node_pat::{InputsSpec, KindSpec, NodeKindCheck, NodePat};
-use crate::var::{NodeVar, Var};
 
 // ── LoadPat ───────────────────────────────────────────────────────────────────
 
@@ -17,13 +20,11 @@ use crate::var::{NodeVar, Var};
 pub struct LoadPat {
     space: Option<rsleigh::VnSpace>,
     addr: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
 }
 
 impl LoadPat {
     pub(crate) fn new() -> Self {
-        Self { space: None, addr: None, output_var: None, node_var: None }
+        Self { space: None, addr: None }
     }
     /// Restrict the match to loads in address space `s`.
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
@@ -37,14 +38,9 @@ impl LoadPat {
     }
 }
 
-impl CaptureBuilder for LoadPat {
-    fn output_slot(&mut self) -> &mut Option<Var> { &mut self.output_var }
-    fn node_slot(&mut self) -> &mut Option<NodeVar> { &mut self.node_var }
-}
-
 impl From<LoadPat> for Pat {
     fn from(b: LoadPat) -> Pat {
-        let LoadPat { space, addr, output_var, node_var } = b;
+        let LoadPat { space, addr } = b;
         // Load inputs = [mem(0), addr(1)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(addr_pat) = addr {
@@ -57,10 +53,7 @@ impl From<LoadPat> for Pat {
                 move |k| matches!(k, NodeKind::Load(actual) if *actual == s),
             ),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
-            .with_output_var(output_var)
-            .with_node_var(node_var)
-            .into_pat()
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()
     }
 }
 
@@ -71,13 +64,11 @@ pub struct StorePat {
     space: Option<rsleigh::VnSpace>,
     addr: Option<Pat>,
     data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
 }
 
 impl StorePat {
     pub(crate) fn new() -> Self {
-        Self { space: None, addr: None, data: None, output_var: None, node_var: None }
+        Self { space: None, addr: None, data: None }
     }
     /// Restrict the match to stores in address space `s`.
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
@@ -96,14 +87,9 @@ impl StorePat {
     }
 }
 
-impl CaptureBuilder for StorePat {
-    fn output_slot(&mut self) -> &mut Option<Var> { &mut self.output_var }
-    fn node_slot(&mut self) -> &mut Option<NodeVar> { &mut self.node_var }
-}
-
 impl From<StorePat> for Pat {
     fn from(b: StorePat) -> Pat {
-        let StorePat { space, addr, data, output_var, node_var } = b;
+        let StorePat { space, addr, data } = b;
         // Store inputs = [mem(0), addr(1), data(2)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(addr_pat) = addr {
@@ -119,10 +105,7 @@ impl From<StorePat> for Pat {
                 move |k| matches!(k, NodeKind::Store(actual) if *actual == s),
             ),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
-            .with_output_var(output_var)
-            .with_node_var(node_var)
-            .into_pat()
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()
     }
 }
 
@@ -133,13 +116,11 @@ pub struct StackStorePat {
     space: Option<rsleigh::VnSpace>,
     offset: Option<i64>,
     data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
 }
 
 impl StackStorePat {
     pub(crate) fn new() -> Self {
-        Self { space: None, offset: None, data: None, output_var: None, node_var: None }
+        Self { space: None, offset: None, data: None }
     }
     /// Restrict the match to stack-stores in address space `s`.
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
@@ -158,14 +139,9 @@ impl StackStorePat {
     }
 }
 
-impl CaptureBuilder for StackStorePat {
-    fn output_slot(&mut self) -> &mut Option<Var> { &mut self.output_var }
-    fn node_slot(&mut self) -> &mut Option<NodeVar> { &mut self.node_var }
-}
-
 impl From<StackStorePat> for Pat {
     fn from(b: StackStorePat) -> Pat {
-        let StackStorePat { space, offset, data, output_var, node_var } = b;
+        let StackStorePat { space, offset, data } = b;
         // StackStore inputs = [memory(0), base(1), data(2)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(data_pat) = data {
@@ -187,10 +163,7 @@ impl From<StackStorePat> for Pat {
                 )
             })
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
-            .with_output_var(output_var)
-            .with_node_var(node_var)
-            .into_pat()
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()
     }
 }
 
@@ -201,13 +174,11 @@ pub struct StackStorePhiPat {
     space: Option<rsleigh::VnSpace>,
     offsets: Option<Vec<i64>>,
     data: Option<Pat>,
-    output_var: Option<Var>,
-    node_var: Option<NodeVar>,
 }
 
 impl StackStorePhiPat {
     pub(crate) fn new() -> Self {
-        Self { space: None, offsets: None, data: None, output_var: None, node_var: None }
+        Self { space: None, offsets: None, data: None }
     }
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
@@ -228,14 +199,9 @@ impl StackStorePhiPat {
     }
 }
 
-impl CaptureBuilder for StackStorePhiPat {
-    fn output_slot(&mut self) -> &mut Option<Var> { &mut self.output_var }
-    fn node_slot(&mut self) -> &mut Option<NodeVar> { &mut self.node_var }
-}
-
 impl From<StackStorePhiPat> for Pat {
     fn from(b: StackStorePhiPat) -> Pat {
-        let StackStorePhiPat { space, offsets, data, output_var, node_var } = b;
+        let StackStorePhiPat { space, offsets, data } = b;
         // StackStorePhi inputs = [phi_token(0), memory(1), data(2)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(data_pat) = data {
@@ -278,8 +244,6 @@ impl From<StackStorePhiPat> for Pat {
         } else {
             pat
         };
-        pat.with_output_var(output_var)
-            .with_node_var(node_var)
-            .into_pat()
+        pat.into_pat()
     }
 }

@@ -31,7 +31,7 @@ use crate::error::{Error, Result};
 use crate::matcher::Bindings;
 use crate::matcher::walk;
 use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
-use crate::var::{NodeVar, Var};
+use crate::var::NodeVar;
 
 /// Node-level check closure used by [`NodePat::post_match`].
 ///
@@ -203,7 +203,13 @@ pub struct NodePat {
     /// typed-constant Vars), since it executes once bindings from
     /// sub-matches are already in place.
     pub(crate) post_match: Option<NodeKindCheck>,
-    pub(crate) output_var: Option<Var>,
+    /// Bind the matched `NodeId` to `nv` after a successful match.
+    /// Set only by the control-flow builders (`CallPat`, `IfPat`, `RetPat`,
+    /// `CallOtherPat`) via their `.capture_node(nv)` method.  Value-output
+    /// builders route all captures through [`crate::pat::any::CapturePat`]
+    /// (wrapping `Var` bindings), since `NodeVar` on a value-producing node
+    /// is almost never the handle the caller wants — see the crate-level
+    /// capture docs for the rule.
     pub(crate) node_var: Option<NodeVar>,
 }
 
@@ -274,7 +280,7 @@ pub enum ConsumersSpec {
 impl Pattern for NodePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let node = ctx.graph.graph.get_node_from_output(target);
-        self.try_match_common(ctx, node, Some(target), b)
+        self.try_match_common(ctx, node, b)
     }
 
     fn kind_spec(&self) -> KindSpec {
@@ -286,8 +292,8 @@ impl Pattern for NodePat {
         if outputs.is_empty() {
             // Zero-output nodes (e.g. `Return`) can't be reached via the
             // default "iterate outputs" loop; match directly against the
-            // node with no target output.
-            return self.try_match_common(ctx, node, None, b);
+            // node.
+            return self.try_match_common(ctx, node, b);
         }
         for out in outputs.into_iter() {
             let mark = b.mark();
@@ -354,7 +360,6 @@ impl NodePat {
             outputs: OutputsSpec::None,
             consumers: ConsumersSpec::None,
             post_match: None,
-            output_var: None,
             node_var: None,
         }
     }
@@ -390,11 +395,6 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn with_output_var(mut self, v: Option<crate::var::Var>) -> Self {
-        self.output_var = v;
-        self
-    }
-
     pub(crate) fn with_node_var(mut self, nv: Option<crate::var::NodeVar>) -> Self {
         self.node_var = nv;
         self
@@ -406,13 +406,10 @@ impl NodePat {
 
     /// Core match pipeline shared by output-rooted (`try_match`) and
     /// node-rooted (`try_match_node` for zero-output nodes) entry points.
-    /// `target` is the `NodeOutputId` the match started from, if any — it
-    /// drives `output_var` binding and is otherwise unused.
     fn try_match_common(
         &self,
         ctx: &MatchCtx,
         node: NodeId,
-        target: Option<NodeOutputId>,
         b: &mut Bindings,
     ) -> bool {
         // Kind gate: discriminant + payload check in one go.  The kind spec
@@ -431,7 +428,7 @@ impl NodePat {
         // across the retry restore and the final rollback needs no clone.
         let before_inputs = b.mark();
 
-        if try_once(self, ctx, node, target, b, false) {
+        if try_once(self, ctx, node, b, false) {
             return true;
         }
 
@@ -440,7 +437,7 @@ impl NodePat {
             && commutative(ctx, node)
         {
             b.restore(before_inputs);
-            if try_once(self, ctx, node, target, b, true) {
+            if try_once(self, ctx, node, b, true) {
                 return true;
             }
         }
@@ -454,7 +451,6 @@ fn try_once(
     pat: &NodePat,
     ctx: &MatchCtx,
     node: NodeId,
-    target: Option<NodeOutputId>,
     b: &mut Bindings,
     swap: bool,
 ) -> bool {
@@ -532,13 +528,9 @@ fn try_once(
         return false;
     }
 
-    // (e) output/node captures — output_var only meaningful when matched
-    // from an output (target is Some); skipped for zero-output nodes.
-    if let (Some(v), Some(tgt)) = (pat.output_var, target)
-        && !b.bind_var(v, tgt)
-    {
-        return false;
-    }
+    // (e) node capture — value-output captures (`Var`) go through
+    // `CapturePat` / `VarPat` at the Pat level, not through a NodePat
+    // field.  `node_var` is set only by the control-flow builders.
     if let Some(nv) = pat.node_var
         && !b.bind_node_var(nv, node)
     {

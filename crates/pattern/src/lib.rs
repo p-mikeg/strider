@@ -81,7 +81,6 @@ pub use pat::{
     CallOtherPat,
     // Builder types
     CallPat,
-    CaptureBuilder,
     FloatBinaryOpPat,
     FunctionArgPat,
     IfPat,

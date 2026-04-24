@@ -33,7 +33,7 @@ impl RetPat {
         self
     }
     /// Bind the matched `Return` node to `nv`.
-    pub fn capture(mut self, nv: NodeVar) -> Self {
+    pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
     }

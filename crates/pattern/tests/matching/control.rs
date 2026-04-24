@@ -629,7 +629,7 @@ fn call_other_captures_node_id() -> ir::Result<()> {
     let g = graph_two_call_others_return()?;
     let m = Matcher::new(&g);
     let cv = NodeVar::new();
-    let hits = m.find_all(&call_other().user_op_id(2).capture(cv).into());
+    let hits = m.find_all(&call_other().user_op_id(2).capture_node(cv).into());
     assert_eq!(hits.len(), 1);
     let node = hits[0].get_node(cv).expect("NodeVar must bind");
     assert!(matches!(

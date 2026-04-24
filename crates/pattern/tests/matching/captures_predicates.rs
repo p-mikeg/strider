@@ -133,7 +133,7 @@ fn node_var_captures_call_node_id() -> ir::Result<()> {
     let g = graph_call_return()?;
     let m = Matcher::new(&g);
     let cv = NodeVar::new();
-    let hits = m.find_all(&call().at(0x1234).capture(cv).into());
+    let hits = m.find_all(&call().at(0x1234).capture_node(cv).into());
     assert_eq!(hits.len(), 1);
     let node_id = hits[0].get_node(cv).expect("NodeVar must be bound");
     assert!(matches!(g.graph.node_kind(node_id), NodeKind::Call));
@@ -145,7 +145,7 @@ fn ret_node_var_captures_return_node_id() -> ir::Result<()> {
     let g = graph_add_return()?;
     let m = Matcher::new(&g);
     let rv = NodeVar::new();
-    let hits = m.find_all(&ret().capture(rv).into());
+    let hits = m.find_all(&ret().capture_node(rv).into());
     assert_eq!(hits.len(), 1);
     let node_id = hits[0].get_node(rv).expect("NodeVar must be bound");
     assert_eq!(node_id, hits[0].root);
@@ -158,7 +158,7 @@ fn if_node_var_captures_if_node_id() -> ir::Result<()> {
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let iv = NodeVar::new();
-    let hits = m.find_all(&if_node().capture(iv).into());
+    let hits = m.find_all(&if_node().capture_node(iv).into());
     assert_eq!(hits.len(), 1);
     let node_id = hits[0].get_node(iv).unwrap();
     assert!(matches!(g.graph.node_kind(node_id), NodeKind::If));
@@ -171,7 +171,7 @@ fn node_var_not_bound_when_pattern_fails() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let cv = NodeVar::new();
     // call().at(0xDEAD) won't match, so cv stays unbound
-    let hits = m.find_all(&call().at(0xDEAD).capture(cv).into());
+    let hits = m.find_all(&call().at(0xDEAD).capture_node(cv).into());
     assert!(hits.is_empty());
     Ok(())
 }
