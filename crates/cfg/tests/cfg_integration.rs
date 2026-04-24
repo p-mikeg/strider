@@ -18,18 +18,7 @@
 //! ARM 32-bit tests are all `#[ignore]` because `BranchIndirect` is not yet
 //! handled as a region terminator — unignore them once that is fixed.
 
-#[path = "helpers.rs"]
-mod helpers;
-
-/// Returns the path to the test binary for `arch`.
-///
-/// Binaries are expected at `<workspace_root>/binary_tests/out/<arch>/test.elf`.
-fn binary(arch: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../binary_tests/out")
-        .join(arch)
-        .join("test.elf")
-}
+mod common;
 
 // ── arch_tests! macro ─────────────────────────────────────────────────────────
 //
@@ -45,15 +34,15 @@ macro_rules! arch_tests {
         $(, ignore = $reason:literal)?
     ) => {
         mod $mod_name {
-            use super::helpers::*;
-            use super::helpers;
+            use super::common::*;
+            use super::common;
 
             fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
-                let p = super::binary($arch);
-                helpers::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
+                let p = super::common::binary($arch);
+                common::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
             }
 
-            fn bin() -> std::path::PathBuf { super::binary($arch) }
+            fn bin() -> std::path::PathBuf { super::common::binary($arch) }
 
             // ── linear functions ──────────────────────────────────────────────
 
