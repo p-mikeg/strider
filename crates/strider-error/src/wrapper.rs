@@ -49,13 +49,6 @@ impl ErrorFields {
     }
 }
 
-impl Default for ErrorFields {
-    #[track_caller]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Defines a crate's error wrapper struct + its underlying `ErrorKind`
 /// enum in one macro invocation.
 ///
