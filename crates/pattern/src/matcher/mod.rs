@@ -13,6 +13,7 @@ mod bindings;
 pub(crate) mod commutativity;
 mod match_result;
 pub(crate) mod traversal;
+pub(crate) mod walk;
 
 #[cfg(test)]
 mod tests;
