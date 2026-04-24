@@ -4,6 +4,28 @@
 //! This module is the ELF-specific half of the `reader` crate. The generic
 //! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
 //! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
+//!
+//! # Converter API
+//!
+//! Single-item converters (take one segment/section, return one region):
+//! - [`elf_segment_to_mem_region`]
+//! - [`elf_section_to_mem_region`]
+//!
+//! Batch converters (iterate all segments/sections, return matching regions):
+//! - [`elf_segments_to_mem_regions`] (filter by any predicate)
+//! - [`elf_sections_to_mem_regions`] (filter by any predicate)
+//!
+//! Filter presets (batch converters wired to common predicates):
+//! - [`elf_get_executable_segments_as_mem_regions`] — `PF_X`
+//! - [`elf_get_executable_sections_as_mem_regions`] — `SHF_EXECINSTR`
+//! - [`elf_get_code_and_readonly_sections_as_mem_regions`] — `SHF_ALLOC &&
+//!   (SHF_EXECINSTR || !SHF_WRITE)`; the preset used by [`ElfFileMemReader`].
+//!
+//! Top-level helpers:
+//! - [`ElfFileMemReader`] — owns its regions; implements both
+//!   [`rsleigh::MemReader`] and [`crate::ReadOnlyMemory`].
+//! - [`load_elf`] — reads an ELF from disk and returns a `'static`-lifetime
+//!   parsed `object::File` (intentionally leaks the backing bytes).
 
 use object::{Object, ObjectSection, ObjectSegment};
 
