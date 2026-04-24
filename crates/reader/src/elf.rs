@@ -107,7 +107,9 @@ pub fn elf_get_executable_sections_as_mem_regions(
 ///
 /// This includes `.text` (exec), `.rodata` (non-writable data), `.plt`,
 /// `.eh_frame`, etc. It excludes `.data`, `.bss`, and any other writable or
-/// `SHT_NOBITS` section.
+/// `SHT_NOBITS` section. Only sections with `SHF_ALLOC` are included — a
+/// non-loadable section like `.shstrtab` has no runtime address and is not
+/// valid for a memory reader even if it happens to be non-writable.
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -115,9 +117,10 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
             return false;
         };
+        let is_alloc = sh_flags & object::elf::SHF_ALLOC as u64 != 0;
         let is_exec = sh_flags & object::elf::SHF_EXECINSTR as u64 != 0;
         let is_writable = sh_flags & object::elf::SHF_WRITE as u64 != 0;
-        is_exec || !is_writable
+        is_alloc && (is_exec || !is_writable)
     })
 }
 
