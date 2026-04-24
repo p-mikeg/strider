@@ -21,23 +21,23 @@
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// strider_error::define_error! {
 ///     pub struct Error wraps ErrorKind;
-///     sources: [std::io::Error, object::Error];
+///     sources: [std::io::Error];
 ///
 ///     #[derive(Debug, thiserror::Error)]
 ///     pub enum ErrorKind {
 ///         #[error("address {0:#x} is not mapped")]
 ///         NotMapped(u64),
-///         #[error("failed to read file: {0}")]
+///         #[error("io: {0}")]
 ///         Io(#[from] std::io::Error),
-///         #[error("failed to parse ELF: {0}")]
-///         Object(#[from] object::Error),
-///         #[error("assertion failed: {0}")]
-///         AssertionFailed(String),
 ///     }
 /// }
+///
+/// let err: Error = ErrorKind::NotMapped(0xdead_beef).into();
+/// assert_eq!(err.to_string(), "address 0xdeadbeef is not mapped");
+/// assert_eq!(err.locations().len(), 1);
 /// ```
 ///
 /// # Cross-crate bridges

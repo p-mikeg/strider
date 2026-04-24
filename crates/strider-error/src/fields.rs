@@ -60,19 +60,40 @@ impl ErrorFields {
 ///
 /// # Example
 ///
-/// ```ignore
-/// strider_error::bridge_error!(ir::Error => Error, ErrorKind::IrError);
+/// ```
+/// strider_error::define_error! {
+///     pub struct InnerError wraps InnerKind;
+///     #[derive(Debug, thiserror::Error)]
+///     pub enum InnerKind { #[error("boom")] Boom }
+/// }
+///
+/// strider_error::define_error! {
+///     pub struct OuterError wraps OuterKind;
+///     #[derive(Debug, thiserror::Error)]
+///     pub enum OuterKind {
+///         #[error(transparent)]
+///         Inner(InnerKind),
+///     }
+/// }
+///
+/// strider_error::bridge_error!(InnerError => OuterError, OuterKind::Inner);
+///
+/// fn inner() -> Result<(), InnerError> { Err(InnerKind::Boom.into()) }
+/// fn outer() -> Result<(), OuterError> { inner()?; Ok(()) }
+///
+/// let err = outer().unwrap_err();
+/// assert_eq!(err.locations().len(), 2, "origin + bridge push_caller");
 /// ```
 ///
-/// expands to:
+/// Expands to:
 ///
-/// ```ignore
-/// impl ::core::convert::From<ir::Error> for Error {
+/// ```text
+/// impl ::core::convert::From<InnerError> for OuterError {
 ///     #[track_caller]
-///     fn from(e: ir::Error) -> Self {
+///     fn from(e: InnerError) -> Self {
 ///         let (kind, fields) = e.decompose();
 ///         Self {
-///             kind: ::std::boxed::Box::new(ErrorKind::IrError(*kind)),
+///             kind: ::std::boxed::Box::new(OuterKind::Inner(*kind)),
 ///             fields: fields.push_caller(),
 ///         }
 ///     }
