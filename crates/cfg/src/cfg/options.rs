@@ -34,6 +34,7 @@ impl Default for OptionsBuilder {
 
 impl OptionsBuilder {
     /// Creates an `OptionsBuilder` with all options at their defaults.
+    #[must_use]
     pub fn new() -> Self {
         OptionsBuilder {
             lifter_options: Options::default(),
@@ -44,6 +45,7 @@ impl OptionsBuilder {
     ///
     /// Any unconditional branch whose target address is ≥ `start_addr + max_size`
     /// will be treated as a tail call.
+    #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
         self.lifter_options.fn_max_size = Some(max_size);
         self
@@ -55,53 +57,15 @@ impl OptionsBuilder {
     /// By default such branches are classified as tail calls (they are
     /// assumed to leave the current function).  Enable this option when the
     /// binary layout places shared or out-of-order code before the entry point.
+    #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.lifter_options.allow_code_before_start_addr = true;
         self
     }
 
     /// Consumes the builder and returns the final [`Options`].
+    #[must_use]
     pub fn build(self) -> Options {
         self.lifter_options
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Defaults: no size limit, backward branches treated as tail calls.
-    #[test]
-    fn options_builder_defaults() {
-        let opts = OptionsBuilder::new().build();
-        assert_eq!(opts.fn_max_size, None);
-        assert!(!opts.allow_code_before_start_addr);
-    }
-
-    /// `set_function_max_size` stores the value without touching the other flag.
-    #[test]
-    fn options_builder_set_fn_max_size() {
-        let opts = OptionsBuilder::new().set_function_max_size(0x1000).build();
-        assert_eq!(opts.fn_max_size, Some(0x1000));
-        assert!(!opts.allow_code_before_start_addr);
-    }
-
-    /// `allow_code_before_start_addr` flips its flag without touching `fn_max_size`.
-    #[test]
-    fn options_builder_allow_code_before_start_addr() {
-        let opts = OptionsBuilder::new().allow_code_before_start_addr().build();
-        assert!(opts.allow_code_before_start_addr);
-        assert_eq!(opts.fn_max_size, None);
-    }
-
-    /// Both options can be set together and are stored independently.
-    #[test]
-    fn options_builder_both_options_set() {
-        let opts = OptionsBuilder::new()
-            .set_function_max_size(0x2000)
-            .allow_code_before_start_addr()
-            .build();
-        assert_eq!(opts.fn_max_size, Some(0x2000));
-        assert!(opts.allow_code_before_start_addr);
     }
 }

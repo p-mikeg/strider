@@ -1,13 +1,3 @@
-#![cfg_attr(
-    test,
-    allow(
-        clippy::panic,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::unreachable
-    )
-)]
-
 //! Control-flow graph construction for the Strider binary analysis framework.
 //!
 //! This crate lifts a binary function to a [`Cfg`] of basic blocks using
@@ -27,3 +17,6 @@ mod cfg;
 pub mod error;
 pub use cfg::{Builder, Cfg, IfRegionState, OptionsBuilder, RegionEdgeKind, RegionId};
 pub use error::{Error, ErrorKind, Result};
+
+#[doc(hidden)]
+pub mod test_api;

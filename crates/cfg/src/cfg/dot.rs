@@ -26,8 +26,27 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     }
 
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
+    #[must_use]
     pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
         CfgDotDumper(self)
+    }
+}
+
+#[doc(hidden)]
+pub mod test_api {
+    //! Test-only forwarder for `Cfg::vn_to_name`.
+
+    use super::Cfg;
+    use crate::error::Result;
+
+    /// # Errors
+    /// Propagates errors from the underlying `Cfg::vn_to_name` (invalid reg vn,
+    /// unsupported varnode space, or Sleigh lookup failure).
+    pub fn vn_to_name<R: rsleigh::MemReader>(
+        cfg: &Cfg<R>,
+        vn: &rsleigh::Vn,
+    ) -> Result<String> {
+        cfg.vn_to_name(vn)
     }
 }
 

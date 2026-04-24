@@ -18,18 +18,7 @@
 //! ARM 32-bit tests are all `#[ignore]` because `BranchIndirect` is not yet
 //! handled as a region terminator — unignore them once that is fixed.
 
-#[path = "helpers.rs"]
-mod helpers;
-
-/// Returns the path to the test binary for `arch`.
-///
-/// Binaries are expected at `<workspace_root>/binary_tests/out/<arch>/test.elf`.
-fn binary(arch: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../binary_tests/out")
-        .join(arch)
-        .join("test.elf")
-}
+mod common;
 
 // ── arch_tests! macro ─────────────────────────────────────────────────────────
 //
@@ -45,15 +34,15 @@ macro_rules! arch_tests {
         $(, ignore = $reason:literal)?
     ) => {
         mod $mod_name {
-            use super::helpers::*;
-            use super::helpers;
+            use super::common::*;
+            use super::common;
 
             fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
-                let p = super::binary($arch);
-                helpers::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
+                let p = super::common::binary($arch);
+                common::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
             }
 
-            fn bin() -> std::path::PathBuf { super::binary($arch) }
+            fn bin() -> std::path::PathBuf { super::common::binary($arch) }
 
             // ── linear functions ──────────────────────────────────────────────
 
@@ -158,29 +147,6 @@ macro_rules! arch_tests {
                 let expected = symbol_addr(b.to_str().unwrap(), "add");
                 let c = cfg_of("add");
                 assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
-            }
-
-            // ── API surface: region_if ────────────────────────────────────────
-
-            /// `region_if` on a conditional region must return both successors.
-            #[test] $(#[ignore = $reason])?
-            fn abs_val_region_if_returns_both_successors() {
-                let c = cfg_of("abs_val");
-                let has_pair = c.region_ids().any(|id| {
-                    let s = c.region_if(id).unwrap();
-                    s.if_true_region.is_some() && s.if_false_region.is_some()
-                });
-                assert!(has_pair, "abs_val: no region has both if-true and if-false successors");
-            }
-
-            /// `region_branch` returns `None` on the entry region of a linear function.
-            #[test] $(#[ignore = $reason])?
-            fn add_entry_region_branch_is_none() {
-                let c = cfg_of("add");
-                assert!(
-                    c.region_branch(c.entry).unwrap().is_none(),
-                    "add: linear entry should have no branch successor"
-                );
             }
 
             // ── fallthrough edges ─────────────────────────────────────────────

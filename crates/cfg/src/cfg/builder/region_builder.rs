@@ -303,85 +303,131 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::testing::*;
+#[doc(hidden)]
+pub mod test_api {
+    //! Test-only wrapper around `RegionBuilder` so integration tests can drive
+    //! its private methods directly.
 
-    // ── RegionBuilder::is_branch_tail_call_nocheck ────────────────────────────
+    use super::{ProcessInsnRes as InnerProcessInsnRes, RegionBuilder};
+    use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction};
+    use crate::cfg::Builder;
+    use crate::error::Result;
+    use petgraph::graph::NodeIndex;
+    use std::collections::VecDeque;
 
-    /// A target below the function start is a tail call (default options).
-    #[test]
-    fn tail_call_nocheck_below_start_default_opts() {
-        let mut b = make_builder(0x1000);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        assert!(rb.is_branch_tail_call_nocheck(addr(0x0800, 0)));
+    /// Mirror of `ProcessInsnRes` for test consumers.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ProcessInsnRes {
+        FinishedProcessing,
+        DidntFinishProcessing,
     }
 
-    /// When `allow_code_before_start_addr` is set, a below-start target is NOT
-    /// treated as a tail call.
-    #[test]
-    fn tail_call_nocheck_below_start_with_allow() {
-        let opts = crate::cfg::OptionsBuilder::new()
-            .allow_code_before_start_addr()
-            .build();
-        let mut b = make_builder_opts(0x1000, opts);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        assert!(!rb.is_branch_tail_call_nocheck(addr(0x0800, 0)));
+    impl From<InnerProcessInsnRes> for ProcessInsnRes {
+        fn from(inner: InnerProcessInsnRes) -> Self {
+            match inner {
+                InnerProcessInsnRes::FinishedProcessing => ProcessInsnRes::FinishedProcessing,
+                InnerProcessInsnRes::DidntFinishProcessing => ProcessInsnRes::DidntFinishProcessing,
+            }
+        }
     }
 
-    /// A target within the function is never a tail call when no size limit is set.
-    #[test]
-    fn tail_call_nocheck_within_function_no_limit() {
-        let mut b = make_builder(0x1000);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        assert!(!rb.is_branch_tail_call_nocheck(addr(0x1200, 0)));
+    /// Owns a `RegionBuilder` for the lifetime of the test.
+    pub struct TestRegionBuilder<'a, R: rsleigh::MemReader> {
+        inner: RegionBuilder<'a, R>,
     }
 
-    /// A target at exactly `start + fn_max_size` is a tail call.
-    #[test]
-    fn tail_call_nocheck_at_fn_max_size_boundary() {
-        let opts = crate::cfg::OptionsBuilder::new()
-            .set_function_max_size(0x100)
-            .build();
-        let mut b = make_builder_opts(0x1000, opts);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        // 0x1100 == start(0x1000) + max_size(0x100) → tail call
-        assert!(rb.is_branch_tail_call_nocheck(addr(0x1100, 0)));
-        // 0x10ff is still inside the function
-        assert!(!rb.is_branch_tail_call_nocheck(addr(0x10ff, 0)));
-    }
+    impl<'a, R: rsleigh::MemReader> TestRegionBuilder<'a, R> {
+        /// Creates a new `TestRegionBuilder` anchored at `start_addr`.
+        pub fn new(builder: &'a mut Builder<R>, start_addr: PcodeInsnAddr) -> Self {
+            Self {
+                inner: RegionBuilder {
+                    builder,
+                    start_addr,
+                    insns: VecDeque::new(),
+                    parent_edge: None,
+                },
+            }
+        }
 
-    // ── RegionBuilder::is_branch_tail_call ────────────────────────────────────
+        /// Creates a new `TestRegionBuilder` with an explicit parent edge.
+        pub fn with_parent_edge(
+            builder: &'a mut Builder<R>,
+            start_addr: PcodeInsnAddr,
+            parent: (NodeIndex, RegionEdgeKind),
+        ) -> Self {
+            Self {
+                inner: RegionBuilder {
+                    builder,
+                    start_addr,
+                    insns: VecDeque::new(),
+                    parent_edge: Some(parent),
+                },
+            }
+        }
 
-    /// A tail-call target with `insn_index == 0` is valid and returns `Ok(true)`.
-    #[test]
-    fn tail_call_valid_insn_index_zero() {
-        let mut b = make_builder(0x1000);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        // target is below start → tail call; insn_index == 0 → valid
-        assert!(matches!(rb.is_branch_tail_call(addr(0x0800, 0)), Ok(true)));
-    }
+        /// Returns the accumulated instructions for this region.
+        #[must_use]
+        pub fn insns(&self) -> &VecDeque<RegionInstruction> {
+            &self.inner.insns
+        }
 
-    /// A tail-call target with `insn_index != 0` is malformed and returns an error.
-    #[test]
-    fn tail_call_invalid_insn_index_nonzero() {
-        let mut b = make_builder(0x1000);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        // target is below start → tail call; insn_index != 0 → error
-        assert!(matches!(
-            rb.is_branch_tail_call(addr(0x0800, 3))
-                .as_ref()
-                .map_err(|e| e.kind()),
-            Err(crate::ErrorKind::InvalidTailCall(_))
-        ));
-    }
+        /// Pushes an instruction onto the back of the instruction queue.
+        pub fn push_insn(&mut self, insn: RegionInstruction) {
+            self.inner.insns.push_back(insn);
+        }
 
-    /// A target inside the function is not a tail call and returns `Ok(false)`,
-    /// regardless of `insn_index`.
-    #[test]
-    fn tail_call_inside_function_returns_false() {
-        let mut b = make_builder(0x1000);
-        let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-        assert!(matches!(rb.is_branch_tail_call(addr(0x1200, 7)), Ok(false)));
+        /// Checks whether `target` is a tail call without validating `insn_index`.
+        #[must_use]
+        pub fn is_branch_tail_call_nocheck(&mut self, target: PcodeInsnAddr) -> bool {
+            self.inner.is_branch_tail_call_nocheck(target)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying tail-call check.
+        pub fn is_branch_tail_call(&mut self, target: PcodeInsnAddr) -> Result<bool> {
+            self.inner.is_branch_tail_call(target)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying branch-target decode.
+        pub fn decode_branch_target(
+            &mut self,
+            vn: rsleigh::Vn,
+            at: PcodeInsnAddr,
+        ) -> Result<PcodeInsnAddr> {
+            self.inner.decode_branch_target(vn, at)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying instruction-processing path.
+        pub fn process_new_insn(
+            &mut self,
+            insn: &rsleigh::Insn,
+            at: PcodeInsnAddr,
+            lift: &rsleigh::LiftRes,
+        ) -> Result<ProcessInsnRes> {
+            self.inner.process_new_insn(insn, at, lift).map(Into::into)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying instruction-processing path.
+        pub fn process_insn(
+            &mut self,
+            insn: &rsleigh::Insn,
+            at: PcodeInsnAddr,
+            lift: &rsleigh::LiftRes,
+        ) -> Result<ProcessInsnRes> {
+            self.inner.process_insn(insn, at, lift).map(Into::into)
+        }
+
+        /// # Errors
+        /// Returns `NoInstructionsRegionBuilder` if the region has no instructions.
+        pub fn finish_current_region(
+            &mut self,
+            ends_with_tail_call: bool,
+        ) -> Result<NodeIndex> {
+            self.inner.finish_current_region(ends_with_tail_call)
+        }
     }
 }
+

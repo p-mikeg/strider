@@ -1,8 +1,8 @@
 mod region_builder;
 mod split;
 
-#[cfg(test)]
-pub(super) mod testing;
+#[doc(hidden)]
+pub use region_builder::test_api as region_builder_test_api;
 
 use region_builder::RegionBuilder;
 
@@ -45,6 +45,7 @@ pub struct Builder<R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` that will construct a CFG starting at
     /// `start_addr` using `sleigh` to disassemble instructions.
+    #[must_use]
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
         Self {
             sleigh,
@@ -77,7 +78,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Uses a BTreeMap range query to find the last region whose
     /// `start_addr <= addr`, then confirms that `addr` also falls within the
     /// region's instruction range via [`Region::contains_addr`].
-    fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
+    pub(super) fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
         // Find the last region whose start_addr <= addr
         let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
@@ -147,6 +148,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///
     /// Seeds the work queue with the entry address, processes items until the
     /// queue is empty, then locates the entry region.
+    ///
+    /// # Errors
+    /// Returns a [`crate::Error`] if disassembly fails, if the start region
+    /// cannot be located after processing, or if any region split or edge
+    /// routing fails.
     pub fn build(mut self) -> Result<Cfg<R>> {
         self.work_queue.push_back((None, self.start_pcode_addr()));
         while let Some((parent_region, address)) = self.work_queue.pop_back() {
@@ -164,141 +170,67 @@ impl<R: rsleigh::MemReader> Builder<R> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::testing::*;
-    use super::*;
-    use std::collections::VecDeque;
+#[doc(hidden)]
+pub mod test_api {
+    //! Test-only forwarders for `Builder` internals.
 
-    // ── Builder::add_region ───────────────────────────────────────────────────
+    use super::Builder;
+    use crate::cfg::types::{RegionEdgeKind, RegionGraph};
+    use crate::error::Result;
+    use petgraph::graph::NodeIndex;
+    use std::collections::{BTreeMap, VecDeque};
 
-    /// Adding a valid region returns a `NodeIndex` and registers the region
-    /// in both the graph and the address→id map.
-    #[test]
-    fn add_region_inserts_into_graph_and_map() {
-        let mut b = make_builder(0x1000);
-        let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
-        let id = b.add_region(r).unwrap();
+    pub use crate::cfg::options::Options;
+    pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
 
-        assert!(b.graph.node_weight(id).is_some());
-        assert_eq!(b.start_addr_to_region_id.get(&addr(0x1000, 0)), Some(&id));
+    pub fn add_region<R: rsleigh::MemReader>(
+        b: &mut Builder<R>,
+        region: Region,
+    ) -> Result<NodeIndex> {
+        b.add_region(region)
     }
 
-    /// Adding an empty region must return `ErrorKind::EmptyRegion`.
-    #[test]
-    fn add_region_empty_returns_error() {
-        let mut b = make_builder(0x1000);
-        let empty = Region {
-            start_addr: addr(0x1000, 0),
-            insns: VecDeque::new(),
-            ends_with_tail_call: false,
-        };
-        assert!(matches!(
-            b.add_region(empty).as_ref().map_err(|e| e.kind()),
-            Err(crate::ErrorKind::EmptyRegion(_))
-        ));
+    #[must_use]
+    pub fn find_region_containing_addr<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+        addr: PcodeInsnAddr,
+    ) -> Option<(NodeIndex, &Region)> {
+        b.find_region_containing_addr(addr)
     }
 
-    /// Adding two non-overlapping regions places both in the graph.
-    #[test]
-    fn add_region_two_regions_both_present() {
-        let mut b = make_builder(0x1000);
-        let r1 = make_region(&[(0x1000, 0)]);
-        let r2 = make_region(&[(0x1010, 0)]);
-        let id1 = b.add_region(r1).unwrap();
-        let id2 = b.add_region(r2).unwrap();
-
-        assert_ne!(id1, id2);
-        assert_eq!(b.graph.node_count(), 2);
-        assert_eq!(b.start_addr_to_region_id[&addr(0x1000, 0)], id1);
-        assert_eq!(b.start_addr_to_region_id[&addr(0x1010, 0)], id2);
+    pub fn split_region<R: rsleigh::MemReader>(
+        b: &mut Builder<R>,
+        region_id: NodeIndex,
+        addr: PcodeInsnAddr,
+    ) -> Result<NodeIndex> {
+        b.split_region(region_id, addr)
     }
 
-    // ── Builder::find_region_containing_addr ──────────────────────────────────
-
-    /// Returns `None` when no regions have been added.
-    #[test]
-    fn find_region_empty_graph() {
-        let b = make_builder(0x1000);
-        assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
+    #[must_use]
+    pub fn graph<R: rsleigh::MemReader>(b: &Builder<R>) -> &RegionGraph {
+        &b.graph
     }
 
-    /// Finds a region when queried exactly at its start address.
-    #[test]
-    fn find_region_at_start_addr() {
-        let mut b = make_builder(0x1000);
-        let id = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1000, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
+    pub fn graph_mut<R: rsleigh::MemReader>(b: &mut Builder<R>) -> &mut RegionGraph {
+        &mut b.graph
     }
 
-    /// Finds a region when queried at an interior address.
-    #[test]
-    fn find_region_at_interior_addr() {
-        let mut b = make_builder(0x1000);
-        let id = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1008, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
+    #[must_use]
+    pub fn start_addr_to_region_id<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+    ) -> &BTreeMap<PcodeInsnAddr, NodeIndex> {
+        &b.start_addr_to_region_id
     }
 
-    /// Finds a region when queried exactly at its last instruction.
-    #[test]
-    fn find_region_at_last_insn() {
-        let mut b = make_builder(0x1000);
-        let id = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x100f, 0))
-                .map(|(i, _)| i),
-            Some(id)
-        );
+    #[must_use]
+    pub fn work_queue<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+    ) -> &VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)> {
+        &b.work_queue
     }
 
-    /// Returns `None` for an address beyond the region's last instruction.
-    #[test]
-    fn find_region_beyond_end_returns_none() {
-        let mut b = make_builder(0x1000);
-        b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
-    }
-
-    /// With two adjacent regions, each query is routed to the correct region.
-    #[test]
-    fn find_region_two_adjacent_regions_correct_routing() {
-        let mut b = make_builder(0x1000);
-        let id1 = b
-            .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
-            .unwrap();
-        let id2 = b
-            .add_region(make_region(&[(0x1010, 0), (0x1020, 0)]))
-            .unwrap();
-
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1004, 0))
-                .map(|(i, _)| i),
-            Some(id1)
-        );
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1010, 0))
-                .map(|(i, _)| i),
-            Some(id2)
-        );
-        assert_eq!(
-            b.find_region_containing_addr(addr(0x1018, 0))
-                .map(|(i, _)| i),
-            Some(id2)
-        );
+    #[must_use]
+    pub fn sleigh<R: rsleigh::MemReader>(b: &Builder<R>) -> &rsleigh::Sleigh<R> {
+        &b.sleigh
     }
 }
