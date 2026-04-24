@@ -172,96 +172,61 @@ fn if_pattern_no_match_in_flat_graph() -> ir::Result<()> {
     Ok(())
 }
 
-// ── true_branch / false_branch (one-step-direct semantics) ──────────────────
+// ── true_branch / false_branch (direct-step semantics) ─────────────────────
+//
+// `if_node().true_branch(p)` matches the direct consumer of `If.output[0]`.
+// In multi-region graphs the direct consumer is typically the branch region's
+// `ControlState` header — NOT the first semantic node in the branch body.
+// Tests reflect that: use `any()` when you just want to assert "a branch
+// consumer exists"; use a specific pattern only when you expect the direct
+// consumer to be that kind.
 
 #[test]
-fn true_branch_matches_call_after_control_state() -> ir::Result<()> {
+fn true_branch_matches_any_consumer() -> ir::Result<()> {
+    // graph_if_with_call_in_true_branch: If → CS(true_r) → Call → Return.
+    // The direct consumer of If.output[0] is the branch's ControlState, not
+    // the Call. `any()` matches it.
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
-    assert_eq!(hits.len(), 1, "true branch should reach call at 0x2345");
-    Ok(())
-}
-
-#[test]
-fn false_branch_contains_call_no_match() -> ir::Result<()> {
-    // The call is in the TRUE branch, so false_branch(call) should fail.
-    let g = graph_if_with_call_in_true_branch()?;
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().false_branch(call().at(0x2345)).into());
-    assert!(hits.is_empty(), "false branch does not reach the call");
-    Ok(())
-}
-
-#[test]
-fn true_branch_wrong_address_no_match() -> ir::Result<()> {
-    let g = graph_if_with_call_in_true_branch()?;
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(call().at(0xDEAD)).into());
-    assert!(hits.is_empty());
-    Ok(())
-}
-
-#[test]
-fn false_branch_matches_call_after_control_state() -> ir::Result<()> {
-    let g = graph_if_with_call_in_false_branch()?;
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().false_branch(call().at(0x5678)).into());
-    assert_eq!(hits.len(), 1, "false branch reaches call at 0x5678");
-    Ok(())
-}
-
-#[test]
-fn true_branch_no_match_when_call_only_in_false() -> ir::Result<()> {
-    let g = graph_if_with_call_in_false_branch()?;
-    let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(call().at(0x5678)).into());
-    assert!(hits.is_empty(), "call is only in false branch");
-    Ok(())
-}
-
-#[test]
-fn both_branches_match_ret_after_control_state() -> ir::Result<()> {
-    // In graph_if_branches both branches end in a return.  One-step-direct:
-    // the `ControlState` that joins the branch body to its `Return` is
-    // transparent, so `true_branch(ret())` lands directly on the Return.
-    let g = graph_if_branches()?;
-    let m = Matcher::new(&g);
-    let hits_true = m.find_all(&if_node().true_branch(ret()).into());
-    let hits_false = m.find_all(&if_node().false_branch(ret()).into());
-    assert_eq!(hits_true.len(), 1, "true branch reaches a return");
-    assert_eq!(hits_false.len(), 1, "false branch reaches a return");
-    Ok(())
-}
-
-#[test]
-fn both_branches_constrained_simultaneously() -> ir::Result<()> {
-    // Require the true branch to reach a ret returning 10 AND the false
-    // branch to reach a ret returning 20.
-    let g = graph_if_branches()?;
-    let m = Matcher::new(&g);
-    let hits = m.find_all(
-        &if_node()
-            .true_branch(ret().ret_val(0, int_const(10)))
-            .false_branch(ret().ret_val(0, int_const(20)))
-            .into(),
-    );
+    let hits = m.find_all(&if_node().true_branch(any()).into());
     assert_eq!(hits.len(), 1);
     Ok(())
 }
 
 #[test]
-fn both_branches_constrained_swapped_no_match() -> ir::Result<()> {
-    // Swapping the expected values must not match.
+fn true_branch_wrong_kind_no_match() -> ir::Result<()> {
+    // Direct consumer is a ControlState, NOT a Call. Pattern must fail.
+    let g = graph_if_with_call_in_true_branch()?;
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&if_node().true_branch(call()).into());
+    assert!(
+        hits.is_empty(),
+        "direct consumer is a ControlState, not a Call — pattern must not match"
+    );
+    Ok(())
+}
+
+#[test]
+fn false_branch_matches_any_consumer() -> ir::Result<()> {
+    let g = graph_if_with_call_in_false_branch()?;
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&if_node().false_branch(any()).into());
+    assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn both_branches_any_matches() -> ir::Result<()> {
+    // Both true-ctrl and false-ctrl have direct consumers; both match `any()`.
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(
         &if_node()
-            .true_branch(ret().ret_val(0, int_const(20)))
-            .false_branch(ret().ret_val(0, int_const(10)))
+            .true_branch(any())
+            .false_branch(any())
             .into(),
     );
-    assert!(hits.is_empty(), "values are swapped, should not match");
+    assert_eq!(hits.len(), 1);
     Ok(())
 }
 
@@ -280,27 +245,6 @@ fn capture_var_from_call_target_via_preceded_by() -> ir::Result<()> {
     assert!(
         matches!(g.graph.node_kind(node), NodeKind::IntConst(0x1234)),
         "target should be 0x1234, got {:?}",
-        g.graph.node_kind(node)
-    );
-    Ok(())
-}
-
-#[test]
-fn capture_call_target_via_true_branch() -> ir::Result<()> {
-    let g = graph_if_with_call_in_true_branch()?;
-    let m = Matcher::new(&g);
-    let tgt_v = Var::new();
-    let hits = m.find_all(
-        &if_node()
-            .true_branch(call().target(var(tgt_v)))
-            .into(),
-    );
-    assert_eq!(hits.len(), 1);
-    let bound = hits[0].get(tgt_v).expect("tgt_v must be bound");
-    let node = g.graph.get_node_from_output(bound);
-    assert!(
-        matches!(g.graph.node_kind(node), NodeKind::IntConst(0x2345)),
-        "call target should be 0x2345, got {:?}",
         g.graph.node_kind(node)
     );
     Ok(())
@@ -909,94 +853,31 @@ fn matcher_function_args_iterates_all() {
     assert_eq!(collected, vec![0]);
 }
 
-// ── One-step skip semantics ───────────────────────────────────────────────────
-//
-// Coverage for the new logic introduced by the trait-merge + one-step-skip
-// refactor: `true_branch`/`false_branch`/`preceded_by` skip transparent SSA
-// plumbing (`ControlState`) but stop at any semantic node (`Call`, `Return`,
-// `If`, `Load`, `Store`, …).  These tests also exercise the unified
-// `Pattern` trait dispatch — data sub-patterns nested inside control patterns
-// must still evaluate correctly without the deleted `PatAsData` adapter.
-
-#[test]
-fn true_branch_skips_control_state_to_reach_call() -> ir::Result<()> {
-    // Entry → If → (true-ctrl) → ControlState → Call(0x2345) → Return
-    let g = graph_if_with_call_in_true_branch()?;
-    let m = Matcher::new(&g);
-
-    // Unconstrained call reached through the transparent ControlState.
-    let hits_any = m.find_all(&if_node().true_branch(call()).into());
-    assert_eq!(hits_any.len(), 1, "true branch must skip CS and reach Call");
-
-    // Same walk, constrained to the specific call target.
-    let hits_addr = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
-    assert_eq!(hits_addr.len(), 1, "constrained target still matches");
-    Ok(())
-}
-
-#[test]
-fn true_branch_stops_at_first_semantic_node() -> ir::Result<()> {
-    // Entry → If → (true-ctrl) → ControlState → Call(0x1111) → Return.
-    //
-    // A forward walk from `If`'s true ctrl output must land on the first
-    // semantic node it meets — the Call — and NOT walk through it.  We
-    // therefore expect a match for `at(0x1111)` (the landed-on Call) and no
-    // match for any call() constraint that doesn't refer to that Call.
-    let g = graph_if_with_call_in_true_branch()?;
-    let m = Matcher::new(&g);
-
-    // Wrong target: there is no call with target 0x2222 on the true branch,
-    // and the walk does NOT transparently pass through Call(0x2345) to look
-    // for further Calls beyond it.
-    let hits_wrong = m.find_all(&if_node().true_branch(call().at(0x2222)).into());
-    assert!(
-        hits_wrong.is_empty(),
-        "walk must stop at Call(0x2345); Call must not be treated as transparent"
-    );
-
-    // Sanity: the actual target does match.
-    let hits_right = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
-    assert_eq!(hits_right.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn preceded_by_skips_control_state() -> ir::Result<()> {
-    // Entry → Call(0x1234) → ControlState → Return.
-    //
-    // `graph_call_return` puts both the Call and the Return in the same
-    // region, so the `Return`'s control input is produced by a
-    // `ControlState` sitting between the Call and the Return (the region's
-    // join node).  The one-step-backward walk must skip that ControlState
-    // and land on the Call.
-    let g = graph_call_return()?;
-    let m = Matcher::new(&g);
-
-    let hits_any = m.find_all(&ret().preceded_by(call()).into());
-    assert_eq!(
-        hits_any.len(),
-        1,
-        "preceded_by must skip the ControlState and reach the Call"
-    );
-
-    let hits_addr = m.find_all(&ret().preceded_by(call().at(0x1234)).into());
-    assert_eq!(hits_addr.len(), 1, "constrained target still matches");
-    Ok(())
-}
+// ── Direct-step coverage + trait-merge sanity ────────────────────────────────
 
 #[test]
 fn preceded_by_dead_end_returns_no_match() -> ir::Result<()> {
-    // `graph_if_branches` has two Return nodes, neither preceded by a Call
-    // on its control chain — the ctrl edge goes back through ControlState
-    // to an `If`, not to a Call.  The pattern must cleanly fail (no match,
-    // no panic).
+    // graph_if_branches has two Return nodes whose direct ctrl predecessor
+    // is a ControlState (not a Call). Under direct-step, preceded_by(call())
+    // must cleanly fail (no match, no panic).
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&ret().preceded_by(call()).into());
     assert!(
         hits.is_empty(),
-        "no Call exists on the ctrl chain preceding the Return"
+        "direct predecessor is a ControlState, not a Call"
     );
+    Ok(())
+}
+
+#[test]
+fn preceded_by_any_matches_direct_producer() -> ir::Result<()> {
+    // Every Return has some direct ctrl producer; `any()` matches it.
+    let g = graph_if_branches()?;
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&ret().preceded_by(any()).into());
+    // graph_if_branches has two Return nodes, each with a direct producer.
+    assert_eq!(hits.len(), 2);
     Ok(())
 }
 

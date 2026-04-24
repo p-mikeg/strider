@@ -160,14 +160,13 @@ impl Pattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    // One-step backward skip: walk through any transparent
-                    // `ControlState` producers until we reach a semantic
-                    // node, then match the inner pattern against
-                    // that node's output.  `skip_backward_transparent`
-                    // returns `ctrl_in` unchanged if the immediate producer
-                    // is already semantic.
-                    let producer_out = walk::skip_backward_transparent(ctx.matcher, ctrl_in);
-                    if !ctx.matcher.match_output_dyn(producer_out, call_pat, b) {
+                    // Direct-step backward: match the inner pattern against
+                    // whatever node produces Return's ctrl input. If that
+                    // producer is a `ControlState`, the inner pattern must
+                    // match a `ControlState`; callers compose chains
+                    // explicitly.
+                    let producer = walk::prev_control_node(ctx.matcher, ctrl_in);
+                    if !call_pat.try_match_node(ctx, producer, b) {
                         *b = snap;
                         return false;
                     }
@@ -222,7 +221,15 @@ impl Pattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !try_match_forward_branch(ctx, true_ctrl, tb_pat, b) {
+                    // Direct-step forward: match the inner pattern against
+                    // the direct consumer of If.output[0]. If the consumer
+                    // is a `ControlState`, the inner pattern must match a
+                    // `ControlState`; callers compose chains explicitly.
+                    let Some(successor) = walk::next_control_node(ctx.matcher, true_ctrl) else {
+                        *b = snap;
+                        return false;
+                    };
+                    if !tb_pat.try_match_node(ctx, successor, b) {
                         *b = snap;
                         return false;
                     }
@@ -233,7 +240,11 @@ impl Pattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !try_match_forward_branch(ctx, false_ctrl, fb_pat, b) {
+                    let Some(successor) = walk::next_control_node(ctx.matcher, false_ctrl) else {
+                        *b = snap;
+                        return false;
+                    };
+                    if !fb_pat.try_match_node(ctx, successor, b) {
                         *b = snap;
                         return false;
                     }
@@ -260,50 +271,3 @@ impl Pattern for ControlNodePat {
     }
 }
 
-/// Advance `ctrl_out` past transparent nodes (`ControlState`) and match
-/// `pat` against the first semantic node reached.
-///
-/// Uses [`walk::skip_forward_transparent`] first — that returns the first
-/// output of the reached semantic node, which is the most direct path and
-/// handles the common case cleanly.  When the semantic node has no
-/// outputs (e.g. a terminating `Return`) [`walk::skip_forward_transparent`]
-/// returns `None`; the fallback locates the semantic node itself via
-/// [`locate_forward_semantic_node`] and dispatches through
-/// [`Pattern::try_match_node`], which `ControlNodePat` overrides so
-/// patterns like `ret()` match zero-output nodes correctly.
-fn try_match_forward_branch(
-    ctx: &MatchCtx,
-    ctrl_out: NodeOutputId,
-    pat: &DynPat,
-    b: &mut Bindings,
-) -> bool {
-    if let Some(out) = walk::skip_forward_transparent(ctx.matcher, ctrl_out) {
-        return ctx.matcher.match_output_dyn(out, pat, b);
-    }
-    let Some(semantic_node) = locate_forward_semantic_node(ctx, ctrl_out) else {
-        return false;
-    };
-    pat.try_match_node(ctx, semantic_node, b)
-}
-
-/// Mirror of [`walk::skip_forward_transparent`] that returns the semantic
-/// node's [`NodeId`] instead of its first output.  Used when the semantic
-/// node has no outputs — the caller ([`try_match_forward_branch`]) needs
-/// the node.
-fn locate_forward_semantic_node(ctx: &MatchCtx, ctrl_out: NodeOutputId) -> Option<NodeId> {
-    let mut out = ctrl_out;
-    for _ in 0..64 {
-        let consumers: Vec<_> = ctx.graph.graph.output_uses(out).collect();
-        if consumers.len() != 1 {
-            return None;
-        }
-        let (consumer_node, _) = consumers[0];
-        let kind = ctx.graph.graph.node_kind(consumer_node);
-        if !matches!(kind, NodeKind::ControlState) {
-            return Some(consumer_node);
-        }
-        let next = ctx.graph.graph.node_outputs(consumer_node).into_iter().next()?;
-        out = next;
-    }
-    None
-}
