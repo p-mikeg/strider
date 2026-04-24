@@ -28,6 +28,7 @@ smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
 object = "0.38.1"
+tempfile = "3.10"
 
 petgraph = "0.8.3"
 thiserror = "2.0.18"

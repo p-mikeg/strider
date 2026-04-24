@@ -13,4 +13,6 @@ thiserror.workspace = true
 workspace = true
 
 [dev-dependencies]
-object.workspace = true
+object = { workspace = true, features = ["write"] }
+tempfile = { workspace = true }
+rsleigh.workspace = true
