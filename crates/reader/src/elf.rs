@@ -206,7 +206,7 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
-    endianness: object::Endianness,
+    is_little_endian: bool,
 }
 
 impl ElfFileMemReader {
@@ -223,7 +223,7 @@ impl ElfFileMemReader {
         let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
         Ok(Self {
             lookup: MemRegionsLookupTable::new(regions),
-            endianness: obj.endianness(),
+            is_little_endian: matches!(obj.endianness(), object::Endianness::Little),
         })
     }
 
@@ -270,12 +270,11 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
         if size == 0 || size > 8 {
             return None;
         }
-        let is_little = matches!(self.endianness, object::Endianness::Little);
         // Place the read bytes at the endianness-appropriate end of an 8-byte
         // buffer so the final from_{le,be}_bytes produces the same numeric
         // value for an N-byte load as the target machine would.
         let mut buf = [0u8; 8];
-        let slot = if is_little {
+        let slot = if self.is_little_endian {
             &mut buf[..size]
         } else {
             &mut buf[8 - size..]
@@ -283,7 +282,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
         if self.lookup.read(addr, slot)? != size {
             return None;
         }
-        Some(if is_little {
+        Some(if self.is_little_endian {
             u64::from_le_bytes(buf)
         } else {
             u64::from_be_bytes(buf)

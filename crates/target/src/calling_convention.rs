@@ -161,10 +161,9 @@ impl CallingConvention {
         let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
         let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
         let ret_val_regs = regs_to_vns(self.ret_val_regs, sleigh_regs)?;
-        let stack_ptr_name = self.stack_ptr_reg_name;
         let stack_ptr_vn = sleigh_regs
-            .name_to_vn(stack_ptr_name)
-            .ok_or(ErrorKind::UnknownRegName(stack_ptr_name.to_string()))?;
+            .name_to_vn(self.stack_ptr_reg_name)
+            .ok_or_else(|| ErrorKind::UnknownRegName(self.stack_ptr_reg_name.to_string()))?;
         Ok(BuiltCallingConvention {
             arg_passing_regs,
             callee_saved_regs,
