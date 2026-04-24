@@ -76,7 +76,7 @@ fn track_caller_on_question_mark_points_at_question_mark_site() {
 }
 
 #[test]
-fn decompose_and_reconstruct_preserves_chain_length_and_backtrace_status() {
+fn decompose_preserves_chain_length_and_backtrace_status() {
     let err: MyError = MyKind::Boom.into();
     let before_len = err.locations().len();
     let before_status = err.backtrace().status();
