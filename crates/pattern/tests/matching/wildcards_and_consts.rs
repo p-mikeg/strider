@@ -148,7 +148,7 @@ fn any_float_const_captures_bits() {
 
     let fv = FloatVar::new();
     let m = a::unique(&g, any_float_const(fv));
-    assert_eq!(m.get_float(fv), Some(2.5f64.to_bits()));
+    assert_eq!(m.get_float_const(fv), Some(2.5f64.to_bits()));
 }
 
 // ── Constant deduplication ────────────────────────────────────────────────────

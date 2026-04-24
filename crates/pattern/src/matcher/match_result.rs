@@ -49,13 +49,11 @@ impl Match {
         self.bindings.get_bool(bv)
     }
 
-    /// Returns the float constant IEEE 754 bit pattern bound to the [`FloatVar`]
-    /// `fv`, or `None` if `fv` was not captured in this match.
-    ///
-    /// Named `get_float` (not `get_float_bits`) to avoid colliding with the
-    /// graph-lookup helper [`Match::get_float_bits`] which takes a [`Var`] and a
-    /// graph reference.
-    pub fn get_float(&self, fv: FloatVar) -> Option<u64> {
+    /// Returns the IEEE 754 bit pattern bound to the [`FloatVar`] `fv`, or
+    /// `None` if `fv` was not captured in this match.  Parallel to
+    /// [`Match::get_int_const`] and [`Match::get_bool_const`] — typed-capture
+    /// accessors for const-value bindings.
+    pub fn get_float_const(&self, fv: FloatVar) -> Option<u64> {
         self.bindings.get_float_bits(fv)
     }
 
