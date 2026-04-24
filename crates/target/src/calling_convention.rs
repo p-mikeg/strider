@@ -140,8 +140,13 @@ impl CallingConvention {
     /// concrete [`rsleigh::Vn`] varnodes using `sleigh_regs`.
     ///
     /// The number of varnodes in each resulting list equals the length of the
-    /// corresponding name list.  Returns an error if any register name is
-    /// unknown.
+    /// corresponding name list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::UnknownRegName`] if any register name listed in
+    /// this convention (including the stack pointer) does not resolve against
+    /// `sleigh_regs`.  The resolution short-circuits on the first failure.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
         let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
         let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
