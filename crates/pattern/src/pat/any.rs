@@ -25,7 +25,15 @@ pub struct VarPat {
 }
 
 impl Pattern for VarPat {
-    fn try_match(&self, _: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
+    fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
+        // Value-kind gate: a `Var` binds a data edge, never a Control or
+        // Memory slot.  For a multi-output node (e.g. `Load` =
+        // `[Memory, Value]`) this causes iteration in `try_match_node` to
+        // skip the non-value slots and land on the value output — the
+        // caller's intent for `var(v)` / `.capture(v)`.
+        if ctx.graph.graph.output_kind(target).as_value().is_none() {
+            return false;
+        }
         // `bind_var` is self-contained: it returns false on conflict without
         // mutating, so no snapshot is needed.
         b.bind_var(self.var, target)
@@ -68,6 +76,14 @@ impl Pattern for CapturePat {
             // Inner is expected to clean up its own speculative bindings,
             // but restore here too for pattern-local cleanliness: truncate
             // is idempotent if the inner already rolled back.
+            b.restore(mark);
+            return false;
+        }
+        // Value-kind gate: see `VarPat::try_match` — a `Var` refers to a
+        // data edge, so non-value outputs (Memory / Control) cause the
+        // whole capture to fail.  On multi-output nodes this steers
+        // `try_match_node`'s iteration to the value slot.
+        if ctx.graph.graph.output_kind(target).as_value().is_none() {
             b.restore(mark);
             return false;
         }
