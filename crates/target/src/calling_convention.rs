@@ -24,7 +24,11 @@ fn regs_to_vns(reg_names: &[&str], sleigh_regs: &rsleigh::SleighRegs) -> Result<
 /// using a Sleigh register table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CallingConvention {
-    arch: crate::arch::SleighArch,
+    /// The Sleigh register name of the hardware stack pointer.  Stored on
+    /// the convention because every built convention needs the stack
+    /// pointer's `Vn` resolved, and the `SleighArch` that would otherwise
+    /// own this fact is already passed separately to `Analyzer::new`.
+    stack_ptr_reg_name: &'static str,
     arg_passing_regs: &'static [&'static str],
     callee_saved_regs: &'static [&'static str],
     ret_val_regs: &'static [&'static str],
@@ -60,7 +64,7 @@ impl CallingConvention {
     /// Return value: RAX, RDX
     pub fn x86_64_systemv_abi() -> CallingConvention {
         CallingConvention {
-            arch: crate::arch::SleighArch::x86_64(),
+            stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
             ret_val_regs: &["RAX", "RDX"],
@@ -79,7 +83,7 @@ impl CallingConvention {
     /// Return value: x0, x1
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
-            arch: crate::arch::SleighArch::aarch64(),
+            stack_ptr_reg_name: "sp",
             arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             callee_saved_regs: &[
                 "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
@@ -101,7 +105,7 @@ impl CallingConvention {
     /// stack-passed arg sits at SP + 0.
     pub fn arm_aapcs() -> CallingConvention {
         CallingConvention {
-            arch: crate::arch::SleighArch::arm(),
+            stack_ptr_reg_name: "sp",
             arg_passing_regs: &["r0", "r1", "r2", "r3"],
             callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr"],
             ret_val_regs: &["r0", "r1"],
@@ -116,7 +120,7 @@ impl CallingConvention {
     /// Return value: EAX, EDX
     pub fn x86_cdecl() -> CallingConvention {
         CallingConvention {
-            arch: crate::arch::SleighArch::x86(),
+            stack_ptr_reg_name: "ESP",
             arg_passing_regs: &[],
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
             ret_val_regs: &["EAX", "EDX"],
@@ -138,7 +142,7 @@ impl CallingConvention {
         let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
         let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
         let ret_val_regs = regs_to_vns(self.ret_val_regs, sleigh_regs)?;
-        let stack_ptr_name = self.arch.stack_ptr_reg_name;
+        let stack_ptr_name = self.stack_ptr_reg_name;
         let stack_ptr_vn = sleigh_regs
             .name_to_vn(stack_ptr_name)
             .ok_or(ErrorKind::UnknownRegName(stack_ptr_name.to_string()))?;
@@ -337,7 +341,7 @@ mod tests {
         let regs = regs_for(crate::arch::SleighArch::x86_64());
         for bad_name in &["NOTAREG", "", "rax_FAKE"] {
             let cc = CallingConvention {
-                arch: crate::arch::SleighArch::x86_64(),
+                stack_ptr_reg_name: "RSP",
                 arg_passing_regs: std::slice::from_ref(bad_name),
                 callee_saved_regs: &[],
                 ret_val_regs: &[],
@@ -361,7 +365,7 @@ mod tests {
     fn build_returns_error_even_when_some_names_are_valid() {
         let regs = regs_for(crate::arch::SleighArch::x86_64());
         let cc = CallingConvention {
-            arch: crate::arch::SleighArch::x86_64(),
+            stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
             callee_saved_regs: &[],
             ret_val_regs: &[],
