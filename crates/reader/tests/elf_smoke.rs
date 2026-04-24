@@ -10,7 +10,7 @@
 //! matching the convention used by `cfg::cfg_integration` and
 //! `analyzer::analyze_binary`.
 
-use object::{Object, ObjectSection};
+use object::Object;
 use reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn binary_path() -> std::path::PathBuf {
