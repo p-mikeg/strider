@@ -90,7 +90,7 @@ impl SleighArch {
     }
 
     /// Returns the big-endian AArch64 architecture descriptor.
-    pub fn aarchbe64() -> SleighArch {
+    pub fn aarch64be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
             pspec: rsleigh::pspec::PSPEC_AARCH64,
