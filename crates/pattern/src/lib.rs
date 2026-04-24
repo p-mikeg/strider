@@ -59,19 +59,19 @@
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
 //! operand orderings.  Call `.ordered()` on the returned builder to opt out.
 
-pub mod build;
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
 
 mod macros;
 mod matcher;
 mod pat;
+mod rewrite;
 mod var;
 
-pub use build::{
-    BoxedRule, Build, BuildCtx, BuildValue, FromCtx, RewriteOutcome, apply_rules_in_order,
-    boxed_rule, first_value_input_type, rewrite_rule,
-};
+pub use rewrite::{BoxedRule, RewriteOutcome, apply_rules_in_order, boxed_rule, rewrite_rule};
+pub use pat::traits::{BuildCtx, BuildOutcome};
+pub use pat::ctor::consts::{FromCtx, first_value_input_type};
+pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

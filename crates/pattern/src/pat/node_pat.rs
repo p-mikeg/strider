@@ -18,11 +18,12 @@
 
 use std::sync::Arc;
 
-use ir::node::{NodeId, NodeOutputId};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
+use crate::error::{Error, Result};
 use crate::matcher::Bindings;
 use crate::matcher::walk;
-use crate::pat::traits::{CandidateKind, MatchCtx, Pattern};
+use crate::pat::traits::{BuildCtx, BuildOutcome, CandidateKind, MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
@@ -36,14 +37,36 @@ pub(crate) type NodeKindCheck =
 pub(crate) type CommutativeDecider =
     Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
 
+/// Closure that produces a concrete [`NodeKind`] at build time, reading
+/// any needed captures / root-type info out of the [`BuildCtx`].  Used by
+/// [`NodePat::kind_build`].
+pub(crate) type NodeKindBuilder =
+    Arc<dyn Fn(&BuildCtx<'_>) -> Result<NodeKind> + Send + Sync>;
+
+/// How to pick the output type of a node built by [`NodePat::try_build`].
+pub enum BuildTy {
+    /// Use the root-type parameter threaded through `try_build`.
+    InheritRoot,
+    /// Use a specific type regardless of root (cmps, bool ops, bool const).
+    Fixed(NodeOutputType),
+}
+
 /// A generic node-level pattern. Covers every pattern shape: "check node
 /// kind, match inputs in some arrangement, optionally constrain outputs
-/// and consumers, optionally bind output/node captures".
+/// and consumers, optionally bind output/node captures".  Buildable
+/// patterns additionally populate [`NodePat::kind_build`].
 pub struct NodePat {
     /// Checks the node's kind (and any kind-embedded data — e.g. constants,
     /// varnodes, spaces, offsets, phi offsets). May bind typed-constant
     /// values or operator variants.
     pub(crate) kind_match: NodeKindCheck,
+    /// Build-side counterpart to `kind_match`: produces the [`NodeKind`] to
+    /// materialize.  `None` means "match-only" (default for wildcards,
+    /// control patterns, memory ops, phis — none of which current rules
+    /// need to build).
+    pub(crate) kind_build: Option<NodeKindBuilder>,
+    /// Output type picker for the built node.
+    pub(crate) build_result_ty: BuildTy,
     /// How to match the node's inputs.
     pub(crate) inputs: InputsSpec,
     /// Optional constraints on the node's outputs (by position).
@@ -150,6 +173,41 @@ impl Pattern for NodePat {
 
     fn candidate_kind(&self) -> Option<CandidateKind> {
         self.candidate_kind
+    }
+
+    fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
+        let Some(kind_build) = &self.kind_build else {
+            return Err(Error::not_buildable(std::any::type_name::<Self>()));
+        };
+
+        // Recurse into inputs.  Only `Fixed` inputs are buildable — ordered
+        // positional materialization.  `Indexed` is used by memory/phi/
+        // control patterns that no rule needs to construct; if we reach one
+        // here it's a usage error, surface it as NotBuildable.
+        let input_outs: Vec<NodeOutputId> = match &self.inputs {
+            InputsSpec::None => Vec::new(),
+            InputsSpec::Fixed { pats, .. } => {
+                let mut out = Vec::with_capacity(pats.len());
+                for p in pats {
+                    match p.as_dyn().try_build(ctx)? {
+                        BuildOutcome::Out(o) => out.push(o),
+                        BuildOutcome::Skip => return Ok(BuildOutcome::Skip),
+                    }
+                }
+                out
+            }
+            InputsSpec::Indexed(_) => {
+                return Err(Error::not_buildable(std::any::type_name::<Self>()));
+            }
+        };
+
+        let kind = kind_build(ctx)?;
+        let ty = match self.build_result_ty {
+            BuildTy::InheritRoot => ctx.root_ty,
+            BuildTy::Fixed(t) => t,
+        };
+        let out = ctx.graph.make_value_node(kind, input_outs, ty)?;
+        Ok(BuildOutcome::Out(out))
     }
 }
 

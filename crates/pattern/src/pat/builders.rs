@@ -65,6 +65,8 @@ impl From<IntBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: Some(Arc::new(move |_b| Ok(NodeKind::IntBinaryOp(op)))),
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -121,6 +123,8 @@ impl From<BoolBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: Some(Arc::new(move |_b| Ok(NodeKind::BoolBinaryOp(op)))),
+            build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -179,6 +183,8 @@ impl From<FloatBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatBinaryOp(op)))),
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -248,6 +254,8 @@ impl From<LoadPat> for Pat {
             indexed.push((1, addr_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -331,6 +339,8 @@ impl From<StorePat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -411,6 +421,8 @@ impl From<StackStorePat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -492,6 +504,8 @@ impl From<StackStorePhiPat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -576,6 +590,8 @@ impl From<PhiPat> for Pat {
             node_var,
         } = b;
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -677,6 +693,8 @@ impl From<CallPat> for Pat {
             crate::pat::node_pat::OutputsSpec::Indexed(indexed)
         };
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: outputs_spec,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: Some(crate::pat::traits::CandidateKind::Call),
@@ -736,6 +754,8 @@ impl From<CallOtherPat> for Pat {
         let indexed_inputs: Vec<(usize, Pat)> =
             args.into_iter().map(|(i, p)| (2 + i, p)).collect();
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: Some(crate::pat::traits::CandidateKind::CallOther),
@@ -808,6 +828,8 @@ impl From<RetPat> for Pat {
             indexed_inputs.push((2 + i, p));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: Some(crate::pat::traits::CandidateKind::Return),
@@ -874,6 +896,8 @@ impl From<FunctionArgPat> for Pat {
             node_var,
         } = b;
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -972,6 +996,8 @@ impl From<IfPat> for Pat {
             crate::pat::node_pat::ConsumersSpec::Indexed(indexed_consumers)
         };
         Pat::from_dyn(Arc::new(NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: consumers_spec,
             candidate_kind: Some(crate::pat::traits::CandidateKind::If),

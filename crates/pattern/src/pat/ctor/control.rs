@@ -31,6 +31,8 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
 
 fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: None,
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

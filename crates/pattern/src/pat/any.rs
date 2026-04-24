@@ -2,8 +2,9 @@
 
 use ir::node::NodeOutputId;
 
+use crate::error::{ErrorKind, Result};
 use crate::matcher::Bindings;
-use crate::pat::traits::{MatchCtx, Pattern};
+use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 use crate::var::Var;
 
 /// Matches any output unconditionally.
@@ -41,5 +42,16 @@ impl Pattern for CapturePat {
             *b = snap;
             false
         }
+    }
+
+    fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
+        // In build position, `var(v)` materializes by looking up the
+        // `NodeOutputId` bound during the match. Used by rewrite rules
+        // that reuse captured operands verbatim in the RHS.
+        let out = ctx
+            .bindings
+            .get(self.var)
+            .ok_or(ErrorKind::MissingBinding("Var"))?;
+        Ok(BuildOutcome::Out(out))
     }
 }

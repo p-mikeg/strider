@@ -33,6 +33,8 @@ decl_pat_binary_ops!(bool_binary, BoolBinaryOp, BoolBinaryOpPat, [
 /// Matches a boolean unary operation with the given `op`.
 pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::BoolUnaryOp(op)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

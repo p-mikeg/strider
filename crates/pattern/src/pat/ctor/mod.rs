@@ -8,6 +8,7 @@
 // every call site, which is uglier than the suffix.
 mod bool_;
 mod casts;
+pub(crate) mod consts;
 mod control;
 mod float;
 mod int;

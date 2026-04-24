@@ -1,5 +1,5 @@
 //! Rule composition: [`rewrite_rule`], [`apply_rules_in_order`], [`BoxedRule`],
-//! [`boxed_rule`], and the [`RewriteOutcome`] / [`InnerOutcome`] outcome enums.
+//! [`boxed_rule`], and the [`RewriteOutcome`] outcome enum.
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId};
@@ -7,9 +7,7 @@ use ir::node::{NodeId, NodeOutputId};
 use crate::error::Result;
 use crate::matcher::Matcher;
 use crate::pat::Pat;
-
-use super::Build;
-use super::eval::eval;
+use crate::pat::traits::{BuildCtx, BuildOutcome};
 
 /// Outcome of a single rewrite rule firing.
 pub enum RewriteOutcome {
@@ -20,33 +18,29 @@ pub enum RewriteOutcome {
     Skip,
 }
 
-/// Internal helper: an inner evaluation either produced a value or propagated
-/// a Skip upward.
-pub(super) enum InnerOutcome {
-    Out(NodeOutputId),
-    Skip,
-}
-
-/// Build a rewrite-rule closure from an LHS [`Pat`] and an RHS [`Build`].
+/// Build a rewrite-rule closure from an LHS and RHS [`Pat`].
 ///
 /// The returned closure takes `&mut BuiltFunctionGraph` and a candidate root
-/// [`NodeId`], attempts the match, and on success evaluates the RHS and
-/// redirects the root's value output to the RHS output via
+/// [`NodeId`], attempts the match, and on success materializes the RHS
+/// template via [`crate::pat::traits::Pattern::try_build`] and redirects
+/// the root's value output to the built output via
 /// [`BuiltFunctionGraph::replace_all_uses`].
 ///
 /// Returns `Ok(true)` if the rule fired and at least one use was redirected,
-/// `Ok(false)` if the match failed, the RHS produced [`RewriteOutcome::Skip`],
-/// or `replace_all_uses` found nothing to redirect.
+/// `Ok(false)` if the match failed, the RHS produced a skip, or
+/// `replace_all_uses` found nothing to redirect.
 ///
 /// Errors from the graph layer (`make_value_node`, `replace_all_uses`) are
 /// wrapped in [`crate::error::ErrorKind::IrError`]; errors from user closures
-/// are wrapped in [`crate::error::ErrorKind::RewriteClosure`] (via
+/// inside `*_const_with!` macros are wrapped in
+/// [`crate::error::ErrorKind::RewriteClosure`] (via
 /// [`crate::error::Error::rewrite_closure`]).
 pub fn rewrite_rule(
     lhs: impl Into<Pat>,
-    rhs: Build,
+    rhs: impl Into<Pat>,
 ) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'static {
     let lhs: Pat = lhs.into();
+    let rhs: Pat = rhs.into();
     move |fg: &mut BuiltFunctionGraph, node: NodeId| -> Result<bool> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so we can
         //    mutate `fg` afterwards.
@@ -62,19 +56,27 @@ pub fn rewrite_rule(
         let [root_out] = fg.graph.node_outputs_exact::<1>(node)?;
         let root_ty = fg.graph.output_kind(root_out).as_value_or_err()?;
 
-        // 3. Evaluate RHS.  A closure inside the tree may opt out of the
+        // 3. Materialize RHS.  A closure inside the tree may opt out of the
         //    rewrite by returning `Err(pattern::Error::skip())`; catch that
         //    sentinel here and convert it to "no change" instead of a hard
         //    error.  All other errors propagate.
-        let outcome = match eval(&rhs, fg, &bindings, node, root_ty) {
-            Ok(o) => o,
-            Err(e) if e.is_skip() => return Ok(false),
-            Err(e) => return Err(e),
+        let outcome = {
+            let mut ctx = BuildCtx {
+                graph: fg,
+                bindings: &bindings,
+                root: node,
+                root_ty,
+            };
+            match rhs.as_dyn().try_build(&mut ctx) {
+                Ok(o) => o,
+                Err(e) if e.is_skip() => return Ok(false),
+                Err(e) => return Err(e),
+            }
         };
 
         match outcome {
-            RewriteOutcome::Skip => Ok(false),
-            RewriteOutcome::RedirectTo(new_out) => {
+            BuildOutcome::Skip => Ok(false),
+            BuildOutcome::Out(new_out) => {
                 let changed = fg.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }

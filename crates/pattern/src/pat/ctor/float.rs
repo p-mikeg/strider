@@ -36,6 +36,8 @@ decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
 /// Matches a float unary operation with the given `op`.
 pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatUnaryOp(op)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -67,6 +69,8 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 /// Matches a float comparison node with the given `op`.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatCmpOp(op)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -94,6 +98,8 @@ decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
 /// Matches an `IntToFloat` value-conversion node.
 pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(|_b| Ok(NodeKind::IntToFloat))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -109,6 +115,8 @@ pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
 /// Matches a `FloatToInt` value-conversion node.
 pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatToInt))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -124,6 +132,8 @@ pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
 /// Matches a `FloatToFloat` precision-conversion node.
 pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatToFloat))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -139,6 +149,8 @@ pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
 /// Matches an `IntBitsToFloat` bitcast node.
 pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(|_b| Ok(NodeKind::IntBitsToFloat))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -154,6 +166,8 @@ pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
 /// Matches a `FloatBitsToInt` bitcast node.
 pub fn float_bits_to_int(operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(|_b| Ok(NodeKind::FloatBitsToInt))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

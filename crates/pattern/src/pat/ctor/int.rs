@@ -55,6 +55,8 @@ decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
 /// Matches an integer unary operation with the given `op`.
 pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::IntUnaryOp(op)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -88,6 +90,8 @@ pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
         InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()])
     };
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::IntCmpOp(op)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

@@ -34,6 +34,13 @@ pub fn int_binary_any(op_var: IntBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Int
         }
     });
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_int_binary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("IntBinaryOpVar"))?;
+            Ok(NodeKind::IntBinaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -56,6 +63,13 @@ pub fn int_binary_any(op_var: IntBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Int
 /// variant to `op`.
 pub fn int_unary_any(op_var: IntUnaryOpVar, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_int_unary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("IntUnaryOpVar"))?;
+            Ok(NodeKind::IntUnaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -87,6 +101,13 @@ pub fn int_cmp_any(op_var: IntCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>
         }
     });
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_int_cmp_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("IntCmpOpVar"))?;
+            Ok(NodeKind::IntCmpOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -118,6 +139,13 @@ pub fn bool_binary_any(op_var: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl I
         }
     });
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_bool_binary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("BoolBinaryOpVar"))?;
+            Ok(NodeKind::BoolBinaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -140,6 +168,13 @@ pub fn bool_binary_any(op_var: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl I
 /// variant to `op`.
 pub fn bool_unary_any(op_var: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_bool_unary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("BoolUnaryOpVar"))?;
+            Ok(NodeKind::BoolUnaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -174,6 +209,13 @@ pub fn float_binary_any(
         }
     });
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_float_binary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("FloatBinaryOpVar"))?;
+            Ok(NodeKind::FloatBinaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -196,6 +238,13 @@ pub fn float_binary_any(
 /// variant to `op`.
 pub fn float_unary_any(op_var: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_float_unary_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("FloatUnaryOpVar"))?;
+            Ok(NodeKind::FloatUnaryOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -221,6 +270,13 @@ pub fn float_unary_any(op_var: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat 
 /// automatic operand-swap retry is attempted.
 pub fn float_cmp_any(op_var: FloatCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |ctx| {
+            let op = ctx.bindings
+                .get_float_cmp_op(op_var)
+                .ok_or(crate::error::ErrorKind::MissingBinding("FloatCmpOpVar"))?;
+            Ok(NodeKind::FloatCmpOp(op))
+        })),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

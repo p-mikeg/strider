@@ -6,7 +6,7 @@ use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 use crate::var::{BoolVar, FloatVar, IntVar, Var};
 
 mod builders;
-mod ctor;
+pub(crate) mod ctor;
 
 pub(crate) mod traits;
 pub(crate) mod node_pat;
@@ -47,6 +47,8 @@ impl IntoAnyIntConst for Var {
     fn into_any_int_const_pat(self) -> Pat {
         // Match any IntConst; bind the output to `self` via NodePat.output_var.
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -64,8 +66,16 @@ impl IntoAnyIntConst for Var {
 impl IntoAnyIntConst for IntVar {
     fn into_any_int_const_pat(self) -> Pat {
         // Match any IntConst; bind the concrete value to the IntVar.
+        // In build position, emit `IntConst(bindings[iv])` at the root type.
         let iv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: Some(Arc::new(move |ctx| {
+                let v = ctx.bindings
+                    .get_int(iv)
+                    .ok_or(crate::error::ErrorKind::MissingBinding("IntVar"))?;
+                Ok(NodeKind::IntConst(v))
+            })),
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -91,6 +101,8 @@ pub trait IntoAnyBoolConst: sealed::SealedAnyBoolConst {
 impl IntoAnyBoolConst for Var {
     fn into_any_bool_const_pat(self) -> Pat {
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -109,6 +121,13 @@ impl IntoAnyBoolConst for BoolVar {
     fn into_any_bool_const_pat(self) -> Pat {
         let bv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: Some(Arc::new(move |ctx| {
+                let v = ctx.bindings
+                    .get_bool(bv)
+                    .ok_or(crate::error::ErrorKind::MissingBinding("BoolVar"))?;
+                Ok(NodeKind::BoolConst(v))
+            })),
+            build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -134,6 +153,8 @@ pub trait IntoAnyFloatConst: sealed::SealedAnyFloatConst {
 impl IntoAnyFloatConst for Var {
     fn into_any_float_const_pat(self) -> Pat {
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: None,
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,
@@ -152,6 +173,13 @@ impl IntoAnyFloatConst for FloatVar {
     fn into_any_float_const_pat(self) -> Pat {
         let fv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            kind_build: Some(Arc::new(move |ctx| {
+                let bits = ctx.bindings
+                    .get_float_bits(fv)
+                    .ok_or(crate::error::ErrorKind::MissingBinding("FloatVar"))?;
+                Ok(NodeKind::FloatConst(bits))
+            })),
+            build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
             candidate_kind: None,

@@ -24,8 +24,13 @@ pub fn var(v: Var) -> Pat {
 }
 
 /// Matches an `IntConst` node with value exactly `v`.
+///
+/// In build position (RHS of a rewrite rule), constructs an `IntConst(v)`
+/// node at the root type.
 pub fn int_const(v: u64) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::IntConst(v)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -42,6 +47,8 @@ pub fn int_const(v: u64) -> Pat {
 /// Matches a `BoolConst` node with value exactly `v`.
 pub fn bool_const(v: bool) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::BoolConst(v)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,
@@ -58,6 +65,8 @@ pub fn bool_const(v: bool) -> Pat {
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
 pub fn float_const(bits: u64) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        kind_build: Some(Arc::new(move |_b| Ok(NodeKind::FloatConst(bits)))),
+        build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
         candidate_kind: None,

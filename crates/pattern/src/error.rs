@@ -41,6 +41,12 @@ strider_error::define_error! {
         /// other error variant propagates as a real failure.
         #[error("rewrite rule opted to skip")]
         RewriteSkip,
+
+        /// A pattern was used on the RHS of a `rewrite_rule` but does not
+        /// support construction (wildcards, guards, and control patterns
+        /// like `call` / `ret` / `if_node` have no build semantics today).
+        #[error("pattern {0} is not buildable (match-only)")]
+        NotBuildable(&'static str),
     }
 }
 
@@ -77,6 +83,14 @@ impl Error {
     /// opt out of a rewrite rule without surfacing a hard error.
     pub fn is_skip(&self) -> bool {
         matches!(self.kind(), ErrorKind::RewriteSkip)
+    }
+
+    /// Returns an [`Error`] carrying [`ErrorKind::NotBuildable`] for the
+    /// pattern type named `pat_name` (typically `std::any::type_name::<Self>()`
+    /// in a `Pattern::try_build` default impl).
+    #[track_caller]
+    pub fn not_buildable(pat_name: &'static str) -> Self {
+        ErrorKind::NotBuildable(pat_name).into()
     }
 }
 

@@ -16,7 +16,6 @@ use super::try_lower_cast_to_float;
 ///
 /// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
 fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
-    use pattern::build::{self, cap};
     use pattern::{
         BoxedRule, IntVar, Var, add, and, any_int_const, boxed_rule, int_const_with, or,
         rewrite_rule, sub, var,
@@ -26,35 +25,35 @@ fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
     let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
     let rule_add_add = boxed_rule(rewrite_rule(
         add(add(var(x), any_int_const(c1)), any_int_const(c2)),
-        build::add(cap(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+        add(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
     ));
 
     // (x - C1) - C2 → x - (C1 + C2)
     let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
     let rule_sub_sub = boxed_rule(rewrite_rule(
         sub(sub(var(x), any_int_const(c1)), any_int_const(c2)),
-        build::sub(cap(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+        sub(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
     ));
 
     // (x + C1) - C2 → x + (C1 - C2)
     let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
     let rule_add_sub = boxed_rule(rewrite_rule(
         sub(add(var(x), any_int_const(c1)), any_int_const(c2)),
-        build::add(cap(x), int_const_with!([c1, c2] => c1.wrapping_sub(c2))),
+        add(var(x), int_const_with!([c1, c2] => c1.wrapping_sub(c2))),
     ));
 
     // (x - C1) + C2 → x + (C2 - C1)
     let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
     let rule_sub_add = boxed_rule(rewrite_rule(
         add(sub(var(x), any_int_const(c1)), any_int_const(c2)),
-        build::add(cap(x), int_const_with!([c1, c2] => c2.wrapping_sub(c1))),
+        add(var(x), int_const_with!([c1, c2] => c2.wrapping_sub(c1))),
     ));
 
     // (a & C1) & C2 → a & (C1 & C2)
     let (a, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
     let rule_and_merge = boxed_rule(rewrite_rule(
         and(and(var(a), any_int_const(c1)), any_int_const(c2)),
-        build::and(cap(a), int_const_with!([c1, c2] => c1 & c2)),
+        and(var(a), int_const_with!([c1, c2] => c1 & c2)),
     ));
 
     // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
@@ -65,9 +64,9 @@ fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
             or(and(var(a), any_int_const(c1)), and(var(b), any_int_const(c2))),
             any_int_const(c3),
         ),
-        build::or(
-            build::and(cap(a), int_const_with!([c1, c3] => c1 & c3)),
-            build::and(cap(b), int_const_with!([c2, c3] => c2 & c3)),
+        or(
+            and(var(a), int_const_with!([c1, c3] => c1 & c3)),
+            and(var(b), int_const_with!([c2, c3] => c2 & c3)),
         ),
     ));
 
@@ -104,7 +103,6 @@ pub(super) fn apply_reassoc_and_mask_rules(
 
 /// Builds the rule vec for [`apply_bitcast_extend_rules`].
 fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
-    use pattern::build::cap;
     use pattern::{
         BoxedRule, Var, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule, var,
     };
@@ -113,14 +111,14 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     let x = Var::new();
     let rule_int_float = boxed_rule(rewrite_rule(
         int_bits_to_float(float_bits_to_int(var(x))),
-        cap(x),
+        var(x),
     ));
 
     // FloatBitsToInt(IntBitsToFloat(x)) → x
     let x = Var::new();
     let rule_float_int = boxed_rule(rewrite_rule(
         float_bits_to_int(int_bits_to_float(var(x))),
-        cap(x),
+        var(x),
     ));
 
     let rules: Vec<BoxedRule> = vec![rule_int_float, rule_float_int];
@@ -144,7 +142,6 @@ pub(super) fn apply_bitcast_extend_rules(
 
 /// Builds the rule vec for [`apply_identity_rules`].
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
-    use pattern::build::{cap, int_const_lit};
     use pattern::{
         BoxedRule, IntVar, Pat, Var, add, and, any_int_const, boxed_rule, int_const, mul, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
@@ -161,38 +158,38 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let pat = pat.when_match(move |_fg, ty, b| {
             b.get_int(c) == ty.get_unsigned_int(u64::MAX)
         });
-        boxed_rule(rewrite_rule(pat, cap(x)))
+        boxed_rule(rewrite_rule(pat, var(x)))
     };
 
     let rules: Vec<BoxedRule> = vec![
         // x + 0 → x  (commutative: also covers 0 + x)
-        boxed_rule(rewrite_rule(add(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
         // x - 0 → x
-        boxed_rule(rewrite_rule(sub(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(sub(var(x), int_const(0)), var(x))),
         // x - x → 0
-        boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const_lit(0))),
+        boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0))),
         // x ^ x → 0
-        boxed_rule(rewrite_rule(xor(var(x), var(x)), int_const_lit(0))),
+        boxed_rule(rewrite_rule(xor(var(x), var(x)), int_const(0))),
         // x ^ 0 → x  (commutative)
-        boxed_rule(rewrite_rule(xor(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(xor(var(x), int_const(0)), var(x))),
         // x * 0 → 0  (commutative)
-        boxed_rule(rewrite_rule(mul(var(x), int_const(0)), int_const_lit(0))),
+        boxed_rule(rewrite_rule(mul(var(x), int_const(0)), int_const(0))),
         // x * 1 → x  (commutative)
-        boxed_rule(rewrite_rule(mul(var(x), int_const(1)), cap(x))),
+        boxed_rule(rewrite_rule(mul(var(x), int_const(1)), var(x))),
         // x & 0 → 0  (commutative)
-        boxed_rule(rewrite_rule(and(var(x), int_const(0)), int_const_lit(0))),
+        boxed_rule(rewrite_rule(and(var(x), int_const(0)), int_const(0))),
         // x & x → x
-        boxed_rule(rewrite_rule(and(var(x), var(x)), cap(x))),
+        boxed_rule(rewrite_rule(and(var(x), var(x)), var(x))),
         // x | 0 → x  (commutative)
-        boxed_rule(rewrite_rule(or(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(or(var(x), int_const(0)), var(x))),
         // x | x → x
-        boxed_rule(rewrite_rule(or(var(x), var(x)), cap(x))),
+        boxed_rule(rewrite_rule(or(var(x), var(x)), var(x))),
         // x << 0 → x  (non-commutative — only RHS 0 is the identity)
-        boxed_rule(rewrite_rule(shl(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(shl(var(x), int_const(0)), var(x))),
         // x >> 0 → x  (logical shift right)
-        boxed_rule(rewrite_rule(shr(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(shr(var(x), int_const(0)), var(x))),
         // x >>> 0 → x  (arithmetic / signed shift right)
-        boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), cap(x))),
+        boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), var(x))),
         all_ones_rule,
     ];
     rules
