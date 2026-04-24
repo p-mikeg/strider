@@ -44,11 +44,6 @@ pub enum ErrorKind {
 
     #[error("unsupported varnode space for display: {0:?}")]
     UnsupportedVnSpaceDisplay(rsleigh::VnSpace),
-
-    /// A test assertion failed. Exists so tests can return `Result<(), Error>`
-    /// instead of using `panic!`.
-    #[error("assertion failed: {0}")]
-    AssertionFailed(String),
 }
 
 strider_error::define_error! {
