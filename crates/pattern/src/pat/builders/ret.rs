@@ -1,12 +1,10 @@
 //! `RetPat` — matches `Return` nodes with optional constraints on the direct
 //! ctrl predecessor and return-value inputs.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat};
 use crate::var::NodeVar;
 
 /// Builder for `Return` node patterns.  Created by [`crate::pat::ret`].
@@ -55,12 +53,8 @@ impl From<RetPat> for Pat {
         for (i, p) in ret_vals {
             indexed_inputs.push((2 + i, p));
         }
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::Return),
-            Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::Return)),
-            InputsSpec::Indexed(indexed_inputs),
-        )
-        .with_node_var(node_var)
-        .into_pat()
+        NodePat::matcher(KindSpec::Exact(NodeKind::Return), InputsSpec::Indexed(indexed_inputs))
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

@@ -39,17 +39,17 @@ pub struct MatchCtx<'g, 'm> {
 pub trait Pattern: Send + Sync {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool;
 
-    /// Advertises the `NodeKind` discriminants this pattern can match at
-    /// its root.  [`crate::matcher::Matcher::find_all`] uses this to skip
+    /// Advertises the kind-level constraint this pattern imposes at its
+    /// root.  [`crate::matcher::Matcher::find_all`] uses this to skip
     /// candidate nodes whose kind is incompatible, turning a graph-wide
     /// preorder scan into an effectively kind-indexed scan for patterns
     /// with a concrete root.
     ///
-    /// Default: [`crate::pat::node_pat::KindFilter::Any`] (no filtering).
+    /// Default: [`crate::pat::node_pat::KindSpec::Any`] (no filtering).
     /// Override on combinators by forwarding to the inner pattern, and on
     /// leaves whose root kind is statically known.
-    fn root_kind_filter(&self) -> crate::pat::node_pat::KindFilter {
-        crate::pat::node_pat::KindFilter::Any
+    fn kind_spec(&self) -> crate::pat::node_pat::KindSpec {
+        crate::pat::node_pat::KindSpec::Any
     }
 
     /// Node-level match entry.  Default impl iterates the node's outputs

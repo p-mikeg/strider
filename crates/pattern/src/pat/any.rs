@@ -53,11 +53,11 @@ pub struct CapturePat {
 }
 
 impl Pattern for CapturePat {
-    fn root_kind_filter(&self) -> crate::pat::node_pat::KindFilter {
-        // A capture inherits the inner pattern's kind filter — wrapping
+    fn kind_spec(&self) -> crate::pat::node_pat::KindSpec {
+        // A capture inherits the inner pattern's kind spec — wrapping
         // `add(...)` in `.capture(v)` must not forfeit the find_all
         // prefilter speedup.
-        self.inner.as_dyn().root_kind_filter()
+        self.inner.as_dyn().kind_spec()
     }
 
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {

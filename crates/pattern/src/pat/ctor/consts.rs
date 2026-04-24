@@ -3,7 +3,7 @@
 //! trait and [`first_value_input_type`] helper the `*_const_with!`
 //! macros expand against.
 //!
-//! These constructors are match-only-false ([`NodePat::kind_match`]
+//! These constructors are match-only-false (their `post_match` always
 //! returns `false`), so accidentally pasting one on the LHS of a rule
 //! causes a silent no-match rather than a panic.  Their purpose is to
 //! materialize an `IntConst` / `BoolConst` / `FloatConst` node whose
@@ -15,12 +15,19 @@ use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
 use crate::error::{ErrorKind, Result};
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
 use crate::pat::traits::BuildCtx;
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
 };
+
+/// Match-only-false post_match shared by every `*_const_with_fn` — these
+/// patterns are build-only; landing one on an LHS is a silent no-match
+/// rather than a panic.
+fn never_match() -> NodeKindCheck {
+    Arc::new(|_ctx, _node, _b| false)
+}
 
 /// Type alias for the closure stored by `int_const_with_fn` /
 /// `bool_const_with_fn` / `float_const_with_fn`.
@@ -41,21 +48,18 @@ pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
     }
 }
 
-/// Match-only-false kind_match shared by every `*_const_with_fn` — these
-/// patterns are build-only; landing one on an LHS is a silent no-match
-/// rather than a panic.
-fn never_match_kind() -> crate::pat::node_pat::NodeKindCheck {
-    Arc::new(|_ctx, _node, _b| false)
-}
-
 /// Builds an `IntConst` node whose value is computed by `f` at build time.
 pub fn int_const_with_fn<F>(f: F) -> Pat
 where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
-        .with_build(Arc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?))))
+    NodePat::matcher(KindSpec::Any, InputsSpec::None)
+        .with_post_match(never_match())
+        .with_build_fn(
+            Arc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?))),
+            BuildTy::InheritRoot,
+        )
         .into_pat()
 }
 
@@ -65,9 +69,12 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
 {
     let f: BuildValueFn<bool> = Arc::new(f);
-    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
-        .with_build(Arc::new(move |ctx| Ok(NodeKind::BoolConst(f(ctx)?))))
-        .with_build_ty(BuildTy::Fixed(NodeOutputType::Bool))
+    NodePat::matcher(KindSpec::Any, InputsSpec::None)
+        .with_post_match(never_match())
+        .with_build_fn(
+            Arc::new(move |ctx| Ok(NodeKind::BoolConst(f(ctx)?))),
+            BuildTy::Fixed(NodeOutputType::Bool),
+        )
         .into_pat()
 }
 
@@ -78,8 +85,12 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
-        .with_build(Arc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?))))
+    NodePat::matcher(KindSpec::Any, InputsSpec::None)
+        .with_post_match(never_match())
+        .with_build_fn(
+            Arc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?))),
+            BuildTy::InheritRoot,
+        )
         .into_pat()
 }
 

@@ -1,13 +1,11 @@
 //! `PhiPat` — matches `ControlPhi` nodes with optional varnode constraint
 //! and sparse positional input constraints.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
 use crate::pat::builders::CaptureBuilder;
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat, exemplar_vn};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::var::{NodeVar, Var};
 
 /// Builder for `ControlPhi` node patterns.  Created by [`crate::pat::phi`] or
@@ -43,18 +41,16 @@ impl CaptureBuilder for PhiPat {
 impl From<PhiPat> for Pat {
     fn from(b: PhiPat) -> Pat {
         let PhiPat { vn, inputs, output_var, node_var } = b;
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::ControlPhi(exemplar_vn())),
-            Arc::new(move |ctx, node, _b| {
-                let NodeKind::ControlPhi(actual_vn) = ctx.graph.graph.node_kind(node) else {
-                    return false;
-                };
-                vn.is_none_or(|expected| *actual_vn == expected)
-            }),
-            InputsSpec::Indexed(inputs),
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+        let kind = match vn {
+            None => KindSpec::variant(&NodeKind::ControlPhi(exemplar_vn())),
+            Some(expected) => KindSpec::variant_with(
+                &NodeKind::ControlPhi(exemplar_vn()),
+                move |k| matches!(k, NodeKind::ControlPhi(actual) if *actual == expected),
+            ),
+        };
+        NodePat::matcher(kind, InputsSpec::Indexed(inputs))
+            .with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

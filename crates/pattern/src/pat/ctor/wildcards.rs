@@ -6,7 +6,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pat::any::{AnyPat, VarPat};
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, Pat};
 use crate::var::Var;
 
@@ -30,42 +30,23 @@ pub fn var(v: Var) -> Pat {
 /// In build position (RHS of a rewrite rule), constructs an `IntConst(v)`
 /// node at the root type.
 pub fn int_const(v: u64) -> Pat {
-    NodePat::matcher(
-        KindFilter::exact(&NodeKind::IntConst(0)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(c) if *c == v)
-        }),
-        InputsSpec::None,
-    )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::IntConst(v))))
-    .into_pat()
+    NodePat::matcher(KindSpec::Exact(NodeKind::IntConst(v)), InputsSpec::None)
+        .with_build_exact(NodeKind::IntConst(v), BuildTy::InheritRoot)
+        .into_pat()
 }
 
 /// Matches a `BoolConst` node with value exactly `v`.
 pub fn bool_const(v: bool) -> Pat {
-    NodePat::matcher(
-        KindFilter::exact(&NodeKind::BoolConst(false)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(c) if *c == v)
-        }),
-        InputsSpec::None,
-    )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::BoolConst(v))))
-    .with_build_ty(BuildTy::Fixed(NodeOutputType::Bool))
-    .into_pat()
+    NodePat::matcher(KindSpec::Exact(NodeKind::BoolConst(v)), InputsSpec::None)
+        .with_build_exact(NodeKind::BoolConst(v), BuildTy::Fixed(NodeOutputType::Bool))
+        .into_pat()
 }
 
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
 pub fn float_const(bits: u64) -> Pat {
-    NodePat::matcher(
-        KindFilter::exact(&NodeKind::FloatConst(0)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(c) if *c == bits)
-        }),
-        InputsSpec::None,
-    )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::FloatConst(bits))))
-    .into_pat()
+    NodePat::matcher(KindSpec::Exact(NodeKind::FloatConst(bits)), InputsSpec::None)
+        .with_build_exact(NodeKind::FloatConst(bits), BuildTy::InheritRoot)
+        .into_pat()
 }
 
 /// Matches any `IntConst` node and binds either the output (for a [`Var`]) or

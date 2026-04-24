@@ -60,10 +60,7 @@ macro_rules! decl_any_const {
         impl $trait for Var {
             fn $method(self) -> Pat {
                 crate::pat::node_pat::NodePat::matcher(
-                    crate::pat::node_pat::KindFilter::exact(&NodeKind::$variant($sample)),
-                    Arc::new(|ctx, node, _b| {
-                        matches!(ctx.graph.graph.node_kind(node), NodeKind::$variant(_))
-                    }),
+                    crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
                     crate::pat::node_pat::InputsSpec::None,
                 )
                 .with_output_var(Some(self))
@@ -75,21 +72,29 @@ macro_rules! decl_any_const {
             fn $method(self) -> Pat {
                 let tv = self;
                 crate::pat::node_pat::NodePat::matcher(
-                    crate::pat::node_pat::KindFilter::exact(&NodeKind::$variant($sample)),
-                    Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
-                        NodeKind::$variant(v) => b.$bind(tv, *v),
-                        _ => false,
-                    }),
+                    crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
                     crate::pat::node_pat::InputsSpec::None,
                 )
-                .with_build(Arc::new(move |ctx| {
-                    let v = ctx
-                        .bindings
-                        .$get(tv)
-                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
-                    Ok(NodeKind::$variant(v))
+                // Kind spec already enforces the variant, so the match arm
+                // below is unreachable in the `_` case — but keeping it
+                // lets the closure body stay a single `match`.  Binding
+                // happens in `post_match` per the NodePat kind-purity rule.
+                .with_post_match(Arc::new(move |ctx, node, b| {
+                    match ctx.graph.graph.node_kind(node) {
+                        NodeKind::$variant(v) => b.$bind(tv, *v),
+                        _ => false,
+                    }
                 }))
-                .with_build_ty($build_ty)
+                .with_build_fn(
+                    Arc::new(move |ctx| {
+                        let v = ctx
+                            .bindings
+                            .$get(tv)
+                            .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                        Ok(NodeKind::$variant(v))
+                    }),
+                    $build_ty,
+                )
                 .into_pat()
             }
         }

@@ -4,15 +4,13 @@
 //! primitive type and reusing it as a module name requires `mod r#bool;` /
 //! `r#bool::…` at every call site, which is uglier than the suffix.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 use ir::{BoolBinaryOp, BoolUnaryOp};
 
 use crate::macros::{decl_pat_binary_ops, decl_pat_unary_ops};
 use crate::pat::BoolBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
 /// Matches a boolean binary operation with the given `op`.
 ///
@@ -33,14 +31,10 @@ decl_pat_binary_ops!(bool_binary, BoolBinaryOp, BoolBinaryOpPat, [
 /// Matches a boolean unary operation with the given `op`.
 pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
-        KindFilter::exact(&NodeKind::BoolUnaryOp(op)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(x) if *x == op)
-        }),
+        KindSpec::Exact(NodeKind::BoolUnaryOp(op)),
         InputsSpec::fixed_ordered(vec![operand.into()]),
     )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::BoolUnaryOp(op))))
-    .with_build_ty(BuildTy::Fixed(ir::node::NodeOutputType::Bool))
+    .with_build_exact(NodeKind::BoolUnaryOp(op), BuildTy::Fixed(ir::node::NodeOutputType::Bool))
     .into_pat()
 }
 

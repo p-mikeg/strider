@@ -1,7 +1,5 @@
 //! Integer binary, unary, and comparison pattern constructors.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 use ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 
@@ -9,7 +7,7 @@ use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
 use crate::matcher::commutativity::is_commutative_int_cmp_op;
 use crate::pat::IntBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
 // ── Integer binary ops ────────────────────────────────────────────────────────
 
@@ -55,13 +53,10 @@ decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
 /// Matches an integer unary operation with the given `op`.
 pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
-        KindFilter::exact(&NodeKind::IntUnaryOp(op)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntUnaryOp(x) if *x == op)
-        }),
+        KindSpec::Exact(NodeKind::IntUnaryOp(op)),
         InputsSpec::fixed_ordered(vec![operand.into()]),
     )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::IntUnaryOp(op))))
+    .with_build_exact(NodeKind::IntUnaryOp(op), BuildTy::InheritRoot)
     .into_pat()
 }
 
@@ -84,16 +79,9 @@ pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     } else {
         InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()])
     };
-    NodePat::matcher(
-        KindFilter::exact(&NodeKind::IntCmpOp(op)),
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::IntCmpOp(x) if *x == op)
-        }),
-        inputs,
-    )
-    .with_build(Arc::new(move |_b| Ok(NodeKind::IntCmpOp(op))))
-    .with_build_ty(BuildTy::Fixed(ir::node::NodeOutputType::Bool))
-    .into_pat()
+    NodePat::matcher(KindSpec::Exact(NodeKind::IntCmpOp(op)), inputs)
+        .with_build_exact(NodeKind::IntCmpOp(op), BuildTy::Fixed(ir::node::NodeOutputType::Bool))
+        .into_pat()
 }
 
 decl_pat_cmp_ops!(int_cmp, IntCmpOp, Pat, [

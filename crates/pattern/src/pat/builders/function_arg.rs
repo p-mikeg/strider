@@ -1,13 +1,11 @@
 //! `FunctionArgPat` — matches `FunctionArg` entry nodes with optional source
 //! (register / stack) and index constraints.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
 use crate::pat::builders::CaptureBuilder;
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat, exemplar_vn};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::var::{NodeVar, Var};
 
 /// Builder for `FunctionArg` node patterns.  Created by
@@ -44,17 +42,15 @@ impl CaptureBuilder for FunctionArgPat {
 impl From<FunctionArgPat> for Pat {
     fn from(b: FunctionArgPat) -> Pat {
         let FunctionArgPat { source, index, output_var, node_var } = b;
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::FunctionArg {
-                source: ir::node::FunctionArgSource::Register(exemplar_vn()),
-                index: 0,
-            }),
-            Arc::new(move |ctx, node, _b| {
-                let NodeKind::FunctionArg {
-                    source: actual_source,
-                    index: actual_index,
-                } = ctx.graph.graph.node_kind(node)
-                else {
+        let exemplar = NodeKind::FunctionArg {
+            source: ir::node::FunctionArgSource::Register(exemplar_vn()),
+            index: 0,
+        };
+        let kind = if source.is_none() && index.is_none() {
+            KindSpec::variant(&exemplar)
+        } else {
+            KindSpec::variant_with(&exemplar, move |k| {
+                let NodeKind::FunctionArg { source: actual_source, index: actual_index } = k else {
                     return false;
                 };
                 if let Some(ref expected_source) = source
@@ -63,11 +59,11 @@ impl From<FunctionArgPat> for Pat {
                     return false;
                 }
                 index.is_none_or(|expected| *actual_index == expected)
-            }),
-            InputsSpec::None,
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+            })
+        };
+        NodePat::matcher(kind, InputsSpec::None)
+            .with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

@@ -2,8 +2,6 @@
 //! `FloatBinaryOpPat`).  Each carries an `op` + two sub-patterns and a
 //! default-commutative retry governed by `is_commutative_*`.
 
-use std::sync::Arc;
-
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 
@@ -11,21 +9,16 @@ use crate::matcher::commutativity::{
     is_commutative_bool_op, is_commutative_float_op, is_commutative_int_op,
 };
 use crate::pat::Pat;
-use crate::pat::node_pat::{
-    BuildTy, InputsSpec, KindFilter, NodeKindBuilder, NodeKindCheck, NodePat,
-};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
 /// Helper shared by the three typed binary-op builders.
 fn binary_op_pat(
-    root_kind: KindFilter,
-    kind_match: NodeKindCheck,
-    kind_build: NodeKindBuilder,
+    kind: NodeKind,
     build_ty: BuildTy,
     inputs: InputsSpec,
 ) -> Pat {
-    NodePat::matcher(root_kind, kind_match, inputs)
-        .with_build(kind_build)
-        .with_build_ty(build_ty)
+    NodePat::matcher(KindSpec::Exact(kind), inputs)
+        .with_build_exact(kind, build_ty)
         .into_pat()
 }
 
@@ -61,15 +54,7 @@ impl From<IntBinaryOpPat> for Pat {
         } else {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
-        binary_op_pat(
-            KindFilter::exact(&NodeKind::IntBinaryOp(op)),
-            Arc::new(move |ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(x) if *x == op)
-            }),
-            Arc::new(move |_b| Ok(NodeKind::IntBinaryOp(op))),
-            BuildTy::InheritRoot,
-            inputs,
-        )
+        binary_op_pat(NodeKind::IntBinaryOp(op), BuildTy::InheritRoot, inputs)
     }
 }
 
@@ -103,15 +88,7 @@ impl From<BoolBinaryOpPat> for Pat {
         } else {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
-        binary_op_pat(
-            KindFilter::exact(&NodeKind::BoolBinaryOp(op)),
-            Arc::new(move |ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(x) if *x == op)
-            }),
-            Arc::new(move |_b| Ok(NodeKind::BoolBinaryOp(op))),
-            BuildTy::Fixed(NodeOutputType::Bool),
-            inputs,
-        )
+        binary_op_pat(NodeKind::BoolBinaryOp(op), BuildTy::Fixed(NodeOutputType::Bool), inputs)
     }
 }
 
@@ -147,14 +124,6 @@ impl From<FloatBinaryOpPat> for Pat {
         } else {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
-        binary_op_pat(
-            KindFilter::exact(&NodeKind::FloatBinaryOp(op)),
-            Arc::new(move |ctx, node, _b| {
-                matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(x) if *x == op)
-            }),
-            Arc::new(move |_b| Ok(NodeKind::FloatBinaryOp(op))),
-            BuildTy::InheritRoot,
-            inputs,
-        )
+        binary_op_pat(NodeKind::FloatBinaryOp(op), BuildTy::InheritRoot, inputs)
     }
 }

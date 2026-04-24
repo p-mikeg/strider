@@ -21,10 +21,10 @@ pub struct WhenPat {
 }
 
 impl Pattern for WhenPat {
-    fn root_kind_filter(&self) -> crate::pat::node_pat::KindFilter {
-        // Guards inherit the inner pattern's filter — the predicate
-        // narrows the match but doesn't broaden the accepted kinds.
-        self.inner.as_dyn().root_kind_filter()
+    fn kind_spec(&self) -> crate::pat::node_pat::KindSpec {
+        // Guards inherit the inner pattern's spec — the predicate narrows
+        // the match but doesn't broaden the accepted kinds.
+        self.inner.as_dyn().kind_spec()
     }
 
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
@@ -53,8 +53,8 @@ pub struct WhenMatchPat {
 }
 
 impl Pattern for WhenMatchPat {
-    fn root_kind_filter(&self) -> crate::pat::node_pat::KindFilter {
-        self.inner.as_dyn().root_kind_filter()
+    fn kind_spec(&self) -> crate::pat::node_pat::KindSpec {
+        self.inner.as_dyn().kind_spec()
     }
 
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {

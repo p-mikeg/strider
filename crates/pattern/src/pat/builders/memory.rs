@@ -8,7 +8,7 @@ use ir::node::NodeKind;
 
 use crate::pat::Pat;
 use crate::pat::builders::CaptureBuilder;
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodeKindCheck, NodePat};
 use crate::var::{NodeVar, Var};
 
 // ── LoadPat ───────────────────────────────────────────────────────────────────
@@ -50,19 +50,17 @@ impl From<LoadPat> for Pat {
         if let Some(addr_pat) = addr {
             indexed.push((1, addr_pat));
         }
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::Load(rsleigh::VnSpace::RAM)),
-            Arc::new(move |ctx, node, _b| {
-                matches!(
-                    ctx.graph.graph.node_kind(node),
-                    NodeKind::Load(actual) if space.is_none_or(|s| *actual == s)
-                )
-            }),
-            InputsSpec::Indexed(indexed),
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+        let kind = match space {
+            None => KindSpec::variant(&NodeKind::Load(rsleigh::VnSpace::RAM)),
+            Some(s) => KindSpec::variant_with(
+                &NodeKind::Load(rsleigh::VnSpace::RAM),
+                move |k| matches!(k, NodeKind::Load(actual) if *actual == s),
+            ),
+        };
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
+            .with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }
 
@@ -114,19 +112,17 @@ impl From<StorePat> for Pat {
         if let Some(data_pat) = data {
             indexed.push((2, data_pat));
         }
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::Store(rsleigh::VnSpace::RAM)),
-            Arc::new(move |ctx, node, _b| {
-                matches!(
-                    ctx.graph.graph.node_kind(node),
-                    NodeKind::Store(actual) if space.is_none_or(|s| *actual == s)
-                )
-            }),
-            InputsSpec::Indexed(indexed),
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+        let kind = match space {
+            None => KindSpec::variant(&NodeKind::Store(rsleigh::VnSpace::RAM)),
+            Some(s) => KindSpec::variant_with(
+                &NodeKind::Store(rsleigh::VnSpace::RAM),
+                move |k| matches!(k, NodeKind::Store(actual) if *actual == s),
+            ),
+        };
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
+            .with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }
 
@@ -175,24 +171,26 @@ impl From<StackStorePat> for Pat {
         if let Some(data_pat) = data {
             indexed.push((2, data_pat));
         }
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::StackStore {
-                space: rsleigh::VnSpace::RAM,
-                offset: 0,
-            }),
-            Arc::new(move |ctx, node, _b| {
+        let exemplar = NodeKind::StackStore {
+            space: rsleigh::VnSpace::RAM,
+            offset: 0,
+        };
+        let kind = if space.is_none() && offset.is_none() {
+            KindSpec::variant(&exemplar)
+        } else {
+            KindSpec::variant_with(&exemplar, move |k| {
                 matches!(
-                    ctx.graph.graph.node_kind(node),
+                    k,
                     NodeKind::StackStore { space: actual_space, offset: actual_offset }
                         if space.is_none_or(|s| *actual_space == s)
                             && offset.is_none_or(|o| *actual_offset == o)
                 )
-            }),
-            InputsSpec::Indexed(indexed),
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+            })
+        };
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed))
+            .with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }
 
@@ -243,51 +241,45 @@ impl From<StackStorePhiPat> for Pat {
         if let Some(data_pat) = data {
             indexed.push((2, data_pat));
         }
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM }),
-            Arc::new(move |ctx, node, _b| {
-                let NodeKind::StackStorePhi { space: actual_space } =
-                    ctx.graph.graph.node_kind(node)
-                else {
-                    return false;
-                };
-                if let Some(expected_space) = space
-                    && *actual_space != expected_space
-                {
-                    return false;
-                }
-                if let Some(expected_offsets) = &offsets {
-                    // `expected_offsets` is already sorted (see
-                    // `StackStorePhiPat::offsets`).  Compare as multisets
-                    // without allocating: skip on length mismatch, then sort
-                    // a fixed-size stack buffer for small arities and fall
-                    // back to a heap Vec only in the unlikely arity > 8 case.
-                    let actual_slice = ctx.graph.graph.stack_phi_offsets(node);
-                    if actual_slice.len() != expected_offsets.len() {
-                        return false;
-                    }
-                    const INLINE: usize = 8;
-                    if actual_slice.len() <= INLINE {
-                        let mut buf = [0i64; INLINE];
-                        buf[..actual_slice.len()].copy_from_slice(actual_slice);
-                        buf[..actual_slice.len()].sort();
-                        if &buf[..actual_slice.len()] != expected_offsets.as_slice() {
-                            return false;
-                        }
-                    } else {
-                        let mut actual: Vec<i64> = actual_slice.to_vec();
-                        actual.sort();
-                        if &actual != expected_offsets {
-                            return false;
-                        }
-                    }
-                }
-                true
+        let exemplar = NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM };
+
+        // The space constraint is a pure payload check — handle it in the
+        // kind spec.  Offsets need `Graph::stack_phi_offsets(node)` side-table
+        // access, so they run in a post_match step.
+        let kind = match space {
+            None => KindSpec::variant(&exemplar),
+            Some(expected) => KindSpec::variant_with(&exemplar, move |k| {
+                matches!(k, NodeKind::StackStorePhi { space: actual } if *actual == expected)
             }),
-            InputsSpec::Indexed(indexed),
-        )
-        .with_output_var(output_var)
-        .with_node_var(node_var)
-        .into_pat()
+        };
+
+        let pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
+        let pat = if let Some(expected_offsets) = offsets {
+            // `expected_offsets` is already sorted (see
+            // `StackStorePhiPat::offsets`).
+            let check: NodeKindCheck = Arc::new(move |ctx, node, _b| {
+                let actual_slice = ctx.graph.graph.stack_phi_offsets(node);
+                if actual_slice.len() != expected_offsets.len() {
+                    return false;
+                }
+                const INLINE: usize = 8;
+                if actual_slice.len() <= INLINE {
+                    let mut buf = [0i64; INLINE];
+                    buf[..actual_slice.len()].copy_from_slice(actual_slice);
+                    buf[..actual_slice.len()].sort();
+                    &buf[..actual_slice.len()] == expected_offsets.as_slice()
+                } else {
+                    let mut actual: Vec<i64> = actual_slice.to_vec();
+                    actual.sort();
+                    actual == expected_offsets
+                }
+            });
+            pat.with_post_match(check)
+        } else {
+            pat
+        };
+        pat.with_output_var(output_var)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

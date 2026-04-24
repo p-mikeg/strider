@@ -1,32 +1,21 @@
 //! Cast / coercion / bit-width-change pattern constructors.
 
-use std::sync::Arc;
-
 use ir::ExtendOp;
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodeKindCheck, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 
-/// Helper: build a unary-input NodePat whose kind_match is supplied by the
-/// caller and whose kind_build emits a fixed `NodeKind`.  Covers the
-/// unit-variant casts (`CastToBool`, `Truncate`, `Popcount`, …).
-///
-/// The `root_kind` fast-path filter is derived from `build_kind` — both
-/// use the same `NodeKind` variant, and discriminant ignores the payload.
-fn unary_node(
-    kind_match: NodeKindCheck,
-    build_kind: NodeKind,
-    build_ty: BuildTy,
-    operand: impl Into<Pat>,
-) -> Pat {
+/// Helper: build a unary-input NodePat whose kind is determined by
+/// `build_kind` (match via `KindSpec::Exact`) and whose build side emits
+/// the same literal kind.  Covers the unit-variant casts (`CastToBool`,
+/// `Truncate`, `Popcount`, …) and the `Extend`-with-op variants.
+fn unary_node(build_kind: NodeKind, build_ty: BuildTy, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
-        KindFilter::exact(&build_kind),
-        kind_match,
+        KindSpec::Exact(build_kind),
         InputsSpec::fixed_ordered(vec![operand.into()]),
     )
-    .with_build(Arc::new(move |_b| Ok(build_kind)))
-    .with_build_ty(build_ty)
+    .with_build_exact(build_kind, build_ty)
     .into_pat()
 }
 
@@ -34,12 +23,7 @@ macro_rules! simple_unary_cast {
     ($fn_name:ident, $variant:ident, $build_ty:expr, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(operand: impl Into<Pat>) -> Pat {
-            unary_node(
-                Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::$variant)),
-                NodeKind::$variant,
-                $build_ty,
-                operand,
-            )
+            unary_node(NodeKind::$variant, $build_ty, operand)
         }
     };
 }
@@ -83,14 +67,7 @@ simple_unary_cast!(
 
 /// Matches an `Extend` node with the given extension kind.
 pub fn extend(op: ExtendOp, operand: impl Into<Pat>) -> Pat {
-    unary_node(
-        Arc::new(move |ctx, node, _b| {
-            matches!(ctx.graph.graph.node_kind(node), NodeKind::Extend(actual) if *actual == op)
-        }),
-        NodeKind::Extend(op),
-        BuildTy::InheritRoot,
-        operand,
-    )
+    unary_node(NodeKind::Extend(op), BuildTy::InheritRoot, operand)
 }
 /// Matches a zero-extension node.
 pub fn zero_extend(operand: impl Into<Pat>) -> Pat {

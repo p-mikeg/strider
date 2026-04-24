@@ -2,11 +2,9 @@
 //! over `[ctrl, mem, target/args…]`; `CallPat` additionally supports output
 //! constraints on ret-value slots.
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat, OutputsSpec};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, OutputsSpec};
 use crate::pat::{Pat, int_const};
 use crate::var::NodeVar;
 
@@ -74,14 +72,10 @@ impl From<CallPat> for Pat {
         } else {
             OutputsSpec::Indexed(ret_outputs.into_iter().map(|(i, p)| (2 + i, p)).collect())
         };
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::Call),
-            Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::Call)),
-            InputsSpec::Indexed(indexed_inputs),
-        )
-        .with_outputs(outputs_spec)
-        .with_node_var(node_var)
-        .into_pat()
+        NodePat::matcher(KindSpec::Exact(NodeKind::Call), InputsSpec::Indexed(indexed_inputs))
+            .with_outputs(outputs_spec)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }
 
@@ -121,18 +115,12 @@ impl From<CallOtherPat> for Pat {
         // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), ...].
         let indexed_inputs: Vec<(usize, Pat)> =
             args.into_iter().map(|(i, p)| (2 + i, p)).collect();
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::CallOther { user_op_id: 0 }),
-            Arc::new(move |ctx, node, _b| {
-                let NodeKind::CallOther { user_op_id: actual } = ctx.graph.graph.node_kind(node)
-                else {
-                    return false;
-                };
-                user_op_id.is_none_or(|id| *actual == id)
-            }),
-            InputsSpec::Indexed(indexed_inputs),
-        )
-        .with_node_var(node_var)
-        .into_pat()
+        let kind = match user_op_id {
+            None => KindSpec::variant(&NodeKind::CallOther { user_op_id: 0 }),
+            Some(expected) => KindSpec::Exact(NodeKind::CallOther { user_op_id: expected }),
+        };
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs))
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

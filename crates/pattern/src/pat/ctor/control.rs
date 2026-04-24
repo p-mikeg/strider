@@ -6,11 +6,9 @@
 //! (memory.rs, control.rs) because each ctor is a one-liner; the file as
 //! a whole is still under 120 lines.
 
-use std::sync::Arc;
-
 use ir::node::{FunctionArgSource, NodeKind};
 
-use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat, exemplar_vn};
+use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::pat::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, Pat, PhiPat, RetPat, StackStorePat,
     StackStorePhiPat, StorePat,
@@ -55,17 +53,11 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
 }
 
 fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
-    NodePat::matcher(
-        KindFilter::exact(&NodeKind::InitialVar(exemplar_vn())),
-        Arc::new(move |ctx, node, _b| {
-            let NodeKind::InitialVar(actual_vn) = ctx.graph.graph.node_kind(node) else {
-                return false;
-            };
-            vn.is_none_or(|expected| *actual_vn == expected)
-        }),
-        InputsSpec::None,
-    )
-    .into_pat()
+    let kind = match vn {
+        None => KindSpec::variant(&NodeKind::InitialVar(exemplar_vn())),
+        Some(expected) => KindSpec::Exact(NodeKind::InitialVar(expected)),
+    };
+    NodePat::matcher(kind, InputsSpec::None).into_pat()
 }
 
 // ── Function-argument constructors ────────────────────────────────────────────

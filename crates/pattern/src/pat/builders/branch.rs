@@ -2,12 +2,10 @@
 //! input and the single consumers of the true/false control outputs
 //! (via `ConsumersSpec::Indexed` direct-step forward walk).
 
-use std::sync::Arc;
-
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
-use crate::pat::node_pat::{ConsumersSpec, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{ConsumersSpec, InputsSpec, KindSpec, NodePat};
 use crate::var::NodeVar;
 
 /// Builder for `If` node patterns.  Created by [`crate::pat::if_node`].
@@ -64,13 +62,9 @@ impl From<IfPat> for Pat {
         } else {
             ConsumersSpec::Indexed(indexed_consumers)
         };
-        NodePat::matcher(
-            KindFilter::exact(&NodeKind::If),
-            Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::If)),
-            InputsSpec::Indexed(indexed_inputs),
-        )
-        .with_consumers(consumers_spec)
-        .with_node_var(node_var)
-        .into_pat()
+        NodePat::matcher(KindSpec::Exact(NodeKind::If), InputsSpec::Indexed(indexed_inputs))
+            .with_consumers(consumers_spec)
+            .with_node_var(node_var)
+            .into_pat()
     }
 }

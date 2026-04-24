@@ -1,20 +1,27 @@
-//! Generic node-level data pattern. Covers the vast majority of patterns
-//! (data and control) with a single struct parameterised by a kind-match
-//! closure, an `InputsSpec`, an `OutputsSpec`, a `ConsumersSpec`, and
-//! optional post-match / capture hooks.
+//! Generic node-level pattern.  One [`NodePat`] struct covers every pattern
+//! shape (data and control), parameterised by:
 //!
-//! `InputsSpec::None` handles zero-input patterns (constants, `InitialVar`,
-//! `FunctionArg`); `InputsSpec::Fixed` covers unary / binary / cmp ops with
-//! optional commutative retry; `InputsSpec::Indexed` covers sparse
-//! positional matching for memory ops (`Load` / `Store` / `StackStore` /
-//! `StackStorePhi`), `Phi`, and the control patterns (`Call`, `CallOther`,
-//! `Return`, `If`).
-//!
-//! `OutputsSpec::Indexed` constrains the `NodeOutputId` at specific output
-//! positions — used by `Call` for return-value captures.
-//!
-//! `ConsumersSpec::Indexed` constrains the single consumer node of a given
-//! output — used by `If` for branch successors (direct-step forward walk).
+//! * [`KindSpec`] — kind-level constraint on the candidate node's
+//!   `NodeKind`.  Data-driven for `Any` / `Variant` / `Exact`; carries a
+//!   payload-only closure in `VariantWith`.  Kind-phase is pure — it can
+//!   never touch [`Bindings`], which makes the commutative-retry rollback
+//!   trivially safe.
+//! * [`InputsSpec`] — how to match the node's inputs.  `None` handles
+//!   zero-input patterns (constants, `InitialVar`, `FunctionArg`); `Fixed`
+//!   covers unary / binary / cmp ops with optional commutative retry;
+//!   `Indexed` covers sparse positional matching for memory ops (`Load` /
+//!   `Store` / `StackStore` / `StackStorePhi`), `Phi`, and the control
+//!   patterns (`Call`, `CallOther`, `Return`, `If`).
+//! * [`OutputsSpec`] — sub-pattern constraints on specific output slots
+//!   (used by `Call` for return-value captures).
+//! * [`ConsumersSpec`] — sub-pattern against the single consumer of an
+//!   output slot (used by `If` for branch successors via direct-step
+//!   forward walk).
+//! * [`NodePat::post_match`] — the one place bindings can be installed
+//!   during the match pipeline (op-variant captures, typed-const captures,
+//!   side-table lookups such as `stack_phi_offsets`).
+//! * [`BuildSpec`] (optional) — build-side spec for use as a rewrite-rule
+//!   RHS.  `None` means "match-only".
 
 use std::sync::Arc;
 
@@ -26,54 +33,97 @@ use crate::matcher::walk;
 use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
-/// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
+/// Node-level check closure used by [`NodePat::post_match`].
 ///
-/// The closure is only ever invoked after [`NodePat::root_kind`] has already
-/// accepted the candidate node's discriminant — so it can focus on payload
-/// checks (matching a specific op variant, space, offset, …) and optional
-/// binding side-effects (`IntoAnyIntConst` capturing an IntVar value).
+/// Post-match runs after the kind spec has already accepted the candidate
+/// and all input / output / consumer constraints have passed — it is the
+/// place for bindings that depend on payload data (e.g. the `*_any`
+/// op-variant capture, or the typed-Var path of `IntoAnyIntConst`).
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
 
-/// Fast-path root-kind hint on [`NodePat`].  [`crate::matcher::Matcher::find_all`]
-/// uses it to skip candidate nodes whose `NodeKind` is incompatible with
-/// the pattern, avoiding any per-candidate closure dispatch or allocation.
-/// [`NodePat::try_match_common`] also short-circuits on it, so
-/// [`crate::matcher::Matcher::match_at`] callers (e.g. rewrite rules) still
-/// get the fast-fail path.
-#[derive(Clone, Copy)]
-pub enum KindFilter {
-    /// Pattern can accept any `NodeKind` — the `kind_match` closure is
-    /// the sole authority.  Used by wildcards ([`crate::pat::any`],
-    /// [`crate::pat::var`]) and the match-only-false `*_const_with_fn`
-    /// builders.
+/// Kind-level constraint carried by every [`NodePat`].
+///
+/// Dispatch has two phases:
+/// * [`accepts_discriminant`](Self::accepts_discriminant) — O(1), closure-free.
+///   Used by [`crate::matcher::Matcher::find_all`] to prefilter candidate
+///   roots to the compatible discriminant class.
+/// * [`matches`](Self::matches) — full check (discriminant + payload).
+///   Used by [`NodePat::try_match_common`] to gate the whole match.
+///
+/// The `VariantWith` closure is payload-only (`&NodeKind -> bool`) — it
+/// cannot read graph side tables.  The rare pattern that needs side-table
+/// access (`StackStorePhi` offsets) uses a [`NodePat::post_match`] hook on
+/// top of a `VariantWith` kind spec.
+#[derive(Clone)]
+pub enum KindSpec {
+    /// Accepts any `NodeKind`.  Used by wildcards and by the match-only-false
+    /// `*_const_with_fn` builders (whose `try_match` never succeeds anyway).
     Any,
-    /// Pattern only accepts nodes whose discriminant equals the stored
-    /// one.  Nearly every leaf `NodePat` falls here.
-    Single(std::mem::Discriminant<NodeKind>),
+    /// Matches a `NodeKind` variant by discriminant, ignoring the payload.
+    /// (e.g. `load()` with no space constraint accepts any `Load(_)`.)
+    Variant(std::mem::Discriminant<NodeKind>),
+    /// Matches a `NodeKind` value exactly (discriminant + payload equality).
+    /// (e.g. `int_const(5)`, `add`, `int_binary(Add, …)`.)
+    Exact(NodeKind),
+    /// Variant match plus a payload-only predicate.  Used when a pattern
+    /// constrains some but not all payload fields (e.g. `load().space(S)`).
+    VariantWith {
+        discriminant: std::mem::Discriminant<NodeKind>,
+        check: Arc<dyn Fn(&NodeKind) -> bool + Send + Sync>,
+    },
 }
 
-impl KindFilter {
-    /// Convenience: build a `Single` filter from an exemplar `NodeKind`.
-    /// The payload of `exemplar` is ignored — only the discriminant matters.
+impl KindSpec {
+    /// Build a `Variant` spec from an exemplar.  The payload is ignored —
+    /// only the discriminant is retained.
     #[inline]
-    pub(crate) fn exact(exemplar: &NodeKind) -> Self {
-        Self::Single(std::mem::discriminant(exemplar))
+    pub(crate) fn variant(exemplar: &NodeKind) -> Self {
+        Self::Variant(std::mem::discriminant(exemplar))
     }
 
-    /// Returns `true` if a node with the given `kind` is acceptable.
+    /// Build a `VariantWith` spec with a payload-only predicate.
+    pub(crate) fn variant_with<F>(exemplar: &NodeKind, check: F) -> Self
+    where
+        F: Fn(&NodeKind) -> bool + Send + Sync + 'static,
+    {
+        Self::VariantWith {
+            discriminant: std::mem::discriminant(exemplar),
+            check: Arc::new(check),
+        }
+    }
+
+    /// Cheap prefilter: true iff the candidate's discriminant could match.
+    /// `Any` accepts everything; the other variants accept only their stored
+    /// discriminant.
     #[inline]
-    pub(crate) fn accepts(&self, kind: &NodeKind) -> bool {
+    pub(crate) fn accepts_discriminant(&self, kind: &NodeKind) -> bool {
         match self {
             Self::Any => true,
-            Self::Single(d) => *d == std::mem::discriminant(kind),
+            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => {
+                *d == std::mem::discriminant(kind)
+            }
+            Self::Exact(k) => std::mem::discriminant(k) == std::mem::discriminant(kind),
+        }
+    }
+
+    /// Full check: discriminant + payload.
+    #[inline]
+    pub(crate) fn matches(&self, kind: &NodeKind) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Variant(d) => *d == std::mem::discriminant(kind),
+            Self::Exact(k) => k == kind,
+            Self::VariantWith { discriminant, check } => {
+                *discriminant == std::mem::discriminant(kind) && check(kind)
+            }
         }
     }
 }
 
 /// Arbitrary `rsleigh::Vn` used as a payload-don't-care exemplar when
 /// constructing `NodeKind` variants for discriminant-only purposes
-/// (e.g. `KindFilter::exact(&NodeKind::ControlPhi(exemplar_vn()))`).
+/// (e.g. `KindSpec::variant(&NodeKind::ControlPhi(exemplar_vn()))`).
 #[inline]
 pub(crate) fn exemplar_vn() -> rsleigh::Vn {
     rsleigh::Vn {
@@ -90,8 +140,8 @@ pub(crate) type CommutativeDecider =
     Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
 
 /// Closure that produces a concrete [`NodeKind`] at build time, reading
-/// any needed captures / root-type info out of the [`BuildCtx`].  Used by
-/// [`NodePat::kind_build`].
+/// any needed captures / root-type info out of the [`BuildCtx`].  Used
+/// in [`BuildKind::Fn`].
 pub(crate) type NodeKindBuilder =
     Arc<dyn Fn(&BuildCtx<'_>) -> Result<NodeKind> + Send + Sync>;
 
@@ -103,38 +153,44 @@ pub enum BuildTy {
     Fixed(NodeOutputType),
 }
 
+/// How to obtain the `NodeKind` at build time.
+pub(crate) enum BuildKind {
+    /// Emit a fixed literal — no captures needed (constants with known
+    /// value, concrete-op binary/unary/cmp patterns, unit-variant casts).
+    Exact(NodeKind),
+    /// Compute the `NodeKind` at build time from the [`BuildCtx`]
+    /// (variant-agnostic `*_any` ops, `*_const_with_fn` builders).
+    Fn(NodeKindBuilder),
+}
+
+/// Build-side specification for a [`NodePat`].  Present iff the pattern is
+/// buildable (usable on the RHS of a rewrite rule).
+pub(crate) struct BuildSpec {
+    pub(crate) kind: BuildKind,
+    pub(crate) ty: BuildTy,
+}
+
 /// A generic node-level pattern. Covers every pattern shape: "check node
 /// kind, match inputs in some arrangement, optionally constrain outputs
 /// and consumers, optionally bind output/node captures".  Buildable
-/// patterns additionally populate [`NodePat::kind_build`].
+/// patterns additionally populate [`NodePat::build`].
+///
+/// Kind-phase purity: the [`KindSpec::VariantWith`] closure is
+/// payload-only (`&NodeKind -> bool`) and can therefore never touch
+/// [`Bindings`].  All data-dependent binding happens strictly in
+/// [`Self::post_match`], which runs after the inputs/outputs/consumers
+/// pass — so the commutative retry path can safely snapshot-restore
+/// without worrying about bindings made during the kind check.
 pub struct NodePat {
-    /// Fast-path filter on the candidate node's `NodeKind` discriminant.
-    /// Consulted before any clone or closure call — both by
-    /// [`crate::matcher::Matcher::find_all`] (to skip incompatible
-    /// candidate roots) and by [`Self::try_match_common`] (to fail fast
-    /// at the top).  Every ctor sets this; patterns whose root kind
-    /// genuinely varies use [`KindFilter::Any`] and rely on `kind_match`.
-    pub(crate) root_kind: KindFilter,
-    /// Checks the node's kind (and any kind-embedded data — e.g. constants,
-    /// varnodes, spaces, offsets, phi offsets). May bind typed-constant
-    /// values or operator variants.
-    ///
-    /// **Invariant** — when `inputs` is `InputsSpec::Fixed { pats, commutative }`
-    /// with `pats.len() == 2` and `commutative(...)` can return `true`, this
-    /// closure must NOT perform bindings that could vary between the forward
-    /// and swapped attempt.  The commutative retry path restores bindings to
-    /// the post-`kind_match` snapshot and re-runs input matching only — if
-    /// `kind_match` could bind differently on re-entry the snapshot would not
-    /// be restored.  Patterns that need to bind should do so in `post_match`
-    /// instead (see `variant_agnostic.rs` for the canonical example).
-    pub(crate) kind_match: NodeKindCheck,
-    /// Build-side counterpart to `kind_match`: produces the [`NodeKind`] to
-    /// materialize.  `None` means "match-only" (default for wildcards,
-    /// control patterns, memory ops, phis — none of which current rules
-    /// need to build).
-    pub(crate) kind_build: Option<NodeKindBuilder>,
-    /// Output type picker for the built node.
-    pub(crate) build_result_ty: BuildTy,
+    /// Kind-level constraint consulted by both [`crate::matcher::Matcher::find_all`]
+    /// (prefilter, discriminant-only) and [`Self::try_match_common`] (full
+    /// check, discriminant + payload).  Every ctor sets this; wildcards
+    /// and the match-only-false `*_const_with_fn` builders use [`KindSpec::Any`].
+    pub(crate) kind: KindSpec,
+    /// Build-side specification.  `None` means "match-only" (default for
+    /// wildcards, control patterns, memory ops, phis — none of which
+    /// current rules need to build).
+    pub(crate) build: Option<BuildSpec>,
     /// How to match the node's inputs.
     pub(crate) inputs: InputsSpec,
     /// Optional constraints on the node's outputs (by position).
@@ -142,7 +198,10 @@ pub struct NodePat {
     /// Optional constraints on the single consumer of outputs (by position).
     pub(crate) consumers: ConsumersSpec,
     /// Runs AFTER inputs/outputs/consumers match (and after each commutative
-    /// retry) but BEFORE output/node captures.
+    /// retry) but BEFORE output/node captures.  This is the designated
+    /// binding site for payload-dependent captures (op-variant Vars,
+    /// typed-constant Vars), since it executes once bindings from
+    /// sub-matches are already in place.
     pub(crate) post_match: Option<NodeKindCheck>,
     pub(crate) output_var: Option<Var>,
     pub(crate) node_var: Option<NodeVar>,
@@ -218,8 +277,8 @@ impl Pattern for NodePat {
         self.try_match_common(ctx, node, Some(target), b)
     }
 
-    fn root_kind_filter(&self) -> KindFilter {
-        self.root_kind
+    fn kind_spec(&self) -> KindSpec {
+        self.kind.clone()
     }
 
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
@@ -241,7 +300,7 @@ impl Pattern for NodePat {
     }
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
-        let Some(kind_build) = &self.kind_build else {
+        let Some(build) = &self.build else {
             return Err(Error::not_buildable(std::any::type_name::<Self>()));
         };
 
@@ -266,8 +325,11 @@ impl Pattern for NodePat {
             }
         };
 
-        let kind = kind_build(ctx)?;
-        let ty = match self.build_result_ty {
+        let kind = match &build.kind {
+            BuildKind::Exact(k) => *k,
+            BuildKind::Fn(f) => f(ctx)?,
+        };
+        let ty = match build.ty {
             BuildTy::InheritRoot => ctx.root_ty,
             BuildTy::Fixed(t) => t,
         };
@@ -281,19 +343,13 @@ impl NodePat {
     /// field set to its default.  Chain `.with_*` setters to populate only
     /// the fields a particular ctor actually uses.
     ///
-    /// `root_kind` advertises the node discriminant the pattern accepts;
-    /// pass [`KindFilter::Any`] for patterns that genuinely match across
-    /// kinds (match-only-false build ctors and wildcards).
-    pub(crate) fn matcher(
-        root_kind: KindFilter,
-        kind_match: NodeKindCheck,
-        inputs: InputsSpec,
-    ) -> Self {
+    /// `kind` advertises the node kind the pattern accepts; use
+    /// [`KindSpec::Any`] for patterns that genuinely match across kinds
+    /// (match-only-false build ctors and wildcards).
+    pub(crate) fn matcher(kind: KindSpec, inputs: InputsSpec) -> Self {
         Self {
-            root_kind,
-            kind_match,
-            kind_build: None,
-            build_result_ty: BuildTy::InheritRoot,
+            kind,
+            build: None,
             inputs,
             outputs: OutputsSpec::None,
             consumers: ConsumersSpec::None,
@@ -303,13 +359,19 @@ impl NodePat {
         }
     }
 
-    pub(crate) fn with_build(mut self, b: NodeKindBuilder) -> Self {
-        self.kind_build = Some(b);
+    /// Install a build-side spec producing a literal `NodeKind`.  Used by
+    /// every fixed-op / fixed-constant ctor.  `ty` is baked in at the
+    /// same call — the kind and its output type always travel together.
+    pub(crate) fn with_build_exact(mut self, k: NodeKind, ty: BuildTy) -> Self {
+        self.build = Some(BuildSpec { kind: BuildKind::Exact(k), ty });
         self
     }
 
-    pub(crate) fn with_build_ty(mut self, t: BuildTy) -> Self {
-        self.build_result_ty = t;
+    /// Install a build-side spec that computes the `NodeKind` at build time
+    /// (variant-agnostic and `*_const_with_fn` cases).  `ty` is baked in
+    /// at the same call.
+    pub(crate) fn with_build_fn(mut self, f: NodeKindBuilder, ty: BuildTy) -> Self {
+        self.build = Some(BuildSpec { kind: BuildKind::Fn(f), ty });
         self
     }
 
@@ -353,30 +415,21 @@ impl NodePat {
         target: Option<NodeOutputId>,
         b: &mut Bindings,
     ) -> bool {
-        // Structural fast-path: if the candidate node's discriminant is
-        // outside this pattern's accepted kinds, there's no chance of
-        // matching.  `find_all` already does this filter on the preorder
-        // loop, but guarding here too protects `match_at` callers
-        // (rewrite rules) and any direct `Matcher::match_node_id` recursion.
-        if !self.root_kind.accepts(ctx.graph.graph.node_kind(node)) {
-            return false;
-        }
-
-        // Fail-fast before any snapshot.  `kind_match` contract: must not
-        // mutate `b` on a false return.  All current implementations satisfy
-        // this — they either do a pure `matches!` check or call a `bind_*`
-        // helper, and the binders are themselves no-ops on conflict.
-        if !(self.kind_match)(ctx, node, b) {
+        // Kind gate: discriminant + payload check in one go.  The kind spec
+        // is closure-free for `Any`/`Variant`/`Exact` and runs a payload-only
+        // predicate for `VariantWith`.  `find_all` already prefilters by
+        // discriminant for speed; guarding here too covers `match_at`
+        // callers (rewrite rules) and direct `Matcher::match_node_id`
+        // recursion.  Because the kind check can never mutate `b`, we don't
+        // need a snapshot before it.
+        if !self.kind.matches(ctx.graph.graph.node_kind(node)) {
             return false;
         }
 
         // Single journal mark used for both the commutative retry and the
-        // total-failure rollback.  Taken after `kind_match` so any bindings
-        // it performed (e.g. `IntVar` capture in `IntoAnyIntConst`) survive
-        // a commutative retry of the input arm.  `BindingsMark` is `Copy`,
-        // so reusing it across the retry restore and the final rollback
-        // needs no clone.
-        let after_kind = b.mark();
+        // total-failure rollback.  `BindingsMark` is `Copy`, so reusing it
+        // across the retry restore and the final rollback needs no clone.
+        let before_inputs = b.mark();
 
         if try_once(self, ctx, node, target, b, false) {
             return true;
@@ -386,13 +439,13 @@ impl NodePat {
             && pats.len() == 2
             && commutative(ctx, node)
         {
-            b.restore(after_kind);
+            b.restore(before_inputs);
             if try_once(self, ctx, node, target, b, true) {
                 return true;
             }
         }
 
-        b.restore(after_kind);
+        b.restore(before_inputs);
         false
     }
 }

@@ -15,7 +15,7 @@ use crate::matcher::commutativity::{
     is_commutative_int_op,
 };
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar,
@@ -24,7 +24,7 @@ use crate::var::{
 // `binary` / `cmp` / `unary` tags select the ctor's input layout + arity.
 // Commutativity deciders and missing-binding messages are derived from the
 // enum / Var names.  `$sample_op` is an arbitrary variant of the op enum
-// used only to build the `KindFilter::Single(...)` discriminant — payload
+// used only to build the `KindSpec::variant(...)` discriminant — payload
 // is ignored.
 macro_rules! impl_variant_any {
     // Binary-arity ($ctor) with a runtime commutativity decider.
@@ -39,20 +39,19 @@ macro_rules! impl_variant_any {
                 }
             });
             NodePat::matcher(
-                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
-                Arc::new(|ctx, node, _b| {
-                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
-                }),
+                KindSpec::variant(&NodeKind::$op_enum($sample_op)),
                 inputs,
             )
-            .with_build(Arc::new(move |ctx| {
-                let op = ctx
-                    .bindings
-                    .$get(op_var)
-                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
-                Ok(NodeKind::$op_enum(op))
-            }))
-            .with_build_ty($build_ty)
+            .with_build_fn(
+                Arc::new(move |ctx| {
+                    let op = ctx
+                        .bindings
+                        .$get(op_var)
+                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                    Ok(NodeKind::$op_enum(op))
+                }),
+                $build_ty,
+            )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 match ctx.graph.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => b.$bind(op_var, *op),
@@ -68,20 +67,19 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(op_var: $op_var, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             NodePat::matcher(
-                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
-                Arc::new(|ctx, node, _b| {
-                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
-                }),
+                KindSpec::variant(&NodeKind::$op_enum($sample_op)),
                 InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
             )
-            .with_build(Arc::new(move |ctx| {
-                let op = ctx
-                    .bindings
-                    .$get(op_var)
-                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
-                Ok(NodeKind::$op_enum(op))
-            }))
-            .with_build_ty($build_ty)
+            .with_build_fn(
+                Arc::new(move |ctx| {
+                    let op = ctx
+                        .bindings
+                        .$get(op_var)
+                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                    Ok(NodeKind::$op_enum(op))
+                }),
+                $build_ty,
+            )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 match ctx.graph.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => b.$bind(op_var, *op),
@@ -97,20 +95,19 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(op_var: $op_var, operand: impl Into<Pat>) -> Pat {
             NodePat::matcher(
-                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
-                Arc::new(|ctx, node, _b| {
-                    matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
-                }),
+                KindSpec::variant(&NodeKind::$op_enum($sample_op)),
                 InputsSpec::fixed_ordered(vec![operand.into()]),
             )
-            .with_build(Arc::new(move |ctx| {
-                let op = ctx
-                    .bindings
-                    .$get(op_var)
-                    .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
-                Ok(NodeKind::$op_enum(op))
-            }))
-            .with_build_ty($build_ty)
+            .with_build_fn(
+                Arc::new(move |ctx| {
+                    let op = ctx
+                        .bindings
+                        .$get(op_var)
+                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                    Ok(NodeKind::$op_enum(op))
+                }),
+                $build_ty,
+            )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 match ctx.graph.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => b.$bind(op_var, *op),
