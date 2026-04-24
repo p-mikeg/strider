@@ -22,11 +22,13 @@ impl FunctionArgPat {
         Self { source: None, index: None }
     }
     /// Restrict the match to a specific ABI source (register or stack slot).
+    #[must_use]
     pub fn source(mut self, s: ir::node::FunctionArgSource) -> Self {
         self.source = Some(s);
         self
     }
     /// Restrict the match to a specific argument index.
+    #[must_use]
     pub fn index(mut self, i: u32) -> Self {
         self.index = Some(i);
         self

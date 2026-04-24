@@ -39,6 +39,7 @@ pub type BuildValueFn<T> = Arc<dyn Fn(&BuildCtx<'_>) -> Result<T> + Send + Sync>
 /// identifier — for `IntCmp(lhs, rhs)` rules where the comparison's input
 /// type (needed for signed / carry handling) differs from the root's
 /// output type (always `Bool`).
+#[must_use]
 pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
     let inputs = ctx.graph.graph.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;

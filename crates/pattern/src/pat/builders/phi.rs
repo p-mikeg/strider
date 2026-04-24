@@ -21,6 +21,7 @@ impl PhiPat {
         Self { vn: None, inputs: Vec::new() }
     }
     /// Restrict the match to phi nodes for varnode `vn`.
+    #[must_use]
     pub fn for_vn(mut self, v: rsleigh::Vn) -> Self {
         self.vn = Some(v);
         self

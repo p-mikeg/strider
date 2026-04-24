@@ -18,25 +18,31 @@ use crate::pat::{
 
 /// Starts building a `Load` pattern.  Chain `.addr()` / `.space()` to add
 /// constraints.
+#[must_use]
 pub fn load() -> LoadPat { LoadPat::new() }
 /// Starts building a `Store` pattern.  Chain `.addr()` / `.data()` / `.space()`
 /// to add constraints.
+#[must_use]
 pub fn store() -> StorePat { StorePat::new() }
 /// Starts building a `StackStore` pattern.  Chain `.offset()` / `.data()` /
 /// `.space()` to add constraints.
+#[must_use]
 pub fn stack_store() -> StackStorePat { StackStorePat::new() }
 /// Starts building a `StackStorePhi` pattern.  Chain `.offsets(…)` /
 /// `.data()` / `.space()` to add constraints.
+#[must_use]
 pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
 /// Starts building a `ControlPhi` pattern.  Matches any phi node.
+#[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
 }
 /// Starts building a `ControlPhi` pattern pinned to varnode `vn`.
+#[must_use]
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     PhiPat::new().for_vn(vn)
 }
@@ -44,10 +50,12 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
 // ── Entry values ──────────────────────────────────────────────────────────────
 
 /// Matches any `InitialVar` node (function-entry value of any varnode).
+#[must_use]
 pub fn initial_var() -> Pat {
     initial_var_impl(None)
 }
 /// Matches the `InitialVar` node for the specific varnode `vn`.
+#[must_use]
 pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
     initial_var_impl(Some(vn))
 }
@@ -64,22 +72,26 @@ fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
 
 /// Matches a `FunctionArg` node for argument index `i` regardless of source
 /// (register or stack).
+#[must_use]
 pub fn function_arg(i: u32) -> FunctionArgPat {
     FunctionArgPat::new().index(i)
 }
 
 /// Matches any `FunctionArg` node regardless of index or source.
+#[must_use]
 pub fn function_arg_any() -> FunctionArgPat {
     FunctionArgPat::new()
 }
 
 /// Matches a `FunctionArg` node whose source is the register varnode `vn`.
+#[must_use]
 pub fn function_arg_reg(vn: rsleigh::Vn) -> FunctionArgPat {
     FunctionArgPat::new().source(FunctionArgSource::Register(vn))
 }
 
 /// Matches a `FunctionArg` node whose source is a stack slot at SP-relative
 /// `offset` bytes (in address space `space`).
+#[must_use]
 pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64) -> FunctionArgPat {
     FunctionArgPat::new().source(FunctionArgSource::Stack { space, offset })
 }
@@ -88,21 +100,25 @@ pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64) -> FunctionArgPa
 
 /// Starts building a `Call` pattern.  Chain `.at()`, `.arg()`, `.target()` to
 /// add constraints.
+#[must_use]
 pub fn call() -> CallPat {
     CallPat::new()
 }
 /// Starts building a `CallOther` (user-defined op) pattern.  Chain
 /// `.user_op_id()`, `.arg()`, `.capture()` to add constraints.
+#[must_use]
 pub fn call_other() -> CallOtherPat {
     CallOtherPat::new()
 }
 /// Starts building a `Return` pattern.  Chain `.preceded_by()` / `.ret_val()`
 /// to add constraints.
+#[must_use]
 pub fn ret() -> RetPat {
     RetPat::new()
 }
 /// Starts building an `If` pattern.  Chain `.cond()`, `.true_branch()`,
 /// `.false_branch()` to add constraints.
+#[must_use]
 pub fn if_node() -> IfPat {
     IfPat::new()
 }

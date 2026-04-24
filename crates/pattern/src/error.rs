@@ -93,12 +93,14 @@ impl Error {
     /// assert!(err.is_skip());
     /// ```
     #[track_caller]
+    #[must_use]
     pub fn skip() -> Self {
         ErrorKind::RewriteSkip.into()
     }
 
     /// Returns `true` if this error is the `RewriteSkip` sentinel used to
     /// opt out of a rewrite rule without surfacing a hard error.
+    #[must_use]
     pub fn is_skip(&self) -> bool {
         matches!(self.kind(), ErrorKind::RewriteSkip)
     }
@@ -107,6 +109,7 @@ impl Error {
     /// pattern type named `pat_name` (typically `std::any::type_name::<Self>()`
     /// in a `Pattern::try_build` default impl).
     #[track_caller]
+    #[must_use]
     pub fn not_buildable(pat_name: &'static str) -> Self {
         ErrorKind::NotBuildable(pat_name).into()
     }

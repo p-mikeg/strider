@@ -39,6 +39,7 @@ pub struct Matcher<'g> {
 
 impl<'g> Matcher<'g> {
     /// Creates a new `Matcher`.
+    #[must_use]
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
         Self {
             fn_graph,

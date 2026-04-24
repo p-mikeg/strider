@@ -27,24 +27,28 @@ pub struct Match {
 impl Match {
     /// Returns the `NodeOutputId` bound to the data-capture variable `v`,
     /// or `None` if `v` was not captured in this match.
+    #[must_use]
     pub fn get(&self, v: Var) -> Option<NodeOutputId> {
         self.bindings.get(v)
     }
 
     /// Returns the `NodeId` bound to the control-capture variable `nv`,
     /// or `None` if `nv` was not captured in this match.
+    #[must_use]
     pub fn get_node(&self, nv: NodeVar) -> Option<NodeId> {
         self.bindings.get_node(nv)
     }
 
     /// Returns the integer constant value bound to the [`IntVar`] `iv`, or
     /// `None` if `iv` was not captured in this match.
+    #[must_use]
     pub fn get_int(&self, iv: IntVar) -> Option<u64> {
         self.bindings.get_int(iv)
     }
 
     /// Returns the boolean constant value bound to the [`BoolVar`] `bv`, or
     /// `None` if `bv` was not captured in this match.
+    #[must_use]
     pub fn get_bool(&self, bv: BoolVar) -> Option<bool> {
         self.bindings.get_bool(bv)
     }
@@ -53,46 +57,55 @@ impl Match {
     /// `None` if `fv` was not captured in this match.  Parallel to
     /// [`Match::get_int_const`] and [`Match::get_bool_const`] — typed-capture
     /// accessors for const-value bindings.
+    #[must_use]
     pub fn get_float_const(&self, fv: FloatVar) -> Option<u64> {
         self.bindings.get_float_bits(fv)
     }
 
     /// Returns the [`IntBinaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_int_binary_op(&self, v: IntBinaryOpVar) -> Option<IntBinaryOp> {
         self.bindings.get_int_binary_op(v)
     }
 
     /// Returns the [`IntUnaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_int_unary_op(&self, v: IntUnaryOpVar) -> Option<IntUnaryOp> {
         self.bindings.get_int_unary_op(v)
     }
 
     /// Returns the [`IntCmpOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_int_cmp_op(&self, v: IntCmpOpVar) -> Option<IntCmpOp> {
         self.bindings.get_int_cmp_op(v)
     }
 
     /// Returns the [`BoolBinaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_bool_binary_op(&self, v: BoolBinaryOpVar) -> Option<BoolBinaryOp> {
         self.bindings.get_bool_binary_op(v)
     }
 
     /// Returns the [`BoolUnaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_bool_unary_op(&self, v: BoolUnaryOpVar) -> Option<BoolUnaryOp> {
         self.bindings.get_bool_unary_op(v)
     }
 
     /// Returns the [`FloatBinaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_float_binary_op(&self, v: FloatBinaryOpVar) -> Option<FloatBinaryOp> {
         self.bindings.get_float_binary_op(v)
     }
 
     /// Returns the [`FloatUnaryOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_float_unary_op(&self, v: FloatUnaryOpVar) -> Option<FloatUnaryOp> {
         self.bindings.get_float_unary_op(v)
     }
 
     /// Returns the [`FloatCmpOp`] variant bound to `v`, or `None` if unbound.
+    #[must_use]
     pub fn get_float_cmp_op(&self, v: FloatCmpOpVar) -> Option<FloatCmpOp> {
         self.bindings.get_float_cmp_op(v)
     }
@@ -103,6 +116,7 @@ impl Match {
     /// e.g. the rewrite-rule engine drops the [`Matcher`] borrow before
     /// constructing fresh graph nodes, so it needs an owned snapshot of the
     /// captures to consult while mutating the graph.
+    #[must_use]
     pub fn bindings_clone(&self) -> Bindings {
         self.bindings.clone()
     }
@@ -110,6 +124,7 @@ impl Match {
     /// If the output bound to `v` was produced by an `IntConst` node, returns
     /// the stored constant value.  Returns `None` for unbound vars or non-const
     /// outputs.
+    #[must_use]
     pub fn get_int_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
         let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
@@ -122,6 +137,7 @@ impl Match {
     /// If the output bound to `v` was produced by a `BoolConst` node, returns
     /// the constant value.  Returns `None` for unbound vars or non-bool-const
     /// outputs.
+    #[must_use]
     pub fn get_bool_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<bool> {
         let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
@@ -134,6 +150,7 @@ impl Match {
     /// If the output bound to `v` was produced by a `FloatConst` node, returns
     /// the raw IEEE 754 bit pattern stored as `u64`.  Returns `None` for
     /// unbound vars or non-float-const outputs.
+    #[must_use]
     pub fn get_float_bits(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
         let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
@@ -158,6 +175,7 @@ impl Match {
     /// For any other producer (`IntConst`, `Load`, `Phi`, binary ops, …), the
     /// notion of "the varnode this value represents" is not meaningful and the
     /// function returns `None`.  It also returns `None` if `v` is unbound.
+    #[must_use]
     pub fn get_vn(
         &self,
         v: Var,

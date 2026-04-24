@@ -45,11 +45,13 @@ impl CallPat {
         self
     }
     /// Bind the matched `Call` node to `nv`.
+    #[must_use]
     pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self
     }
     /// Constrain the call target to the literal address `addr`.
+    #[must_use]
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(addr))
     }
@@ -93,6 +95,7 @@ impl CallOtherPat {
         Self { user_op_id: None, args: Vec::new(), node_var: None }
     }
     /// Constrain the matched node to a specific user-op id.
+    #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
         self.user_op_id = Some(v);
         self
@@ -103,6 +106,7 @@ impl CallOtherPat {
         self
     }
     /// Bind the matched `CallOther` node to `nv`.
+    #[must_use]
     pub fn capture_node(mut self, nv: NodeVar) -> Self {
         self.node_var = Some(nv);
         self

@@ -11,6 +11,7 @@ use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, 
 use crate::var::Var;
 
 /// Matches any single output unconditionally.
+#[must_use]
 pub fn any() -> Pat {
     Pat::from_dyn(Arc::new(AnyPat))
 }
@@ -21,6 +22,7 @@ pub fn any() -> Pat {
 /// Equivalent in behavior to `any().capture(v)`, but constructs a dedicated
 /// [`VarPat`] rather than wrapping [`AnyPat`] in a [`CapturePat`] — one
 /// fewer vtable hop and no backtracking snapshot per match.
+#[must_use]
 pub fn var(v: Var) -> Pat {
     Pat::from_dyn(Arc::new(VarPat { var: v }))
 }
@@ -29,6 +31,7 @@ pub fn var(v: Var) -> Pat {
 ///
 /// In build position (RHS of a rewrite rule), constructs an `IntConst(v)`
 /// node at the root type.
+#[must_use]
 pub fn int_const(v: u64) -> Pat {
     NodePat::matcher(KindSpec::Exact(NodeKind::IntConst(v)), InputsSpec::None)
         .with_build_exact(NodeKind::IntConst(v), BuildTy::InheritRoot)
@@ -36,6 +39,7 @@ pub fn int_const(v: u64) -> Pat {
 }
 
 /// Matches a `BoolConst` node with value exactly `v`.
+#[must_use]
 pub fn bool_const(v: bool) -> Pat {
     NodePat::matcher(KindSpec::Exact(NodeKind::BoolConst(v)), InputsSpec::None)
         .with_build_exact(NodeKind::BoolConst(v), BuildTy::Fixed(NodeOutputType::Bool))
@@ -43,6 +47,7 @@ pub fn bool_const(v: bool) -> Pat {
 }
 
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
+#[must_use]
 pub fn float_const(bits: u64) -> Pat {
     NodePat::matcher(KindSpec::Exact(NodeKind::FloatConst(bits)), InputsSpec::None)
         .with_build_exact(NodeKind::FloatConst(bits), BuildTy::InheritRoot)

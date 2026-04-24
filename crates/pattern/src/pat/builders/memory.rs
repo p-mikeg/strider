@@ -27,6 +27,7 @@ impl LoadPat {
         Self { space: None, addr: None }
     }
     /// Restrict the match to loads in address space `s`.
+    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self
@@ -71,6 +72,7 @@ impl StorePat {
         Self { space: None, addr: None, data: None }
     }
     /// Restrict the match to stores in address space `s`.
+    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self
@@ -123,11 +125,13 @@ impl StackStorePat {
         Self { space: None, offset: None, data: None }
     }
     /// Restrict the match to stack-stores in address space `s`.
+    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self
     }
     /// Match only the stack-store at the given SP-relative offset.
+    #[must_use]
     pub fn offset(mut self, o: i64) -> Self {
         self.offset = Some(o);
         self
@@ -180,6 +184,7 @@ impl StackStorePhiPat {
     pub(crate) fn new() -> Self {
         Self { space: None, offsets: None, data: None }
     }
+    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self

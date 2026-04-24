@@ -40,6 +40,7 @@ impl IntBinaryOpPat {
     /// Force the pattern to match operands in the stated order only.
     /// By default, commutative operators (`Add`, `Mul`, `And`, `Or`, `Xor`)
     /// will also try the reversed operand order.
+    #[must_use]
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
@@ -74,6 +75,7 @@ impl BoolBinaryOpPat {
     }
 
     /// Force the pattern to match operands in the stated order only.
+    #[must_use]
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
@@ -110,6 +112,7 @@ impl FloatBinaryOpPat {
     /// Force the pattern to match operands in the stated order only.
     /// By default, commutative operators (`Add`, `Mul`) will also try the
     /// reversed operand order.
+    #[must_use]
     pub fn ordered(mut self) -> Self {
         self.ordered = true;
         self
