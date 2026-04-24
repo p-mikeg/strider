@@ -1,8 +1,11 @@
 //! Smoke tests: every [`target::SleighArch`] preset must successfully feed
-//! into `rsleigh::Sleigh::new` and resolve its documented stack pointer
-//! register.  Without this, presets that nothing else exercises (e.g.
-//! `mipsbe32`, `mipsle32`, `aarch64be`) could silently rot if an upstream
-//! constant were renamed.
+//! into `rsleigh::Sleigh::new` and produce a usable register table.  Without
+//! this, presets that nothing else exercises (e.g. `mipsbe32`, `mipsle32`,
+//! `aarch64be`) could silently rot if an upstream constant were renamed.
+//!
+//! Stack-pointer resolution is covered by the `calling_convention` tests in
+//! the crate's unit-test module — this file intentionally does not assert it,
+//! because the SP name lives on `CallingConvention`, not `SleighArch`.
 
 #![allow(clippy::panic, clippy::unwrap_used)]
 
@@ -12,14 +15,9 @@ fn assert_preset_resolves(label: &str, arch: SleighArch) {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .unwrap_or_else(|e| panic!("{label}: Sleigh::new failed: {e:?}"));
-    let regs = sleigh
+    sleigh
         .regs()
         .unwrap_or_else(|e| panic!("{label}: Sleigh::regs failed: {e:?}"));
-    assert!(
-        regs.name_to_vn(arch.stack_ptr_reg_name).is_some(),
-        "{label}: stack_ptr_reg_name {:?} must resolve",
-        arch.stack_ptr_reg_name,
-    );
 }
 
 #[test]
