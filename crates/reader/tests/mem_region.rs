@@ -11,7 +11,7 @@ use reader::{MemRegion, MemRegionsLookupTable};
 /// offset within the region (i.e. `data[i] == i as u8 & 0xff`).
 fn make_region(start: u64, len: usize) -> MemRegion {
     let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
-    MemRegion::new(start, data)
+    MemRegion::new(start, data).expect("test region fits in u64")
 }
 
 // ── MemRegion::end_addr ───────────────────────────────────────────────────
@@ -24,7 +24,7 @@ fn mem_region_end_addr() {
 
 #[test]
 fn mem_region_end_addr_empty() {
-    let r = MemRegion::new(0x2000, vec![]);
+    let r = MemRegion::new(0x2000, vec![]).expect("valid region");
     assert_eq!(r.end_addr(), 0x2000);
 }
 
@@ -56,7 +56,7 @@ fn mem_region_does_not_contain_before_start() {
 
 #[test]
 fn mem_region_empty_contains_nothing() {
-    let r = MemRegion::new(0x1000, vec![]);
+    let r = MemRegion::new(0x1000, vec![]).expect("valid region");
     assert!(!r.contains(0x1000));
 }
 
@@ -213,8 +213,8 @@ fn lookup_table_cross_boundary_read_stops_at_first_region_end() {
 fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
     // Outer A: [0x1000..0x1020), all 0xaa
     // Inner B: [0x1010..0x1014), all 0xbb  (shorter, starts inside A)
-    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]);
-    let b = MemRegion::new(0x1010, vec![0xbb; 0x04]);
+    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]).expect("valid region");
+    let b = MemRegion::new(0x1010, vec![0xbb; 0x04]).expect("valid region");
     let table = MemRegionsLookupTable::new([a, b]);
     let mut buf = [0u8; 1];
 
@@ -227,10 +227,42 @@ fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
     assert_eq!(buf[0], 0xbb);
 }
 
+// ── MemRegion::new overflow rejection ─────────────────────────────────────
+
+/// `MemRegion::new` rejects any (start_addr, data) whose end exceeds u64::MAX.
+/// The returned error carries the offending start and length for diagnostics.
+#[test]
+fn mem_region_new_rejects_overflow() {
+    use reader::ErrorKind;
+    let start = u64::MAX - 3;
+    // len = 4 ⇒ end would be u64::MAX + 1 — reject.
+    let err = MemRegion::new(start, vec![0u8; 4])
+        .expect_err("overflowing region must be rejected");
+    match err.kind() {
+        ErrorKind::RegionOverflow { start_addr, len } => {
+            assert_eq!(*start_addr, start);
+            assert_eq!(*len, 4u64);
+        }
+        other => panic!("expected RegionOverflow, got {other:?}"),
+    }
+}
+
+/// Exact-fit at the top of the address space is accepted: start = u64::MAX - 3,
+/// len = 3 makes end_addr = u64::MAX (representable as u64).
+#[test]
+fn mem_region_new_accepts_exact_fit_at_top_of_address_space() {
+    let start = u64::MAX - 3;
+    let r = MemRegion::new(start, vec![1u8, 2, 3]).expect("exact-fit region is legal");
+    assert_eq!(r.end_addr(), u64::MAX);
+    assert!(r.contains(start));
+    assert!(r.contains(u64::MAX - 1));
+    assert!(!r.contains(u64::MAX), "end_addr is exclusive");
+}
+
 #[test]
 fn lookup_table_overlapping_regions_later_start_shadows_earlier() {
-    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]); // [0x1000..0x1020)
-    let b = MemRegion::new(0x1010, vec![0xbb; 0x20]); // [0x1010..0x1030)
+    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]).expect("valid region"); // [0x1000..0x1020)
+    let b = MemRegion::new(0x1010, vec![0xbb; 0x20]).expect("valid region"); // [0x1010..0x1030)
     let table = MemRegionsLookupTable::new([a, b]);
     let mut buf = [0u8; 1];
 

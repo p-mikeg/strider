@@ -9,6 +9,11 @@ strider_error::define_error! {
         #[error("address {0:#x} is not mapped")]
         NotMapped(u64),
 
+        /// A `MemRegion` was constructed with a (start_addr, len) pair
+        /// whose end would exceed `u64::MAX`.
+        #[error("region at {start_addr:#x} with length {len} would overflow u64")]
+        RegionOverflow { start_addr: u64, len: u64 },
+
         /// An I/O error occurred while reading a file.
         #[error("failed to read file: {0}")]
         Io(#[from] std::io::Error),

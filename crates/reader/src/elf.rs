@@ -18,7 +18,7 @@ use crate::{MemRegion, MemRegionsLookupTable, Result, error};
 /// Returns an error wrapping the underlying `object::Error` if the
 /// segment's file-backed data cannot be read.
 pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
-    Ok(MemRegion::new(segment.address(), segment.data()?.to_vec()))
+    MemRegion::new(segment.address(), segment.data()?.to_vec())
 }
 
 /// Converts a single ELF section into a [`MemRegion`].
@@ -28,7 +28,7 @@ pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Res
 /// Returns an error wrapping the underlying `object::Error` if the
 /// section's file-backed data cannot be read.
 pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
-    Ok(MemRegion::new(section.address(), section.data()?.to_vec()))
+    MemRegion::new(section.address(), section.data()?.to_vec())
 }
 
 /// Collects ELF segments into [`MemRegion`]s, keeping only those for which
@@ -53,7 +53,7 @@ pub fn elf_segments_to_mem_regions(
         if data.is_empty() || !filter(&seg) {
             continue;
         }
-        out.push(MemRegion::new(seg.address(), data.to_vec()));
+        out.push(MemRegion::new(seg.address(), data.to_vec())?);
     }
     Ok(out)
 }
@@ -81,7 +81,7 @@ pub fn elf_sections_to_mem_regions(
         if data.is_empty() || !filter(&sec) {
             continue;
         }
-        out.push(MemRegion::new(sec.address(), data.to_vec()));
+        out.push(MemRegion::new(sec.address(), data.to_vec())?);
     }
     Ok(out)
 }

@@ -53,14 +53,27 @@ pub struct MemRegion {
 
 impl MemRegion {
     /// Creates a new `MemRegion` loaded at `start_addr`.
-    #[must_use]
-    pub fn new(start_addr: u64, data: Vec<u8>) -> Self {
-        Self { start_addr, data }
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::RegionOverflow`](error::ErrorKind::RegionOverflow)
+    /// when `start_addr + data.len()` would exceed `u64::MAX`. This guarantees
+    /// that downstream methods ([`end_addr`](Self::end_addr),
+    /// [`contains`](Self::contains), [`read`](Self::read)) can treat the
+    /// region's end as a plain `u64`.
+    pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
+        let len = data.len() as u64;
+        if start_addr.checked_add(len).is_none() {
+            return Err(error::ErrorKind::RegionOverflow { start_addr, len }.into());
+        }
+        Ok(Self { start_addr, data })
     }
 
     /// One past the last virtual address covered by this region.
     ///
-    /// `end_addr == start_addr + data.len()`.
+    /// `end_addr == start_addr + data.len()`. Cannot overflow: the
+    /// constructor [`new`](Self::new) rejects any `(start_addr, data)` pair
+    /// that would.
     #[must_use]
     pub fn end_addr(&self) -> u64 {
         self.start_addr + self.data.len() as u64
