@@ -77,7 +77,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Uses a BTreeMap range query to find the last region whose
     /// `start_addr <= addr`, then confirms that `addr` also falls within the
     /// region's instruction range via [`Region::contains_addr`].
-    fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
+    pub(super) fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
         // Find the last region whose start_addr <= addr
         let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
@@ -161,6 +161,68 @@ impl<R: rsleigh::MemReader> Builder<R> {
             sleigh: self.sleigh,
             entry: starting_region,
         })
+    }
+}
+
+#[doc(hidden)]
+pub mod test_api {
+    //! Test-only forwarders for `Builder` internals.
+
+    use super::Builder;
+    use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind, RegionGraph};
+    use crate::error::Result;
+    use petgraph::graph::NodeIndex;
+    use std::collections::{BTreeMap, VecDeque};
+
+    pub fn add_region<R: rsleigh::MemReader>(
+        b: &mut Builder<R>,
+        region: Region,
+    ) -> Result<NodeIndex> {
+        b.add_region(region)
+    }
+
+    #[must_use]
+    pub fn find_region_containing_addr<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+        addr: PcodeInsnAddr,
+    ) -> Option<(NodeIndex, &Region)> {
+        b.find_region_containing_addr(addr)
+    }
+
+    pub fn split_region<R: rsleigh::MemReader>(
+        b: &mut Builder<R>,
+        region_id: NodeIndex,
+        addr: PcodeInsnAddr,
+    ) -> Result<NodeIndex> {
+        b.split_region(region_id, addr)
+    }
+
+    #[must_use]
+    pub fn graph<R: rsleigh::MemReader>(b: &Builder<R>) -> &RegionGraph {
+        &b.graph
+    }
+
+    pub fn graph_mut<R: rsleigh::MemReader>(b: &mut Builder<R>) -> &mut RegionGraph {
+        &mut b.graph
+    }
+
+    #[must_use]
+    pub fn start_addr_to_region_id<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+    ) -> &BTreeMap<PcodeInsnAddr, NodeIndex> {
+        &b.start_addr_to_region_id
+    }
+
+    #[must_use]
+    pub fn work_queue<R: rsleigh::MemReader>(
+        b: &Builder<R>,
+    ) -> &VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)> {
+        &b.work_queue
+    }
+
+    #[must_use]
+    pub fn sleigh<R: rsleigh::MemReader>(b: &Builder<R>) -> &rsleigh::Sleigh<R> {
+        &b.sleigh
     }
 }
 

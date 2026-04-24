@@ -5,6 +5,7 @@ mod query;
 mod types;
 
 pub use builder::Builder;
+pub use builder::test_api;
 pub use options::OptionsBuilder;
 pub use query::IfRegionState;
 pub use types::{PcodeInsnAddr, Region, RegionEdgeKind};

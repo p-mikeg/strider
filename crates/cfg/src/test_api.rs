@@ -4,5 +4,7 @@
 //! `crates/cfg/tests/` can exercise every function with logic directly.
 //! Not intended for use from downstream crates.
 
-// Per-module sub-modules are added in the tasks that need them
-// (Task 3: builder, Task 4: region_builder + dot).
+#[doc(hidden)]
+pub use crate::cfg::test_api::*;
+
+// Task 4 will add region_builder and dot re-exports here.
