@@ -44,17 +44,13 @@ pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
         cur = e.source();
     }
 
-    for (i, loc) in err.location_chain().iter().enumerate() {
-        let _ = writeln!(
-            out,
-            "  at [{}] {}:{}:{}",
-            i,
-            loc.file(),
-            loc.line(),
-            loc.column(),
-        );
-    }
-
-    let _ = write!(out, "{}", err.origin_backtrace());
+    // Reuse the same chain+backtrace formatting that Debug impls use
+    // (ErrorFields::fmt_chain_and_backtrace). Writing into a String is
+    // infallible; the `let _` silences the fmt::Result.
+    let _ = crate::fields::write_chain_and_backtrace(
+        err.location_chain(),
+        err.origin_backtrace(),
+        &mut out,
+    );
     out
 }

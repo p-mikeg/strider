@@ -66,18 +66,33 @@ impl ErrorFields {
     ///
     /// Propagates any `fmt::Error` raised by the underlying formatter.
     pub fn fmt_chain_and_backtrace(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, loc) in self.locations.iter().enumerate() {
-            writeln!(
-                f,
-                "  at [{}] {}:{}:{}",
-                i,
-                loc.file(),
-                loc.line(),
-                loc.column(),
-            )?;
-        }
-        write!(f, "{}", self.backtrace)
+        write_chain_and_backtrace(&self.locations, &self.backtrace, f)
     }
+}
+
+/// Shared implementation for writing a location chain followed by a
+/// backtrace, used by [`ErrorFields::fmt_chain_and_backtrace`] (which
+/// writes into a `std::fmt::Formatter`) and by
+/// [`crate::format_traceback`] (which writes into a `String`).
+///
+/// Generic over `W: std::fmt::Write` so both sinks work with one body;
+/// `Formatter<'_>` and `String` both implement the trait.
+pub(crate) fn write_chain_and_backtrace<W: std::fmt::Write>(
+    chain: &LocationChain,
+    backtrace: &Backtrace,
+    w: &mut W,
+) -> std::fmt::Result {
+    for (i, loc) in chain.iter().enumerate() {
+        writeln!(
+            w,
+            "  at [{}] {}:{}:{}",
+            i,
+            loc.file(),
+            loc.line(),
+            loc.column(),
+        )?;
+    }
+    write!(w, "{}", backtrace)
 }
 
 /// Implemented by every error wrapper that carries an [`ErrorFields`] payload.
