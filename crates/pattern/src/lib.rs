@@ -73,150 +73,100 @@ pub use pat::traits::{BuildCtx, BuildOutcome};
 pub use pat::ctor::consts::{FromCtx, first_value_input_type};
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
-// ── Public types ──────────────────────────────────────────────────────────────
+// ── Core types & entry points ────────────────────────────────────────────────
 
 pub use matcher::{Bindings, Match, Matcher};
-pub use pat::{
-    BoolBinaryOpPat,
-    CallOtherPat,
-    // Builder types
-    CallPat,
-    FloatBinaryOpPat,
-    FunctionArgPat,
-    IfPat,
-    IntBinaryOpPat,
-    // Const-capture overload traits
-    IntoAnyBoolConst,
-    IntoAnyFloatConst,
-    IntoAnyIntConst,
-    // Blanket trait
-    IntoPat,
-    LoadPat,
-    MatchPredicateFn,
-    Pat,
-    PhiPat,
-    PredicateFn,
-    RetPat,
-    StackStorePat,
-    StackStorePhiPat,
-    StorePat,
-    add,
-    and,
-    // Free-function constructors
-    any,
-    any_bool_const,
-    any_float_const,
-    any_int_const,
-    bool_and,
-    // Bool ops
-    bool_binary,
-    bool_binary_any,
-    bool_const,
-    bool_not,
-    bool_or,
-    bool_unary,
-    bool_unary_any,
-    bool_xor,
-    // Control nodes
-    call,
-    call_other,
-    // Casts / coercions
-    cast_to_bool,
-    cast_to_float,
-    cast_to_int,
-    div,
-    extend,
-    float_abs,
-    float_add,
-    // Float ops
-    float_binary,
-    float_binary_any,
-    float_bits_to_int,
-    float_ceil,
-    float_cmp,
-    float_cmp_any,
-    float_const,
-    float_div,
-    float_eq,
-    float_floor,
-    float_le,
-    float_lt,
-    float_mul,
-    float_ne,
-    float_neg,
-    float_round,
-    float_sqrt,
-    float_sub,
-    float_to_float,
-    float_to_int,
-    float_unary,
-    float_unary_any,
-    // Function arguments
-    function_arg,
-    function_arg_any,
-    function_arg_reg,
-    function_arg_stack,
-    if_node,
-    // Entry values
-    initial_var,
-    initial_var_for,
-    // Int binary ops
-    int_binary,
-    // Variant-agnostic op constructors
-    int_binary_any,
-    int_bits_to_float,
-    int_carry,
-    // Int comparisons
-    int_cmp,
-    int_cmp_any,
-    int_const,
-    int_eq,
-    int_le,
-    int_lt,
-    int_sborrow,
-    int_scarry,
-    int_sle,
-    int_slt,
-    int_to_float,
-    // Int unary ops
-    int_unary,
-    int_unary_any,
-    // Memory
-    load,
-    lzcount,
-    mul,
-    neg,
-    not,
-    or,
-    // Phi nodes
-    phi,
-    phi_for,
-    popcount,
-    predicate,
-    rem,
-    ret,
-    sdiv,
-    shl,
-    shr,
-    sign_extend,
-    srem,
-    sshr,
-    stack_store,
-    stack_store_phi,
-    store,
-    sub,
-    truncate,
-    var,
-    xor,
-    zero_extend,
-};
+pub use pat::{IntoPat, MatchPredicateFn, Pat, PredicateFn};
+
+// ── Capture variables ────────────────────────────────────────────────────────
+
 pub use var::{
     BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
 };
 
-// Re-export op enums so callers can use `int_binary(IntBinaryOp::Add, …)`
-// without also depending on the `ir` crate directly.
+// ── Builder structs ──────────────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
+    IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat,
+    StackStorePhiPat, StorePat,
+};
+
+// ── Const-capture overload traits ────────────────────────────────────────────
+
+pub use pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst};
+
+// ── Wildcards, captures, predicates ──────────────────────────────────────────
+
+pub use pat::{any, predicate, var};
+
+// ── Int ops (binary, unary, comparison, variant-agnostic) ────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    add, and, div, int_binary, int_binary_any, int_carry, int_cmp, int_cmp_any,
+    int_eq, int_le, int_lt, int_sborrow, int_scarry, int_sle, int_slt,
+    int_unary, int_unary_any, lzcount, mul, neg, not, or, popcount,
+    rem, sdiv, shl, shr, srem, sshr, sub, xor,
+};
+
+// ── Bool ops ─────────────────────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    bool_and, bool_binary, bool_binary_any, bool_not, bool_or, bool_unary,
+    bool_unary_any, bool_xor,
+};
+
+// ── Float ops ────────────────────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    float_abs, float_add, float_binary, float_binary_any, float_ceil, float_cmp,
+    float_cmp_any, float_div, float_eq, float_floor, float_le, float_lt,
+    float_mul, float_ne, float_neg, float_round, float_sqrt, float_sub,
+    float_unary, float_unary_any,
+};
+
+// ── Casts & coercions ────────────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    cast_to_bool, cast_to_float, cast_to_int, extend, float_bits_to_int,
+    float_to_float, float_to_int, int_bits_to_float, int_to_float, sign_extend,
+    truncate, zero_extend,
+};
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    any_bool_const, any_float_const, any_int_const,
+    bool_const, float_const, int_const,
+};
+
+// ── Memory, phi, function-arg ────────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    function_arg, function_arg_any, function_arg_reg, function_arg_stack,
+    load, phi, phi_for, stack_store, stack_store_phi, store,
+};
+
+// ── Control flow & entry values ──────────────────────────────────────────────
+
+#[rustfmt::skip]
+pub use pat::{
+    call, call_other, if_node, initial_var, initial_var_for, ret,
+};
+
+// ── Op enums re-exported from `ir` for builder call-site convenience ────────
+//
+// Lets callers write `int_binary(IntBinaryOp::Add, …)` without pulling in the
+// `ir` crate directly.
+
 pub use ir::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
