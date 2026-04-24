@@ -349,12 +349,13 @@ mod tests {
     }
 
     /// The stack-pointer varnode must resolve to the architecture's SP
-    /// register and must NOT appear in `callee_saved_regs` (the callee's
-    /// `ret` pops the return address, so SP is not preserved across a call
-    /// on stack-push ISAs; on link-register ISAs the call doesn't touch SP
-    /// but SP is still modeled as not callee-saved for uniformity, with
-    /// `ret_stack_pop = 0`).  Stack-arg offsets and `ret_stack_pop` must
-    /// round-trip unchanged from the preset.
+    /// register and must NOT appear in any of the three resolved register
+    /// lists (`arg_passing_regs`, `callee_saved_regs`, `ret_val_regs`) —
+    /// the callee's `ret` pops the return address on stack-push ISAs so
+    /// SP is not preserved across a call, and on link-register ISAs the
+    /// call doesn't touch SP but SP is still modeled as not callee-saved
+    /// for uniformity (with `ret_stack_pop = 0`).  Stack-arg offsets and
+    /// `ret_stack_pop` must round-trip unchanged from the preset.
     #[test]
     fn presets_stack_pointer_and_arg_offsets() {
         for c in cases() {
