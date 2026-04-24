@@ -279,10 +279,11 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// When a region starts at a non-zero pcode index (because a relative
     /// `CondBranch` branched into the middle of a machine instruction's pcode
     /// sequence), `cur_addr.insn_index` may be > 0 at the top of the first
-    /// iteration.  We must add that base offset to the `enumerate` counter so
-    /// that every `RegionInstruction` carries the correct
-    /// `(machine_addr, insn_index)` pair.  Subsequent machine instructions
-    /// always start at pcode index 0, so the offset resets naturally.
+    /// iteration.  By calling `.enumerate()` *before* `.skip(start_pcode_idx)`,
+    /// the enumerator's index `i` is already the absolute pcode-instruction
+    /// index within the current machine instruction, so no offset arithmetic
+    /// is needed.  Subsequent machine instructions always start at pcode
+    /// index 0, so `start_pcode_idx` is naturally 0 there.
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
@@ -291,22 +292,16 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 .sleigh
                 .lift_one(cur_addr.machine_addr.addr)
                 .map_err(|e| ErrorKind::GenericSleighError(format!("{:?}", e)))?;
-            // Save the starting pcode index for this machine instruction.
-            // For the first machine instruction this may be non-zero when the
-            // work queue delivered a mid-instruction entry point.  For all
-            // subsequent machine instructions it is always 0.
-            let start_pcode_idx = cur_addr.insn_index;
-            for (i, insn) in lift_res
-                .insns
-                .iter()
-                .skip(start_pcode_idx as usize)
-                .enumerate()
-            {
+            // `enumerate` before `skip` so `i` is the absolute pcode index.
+            // On the very first machine instruction this may start at a non-zero
+            // index (the work queue delivered a mid-instruction entry point);
+            // subsequent machine instructions always start at 0.
+            let start_pcode_idx = cur_addr.insn_index as usize;
+            for (i, insn) in lift_res.insns.iter().enumerate().skip(start_pcode_idx) {
                 cur_addr = PcodeInsnAddr {
                     machine_addr: cur_addr.machine_addr,
-                    insn_index: start_pcode_idx + i as u64,
+                    insn_index: i as u64,
                 };
-
                 let res = self.process_insn(insn, cur_addr, &lift_res)?;
                 if matches!(res, ProcessInsnRes::FinishedProcessing) {
                     return Ok(());
