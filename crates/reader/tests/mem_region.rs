@@ -199,11 +199,30 @@ fn lookup_table_cross_boundary_read_stops_at_first_region_end() {
 // ── Pinned contract #2: overlapping regions, later-start-wins ─────────────
 
 /// Pinned contract: when two regions overlap but have different start
-/// addresses, the region whose start_addr is the latest <= addr wins.
+/// addresses, the region whose `start_addr` is the latest <= `addr` wins.
 /// The earlier region's bytes in the overlap are shadowed.
 ///
 /// This falls out of the BTreeMap range query but the BEHAVIOR matters to
 /// callers; future backends that register overlapping regions must know.
+#[test]
+fn lookup_table_overlapping_regions_later_start_shadows_earlier() {
+    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]).expect("valid region"); // [0x1000..0x1020)
+    let b = MemRegion::new(0x1010, vec![0xbb; 0x20]).expect("valid region"); // [0x1010..0x1030)
+    let table = MemRegionsLookupTable::new([a, b]);
+    let mut buf = [0u8; 1];
+
+    assert_eq!(table.read(0x1000, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xaa, "pre-overlap resolves to A");
+
+    assert_eq!(table.read(0x1010, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xbb, "overlap resolves to B (later start wins)");
+
+    assert_eq!(table.read(0x101f, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xbb, "A's tail in overlap is shadowed");
+}
+
+// ── Pinned contract #3: fall-through when later region is shorter ─────────
+
 /// Pinned contract: when a later-starting region is *shorter* and does not
 /// cover `addr`, lookup must fall through to an earlier region that does.
 /// Without this, overlapping regions silently lose data.
@@ -267,22 +286,5 @@ fn mem_region_accessors_expose_start_and_data() {
     let r = MemRegion::new(0x1234, vec![0xaa, 0xbb, 0xcc]).expect("valid region");
     assert_eq!(r.start_addr(), 0x1234);
     assert_eq!(r.data(), &[0xaa, 0xbb, 0xcc]);
-}
-
-#[test]
-fn lookup_table_overlapping_regions_later_start_shadows_earlier() {
-    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]).expect("valid region"); // [0x1000..0x1020)
-    let b = MemRegion::new(0x1010, vec![0xbb; 0x20]).expect("valid region"); // [0x1010..0x1030)
-    let table = MemRegionsLookupTable::new([a, b]);
-    let mut buf = [0u8; 1];
-
-    assert_eq!(table.read(0x1000, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xaa, "pre-overlap resolves to A");
-
-    assert_eq!(table.read(0x1010, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xbb, "overlap resolves to B (later start wins)");
-
-    assert_eq!(table.read(0x101f, &mut buf), Some(1));
-    assert_eq!(buf[0], 0xbb, "A's tail in overlap is shadowed");
 }
 
