@@ -12,9 +12,6 @@ pub enum ErrorKind {
     #[error("empty region {0:?}")]
     EmptyRegion(Region),
 
-    #[error("unknown register name by sleign {0:?}")]
-    UnknownRegName(String),
-
     #[error("invalid branch target variable {0:?} at opcode {1:?}")]
     InvalidBranchTargetVaErr(rsleigh::Vn, PcodeInsnAddr),
 
