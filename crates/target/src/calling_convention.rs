@@ -62,6 +62,7 @@ impl CallingConvention {
     /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
     /// Callee-saved: RBX, RSP, RBP, R12–R15
     /// Return value: RAX, RDX
+    #[must_use]
     pub fn x86_64_systemv_abi() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "RSP",
@@ -81,6 +82,7 @@ impl CallingConvention {
     /// Argument registers: x0–x7
     /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register), sp
     /// Return value: x0, x1
+    #[must_use]
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "sp",
@@ -103,6 +105,7 @@ impl CallingConvention {
     /// Unlike x86, the ARM `bl` instruction stores the return address in the
     /// link register `lr` rather than pushing it on the stack, so the first
     /// stack-passed arg sits at SP + 0.
+    #[must_use]
     pub fn arm_aapcs() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "sp",
@@ -118,6 +121,7 @@ impl CallingConvention {
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
     /// Return value: EAX, EDX
+    #[must_use]
     pub fn x86_cdecl() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "ESP",

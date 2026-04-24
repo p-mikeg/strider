@@ -26,6 +26,7 @@ pub struct SleighArch {
 
 impl SleighArch {
     /// Returns the x86-64 (64-bit Intel/AMD) architecture descriptor.
+    #[must_use]
     pub fn x86_64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64,
@@ -36,6 +37,7 @@ impl SleighArch {
     }
 
     /// Returns the x86 (32-bit Intel/AMD) architecture descriptor.
+    #[must_use]
     pub fn x86() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86,
@@ -46,6 +48,7 @@ impl SleighArch {
     }
 
     /// Returns the big-endian MIPS-32 architecture descriptor.
+    #[must_use]
     pub fn mipsbe32() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE,
@@ -56,6 +59,7 @@ impl SleighArch {
     }
 
     /// Returns the little-endian MIPS-32 architecture descriptor.
+    #[must_use]
     pub fn mipsle32() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE,
@@ -70,6 +74,7 @@ impl SleighArch {
     ///
     /// Uses the `ARM8_le` Sleigh spec with the `ARM_v45` processor spec, which
     /// matches the `-marm` compilation target in `binary_tests/arch/arm.mk`.
+    #[must_use]
     pub fn arm() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
@@ -80,6 +85,7 @@ impl SleighArch {
     }
 
     /// Returns the little-endian AArch64 (ARM 64-bit) architecture descriptor.
+    #[must_use]
     pub fn aarch64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64,
@@ -90,6 +96,7 @@ impl SleighArch {
     }
 
     /// Returns the big-endian AArch64 architecture descriptor.
+    #[must_use]
     pub fn aarch64be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
