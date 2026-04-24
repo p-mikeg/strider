@@ -170,6 +170,12 @@ macro_rules! define_error {
 /// — any type produced by [`define_error!`](crate::define_error) does, as does
 /// the hand-rolled `dot::error::Error<E>` via its manual `decompose` method.
 ///
+/// `$outer_kind::$variant` must be a **tuple variant** that takes the inner
+/// kind as its single positional field (e.g. `Inner(InnerKind)`). The
+/// expansion calls `$outer_kind::$variant(*kind)`, so struct variants like
+/// `Inner { kind: InnerKind }` will not compile. If you need a struct
+/// variant, write the bridge `impl From<$inner> for $outer` by hand.
+///
 /// # Example
 ///
 /// ```
