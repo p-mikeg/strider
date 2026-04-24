@@ -61,3 +61,31 @@ fn check_inside_function_any_insn_index_is_not_tail_call() {
     let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
     assert!(matches!(rb.is_branch_tail_call(addr(0x1200, 7)), Ok(false)));
 }
+
+/// Pinned contract: when `start_addr + fn_max_size` would overflow u64,
+/// the tail-call bound check must not silently wrap. Current code computes
+/// `fn_max_size + start_addr.addr <= addr.addr` with unchecked `+`, so an
+/// overflow produces a tiny wrapped number that trivially <= addr, flipping
+/// every branch to "tail call". Fix: saturate on overflow.
+#[test]
+fn fn_max_size_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
+    use cfg::test_api::Options;
+
+    // start_addr near top of u64; fn_max_size large enough that the raw sum
+    // would overflow but every plausible target still lies inside the function.
+    let start_addr = u64::MAX - 0x100;
+    let max_size = 0x1000u64; // start + max overflows
+    let opts: Options = cfg::OptionsBuilder::new()
+        .set_function_max_size(max_size)
+        .build();
+
+    let mut b = common::make_builder_opts(start_addr, opts);
+    let mut rb = common::make_region_builder(&mut b, common::addr(start_addr, 0));
+
+    // Target inside [start, start+max) (but the raw sum would overflow).
+    let target = common::addr(start_addr + 0x10, 0);
+    assert!(
+        !rb.is_branch_tail_call_nocheck(target),
+        "target inside function range must NOT classify as tail call even when start+max overflows"
+    );
+}

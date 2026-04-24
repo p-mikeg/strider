@@ -102,10 +102,16 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             return true;
         }
 
-        if let Some(fn_max_size) = self.builder.options.fn_max_size
-            && fn_max_size + self.builder.start_addr.addr <= addr.addr
-        {
-            return true;
+        if let Some(fn_max_size) = self.builder.options.fn_max_size {
+            // Saturate on overflow: if start + max would exceed u64::MAX, no target can
+            // be at-or-beyond the sum, so the only way `addr >= sat_sum` is when
+            // `sat_sum == u64::MAX && addr == u64::MAX`. That tiny boundary case is
+            // the correct semantics — an address past the end of addressable memory
+            // is, by definition, outside any reasonable function.
+            let end_exclusive = self.builder.start_addr.addr.saturating_add(fn_max_size);
+            if end_exclusive <= addr.addr {
+                return true;
+            }
         }
         false
     }
