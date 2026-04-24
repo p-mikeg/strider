@@ -24,12 +24,13 @@ fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {
 /// Finds the first pcode insn in `lift` whose opcode matches `want`, returns
 /// (insn_index, insn clone).
 fn find_pcode(lift: &rsleigh::LiftRes, want: rsleigh::Opcode) -> (u64, rsleigh::Insn) {
-    lift.insns
+    let (idx, i) = lift
+        .insns
         .iter()
         .enumerate()
         .find(|(_, i)| i.opcode == want)
-        .map(|(idx, i)| (idx as u64, i.clone()))
-        .unwrap_or_else(|| panic!("no pcode op with opcode {:?}", want))
+        .expect("no pcode op with requested opcode");
+    (idx as u64, i.clone())
 }
 
 // ── process_new_insn ──────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ fn branch_non_tail_enqueues_target() {
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
     assert_eq!(test_api::work_queue(&b).len(), 1);
-    let (parent, enqueued_addr) = test_api::work_queue(&b)[0].clone();
+    let (parent, enqueued_addr) = test_api::work_queue(&b)[0];
     assert_eq!(enqueued_addr, addr(0x1002, 0));
     let (_, kind) = parent.expect("branch must have a parent edge");
     assert_eq!(kind, RegionEdgeKind::Branch);

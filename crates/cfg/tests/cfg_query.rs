@@ -125,11 +125,10 @@ fn duplicate_if_case_true_is_detected_by_region_if() {
         entry: src,
     };
 
-    let result = cfg.region_if(src);
-    let err = match result {
-        Err(e) => e,
-        Ok(_) => panic!("expected DuplicateEdgeKind error"),
-    };
+    let err = cfg
+        .region_if(src)
+        .map(|_| ())
+        .expect_err("region_if must return DuplicateEdgeKind on malformed graph");
     assert!(matches!(
         err.kind(),
         ErrorKind::DuplicateEdgeKind(_, RegionEdgeKind::IfCaseTrue)
