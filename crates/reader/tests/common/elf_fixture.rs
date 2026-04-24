@@ -114,3 +114,138 @@ fn build_one_section_elf(opts: OneSectionOpts<'_>) -> Vec<u8> {
     }
     buf
 }
+
+/// Description of one section in a fixture ELF.
+#[derive(Clone, Debug)]
+pub struct SectionSpec {
+    pub name: &'static [u8],
+    pub addr: u64,
+    pub data: Vec<u8>,
+    pub exec: bool,
+    pub writable: bool,
+    /// If true, section is `SHT_NOBITS` (no file-backed data). `data` is
+    /// ignored except that its length becomes `sh_size`.
+    pub nobits: bool,
+}
+
+impl SectionSpec {
+    pub fn text(addr: u64, data: Vec<u8>) -> Self {
+        Self { name: b".text", addr, data, exec: true, writable: false, nobits: false }
+    }
+    pub fn rodata(addr: u64, data: Vec<u8>) -> Self {
+        Self { name: b".rodata", addr, data, exec: false, writable: false, nobits: false }
+    }
+    pub fn data(addr: u64, data: Vec<u8>) -> Self {
+        Self { name: b".data", addr, data, exec: false, writable: true, nobits: false }
+    }
+    pub fn bss(addr: u64, size: usize) -> Self {
+        Self {
+            name: b".bss",
+            addr,
+            data: vec![0; size],
+            exec: false,
+            writable: true,
+            nobits: true,
+        }
+    }
+}
+
+/// Builds a 64-bit little-endian x86-64 ELF with the given sections, in
+/// order. Each section lands at its `addr`; the writer emits `SHT_PROGBITS`
+/// (or `SHT_NOBITS` if `spec.nobits`) with `SHF_ALLOC` plus `SHF_EXECINSTR`
+/// / `SHF_WRITE` per the spec.
+///
+/// Sections with `nobits == true` contribute nothing to the file on-disk
+/// but still have a section header with the right `sh_size` and `sh_type`.
+/// This is how `object` models `.bss`.
+pub fn build_elf_with_sections(sections: &[SectionSpec]) -> Vec<u8> {
+    build_sections_elf(sections, Endianness::Little, true, elf::EM_X86_64)
+}
+
+fn build_sections_elf(
+    sections: &[SectionSpec],
+    endian: Endianness,
+    is_64: bool,
+    e_machine: u16,
+) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(endian, is_64, &mut buf);
+
+        let _null_idx = w.reserve_null_section_index();
+
+        // Reserve one section name + index per spec, preserving order.
+        let mut name_ids = Vec::with_capacity(sections.len());
+        let mut sec_indices = Vec::with_capacity(sections.len());
+        for spec in sections {
+            name_ids.push(w.add_section_name(spec.name));
+            sec_indices.push(w.reserve_section_index());
+        }
+        let _shstrtab_idx = w.reserve_shstrtab_section_index();
+
+        // Reserve layout.
+        w.reserve_file_header();
+
+        // Each non-NOBITS section reserves file space equal to its data.
+        let mut sec_offsets: Vec<u64> = Vec::with_capacity(sections.len());
+        for spec in sections {
+            if spec.nobits {
+                sec_offsets.push(0);
+            } else {
+                sec_offsets.push(w.reserve(spec.data.len(), 1) as u64);
+            }
+        }
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        // Write file header (no program headers in this builder — sections only).
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        // Section data.
+        for spec in sections {
+            if !spec.nobits {
+                w.write(&spec.data);
+            }
+        }
+
+        w.write_shstrtab();
+
+        // Section headers.
+        w.write_null_section_header();
+
+        for (i, spec) in sections.iter().enumerate() {
+            let mut sh_flags = u64::from(elf::SHF_ALLOC);
+            if spec.exec {
+                sh_flags |= u64::from(elf::SHF_EXECINSTR);
+            }
+            if spec.writable {
+                sh_flags |= u64::from(elf::SHF_WRITE);
+            }
+            let sh_type = if spec.nobits { elf::SHT_NOBITS } else { elf::SHT_PROGBITS };
+            let sh_size = spec.data.len() as u64;
+            w.write_section_header(&SectionHeader {
+                name: Some(name_ids[i]),
+                sh_type,
+                sh_flags,
+                sh_addr: spec.addr,
+                sh_offset: sec_offsets[i],
+                sh_size,
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 1,
+                sh_entsize: 0,
+            });
+        }
+
+        w.write_shstrtab_section_header();
+    }
+    buf
+}
