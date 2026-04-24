@@ -34,6 +34,7 @@ impl Default for OptionsBuilder {
 
 impl OptionsBuilder {
     /// Creates an `OptionsBuilder` with all options at their defaults.
+    #[must_use]
     pub fn new() -> Self {
         OptionsBuilder {
             lifter_options: Options::default(),
@@ -44,6 +45,7 @@ impl OptionsBuilder {
     ///
     /// Any unconditional branch whose target address is ≥ `start_addr + max_size`
     /// will be treated as a tail call.
+    #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
         self.lifter_options.fn_max_size = Some(max_size);
         self
@@ -55,12 +57,14 @@ impl OptionsBuilder {
     /// By default such branches are classified as tail calls (they are
     /// assumed to leave the current function).  Enable this option when the
     /// binary layout places shared or out-of-order code before the entry point.
+    #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.lifter_options.allow_code_before_start_addr = true;
         self
     }
 
     /// Consumes the builder and returns the final [`Options`].
+    #[must_use]
     pub fn build(self) -> Options {
         self.lifter_options
     }

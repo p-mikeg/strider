@@ -45,6 +45,7 @@ pub struct Builder<R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` that will construct a CFG starting at
     /// `start_addr` using `sleigh` to disassemble instructions.
+    #[must_use]
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
         Self {
             sleigh,
@@ -147,6 +148,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///
     /// Seeds the work queue with the entry address, processes items until the
     /// queue is empty, then locates the entry region.
+    ///
+    /// # Errors
+    /// Returns a [`crate::Error`] if disassembly fails, if the start region
+    /// cannot be located after processing, or if any region split or edge
+    /// routing fails.
     pub fn build(mut self) -> Result<Cfg<R>> {
         self.work_queue.push_back((None, self.start_pcode_addr()));
         while let Some((parent_region, address)) = self.work_queue.pop_back() {

@@ -26,6 +26,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     }
 
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
+    #[must_use]
     pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
         CfgDotDumper(self)
     }
