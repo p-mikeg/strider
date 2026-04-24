@@ -50,17 +50,14 @@ pub mod test_api {
     }
 }
 
-pub struct CfgDotDumperState;
 pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
 
 impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
     type Node = NodeIndex;
     type Error = Error;
-    type State = CfgDotDumperState;
+    type State = ();
 
-    fn create_initial_state(&self) -> Self::State {
-        Self::State {}
-    }
+    fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         self.0.graph.node_indices()
