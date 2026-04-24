@@ -60,8 +60,12 @@ impl CallingConvention {
     /// Returns the x86-64 System V ABI calling convention.
     ///
     /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
-    /// Callee-saved: RBX, RSP, RBP, R12–R15
+    /// Callee-saved: RBX, RBP, R12–R15
     /// Return value: RAX, RDX
+    ///
+    /// RSP is the stack pointer (see `stack_ptr_reg_name`) and is not listed
+    /// as callee-saved — `ret` pops the return address, so the caller observes
+    /// SP shifted by `ret_stack_pop` across the call.
     #[must_use]
     pub fn x86_64_systemv_abi() -> CallingConvention {
         CallingConvention {
@@ -80,8 +84,12 @@ impl CallingConvention {
     /// Returns the AArch64 AAPCS64 calling convention.
     ///
     /// Argument registers: x0–x7
-    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register), sp
+    /// Callee-saved: x19–x28, x29 (frame pointer), x30 (link register)
     /// Return value: x0, x1
+    ///
+    /// `sp` is the stack pointer (see `stack_ptr_reg_name`) and is not listed
+    /// as callee-saved — `ret_stack_pop` is `0` on AAPCS64 because `bl` writes
+    /// the return address to `lr` rather than pushing it.
     #[must_use]
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
