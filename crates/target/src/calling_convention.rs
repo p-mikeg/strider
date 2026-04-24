@@ -107,12 +107,14 @@ impl CallingConvention {
     /// Returns the ARM 32-bit AAPCS calling convention.
     ///
     /// Argument registers: r0–r3
-    /// Callee-saved: r4–r11, sp, lr
+    /// Callee-saved: r4–r11, lr
     /// Return value: r0, r1  (r0/r1 pair is used for 64-bit return values)
     ///
-    /// Unlike x86, the ARM `bl` instruction stores the return address in the
-    /// link register `lr` rather than pushing it on the stack, so the first
-    /// stack-passed arg sits at SP + 0.
+    /// `sp` is the stack pointer (see `stack_ptr_reg_name`) and is not listed
+    /// as callee-saved.  Unlike x86, the ARM `bl` instruction stores the
+    /// return address in the link register `lr` rather than pushing it on the
+    /// stack, so the first stack-passed arg sits at SP + 0 and `ret_stack_pop`
+    /// is `0`.
     #[must_use]
     pub fn arm_aapcs() -> CallingConvention {
         CallingConvention {
