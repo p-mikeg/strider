@@ -145,10 +145,8 @@ fn lookup_table_two_regions_correct_dispatch() {
 
 #[test]
 fn lookup_table_same_start_last_wins() {
-    let mut r1 = make_region(0x1000, 4);
-    r1.data = vec![0xaa, 0xaa, 0xaa, 0xaa];
-    let mut r2 = make_region(0x1000, 4);
-    r2.data = vec![0xbb, 0xbb, 0xbb, 0xbb];
+    let r1 = MemRegion::new(0x1000, vec![0xaa; 4]).expect("valid region");
+    let r2 = MemRegion::new(0x1000, vec![0xbb; 4]).expect("valid region");
     let table = MemRegionsLookupTable::new([r1, r2]);
     let mut buf = [0u8; 1];
     assert_eq!(table.read(0x1000, &mut buf), Some(1));
@@ -257,6 +255,18 @@ fn mem_region_new_accepts_exact_fit_at_top_of_address_space() {
     assert!(r.contains(start));
     assert!(r.contains(u64::MAX - 1));
     assert!(!r.contains(u64::MAX), "end_addr is exclusive");
+}
+
+// ── accessor contract ─────────────────────────────────────────────────────
+
+/// `start_addr()` and `data()` expose the region's invariants without
+/// allowing callers to mutate them. If the fields stay `pub` this test
+/// still passes; it's only meaningful once Task 1 privatizes them.
+#[test]
+fn mem_region_accessors_expose_start_and_data() {
+    let r = MemRegion::new(0x1234, vec![0xaa, 0xbb, 0xcc]).expect("valid region");
+    assert_eq!(r.start_addr(), 0x1234);
+    assert_eq!(r.data(), &[0xaa, 0xbb, 0xcc]);
 }
 
 #[test]

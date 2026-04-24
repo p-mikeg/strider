@@ -32,8 +32,8 @@ fn elf_section_to_mem_region_preserves_addr_and_data() {
         .expect("find .text in synthetic ELF");
 
     let region = elf_section_to_mem_region(&sec).expect("convert section");
-    assert_eq!(region.start_addr, 0x1000);
-    assert_eq!(region.data, vec![1, 2, 3, 4]);
+    assert_eq!(region.start_addr(), 0x1000);
+    assert_eq!(region.data(), &[1, 2, 3, 4]);
 }
 
 // ── elf_sections_to_mem_regions: filter is honored ────────────────────────
@@ -62,8 +62,8 @@ fn elf_sections_to_mem_regions_filter_selects_subset() {
     .unwrap();
 
     assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0].start_addr, 0x1000);
-    assert_eq!(regions[0].data, vec![1]);
+    assert_eq!(regions[0].start_addr(), 0x1000);
+    assert_eq!(regions[0].data(), &[1]);
 }
 
 // ── elf_sections_to_mem_regions: NOBITS sections are skipped ──────────────
@@ -84,7 +84,7 @@ fn elf_sections_to_mem_regions_skips_nobits() {
     let obj = parse(&bytes);
     let regions = elf_sections_to_mem_regions(&obj, |_| true).unwrap();
 
-    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr).collect();
+    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be present");
     assert!(!addrs.contains(&0x2000), ".bss (NOBITS) must be skipped");
 }
@@ -122,7 +122,7 @@ fn elf_exec_sections_include_shf_execinstr_and_exclude_others() {
     let obj = parse(&bytes);
     let regions = elf_get_executable_sections_as_mem_regions(&obj).unwrap();
     assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0].start_addr, 0x1000);
+    assert_eq!(regions[0].start_addr(), 0x1000);
 }
 
 // ── elf_get_code_and_readonly_sections_as_mem_regions ─────────────────────
@@ -138,7 +138,7 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     let obj = parse(&bytes);
     let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
 
-    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr).collect();
+    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     assert!(addrs.contains(&0x1000), ".text must be included");
     assert!(addrs.contains(&0x2000), ".rodata must be included");
     assert!(!addrs.contains(&0x3000), ".data must be excluded");
@@ -230,8 +230,8 @@ fn elf_segment_to_mem_region_preserves_addr_and_data() {
     let seg = obj.segments().next().expect("at least one segment");
 
     let region = elf_segment_to_mem_region(&seg).expect("convert segment");
-    assert_eq!(region.start_addr, 0x1000);
-    assert_eq!(region.data, vec![1, 2, 3, 4]);
+    assert_eq!(region.start_addr(), 0x1000);
+    assert_eq!(region.data(), &[1, 2, 3, 4]);
 }
 
 // ── elf_segments_to_mem_regions: filter honored ───────────────────────────
@@ -261,7 +261,7 @@ fn elf_segments_to_mem_regions_filter_selects_exec_only() {
     ))
     .unwrap();
     assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0].start_addr, 0x1000);
+    assert_eq!(regions[0].start_addr(), 0x1000);
 }
 
 // ── elf_get_executable_segments_as_mem_regions ────────────────────────────
@@ -275,5 +275,5 @@ fn elf_exec_segments_include_pf_x_and_exclude_others() {
     let obj = parse(&bytes);
     let regions = elf_get_executable_segments_as_mem_regions(&obj).unwrap();
     assert_eq!(regions.len(), 1);
-    assert_eq!(regions[0].start_addr, 0x1000);
+    assert_eq!(regions[0].start_addr(), 0x1000);
 }

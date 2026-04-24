@@ -43,12 +43,14 @@ pub trait ReadOnlyMemory: Send + Sync {
 /// Corresponds to one backend-specific mapping (e.g. an ELF section or an
 /// entry from a raw blob manifest) into the virtual address space of the
 /// target binary.
+///
+/// Fields are private so the "no overflow" invariant established by
+/// [`new`](Self::new) cannot be bypassed after construction. Read access
+/// is via [`start_addr`](Self::start_addr) and [`data`](Self::data).
 #[derive(Clone, Debug)]
 pub struct MemRegion {
-    /// First virtual address covered by this region.
-    pub start_addr: u64,
-    /// Raw bytes of the region, starting at `start_addr`.
-    pub data: Vec<u8>,
+    start_addr: u64,
+    data: Vec<u8>,
 }
 
 impl MemRegion {
@@ -67,6 +69,18 @@ impl MemRegion {
             return Err(error::ErrorKind::RegionOverflow { start_addr, len }.into());
         }
         Ok(Self { start_addr, data })
+    }
+
+    /// First virtual address covered by this region.
+    #[must_use]
+    pub fn start_addr(&self) -> u64 {
+        self.start_addr
+    }
+
+    /// Raw bytes of the region, starting at [`start_addr`](Self::start_addr).
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     /// One past the last virtual address covered by this region.
@@ -128,7 +142,7 @@ impl MemRegionsLookupTable {
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
         let mut map = BTreeMap::new();
         for region in regions {
-            map.insert(region.start_addr, region);
+            map.insert(region.start_addr(), region);
         }
         Self { regions: map }
     }
