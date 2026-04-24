@@ -288,3 +288,24 @@ fn mem_region_accessors_expose_start_and_data() {
     assert_eq!(r.data(), &[0xaa, 0xbb, 0xcc]);
 }
 
+// ── MemRegionsLookupTable: zero-length buffer boundary ───────────────────
+
+/// Pinned contract: a zero-length read on `MemRegionsLookupTable::read`
+/// succeeds for mapped addresses (`Some(0)`) and fails for unmapped
+/// addresses (`None`). Mirrors the `MemRegion::read` pin and prevents a
+/// future "early return if out.is_empty()" optimization from short-
+/// circuiting the unmapped arm.
+#[test]
+fn lookup_table_read_zero_length_buf() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    let mut empty: [u8; 0] = [];
+
+    // Mapped address → Some(0). No bytes requested, but the address is real.
+    assert_eq!(table.read(0x1000, &mut empty), Some(0));
+    assert_eq!(table.read(0x1008, &mut empty), Some(0));
+
+    // Unmapped address → None. Zero-length does not spuriously succeed.
+    assert_eq!(table.read(0x0fff, &mut empty), None);
+    assert_eq!(table.read(0x2000, &mut empty), None);
+}
+
