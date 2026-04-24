@@ -8,7 +8,6 @@ default-members = ["crates/*"]
 edition = "2024"
 
 [workspace.dependencies]
-ir-macros = { path = "crates/ir-macros" }
 pattern = { path = "crates/pattern" }
 analyzer = { path = "crates/analyzer" }
 graphmock = { path = "crates/graphmock" }
