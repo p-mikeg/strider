@@ -220,13 +220,11 @@ impl ControlPattern for ControlNodePat {
                     // semantic node on the true branch.  `None` means a
                     // dead-end (no consumer) or ambiguous fork (multiple
                     // consumers) — treat as no match.
-                    let Some(successor_out) =
-                        walk::skip_forward_transparent(ctx.matcher, true_ctrl)
+                    let Some(successor_node) = skip_forward_to_semantic_node(ctx, true_ctrl)
                     else {
                         *b = snap;
                         return false;
                     };
-                    let successor_node = ctx.graph.graph.get_node_from_output(successor_out);
                     let wrapped = Pat::from_ctrl(tb_pat.clone());
                     if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
                         *b = snap;
@@ -239,13 +237,11 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    let Some(successor_out) =
-                        walk::skip_forward_transparent(ctx.matcher, false_ctrl)
+                    let Some(successor_node) = skip_forward_to_semantic_node(ctx, false_ctrl)
                     else {
                         *b = snap;
                         return false;
                     };
-                    let successor_node = ctx.graph.graph.get_node_from_output(successor_out);
                     let wrapped = Pat::from_ctrl(fb_pat.clone());
                     if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
                         *b = snap;
@@ -285,4 +281,46 @@ fn match_data(
 ) -> bool {
     let wrapped = Pat::from_dyn(pat.clone());
     ctx.matcher.match_output(out, &wrapped, b)
+}
+
+/// Starting from `ctrl_out` (a Control-kind output on a branch edge), walk
+/// forward through transparent consumers (`ControlState` / `IfCase`) until
+/// reaching a semantic node, and return that semantic node's `NodeId`.
+///
+/// This is a node-returning counterpart to
+/// [`walk::skip_forward_transparent`], which returns the semantic node's
+/// first output.  The output-returning variant fails when the semantic node
+/// is a terminator with no outputs (e.g. `Return`); this variant succeeds in
+/// that case because callers (the `If.true_branch` / `If.false_branch` arms
+/// above) only need the node.
+///
+/// Returns `None` in the same dead-end / ambiguous-fork cases as
+/// [`walk::skip_forward_transparent`].
+fn skip_forward_to_semantic_node(ctx: &MatchCtx, ctrl_out: NodeOutputId) -> Option<NodeId> {
+    // Advance one transparent hop at a time by reusing the existing
+    // one-output-returning walker.  If it succeeds, resolve the output back
+    // to a node.  If it fails, the landed-on node may still be semantic but
+    // have no outputs — in that case we locate the semantic node directly
+    // via the consumers of the last-known transparent chain.
+    if let Some(out) = walk::skip_forward_transparent(ctx.matcher, ctrl_out) {
+        return Some(ctx.graph.graph.get_node_from_output(out));
+    }
+    // Fallback: manually walk transparent hops, returning the semantic node
+    // itself (whose `first_output` may be `None`).  Mirrors the transparency
+    // predicate used by `walk.rs`.
+    let mut out = ctrl_out;
+    for _ in 0..64 {
+        let consumers: Vec<_> = ctx.graph.graph.output_uses(out).collect();
+        if consumers.len() != 1 {
+            return None;
+        }
+        let (consumer_node, _) = consumers[0];
+        let kind = ctx.graph.graph.node_kind(consumer_node);
+        if !matches!(kind, NodeKind::ControlState | NodeKind::IfCase(_)) {
+            return Some(consumer_node);
+        }
+        let next = ctx.graph.graph.node_outputs(consumer_node).into_iter().next()?;
+        out = next;
+    }
+    None
 }

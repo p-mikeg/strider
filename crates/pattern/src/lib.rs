@@ -124,8 +124,6 @@ pub use pat::{
     cast_to_bool,
     cast_to_float,
     cast_to_int,
-    // Region search
-    contains,
     div,
     extend,
     float_abs,

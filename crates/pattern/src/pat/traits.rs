@@ -38,17 +38,6 @@ pub trait ControlPattern: Send + Sync {
     fn candidate_kind(&self) -> Option<CandidateKind> {
         None
     }
-
-    /// If this pattern is a `Contains` shell, return its inner.  The default
-    /// implementation returns `None`; only [`crate::pat::contains::ContainsPat`]
-    /// overrides.  Previously used by `ControlNodePat` to peel a `Contains`
-    /// shell before walking; the Step 3 refactor to one-step-direct semantics
-    /// removed that call site.  Kept alive solely for `ContainsPat` until it
-    /// is deleted in the follow-up step.
-    #[allow(dead_code)]
-    fn contains_inner(&self) -> Option<&crate::pat::Pat> {
-        None
-    }
 }
 
 /// Hints `Matcher::find_all` which pre-indexed node list to iterate.

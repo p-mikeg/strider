@@ -2,17 +2,10 @@
 //! (`ControlState`, `IfCase`).  Semantic nodes (`Call` / `Return` / `If` /
 //! `Load` / `Store` / everything else) terminate the walk.
 //!
-//! These replace the unbounded walks in the now-deleted `matcher/traversal.rs`
-//! with helpers that advance exactly one semantic step at a time: transparent
-//! SSA plumbing is skipped, but any real node stops the walk so the caller
-//! can decide what to do next.  Notably, unlike `traversal::match_contains`,
-//! `Call` is treated as a semantic node (the walk stops there), not as
-//! transparent.
-//!
-//! The helpers are introduced as part of a larger refactor; the first
-//! production callers land in a follow-up step.  `#[allow(dead_code)]`
-//! silences the transitional warning.
-#![allow(dead_code)]
+//! The helpers advance exactly one semantic step at a time: transparent SSA
+//! plumbing is skipped, but any real node stops the walk so the caller can
+//! decide what to do next.  `Call` is treated as a semantic node (the walk
+//! stops there), not as transparent.
 
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 

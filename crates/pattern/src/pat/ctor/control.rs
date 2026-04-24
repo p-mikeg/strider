@@ -1,10 +1,9 @@
-//! Phi / function-entry / call / return / branch / region-search constructors.
+//! Phi / function-entry / call / return / branch constructors.
 
 use std::sync::Arc;
 
 use ir::node::{FunctionArgSource, NodeKind};
 
-use crate::pat::contains::ContainsPat;
 use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{CallOtherPat, CallPat, FunctionArgPat, IfPat, Pat, PhiPat, RetPat};
 
@@ -95,15 +94,4 @@ pub fn ret() -> RetPat {
 /// `.false_branch()` to add constraints.
 pub fn if_node() -> IfPat {
     IfPat::new()
-}
-
-// ── Region search ─────────────────────────────────────────────────────────────
-
-/// Matches any node reachable via a forward control-chain walk from the current
-/// node that satisfies `p`.
-///
-/// Transparent to `ControlState`, `IfCase`, and `Call` nodes; stops at `If`
-/// and `Return` terminators.
-pub fn contains(p: impl Into<Pat>) -> Pat {
-    Pat::from_ctrl(Arc::new(ContainsPat { inner: p.into() }))
 }

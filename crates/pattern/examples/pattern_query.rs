@@ -266,12 +266,12 @@ fn example_if_branches() {
     println!("if(99 == 1) matches: {}", no_match.len()); // 0
 
     // ── Check what is in each branch ─────────────────────────────────────────
-    let true_has_call = m.find_all(&if_node().true_branch(contains(call().at(0xAAAA))).into());
-    println!("true branch contains call(0xAAAA): {}", true_has_call.len()); // 1
+    let true_has_call = m.find_all(&if_node().true_branch(call().at(0xAAAA)).into());
+    println!("true branch reaches call(0xAAAA): {}", true_has_call.len()); // 1
 
-    let false_has_call = m.find_all(&if_node().false_branch(contains(call().at(0xAAAA))).into());
+    let false_has_call = m.find_all(&if_node().false_branch(call().at(0xAAAA)).into());
     println!(
-        "false branch contains call(0xAAAA): {}",
+        "false branch reaches call(0xAAAA): {}",
         false_has_call.len()
     ); // 0
 

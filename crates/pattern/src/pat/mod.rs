@@ -13,7 +13,6 @@ pub(crate) mod node_pat;
 pub(crate) mod control_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
-pub(crate) mod contains;
 pub use builders::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
     IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,

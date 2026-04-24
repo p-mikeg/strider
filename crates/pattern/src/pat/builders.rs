@@ -935,12 +935,4 @@ impl crate::pat::traits::ControlPattern for PatAsCtrl {
     ) -> bool {
         ctx.matcher.match_node_id(target, &self.0, b)
     }
-
-    fn contains_inner(&self) -> Option<&Pat> {
-        // Forward the peel so that a `Pat::Ctrl(ContainsPat { .. })` wrapped
-        // in `PatAsCtrl` still lets the ControlNodePat boundary peel the
-        // outer `Contains` shell.  Without this, the forward walker would
-        // double-walk.
-        self.0.as_ctrl().and_then(|c| c.contains_inner())
-    }
 }

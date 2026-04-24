@@ -101,27 +101,6 @@ fn preceded_by_no_match_when_no_call_precedes_return() -> ir::Result<()> {
     Ok(())
 }
 
-#[test]
-#[ignore = "Step 3 switched `preceded_by` to one-step-direct semantics: the \
-           walk now stops at the first semantic predecessor (Call 0x2222) \
-           and cannot reach the earlier Call 0x1111. Revisit in the \
-           follow-up step (delete or rewrite with an explicit chain)."]
-fn preceded_by_finds_either_call_in_two_call_graph() -> ir::Result<()> {
-    let g = graph_two_calls_return()?;
-    let m = Matcher::new(&g);
-    // The return is preceded by both calls in sequence; backwards walk finds
-    // call at 0x2222 directly, then walks further to find 0x1111 if needed.
-    let hits_2222 = m.find_all(&ret().preceded_by(call().at(0x2222)).into());
-    let hits_1111 = m.find_all(&ret().preceded_by(call().at(0x1111)).into());
-    assert_eq!(hits_2222.len(), 1, "return preceded by call at 0x2222");
-    assert_eq!(
-        hits_1111.len(),
-        1,
-        "return also preceded by earlier call at 0x1111"
-    );
-    Ok(())
-}
-
 // ── call() pattern ────────────────────────────────────────────────────────────
 
 #[test]
@@ -193,30 +172,24 @@ fn if_pattern_no_match_in_flat_graph() -> ir::Result<()> {
     Ok(())
 }
 
-// ── contains / true_branch / false_branch ────────────────────────────────────
+// ── true_branch / false_branch (one-step-direct semantics) ──────────────────
 
 #[test]
-#[ignore = "Step 3 one-step-direct semantics: the wrapping `contains(..)` \
-           shell is no longer peeled by `true_branch`, so the inner \
-           pattern sees `ContainsPat` as the target and fails. The \
-           equivalent new-API test is `true_branch(call().at(0x2345))` \
-           (single-hop). `contains` and this test are slated for deletion \
-           in the follow-up step."]
-fn true_branch_contains_call_matches() -> ir::Result<()> {
+fn true_branch_matches_call_after_control_state() -> ir::Result<()> {
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(contains(call().at(0x2345))).into());
-    assert_eq!(hits.len(), 1, "true branch should contain call at 0x2345");
+    let hits = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
+    assert_eq!(hits.len(), 1, "true branch should reach call at 0x2345");
     Ok(())
 }
 
 #[test]
 fn false_branch_contains_call_no_match() -> ir::Result<()> {
-    // The call is in the TRUE branch, so false_branch(contains(call)) should fail.
+    // The call is in the TRUE branch, so false_branch(call) should fail.
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().false_branch(contains(call().at(0x2345))).into());
-    assert!(hits.is_empty(), "false branch does not contain the call");
+    let hits = m.find_all(&if_node().false_branch(call().at(0x2345)).into());
+    assert!(hits.is_empty(), "false branch does not reach the call");
     Ok(())
 }
 
@@ -224,21 +197,17 @@ fn false_branch_contains_call_no_match() -> ir::Result<()> {
 fn true_branch_wrong_address_no_match() -> ir::Result<()> {
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(contains(call().at(0xDEAD))).into());
+    let hits = m.find_all(&if_node().true_branch(call().at(0xDEAD)).into());
     assert!(hits.is_empty());
     Ok(())
 }
 
 #[test]
-#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
-           peeled by `false_branch`. Equivalent new-API test: \
-           `false_branch(call().at(0x5678))`. Slated for deletion in the \
-           follow-up step."]
-fn false_branch_contains_call_matches() -> ir::Result<()> {
+fn false_branch_matches_call_after_control_state() -> ir::Result<()> {
     let g = graph_if_with_call_in_false_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().false_branch(contains(call().at(0x5678))).into());
-    assert_eq!(hits.len(), 1, "false branch contains call at 0x5678");
+    let hits = m.find_all(&if_node().false_branch(call().at(0x5678)).into());
+    assert_eq!(hits.len(), 1, "false branch reaches call at 0x5678");
     Ok(())
 }
 
@@ -246,42 +215,35 @@ fn false_branch_contains_call_matches() -> ir::Result<()> {
 fn true_branch_no_match_when_call_only_in_false() -> ir::Result<()> {
     let g = graph_if_with_call_in_false_branch()?;
     let m = Matcher::new(&g);
-    let hits = m.find_all(&if_node().true_branch(contains(call().at(0x5678))).into());
+    let hits = m.find_all(&if_node().true_branch(call().at(0x5678)).into());
     assert!(hits.is_empty(), "call is only in false branch");
     Ok(())
 }
 
 #[test]
-#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
-           peeled by `true_branch`/`false_branch`. Equivalent new-API \
-           test: `true_branch(ret())`/`false_branch(ret())` (single-hop \
-           skip of the branch's ControlState lands directly on the Return). \
-           Slated for deletion in the follow-up step."]
-fn both_branches_contain_ret() -> ir::Result<()> {
-    // In graph_if_branches both branches end in a return.
+fn both_branches_match_ret_after_control_state() -> ir::Result<()> {
+    // In graph_if_branches both branches end in a return.  One-step-direct:
+    // the `ControlState` that joins the branch body to its `Return` is
+    // transparent, so `true_branch(ret())` lands directly on the Return.
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
-    let hits_true = m.find_all(&if_node().true_branch(contains(ret())).into());
-    let hits_false = m.find_all(&if_node().false_branch(contains(ret())).into());
-    assert_eq!(hits_true.len(), 1, "true branch has a return");
-    assert_eq!(hits_false.len(), 1, "false branch has a return");
+    let hits_true = m.find_all(&if_node().true_branch(ret()).into());
+    let hits_false = m.find_all(&if_node().false_branch(ret()).into());
+    assert_eq!(hits_true.len(), 1, "true branch reaches a return");
+    assert_eq!(hits_false.len(), 1, "false branch reaches a return");
     Ok(())
 }
 
 #[test]
-#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
-           peeled. Equivalent new-API test uses the inner `ret()` \
-           pattern directly (single-hop skip past the branch's \
-           ControlState). Slated for deletion in the follow-up step."]
 fn both_branches_constrained_simultaneously() -> ir::Result<()> {
-    // Require the true branch to have a ret returning 10 AND the false branch
-    // to have a ret returning 20.
+    // Require the true branch to reach a ret returning 10 AND the false
+    // branch to reach a ret returning 20.
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(
         &if_node()
-            .true_branch(contains(ret().ret_val(0, int_const(10))))
-            .false_branch(contains(ret().ret_val(0, int_const(20))))
+            .true_branch(ret().ret_val(0, int_const(10)))
+            .false_branch(ret().ret_val(0, int_const(20)))
             .into(),
     );
     assert_eq!(hits.len(), 1);
@@ -295,8 +257,8 @@ fn both_branches_constrained_swapped_no_match() -> ir::Result<()> {
     let m = Matcher::new(&g);
     let hits = m.find_all(
         &if_node()
-            .true_branch(contains(ret().ret_val(0, int_const(20))))
-            .false_branch(contains(ret().ret_val(0, int_const(10))))
+            .true_branch(ret().ret_val(0, int_const(20)))
+            .false_branch(ret().ret_val(0, int_const(10)))
             .into(),
     );
     assert!(hits.is_empty(), "values are swapped, should not match");
@@ -324,17 +286,13 @@ fn capture_var_from_call_target_via_preceded_by() -> ir::Result<()> {
 }
 
 #[test]
-#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
-           peeled by `true_branch`. Equivalent new-API: \
-           `true_branch(call().target(var(tgt_v)))` (single-hop skip \
-           reaches the Call). Slated for deletion in the follow-up step."]
-fn capture_call_target_inside_true_branch() -> ir::Result<()> {
+fn capture_call_target_via_true_branch() -> ir::Result<()> {
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
     let tgt_v = Var::new();
     let hits = m.find_all(
         &if_node()
-            .true_branch(contains(call().target(var(tgt_v))))
+            .true_branch(call().target(var(tgt_v)))
             .into(),
     );
     assert_eq!(hits.len(), 1);

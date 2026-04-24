@@ -12,7 +12,6 @@ pub use function_arg_handle::FunctionArgHandle;
 mod bindings;
 pub(crate) mod commutativity;
 mod match_result;
-pub(crate) mod traversal;
 pub(crate) mod walk;
 
 #[cfg(test)]
