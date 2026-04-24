@@ -18,9 +18,9 @@ pub enum ProcessInsnRes {
 
 /// Builds a single [`Region`] by decoding pcode instructions one at a time.
 ///
-/// Created internally by `Builder::explore_new_region`; not part of the
-/// public API.  Holds a mutable reference back to the parent [`Builder`] so
-/// it can enqueue successor regions and call `Builder::add_region`.
+/// Created internally by `Builder::explore`; not part of the public API.
+/// Holds a mutable reference back to the parent [`Builder`] so it can
+/// enqueue successor regions and call `Builder::add_region`.
 pub(super) struct RegionBuilder<'a, R: rsleigh::MemReader> {
     /// Parent builder — used to access the Sleigh context, options, graph,
     /// and work queue.
