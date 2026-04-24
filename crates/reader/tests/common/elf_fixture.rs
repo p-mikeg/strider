@@ -10,7 +10,7 @@
 
 use object::Endianness;
 use object::elf;
-use object::write::elf::{FileHeader, SectionHeader, Writer};
+use object::write::elf::{FileHeader, ProgramHeader, SectionHeader, Writer};
 
 /// Builds a minimal 64-bit little-endian x86-64 ELF with a single
 /// `.text` section of `bytes` placed at virtual address `addr`.
@@ -246,6 +246,118 @@ fn build_sections_elf(
         }
 
         w.write_shstrtab_section_header();
+    }
+    buf
+}
+
+/// Description of one PT_LOAD segment in a fixture ELF.
+#[derive(Clone, Debug)]
+pub struct SegmentSpec {
+    pub addr: u64,
+    pub data: Vec<u8>,
+    pub exec: bool,
+}
+
+/// Builds a 64-bit little-endian x86-64 ELF with the given segments, each
+/// as a PT_LOAD with `p_vaddr = addr`, `p_flags = PF_R | (PF_X if exec)`.
+///
+/// A single `.segN`-named section is also emitted per segment so the file
+/// also parses via the section view — but the typical consumer is the
+/// segment-level readers.
+pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
+    let endian = Endianness::Little;
+    let is_64 = true;
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(endian, is_64, &mut buf);
+
+        // Section index layout: null, [one per segment], shstrtab.
+        let _null_idx = w.reserve_null_section_index();
+        let mut name_ids = Vec::with_capacity(segments.len());
+        let mut sec_indices = Vec::with_capacity(segments.len());
+        for i in 0..segments.len() {
+            // Writer::add_section_name takes &'a [u8] bound to the writer's
+            // lifetime. Leaking per-call is acceptable in test-fixture code
+            // that runs a handful of times per test binary.
+            let owned: &'static [u8] =
+                Box::leak(format!(".seg{i}").into_boxed_str().into_boxed_bytes());
+            name_ids.push(w.add_section_name(owned));
+            sec_indices.push(w.reserve_section_index());
+        }
+        let _shstrtab_idx = w.reserve_shstrtab_section_index();
+
+        // Layout.
+        w.reserve_file_header();
+        w.reserve_program_headers(segments.len() as u32);
+
+        let mut data_offsets: Vec<u64> = Vec::with_capacity(segments.len());
+        for spec in segments {
+            data_offsets.push(w.reserve(spec.data.len(), 1) as u64);
+        }
+
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: segments.first().map(|s| s.addr).unwrap_or(0),
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        for (i, spec) in segments.iter().enumerate() {
+            let mut p_flags = u32::from(elf::PF_R);
+            if spec.exec {
+                p_flags |= u32::from(elf::PF_X);
+            }
+            w.write_program_header(&ProgramHeader {
+                p_type: elf::PT_LOAD,
+                p_flags,
+                p_offset: data_offsets[i],
+                p_vaddr: spec.addr,
+                p_paddr: spec.addr,
+                p_filesz: spec.data.len() as u64,
+                p_memsz: spec.data.len() as u64,
+                p_align: 1,
+            });
+        }
+
+        // Segment data.
+        for spec in segments {
+            w.write(&spec.data);
+        }
+
+        w.write_shstrtab();
+
+        // Section headers: one SHT_PROGBITS per segment so the section
+        // view is consistent with the segment view.
+        w.write_null_section_header();
+        for (i, spec) in segments.iter().enumerate() {
+            let mut sh_flags = u64::from(elf::SHF_ALLOC);
+            if spec.exec {
+                sh_flags |= u64::from(elf::SHF_EXECINSTR);
+            }
+            w.write_section_header(&SectionHeader {
+                name: Some(name_ids[i]),
+                sh_type: elf::SHT_PROGBITS,
+                sh_flags,
+                sh_addr: spec.addr,
+                sh_offset: data_offsets[i],
+                sh_size: spec.data.len() as u64,
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 1,
+                sh_entsize: 0,
+            });
+        }
+        w.write_shstrtab_section_header();
+
+        let _ = sec_indices;
     }
     buf
 }
