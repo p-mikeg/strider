@@ -167,9 +167,9 @@ impl Pat {
     where
         F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
-        Pat::from_dyn(Arc::new(crate::pat::guards::WhenPat {
+        Pat::from_dyn(Arc::new(crate::pat::guards::GuardPat {
             inner: self,
-            func: Arc::new(f),
+            func: crate::pat::guards::GuardFn::Output(Arc::new(f)),
         }))
     }
 
@@ -184,9 +184,9 @@ impl Pat {
             + Sync
             + 'static,
     {
-        Pat::from_dyn(Arc::new(crate::pat::guards::WhenMatchPat {
+        Pat::from_dyn(Arc::new(crate::pat::guards::GuardPat {
             inner: self,
-            func: Arc::new(f),
+            func: crate::pat::guards::GuardFn::Bindings(Arc::new(f)),
         }))
     }
 }
