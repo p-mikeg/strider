@@ -12,7 +12,7 @@ use ir::{BoolBinaryOp, BoolUnaryOp};
 use crate::macros::{decl_pat_binary_ops, decl_pat_unary_ops};
 use crate::pat::BoolBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
 
 /// Matches a boolean binary operation with the given `op`.
 ///
@@ -33,6 +33,7 @@ decl_pat_binary_ops!(bool_binary, BoolBinaryOp, BoolBinaryOpPat, [
 /// Matches a boolean unary operation with the given `op`.
 pub fn bool_unary(op: BoolUnaryOp, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
+        KindFilter::exact(&NodeKind::BoolUnaryOp(op)),
         Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(x) if *x == op)
         }),

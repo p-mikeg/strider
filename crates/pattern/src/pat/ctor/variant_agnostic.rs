@@ -15,7 +15,7 @@ use crate::matcher::commutativity::{
     is_commutative_int_op,
 };
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
     IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar,
@@ -23,10 +23,12 @@ use crate::var::{
 
 // `binary` / `cmp` / `unary` tags select the ctor's input layout + arity.
 // Commutativity deciders and missing-binding messages are derived from the
-// enum / Var names.
+// enum / Var names.  `$sample_op` is an arbitrary variant of the op enum
+// used only to build the `KindFilter::Single(...)` discriminant — payload
+// is ignored.
 macro_rules! impl_variant_any {
     // Binary-arity ($ctor) with a runtime commutativity decider.
-    (binary, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+    (binary, $fn_name:ident, $op_enum:ident, $sample_op:expr, $op_var:ident, $bind:ident, $get:ident,
      $commutative:path, $build_ty:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(op_var: $op_var, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
@@ -37,6 +39,7 @@ macro_rules! impl_variant_any {
                 }
             });
             NodePat::matcher(
+                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
                 Arc::new(|ctx, node, _b| {
                     matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
                 }),
@@ -60,11 +63,12 @@ macro_rules! impl_variant_any {
         }
     };
     // Cmp-arity: two inputs, no commutativity retry.
-    (cmp, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+    (cmp, $fn_name:ident, $op_enum:ident, $sample_op:expr, $op_var:ident, $bind:ident, $get:ident,
      $build_ty:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(op_var: $op_var, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             NodePat::matcher(
+                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
                 Arc::new(|ctx, node, _b| {
                     matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
                 }),
@@ -88,11 +92,12 @@ macro_rules! impl_variant_any {
         }
     };
     // Unary-arity: one input.
-    (unary, $fn_name:ident, $op_enum:ident, $op_var:ident, $bind:ident, $get:ident,
+    (unary, $fn_name:ident, $op_enum:ident, $sample_op:expr, $op_var:ident, $bind:ident, $get:ident,
      $build_ty:expr, $missing:literal, $doc:literal) => {
         #[doc = $doc]
         pub fn $fn_name(op_var: $op_var, operand: impl Into<Pat>) -> Pat {
             NodePat::matcher(
+                KindFilter::exact(&NodeKind::$op_enum($sample_op)),
                 Arc::new(|ctx, node, _b| {
                     matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_))
                 }),
@@ -121,56 +126,56 @@ macro_rules! impl_variant_any {
 fn bool_ty() -> BuildTy { BuildTy::Fixed(ir::node::NodeOutputType::Bool) }
 
 impl_variant_any!(
-    binary, int_binary_any, IntBinaryOp, IntBinaryOpVar,
+    binary, int_binary_any, IntBinaryOp, ir::IntBinaryOp::Add, IntBinaryOpVar,
     bind_int_binary_op, get_int_binary_op,
     is_commutative_int_op, BuildTy::InheritRoot, "IntBinaryOpVar",
     "Matches **any** integer binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`Add`, `Mul`, `And`, `Or`, `Xor`) will try both operand orderings automatically."
 );
 
 impl_variant_any!(
-    unary, int_unary_any, IntUnaryOp, IntUnaryOpVar,
+    unary, int_unary_any, IntUnaryOp, ir::IntUnaryOp::Neg, IntUnaryOpVar,
     bind_int_unary_op, get_int_unary_op,
     BuildTy::InheritRoot, "IntUnaryOpVar",
     "Matches **any** integer unary operation and binds the actual operator variant to `op`."
 );
 
 impl_variant_any!(
-    binary, int_cmp_any, IntCmpOp, IntCmpOpVar,
+    binary, int_cmp_any, IntCmpOp, ir::IntCmpOp::Equal, IntCmpOpVar,
     bind_int_cmp_op, get_int_cmp_op,
     is_commutative_int_cmp_op, bool_ty(), "IntCmpOpVar",
     "Matches **any** integer comparison and binds the actual operator variant to `op`.\n\nCommutative comparisons (`Equal`, `Carry`, `Scarry`) try both operand orderings automatically."
 );
 
 impl_variant_any!(
-    binary, bool_binary_any, BoolBinaryOp, BoolBinaryOpVar,
+    binary, bool_binary_any, BoolBinaryOp, ir::BoolBinaryOp::And, BoolBinaryOpVar,
     bind_bool_binary_op, get_bool_binary_op,
     is_commutative_bool_op, bool_ty(), "BoolBinaryOpVar",
     "Matches **any** boolean binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`And`, `Or`, `Xor`) try both operand orderings automatically."
 );
 
 impl_variant_any!(
-    unary, bool_unary_any, BoolUnaryOp, BoolUnaryOpVar,
+    unary, bool_unary_any, BoolUnaryOp, ir::BoolUnaryOp::Neg, BoolUnaryOpVar,
     bind_bool_unary_op, get_bool_unary_op,
     bool_ty(), "BoolUnaryOpVar",
     "Matches **any** boolean unary operation and binds the actual operator variant to `op`."
 );
 
 impl_variant_any!(
-    binary, float_binary_any, FloatBinaryOp, FloatBinaryOpVar,
+    binary, float_binary_any, FloatBinaryOp, ir::FloatBinaryOp::Add, FloatBinaryOpVar,
     bind_float_binary_op, get_float_binary_op,
     is_commutative_float_op, BuildTy::InheritRoot, "FloatBinaryOpVar",
     "Matches **any** float binary operation and binds the actual operator variant to `op`.\n\nCommutative ops (`Add`, `Mul`) try both operand orderings automatically."
 );
 
 impl_variant_any!(
-    unary, float_unary_any, FloatUnaryOp, FloatUnaryOpVar,
+    unary, float_unary_any, FloatUnaryOp, ir::FloatUnaryOp::Neg, FloatUnaryOpVar,
     bind_float_unary_op, get_float_unary_op,
     BuildTy::InheritRoot, "FloatUnaryOpVar",
     "Matches **any** float unary operation and binds the actual operator variant to `op`."
 );
 
 impl_variant_any!(
-    cmp, float_cmp_any, FloatCmpOp, FloatCmpOpVar,
+    cmp, float_cmp_any, FloatCmpOp, ir::FloatCmpOp::Equal, FloatCmpOpVar,
     bind_float_cmp_op, get_float_cmp_op,
     bool_ty(), "FloatCmpOpVar",
     "Matches **any** float comparison and binds the actual operator variant to `op`.\n\nNo float comparison operators are currently treated as commutative, so no automatic operand-swap retry is attempted."

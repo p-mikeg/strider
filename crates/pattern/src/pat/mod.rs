@@ -44,7 +44,7 @@ pub type MatchPredicateFn = Arc<
 macro_rules! decl_any_const {
     (
         trait $trait:ident, sealed $sealed:ident, method $method:ident,
-        variant $variant:ident, $build_ty:expr,
+        variant $variant:ident, $sample:expr, $build_ty:expr,
         typed $typed:ty, $bind:ident, $get:ident, $missing:literal
     ) => {
         #[doc = concat!(
@@ -60,6 +60,7 @@ macro_rules! decl_any_const {
         impl $trait for Var {
             fn $method(self) -> Pat {
                 crate::pat::node_pat::NodePat::matcher(
+                    crate::pat::node_pat::KindFilter::exact(&NodeKind::$variant($sample)),
                     Arc::new(|ctx, node, _b| {
                         matches!(ctx.graph.graph.node_kind(node), NodeKind::$variant(_))
                     }),
@@ -74,6 +75,7 @@ macro_rules! decl_any_const {
             fn $method(self) -> Pat {
                 let tv = self;
                 crate::pat::node_pat::NodePat::matcher(
+                    crate::pat::node_pat::KindFilter::exact(&NodeKind::$variant($sample)),
                     Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                         NodeKind::$variant(v) => b.$bind(tv, *v),
                         _ => false,
@@ -96,17 +98,17 @@ macro_rules! decl_any_const {
 
 decl_any_const!(
     trait IntoAnyIntConst, sealed SealedAnyIntConst, method into_any_int_const_pat,
-    variant IntConst, crate::pat::node_pat::BuildTy::InheritRoot,
+    variant IntConst, 0u64, crate::pat::node_pat::BuildTy::InheritRoot,
     typed IntVar, bind_int, get_int, "IntVar"
 );
 decl_any_const!(
     trait IntoAnyBoolConst, sealed SealedAnyBoolConst, method into_any_bool_const_pat,
-    variant BoolConst, crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
+    variant BoolConst, false, crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
     typed BoolVar, bind_bool, get_bool, "BoolVar"
 );
 decl_any_const!(
     trait IntoAnyFloatConst, sealed SealedAnyFloatConst, method into_any_float_const_pat,
-    variant FloatConst, crate::pat::node_pat::BuildTy::InheritRoot,
+    variant FloatConst, 0u64, crate::pat::node_pat::BuildTy::InheritRoot,
     typed FloatVar, bind_float, get_float_bits, "FloatVar"
 );
 

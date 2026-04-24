@@ -8,7 +8,7 @@ use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
 use crate::pat::FloatBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
 
 /// Matches a float binary operation with the given `op`.
 ///
@@ -36,6 +36,7 @@ decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
 /// Matches a float unary operation with the given `op`.
 pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
+        KindFilter::exact(&NodeKind::FloatUnaryOp(op)),
         Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(x) if *x == op)
         }),
@@ -63,6 +64,7 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 /// Matches a float comparison node with the given `op`.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     NodePat::matcher(
+        KindFilter::exact(&NodeKind::FloatCmpOp(op)),
         Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(x) if *x == op)
         }),
@@ -90,6 +92,7 @@ fn unit_conv(variant_match: impl Fn(&NodeKind) -> bool + Send + Sync + 'static,
              build_kind: NodeKind,
              operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
+        KindFilter::exact(&build_kind),
         Arc::new(move |ctx, node, _b| variant_match(ctx.graph.graph.node_kind(node))),
         InputsSpec::fixed_ordered(vec![operand.into()]),
     )

@@ -19,8 +19,21 @@ use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 use crate::matcher::commutativity::{
     is_commutative_bool_op, is_commutative_float_op, is_commutative_int_op,
 };
+
+/// Arbitrary `rsleigh::Vn` used as an exemplar when building a
+/// `KindFilter::exact(...)` for a `NodeKind` variant that carries a
+/// varnode payload (e.g. `ControlPhi`, `InitialVar`).  Only the variant
+/// discriminant is consulted; the payload is discarded.
+#[inline]
+fn dummy_vn() -> rsleigh::Vn {
+    rsleigh::Vn {
+        size: 0,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::CONST },
+    }
+}
 use crate::pat::node_pat::{
-    BuildTy, ConsumersSpec, InputsSpec, NodeKindBuilder, NodeKindCheck, NodePat, OutputsSpec,
+    BuildTy, ConsumersSpec, InputsSpec, KindFilter, NodeKindBuilder, NodeKindCheck, NodePat,
+    OutputsSpec,
 };
 use crate::pat::{Pat, int_const};
 use crate::var::{NodeVar, Var};
@@ -53,12 +66,13 @@ pub trait CaptureBuilder: Sized {
 // ── Helper: build a binary-op `Pat` shared by Int/Bool/Float variants ─────────
 
 fn binary_op_pat(
+    root_kind: KindFilter,
     kind_match: NodeKindCheck,
     kind_build: NodeKindBuilder,
     build_ty: BuildTy,
     inputs: InputsSpec,
 ) -> Pat {
-    NodePat::matcher(kind_match, inputs)
+    NodePat::matcher(root_kind, kind_match, inputs)
         .with_build(kind_build)
         .with_build_ty(build_ty)
         .into_pat()
@@ -97,6 +111,7 @@ impl From<IntBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         binary_op_pat(
+            KindFilter::exact(&NodeKind::IntBinaryOp(op)),
             Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(x) if *x == op)
             }),
@@ -138,6 +153,7 @@ impl From<BoolBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         binary_op_pat(
+            KindFilter::exact(&NodeKind::BoolBinaryOp(op)),
             Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(x) if *x == op)
             }),
@@ -181,6 +197,7 @@ impl From<FloatBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         binary_op_pat(
+            KindFilter::exact(&NodeKind::FloatBinaryOp(op)),
             Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(x) if *x == op)
             }),
@@ -231,6 +248,7 @@ impl From<LoadPat> for Pat {
             indexed.push((1, addr_pat));
         }
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::Load(rsleigh::VnSpace::RAM)),
             Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -294,6 +312,7 @@ impl From<StorePat> for Pat {
             indexed.push((2, data_pat));
         }
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::Store(rsleigh::VnSpace::RAM)),
             Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -354,6 +373,10 @@ impl From<StackStorePat> for Pat {
             indexed.push((2, data_pat));
         }
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::StackStore {
+                space: rsleigh::VnSpace::RAM,
+                offset: 0,
+            }),
             Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -418,6 +441,7 @@ impl From<StackStorePhiPat> for Pat {
             indexed.push((2, data_pat));
         }
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM }),
             Arc::new(move |ctx, node, _b| {
                 let NodeKind::StackStorePhi { space: actual_space } =
                     ctx.graph.graph.node_kind(node)
@@ -501,6 +525,7 @@ impl From<PhiPat> for Pat {
     fn from(b: PhiPat) -> Pat {
         let PhiPat { vn, inputs, output_var, node_var } = b;
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::ControlPhi(dummy_vn())),
             Arc::new(move |ctx, node, _b| {
                 let NodeKind::ControlPhi(actual_vn) = ctx.graph.graph.node_kind(node) else {
                     return false;
@@ -580,6 +605,7 @@ impl From<CallPat> for Pat {
             OutputsSpec::Indexed(ret_outputs.into_iter().map(|(i, p)| (2 + i, p)).collect())
         };
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::Call),
             Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::Call)),
             InputsSpec::Indexed(indexed_inputs),
         )
@@ -626,6 +652,7 @@ impl From<CallOtherPat> for Pat {
         let indexed_inputs: Vec<(usize, Pat)> =
             args.into_iter().map(|(i, p)| (2 + i, p)).collect();
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::CallOther { user_op_id: 0 }),
             Arc::new(move |ctx, node, _b| {
                 let NodeKind::CallOther { user_op_id: actual } = ctx.graph.graph.node_kind(node)
                 else {
@@ -689,6 +716,7 @@ impl From<RetPat> for Pat {
             indexed_inputs.push((2 + i, p));
         }
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::Return),
             Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::Return)),
             InputsSpec::Indexed(indexed_inputs),
         )
@@ -734,6 +762,10 @@ impl From<FunctionArgPat> for Pat {
     fn from(b: FunctionArgPat) -> Pat {
         let FunctionArgPat { source, index, output_var, node_var } = b;
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::FunctionArg {
+                source: ir::node::FunctionArgSource::Register(dummy_vn()),
+                index: 0,
+            }),
             Arc::new(move |ctx, node, _b| {
                 let NodeKind::FunctionArg {
                     source: actual_source,
@@ -814,6 +846,7 @@ impl From<IfPat> for Pat {
             ConsumersSpec::Indexed(indexed_consumers)
         };
         NodePat::matcher(
+            KindFilter::exact(&NodeKind::If),
             Arc::new(|ctx, node, _b| matches!(ctx.graph.graph.node_kind(node), NodeKind::If)),
             InputsSpec::Indexed(indexed_inputs),
         )

@@ -28,20 +28,48 @@ use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
 ///
-/// # Follow-up: `KindMatch` enum
-///
-/// Today every candidate node hits a dynamic closure just to compare a
-/// `NodeKind` discriminant (and occasionally embedded data like an op
-/// variant or space).  An `enum KindMatch { Exact(NodeKind),
-/// IntBinaryAny, FloatCmpAny, …, Custom(Arc<dyn Fn>) }` would let the hot
-/// path do a branch-and-discriminant compare instead of a vtable call,
-/// *and* enable `Matcher::find_all` to pre-filter candidate nodes by the
-/// root pattern's expected kind family (most rewrite rules have a
-/// concrete root — `add`, `load`, `call` — so the walk becomes
-/// `O(matching nodes)` instead of `O(all nodes)`).  The escape-hatch
-/// `Custom` variant preserves today's full flexibility.
+/// The closure is only ever invoked after [`NodePat::root_kind`] has already
+/// accepted the candidate node's discriminant — so it can focus on payload
+/// checks (matching a specific op variant, space, offset, …) and optional
+/// binding side-effects (`IntoAnyIntConst` capturing an IntVar value).
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
+
+/// Fast-path root-kind hint on [`NodePat`].  [`crate::matcher::Matcher::find_all`]
+/// uses it to skip candidate nodes whose `NodeKind` is incompatible with
+/// the pattern, avoiding any per-candidate closure dispatch or allocation.
+/// [`NodePat::try_match_common`] also short-circuits on it, so
+/// [`crate::matcher::Matcher::match_at`] callers (e.g. rewrite rules) still
+/// get the fast-fail path.
+#[derive(Clone, Copy)]
+pub enum KindFilter {
+    /// Pattern can accept any `NodeKind` — the `kind_match` closure is
+    /// the sole authority.  Used by wildcards ([`crate::pat::any`],
+    /// [`crate::pat::var`]) and the match-only-false `*_const_with_fn`
+    /// builders.
+    Any,
+    /// Pattern only accepts nodes whose discriminant equals the stored
+    /// one.  Nearly every leaf `NodePat` falls here.
+    Single(std::mem::Discriminant<NodeKind>),
+}
+
+impl KindFilter {
+    /// Convenience: build a `Single` filter from an exemplar `NodeKind`.
+    /// The payload of `exemplar` is ignored — only the discriminant matters.
+    #[inline]
+    pub(crate) fn exact(exemplar: &NodeKind) -> Self {
+        Self::Single(std::mem::discriminant(exemplar))
+    }
+
+    /// Returns `true` if a node with the given `kind` is acceptable.
+    #[inline]
+    pub(crate) fn accepts(&self, kind: &NodeKind) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Single(d) => *d == std::mem::discriminant(kind),
+        }
+    }
+}
 
 /// Runtime decider for whether an arity-2 [`InputsSpec::Fixed`] match should
 /// retry with swapped operands.  Concrete ops fix the answer at construction
@@ -69,6 +97,13 @@ pub enum BuildTy {
 /// and consumers, optionally bind output/node captures".  Buildable
 /// patterns additionally populate [`NodePat::kind_build`].
 pub struct NodePat {
+    /// Fast-path filter on the candidate node's `NodeKind` discriminant.
+    /// Consulted before any clone or closure call — both by
+    /// [`crate::matcher::Matcher::find_all`] (to skip incompatible
+    /// candidate roots) and by [`Self::try_match_common`] (to fail fast
+    /// at the top).  Every ctor sets this; patterns whose root kind
+    /// genuinely varies use [`KindFilter::Any`] and rely on `kind_match`.
+    pub(crate) root_kind: KindFilter,
     /// Checks the node's kind (and any kind-embedded data — e.g. constants,
     /// varnodes, spaces, offsets, phi offsets). May bind typed-constant
     /// values or operator variants.
@@ -172,6 +207,10 @@ impl Pattern for NodePat {
         self.try_match_common(ctx, node, Some(target), b)
     }
 
+    fn root_kind_filter(&self) -> KindFilter {
+        self.root_kind
+    }
+
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
         let outputs = ctx.graph.graph.node_outputs(node);
         if outputs.is_empty() {
@@ -230,8 +269,17 @@ impl NodePat {
     /// Minimal matcher-only `NodePat` with every build-side / capture-side
     /// field set to its default.  Chain `.with_*` setters to populate only
     /// the fields a particular ctor actually uses.
-    pub(crate) fn matcher(kind_match: NodeKindCheck, inputs: InputsSpec) -> Self {
+    ///
+    /// `root_kind` advertises the node discriminant the pattern accepts;
+    /// pass [`KindFilter::Any`] for patterns that genuinely match across
+    /// kinds (match-only-false build ctors and wildcards).
+    pub(crate) fn matcher(
+        root_kind: KindFilter,
+        kind_match: NodeKindCheck,
+        inputs: InputsSpec,
+    ) -> Self {
         Self {
+            root_kind,
             kind_match,
             kind_build: None,
             build_result_ty: BuildTy::InheritRoot,
@@ -294,12 +342,19 @@ impl NodePat {
         target: Option<NodeOutputId>,
         b: &mut Bindings,
     ) -> bool {
+        // Structural fast-path: if the candidate node's discriminant is
+        // outside this pattern's accepted kinds, there's no chance of
+        // matching.  `find_all` already does this filter on the preorder
+        // loop, but guarding here too protects `match_at` callers
+        // (rewrite rules) and any direct `Matcher::match_node_id` recursion.
+        if !self.root_kind.accepts(ctx.graph.graph.node_kind(node)) {
+            return false;
+        }
+
         // Fail-fast before any snapshot.  `kind_match` contract: must not
         // mutate `b` on a false return.  All current implementations satisfy
         // this — they either do a pure `matches!` check or call a `bind_*`
-        // helper, and the binders are themselves no-ops on conflict.  For a
-        // preorder walk most candidate nodes miss here, so skipping the clone
-        // on the miss path is the dominant win.
+        // helper, and the binders are themselves no-ops on conflict.
         if !(self.kind_match)(ctx, node, b) {
             return false;
         }

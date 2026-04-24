@@ -15,7 +15,7 @@ use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
 use crate::error::{ErrorKind, Result};
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodePat};
 use crate::pat::traits::BuildCtx;
 use crate::var::{
     BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
@@ -54,7 +54,7 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    NodePat::matcher(never_match_kind(), InputsSpec::None)
+    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
         .with_build(Arc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?))))
         .into_pat()
 }
@@ -65,7 +65,7 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<bool> + Send + Sync + 'static,
 {
     let f: BuildValueFn<bool> = Arc::new(f);
-    NodePat::matcher(never_match_kind(), InputsSpec::None)
+    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
         .with_build(Arc::new(move |ctx| Ok(NodeKind::BoolConst(f(ctx)?))))
         .with_build_ty(BuildTy::Fixed(NodeOutputType::Bool))
         .into_pat()
@@ -78,7 +78,7 @@ where
     F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
 {
     let f: BuildValueFn<u64> = Arc::new(f);
-    NodePat::matcher(never_match_kind(), InputsSpec::None)
+    NodePat::matcher(KindFilter::Any, never_match_kind(), InputsSpec::None)
         .with_build(Arc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?))))
         .into_pat()
 }

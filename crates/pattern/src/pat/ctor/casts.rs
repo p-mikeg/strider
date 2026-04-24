@@ -6,21 +6,28 @@ use ir::ExtendOp;
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, NodeKindCheck, NodePat};
+use crate::pat::node_pat::{BuildTy, InputsSpec, KindFilter, NodeKindCheck, NodePat};
 
 /// Helper: build a unary-input NodePat whose kind_match is supplied by the
 /// caller and whose kind_build emits a fixed `NodeKind`.  Covers the
 /// unit-variant casts (`CastToBool`, `Truncate`, `Popcount`, …).
+///
+/// The `root_kind` fast-path filter is derived from `build_kind` — both
+/// use the same `NodeKind` variant, and discriminant ignores the payload.
 fn unary_node(
     kind_match: NodeKindCheck,
     build_kind: NodeKind,
     build_ty: BuildTy,
     operand: impl Into<Pat>,
 ) -> Pat {
-    NodePat::matcher(kind_match, InputsSpec::fixed_ordered(vec![operand.into()]))
-        .with_build(Arc::new(move |_b| Ok(build_kind)))
-        .with_build_ty(build_ty)
-        .into_pat()
+    NodePat::matcher(
+        KindFilter::exact(&build_kind),
+        kind_match,
+        InputsSpec::fixed_ordered(vec![operand.into()]),
+    )
+    .with_build(Arc::new(move |_b| Ok(build_kind)))
+    .with_build_ty(build_ty)
+    .into_pat()
 }
 
 macro_rules! simple_unary_cast {

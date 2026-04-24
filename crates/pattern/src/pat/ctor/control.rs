@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use ir::node::{FunctionArgSource, NodeKind};
 
-use crate::pat::node_pat::{InputsSpec, NodePat};
+use crate::pat::node_pat::{InputsSpec, KindFilter, NodePat};
 use crate::pat::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, Pat, PhiPat, RetPat, StackStorePat,
     StackStorePhiPat, StorePat,
@@ -55,7 +55,14 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat {
 }
 
 fn initial_var_impl(vn: Option<rsleigh::Vn>) -> Pat {
+    // Exemplar Vn for the discriminant — payload is ignored by the filter;
+    // the closure enforces the actual `vn` constraint if one was specified.
+    let dummy_vn = rsleigh::Vn {
+        size: 0,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::CONST },
+    };
     NodePat::matcher(
+        KindFilter::exact(&NodeKind::InitialVar(dummy_vn)),
         Arc::new(move |ctx, node, _b| {
             let NodeKind::InitialVar(actual_vn) = ctx.graph.graph.node_kind(node) else {
                 return false;

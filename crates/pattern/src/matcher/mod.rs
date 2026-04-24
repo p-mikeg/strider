@@ -67,9 +67,19 @@ impl<'g> Matcher<'g> {
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
     /// for each.  Does a preorder walk of the graph and tries every node as a
     /// potential root.
+    ///
+    /// Candidate nodes are pre-filtered by the pattern's
+    /// [`Pattern::root_kind_filter`](crate::pat::traits::Pattern::root_kind_filter):
+    /// for a pattern with a concrete root kind (e.g. `add(...)`) this skips
+    /// every node whose `NodeKind` discriminant is different, turning a
+    /// graph-wide scan into an effectively kind-indexed scan.  Patterns that
+    /// match any kind (wildcards, `KindFilter::Any`) fall through to the
+    /// unfiltered loop.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
+        let filter = pat.as_dyn().root_kind_filter();
         self.fn_graph
             .preorder()
+            .filter(|&node| filter.accepts(self.fn_graph.graph.node_kind(node)))
             .filter_map(|node| {
                 let mut bindings = Bindings::default();
                 if self.match_node_id(node, pat, &mut bindings) {
