@@ -5,8 +5,21 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::elf_fixture::simple_text_elf;
+use std::io::Write as _;
+
+use common::elf_fixture::{
+    SegmentSpec, build_elf_with_segments, simple_text_elf, simple_text_elf_with_endian,
+};
+use common::reader_contract::{
+    assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
+    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_reads,
+    assert_readonly_rejects_bad_sizes, assert_readonly_rejects_non_ram_spaces,
+    assert_readonly_returns_none,
+};
+use object::{Endianness, File};
 use reader::{ElfFileMemReader, ReadOnlyMemory};
+use rsleigh::{MemReader, VnAddr, VnSpace};
+use tempfile::NamedTempFile;
 
 /// Sanity check: `simple_text_elf` produces bytes that
 /// `ElfFileMemReader::from_bytes` can parse, and the resulting reader
@@ -22,10 +35,6 @@ fn simple_text_elf_fixture_round_trips_through_elf_reader() {
         Some(0xddccbbaa),
     );
 }
-
-use object::Endianness;
-
-use common::elf_fixture::simple_text_elf_with_endian;
 
 // ── ReadOnlyMemory: space filter ──────────────────────────────────────────
 
@@ -132,8 +141,6 @@ fn ro_read_single_byte() {
     );
 }
 
-use rsleigh::{MemReader, VnAddr, VnSpace};
-
 /// Pinned contract: the two traits treat short reads differently.
 ///  * MemReader: partial read → Ok(n) with n < buf.len()
 ///  * ReadOnlyMemory: cannot satisfy full `size` → None (no truncation)
@@ -162,37 +169,24 @@ fn elf_reader_partial_read_asymmetry_between_traits() {
     );
 }
 
-use common::elf_fixture::{SegmentSpec, build_elf_with_segments};
-use object::File;
-
 /// `elf_get_executable_segments_as_mem_regions` picks up only the
 /// executable segment, not other PT_LOADs. Addresses outside the
 /// executable segment's range are unmapped.
 #[test]
 fn elf_exec_segments_only_yield_mapped_regions() {
-    use reader::MemRegionsLookupTable;
-    use reader::elf::elf_get_executable_segments_as_mem_regions;
-
     let bytes = build_elf_with_segments(&[
         SegmentSpec { addr: 0x1000, data: vec![0xaa, 0xbb], exec: true },
         SegmentSpec { addr: 0x2000, data: vec![0xcc, 0xdd], exec: false },
     ]);
     let obj = File::parse(&bytes[..]).unwrap();
-    let regions = elf_get_executable_segments_as_mem_regions(&obj).unwrap();
-    let table = MemRegionsLookupTable::new(regions);
+    let regions = reader::elf::elf_get_executable_segments_as_mem_regions(&obj).unwrap();
+    let table = reader::MemRegionsLookupTable::new(regions);
 
     let mut buf = [0u8; 2];
     assert_eq!(table.read(0x1000, &mut buf), Some(2));
     assert_eq!(buf, [0xaa, 0xbb]);
     assert_eq!(table.read(0x2000, &mut buf), None);
 }
-
-use common::reader_contract::{
-    assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
-    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_reads,
-    assert_readonly_rejects_bad_sizes, assert_readonly_rejects_non_ram_spaces,
-    assert_readonly_returns_none,
-};
 
 /// Runs the backend-agnostic reader contract against an
 /// `ElfFileMemReader` built from a synthetic single-section ELF.
@@ -219,9 +213,6 @@ fn elf_reader_satisfies_read_only_memory_contract() {
     assert_readonly_rejects_non_ram_spaces(&r, 0x1000);
     assert_readonly_rejects_bad_sizes(&r, 0x1000);
 }
-
-use std::io::Write as _;
-use tempfile::NamedTempFile;
 
 /// `from_object` on an already-parsed ELF yields a reader with the same
 /// mapped data as `from_bytes` on the underlying bytes.
