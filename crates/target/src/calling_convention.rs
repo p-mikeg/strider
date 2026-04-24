@@ -46,13 +46,31 @@ pub struct CallingConvention {
 
 /// A calling convention whose register names have been resolved to concrete
 /// [`rsleigh::Vn`] varnodes.
+///
+/// Produced by [`CallingConvention::build`].  The field semantics mirror
+/// [`CallingConvention`]; see that type's field docs for details.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BuiltCallingConvention {
+    /// Varnodes for the ABI's argument-passing registers, in positional order.
     pub arg_passing_regs: Vec<rsleigh::Vn>,
+    /// Varnodes the callee must preserve across the call.  Excludes the
+    /// stack pointer; SP's callee-side preservation is expressed through
+    /// [`Self::ret_stack_pop`] instead.
     pub callee_saved_regs: Vec<rsleigh::Vn>,
+    /// Varnodes used to return a value to the caller, in positional order.
     pub ret_val_regs: Vec<rsleigh::Vn>,
+    /// The hardware stack-pointer varnode (e.g. `RSP` on x86-64, `sp` on
+    /// AArch64).  Deliberately not listed in [`Self::callee_saved_regs`].
     pub stack_ptr_vn: rsleigh::Vn,
+    /// Byte offsets from the call-time stack pointer for each positional
+    /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
+    /// (after register arguments are exhausted).
     pub stack_arg_offsets: Vec<i64>,
+    /// Net byte change the callee's `ret` inflicts on the caller's stack
+    /// pointer.  On stack-push ISAs (x86, x86_64) `ret` pops the return
+    /// address, so this equals the pointer size (4 / 8).  On link-register
+    /// ISAs (ARM, AArch64, MIPS, PowerPC) the call does not touch SP, so
+    /// this is 0.
     pub ret_stack_pop: i64,
 }
 
