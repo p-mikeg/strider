@@ -20,10 +20,10 @@ fn new_seeds_single_location_and_valid_backtrace_status() {
 #[test]
 fn push_caller_appends_location_without_touching_backtrace() {
     let f = ErrorFields::new();
-    let before_ptr: *const _ = std::sync::Arc::as_ptr(&f.backtrace);
+    let before_ptr: *const _ = &*f.backtrace;
     let f = f.push_caller();
     assert_eq!(f.locations.len(), 2, "chain should grow by one per push_caller");
-    let after_ptr: *const _ = std::sync::Arc::as_ptr(&f.backtrace);
+    let after_ptr: *const _ = &*f.backtrace;
     assert_eq!(
         before_ptr, after_ptr,
         "push_caller must not reallocate the backtrace",

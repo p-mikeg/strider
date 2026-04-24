@@ -1,6 +1,5 @@
 use std::backtrace::Backtrace;
 use std::panic::Location;
-use std::sync::Arc;
 
 /// A chain of `Location::caller()` entries captured at every `?` /
 /// `From::from` boundary an error crossed on its way up the stack.
@@ -12,15 +11,14 @@ pub type LocationChain = Vec<&'static Location<'static>>;
 
 /// Shared payload carried by every crate's `Error` wrapper struct.
 ///
-/// Stored as `Arc<Backtrace>` so a wrapper can be moved across `From`
-/// boundaries without re-capturing (backtrace capture costs ~1–3ms on
-/// Linux). Cross-crate bridges [`decompose`](crate::wrapper) the inner
-/// wrapper, keep this payload, and only append a new location.
+/// The backtrace is heap-allocated in a `Box` for a stable 1-pointer
+/// footprint. Backtraces are never cloned — `decompose`, `push_caller`,
+/// and every cross-crate bridge move the whole `ErrorFields` by value.
 pub struct ErrorFields {
     /// Backtrace captured at the point the error was first constructed.
     /// `Backtrace::capture()` respects `RUST_BACKTRACE`; when unset, it
     /// returns a `Disabled` status and carries no frames (cheap).
-    pub backtrace: Arc<Backtrace>,
+    pub backtrace: Box<Backtrace>,
     /// Per-`?` propagation chain. See type docs.
     pub locations: LocationChain,
 }
@@ -33,7 +31,7 @@ impl ErrorFields {
     #[track_caller]
     pub fn new() -> Self {
         Self {
-            backtrace: Arc::new(Backtrace::capture()),
+            backtrace: Box::new(Backtrace::capture()),
             locations: vec![Location::caller()],
         }
     }
