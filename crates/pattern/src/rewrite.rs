@@ -125,15 +125,21 @@ pub type BoxedRule =
 /// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
 /// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
 ///
-/// Typical use:
+/// ```rust
+/// use pattern::{
+///     BoxedRule, Var, add, apply_rules_in_order, boxed_rule, int_const,
+///     rewrite_rule, sub, var,
+/// };
 ///
-/// ```rust,ignore
+/// let x = Var::new();
+/// let y = Var::new();
 /// let rules: Vec<BoxedRule> = vec![
-///     boxed_rule(rewrite_rule(add(var(x), int_const(0)), build::cap(x))),
-///     boxed_rule(rewrite_rule(sub(var(x), var(x)),       build::int_const_lit(0))),
-///     // …
+///     // add(x, 0) → x
+///     boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
+///     // sub(y, y) → 0
+///     boxed_rule(rewrite_rule(sub(var(y), var(y)), int_const(0))),
 /// ];
-/// let apply = apply_rules_in_order(rules);
+/// let _apply = apply_rules_in_order(&rules);
 /// ```
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where

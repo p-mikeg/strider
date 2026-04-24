@@ -67,12 +67,30 @@ impl Error {
     /// the `rewrite_rule` interpreter converts back to "no change" rather than
     /// treating as a hard failure.
     ///
-    /// Typical use inside a `*_const_with!` closure body:
+    /// Typical use inside a `*_const_with!` closure body is to bail out when
+    /// the operation has no meaningful constant value:
     ///
-    /// ```rust,ignore
-    /// int_const_with!([op, l, r, ty] =>
-    ///     eval_int_binary(op, l, r, ty).ok_or_else(pattern::Error::skip)?
-    /// )
+    /// ```rust
+    /// use pattern::{IntVar, any_int_const, div, int_const_with, rewrite_rule};
+    ///
+    /// let a = IntVar::new();
+    /// let b = IntVar::new();
+    /// let _rule = rewrite_rule(
+    ///     div(any_int_const(a), any_int_const(b)),
+    ///     int_const_with!([a, b] => {
+    ///         if b == 0 {
+    ///             return Err(pattern::Error::skip());
+    ///         }
+    ///         a.wrapping_div(b)
+    ///     }),
+    /// );
+    /// ```
+    ///
+    /// The sentinel round-trips via [`Error::is_skip`]:
+    ///
+    /// ```rust
+    /// let err = pattern::Error::skip();
+    /// assert!(err.is_skip());
     /// ```
     #[track_caller]
     pub fn skip() -> Self {

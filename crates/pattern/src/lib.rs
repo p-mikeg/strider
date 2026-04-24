@@ -17,19 +17,41 @@
 //!
 //! # Quick example
 //!
-//! ```rust,ignore
-//! use pattern::{Matcher, Var, load, add, var};
+//! Build a trivial function that loads from `base + offset`, then match the
+//! `Load` and extract its two address operands.
 //!
-//! let ptr    = Var::new();
-//! let offset = Var::new();
+//! ```rust
+//! use ir::{FunctionBuilder, IntBinaryOp, node::NodeOutputType};
+//! use pattern::{Matcher, Var, add, load, var};
+//!
+//! // *(0x1000 + 8); return the loaded value.
+//! let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+//! let region = fb.create_region().unwrap();
+//! fb.set_entry_region(region).unwrap();
+//! fb.set_region(region);
+//! let base = fb.build_int_const(0x1000, NodeOutputType::U64);
+//! let offset = fb.build_int_const(8, NodeOutputType::U64);
+//! let addr = fb
+//!     .build_int_binary_operation(base, offset, IntBinaryOp::Add, NodeOutputType::U64)
+//!     .unwrap();
+//! let val = fb.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64).unwrap();
+//! fb.build_return(Some(val), &[]).unwrap();
+//! let graph = fb.build().unwrap();
 //!
 //! // Match every load whose address is (something + anything).
-//! let pat = load().addr(add(var(ptr), var(offset)));
+//! let ptr_v = Var::new();
+//! let off_v = Var::new();
+//! let pat = load().addr(add(var(ptr_v), var(off_v)));
 //!
-//! let matcher = Matcher::new(&fn_graph);
-//! for m in matcher.find_all(&pat.into()) {
-//!     println!("load base: {:?}, offset: {:?}", m.get(ptr), m.get(offset));
-//! }
+//! let matcher = Matcher::new(&graph);
+//! let hits = matcher.find_all(&pat.into());
+//! assert_eq!(hits.len(), 1);
+//!
+//! // The captured operands are `NodeOutputId`s; `get_int_const` resolves
+//! // them to the concrete constant values their producers yielded.
+//! let m = &hits[0];
+//! assert_eq!(m.get_int_const(ptr_v, &graph), Some(0x1000));
+//! assert_eq!(m.get_int_const(off_v, &graph), Some(8));
 //! ```
 //!
 //! # Key types

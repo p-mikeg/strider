@@ -1,17 +1,20 @@
 //! Shared crate-private `macro_rules!` helpers for collapsing constructor
 //! boilerplate.
 //!
-//! The `pat/ctor/*.rs` modules define dozens of public one-line wrappers of
-//! the form
+//! The `pat/ctor/*.rs` modules define dozens of public one-line wrappers that
+//! delegate to a family-level dispatcher.  For example, the wrapper generated
+//! for `IntBinaryOp::Add` is equivalent to:
 //!
-//! ```ignore
-//! pub fn add(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
+//! ```rust
+//! use pattern::{IntBinaryOp, IntBinaryOpPat, Pat, int_binary};
+//!
+//! fn add(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> IntBinaryOpPat {
 //!     int_binary(IntBinaryOp::Add, lhs, rhs)
 //! }
 //! ```
 //!
-//! for every op variant in each family (integer / boolean / float × binary /
-//! unary / cmp).  The macros below generate those wrappers given the name of
+//! The macros below generate such wrappers for every op variant in each
+//! family (integer / boolean / float × binary / unary / cmp).  The macros below generate those wrappers given the name of
 //! the family-level dispatcher (`int_binary`, `int_unary`, `int_cmp`, …), the
 //! op enum (`IntBinaryOp`, …), and the return type (`IntBinaryOpPat` or `Pat`).
 //!
