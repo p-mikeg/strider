@@ -41,19 +41,8 @@ strider_error::define_error! {
     }
 }
 
-/// Hand-rolled bridge so `?` across the `ir` → `opt` boundary preserves the
-/// origin backtrace + location chain captured by `ir`. Decomposes the inner
-/// wrapper, moves its `ErrorFields`, and appends the outer caller's site.
-impl From<ir::Error> for Error {
-    #[track_caller]
-    fn from(e: ir::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::IrError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
+// Preserves origin backtrace + location chain captured by `ir`.
+strider_error::bridge_error!(ir::Error => Error, ErrorKind::IrError);
 
 /// `ir::ValidationErrors` is produced fresh at the validator call site, so
 /// route it through `ir::Error` (which captures a fresh backtrace) and then
@@ -65,20 +54,8 @@ impl From<ir::ValidationErrors> for Error {
     }
 }
 
-/// Hand-rolled bridge so `?` across the `pattern` → `opt` boundary preserves
-/// the origin backtrace + location chain captured by `pattern`.  Decomposes
-/// the inner wrapper, moves its `ErrorFields`, and appends the outer caller's
-/// site.
-impl From<pattern::Error> for Error {
-    #[track_caller]
-    fn from(e: pattern::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::PatternError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
+// Preserves origin backtrace + location chain captured by `pattern`.
+strider_error::bridge_error!(pattern::Error => Error, ErrorKind::PatternError);
 
 /// Convenience `Result` alias that uses [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;

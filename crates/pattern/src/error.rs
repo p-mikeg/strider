@@ -115,19 +115,9 @@ impl Error {
     }
 }
 
-/// Hand-rolled bridge so `?` across the `ir` → `pattern` boundary preserves the
-/// origin backtrace + location chain captured by `ir`.  Decomposes the inner
-/// wrapper, moves its `ErrorFields`, and appends the outer caller's site.
-impl From<ir::Error> for Error {
-    #[track_caller]
-    fn from(e: ir::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::IrError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
+// Bridge so `?` across the `ir` → `pattern` boundary preserves the origin
+// backtrace + location chain captured by `ir`, appending this crossing.
+strider_error::bridge_error!(ir::Error => Error, ErrorKind::IrError);
 
 /// Convenience `Result` alias that uses [`Error`] as the error type.
 pub type Result<T> = std::result::Result<T, Error>;

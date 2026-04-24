@@ -196,3 +196,47 @@ macro_rules! define_error {
         )?
     };
 }
+
+/// Generates a `#[track_caller] impl From<$inner> for $outer` that decomposes
+/// the inner wrapper, appends the caller's site, and re-assembles as the outer
+/// wrapper with kind wrapped in `$outer_kind::$variant`.
+///
+/// The inner type must expose `.decompose() -> (Box<InnerKind>, ErrorFields)`
+/// — any type produced by [`define_error!`] does, as does the hand-rolled
+/// `dot::error::Error<E>` via its manual `decompose` method.
+///
+/// # Example
+///
+/// ```ignore
+/// strider_error::bridge_error!(ir::Error => Error, ErrorKind::IrError);
+/// ```
+///
+/// expands to:
+///
+/// ```ignore
+/// impl ::core::convert::From<ir::Error> for Error {
+///     #[track_caller]
+///     fn from(e: ir::Error) -> Self {
+///         let (kind, fields) = e.decompose();
+///         Self {
+///             kind: ::std::boxed::Box::new(ErrorKind::IrError(*kind)),
+///             fields: fields.push_caller(),
+///         }
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! bridge_error {
+    ($inner:ty => $outer:ident, $outer_kind:ident :: $variant:ident) => {
+        impl ::core::convert::From<$inner> for $outer {
+            #[track_caller]
+            fn from(e: $inner) -> Self {
+                let (kind, fields) = e.decompose();
+                Self {
+                    kind: ::std::boxed::Box::new($outer_kind::$variant(*kind)),
+                    fields: fields.push_caller(),
+                }
+            }
+        }
+    };
+}

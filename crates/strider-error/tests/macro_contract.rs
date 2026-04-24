@@ -105,3 +105,31 @@ fn error_source_forwards_to_inner_kind() {
     let src = err.source().expect("Io variant exposes its source");
     assert!(src.is::<std::io::Error>());
 }
+
+// ── bridge_error! macro contract ─────────────────────────────────────────
+
+strider_error::define_error! {
+    pub struct OuterError wraps OuterKind;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum OuterKind {
+        #[error(transparent)]
+        Inner(MyKind),
+    }
+}
+
+strider_error::bridge_error!(MyError => OuterError, OuterKind::Inner);
+
+#[test]
+fn bridge_error_macro_extends_chain_by_one() {
+    fn inner() -> Result<(), MyError> { Err(MyKind::Boom.into()) }
+    fn outer() -> Result<(), OuterError> { inner()?; Ok(()) }
+
+    let err = outer().unwrap_err();
+    assert_eq!(
+        err.locations().len(),
+        2,
+        "origin + one bridge push_caller = 2",
+    );
+    assert!(matches!(err.kind(), OuterKind::Inner(MyKind::Boom)));
+}

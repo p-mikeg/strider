@@ -65,54 +65,11 @@ strider_error::define_error! {
     }
 }
 
-/// Hand-rolled bridge from `cfg::Error`. Preserves the origin backtrace +
-/// location chain captured by `cfg` and appends this crossing site.
-impl From<cfg::Error> for Error {
-    #[track_caller]
-    fn from(e: cfg::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::CfgError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
-
-/// Hand-rolled bridge from `ir::Error`.
-impl From<ir::Error> for Error {
-    #[track_caller]
-    fn from(e: ir::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::IrError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
-
-/// Hand-rolled bridge from `opt::Error`.
-impl From<opt::Error> for Error {
-    #[track_caller]
-    fn from(e: opt::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::OptError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
-
-/// Hand-rolled bridge from `target::Error`.
-impl From<target::Error> for Error {
-    #[track_caller]
-    fn from(e: target::Error) -> Self {
-        let (kind, fields) = e.decompose();
-        Error {
-            kind: Box::new(ErrorKind::TargetError(*kind)),
-            fields: fields.push_caller(),
-        }
-    }
-}
+// Preserves origin backtrace + location chain across each crossing.
+strider_error::bridge_error!(cfg::Error    => Error, ErrorKind::CfgError);
+strider_error::bridge_error!(ir::Error     => Error, ErrorKind::IrError);
+strider_error::bridge_error!(opt::Error    => Error, ErrorKind::OptError);
+strider_error::bridge_error!(target::Error => Error, ErrorKind::TargetError);
 
 /// the result type using our error.
 pub type Result<T> = std::result::Result<T, Error>;
