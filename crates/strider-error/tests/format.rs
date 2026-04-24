@@ -3,14 +3,14 @@
 //! Verifies `format_traceback` produces the Display line exactly once when
 //! the wrapper's Debug impl already starts with the Display line.
 
+#[derive(Debug, thiserror::Error)]
+pub enum MyKind {
+    #[error("unique-display-marker-7a3f")]
+    Boom,
+}
+
 strider_error::define_error! {
     pub struct MyError wraps MyKind;
-
-    #[derive(Debug, thiserror::Error)]
-    pub enum MyKind {
-        #[error("unique-display-marker-7a3f")]
-        Boom,
-    }
 }
 
 #[test]

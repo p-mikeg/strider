@@ -8,20 +8,20 @@
 
 use std::error::Error as _;
 
+#[derive(Debug, thiserror::Error)]
+pub enum MyKind {
+    #[error("boom")]
+    Boom,
+    // Non-transparent so `#[from]` implies `#[source]` and `source()`
+    // returns the wrapped `io::Error` (transparent would forward to
+    // io::Error::source() instead, which is typically None).
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 strider_error::define_error! {
     pub struct MyError wraps MyKind;
     sources: [std::io::Error];
-
-    #[derive(Debug, thiserror::Error)]
-    pub enum MyKind {
-        #[error("boom")]
-        Boom,
-        // Non-transparent so `#[from]` implies `#[source]` and `source()`
-        // returns the wrapped `io::Error` (transparent would forward to
-        // io::Error::source() instead, which is typically None).
-        #[error("io: {0}")]
-        Io(#[from] std::io::Error),
-    }
 }
 
 #[test]
@@ -110,14 +110,14 @@ fn error_source_forwards_to_inner_kind() {
 
 // ── bridge_error! macro contract ─────────────────────────────────────────
 
+#[derive(Debug, thiserror::Error)]
+pub enum OuterKind {
+    #[error(transparent)]
+    Inner(MyKind),
+}
+
 strider_error::define_error! {
     pub struct OuterError wraps OuterKind;
-
-    #[derive(Debug, thiserror::Error)]
-    pub enum OuterKind {
-        #[error(transparent)]
-        Inner(MyKind),
-    }
 }
 
 strider_error::bridge_error!(MyError => OuterError, OuterKind::Inner);

@@ -1,9 +1,12 @@
-/// Defines a crate's error wrapper struct + its underlying `ErrorKind`
-/// enum in one macro invocation.
+/// Generates a wrapper struct over an existing `thiserror`-derived enum.
+///
+/// The enum is a separate, vanilla Rust declaration — the macro does
+/// **not** take the enum body as input. This keeps the enum's attributes
+/// (`#[derive(Debug, thiserror::Error)]`, variant-level `#[error(...)]`
+/// and `#[from]`) in plain Rust, so rustfmt, rust-analyzer, and other
+/// tooling see an ordinary enum.
 ///
 /// The macro emits:
-///   * the enum literally as written (so `#[derive(Debug, thiserror::Error)]`
-///     and any variant-level `#[error(...)]` / `#[from]` attributes apply);
 ///   * a wrapper struct `$wrapper { kind: Box<$kind>, fields: ErrorFields }`;
 ///   * `impl Display` (delegates to the inner enum);
 ///   * `impl Debug` (prints kind + location chain + backtrace);
@@ -22,17 +25,17 @@
 /// # Example
 ///
 /// ```
+/// #[derive(Debug, thiserror::Error)]
+/// pub enum ErrorKind {
+///     #[error("address {0:#x} is not mapped")]
+///     NotMapped(u64),
+///     #[error("io: {0}")]
+///     Io(#[from] std::io::Error),
+/// }
+///
 /// strider_error::define_error! {
 ///     pub struct Error wraps ErrorKind;
 ///     sources: [std::io::Error];
-///
-///     #[derive(Debug, thiserror::Error)]
-///     pub enum ErrorKind {
-///         #[error("address {0:#x} is not mapped")]
-///         NotMapped(u64),
-///         #[error("io: {0}")]
-///         Io(#[from] std::io::Error),
-///     }
 /// }
 ///
 /// let err: Error = ErrorKind::NotMapped(0xdead_beef).into();
@@ -53,17 +56,7 @@ macro_rules! define_error {
         $(#[$wrapper_attr:meta])*
         pub struct $wrapper:ident wraps $kind:ident;
         $( sources: [ $($src:ty),* $(,)? ]; )?
-
-        $(#[$enum_attr:meta])*
-        pub enum $kind_enum:ident {
-            $($body:tt)*
-        }
     ) => {
-        $(#[$enum_attr])*
-        pub enum $kind_enum {
-            $($body)*
-        }
-
         $(#[$wrapper_attr])*
         pub struct $wrapper {
             kind: ::std::boxed::Box<$kind>,
@@ -150,19 +143,21 @@ macro_rules! define_error {
 /// # Example
 ///
 /// ```
+/// #[derive(Debug, thiserror::Error)]
+/// pub enum InnerKind { #[error("boom")] Boom }
+///
 /// strider_error::define_error! {
 ///     pub struct InnerError wraps InnerKind;
-///     #[derive(Debug, thiserror::Error)]
-///     pub enum InnerKind { #[error("boom")] Boom }
+/// }
+///
+/// #[derive(Debug, thiserror::Error)]
+/// pub enum OuterKind {
+///     #[error(transparent)]
+///     Inner(InnerKind),
 /// }
 ///
 /// strider_error::define_error! {
 ///     pub struct OuterError wraps OuterKind;
-///     #[derive(Debug, thiserror::Error)]
-///     pub enum OuterKind {
-///         #[error(transparent)]
-///         Inner(InnerKind),
-///     }
 /// }
 ///
 /// strider_error::bridge_error!(InnerError => OuterError, OuterKind::Inner);
