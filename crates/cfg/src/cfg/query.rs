@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
@@ -18,44 +16,44 @@ pub struct IfRegionState {
 }
 
 impl<R: rsleigh::MemReader> Cfg<R> {
-    /// Collects all outgoing edges from `region_id` into a map keyed by edge kind.
+    /// Returns the sole successor of `region_id` whose edge weight is `kind`,
+    /// or `None` if no such edge exists.
     ///
     /// # Errors
-    /// Returns [`ErrorKind::DuplicateEdgeKind`] if the same edge kind appears more
-    /// than once on a single region (which would indicate a malformed CFG).
-    fn following_regions(
-        &self,
-        region_id: RegionId,
-    ) -> Result<HashMap<&RegionEdgeKind, NodeIndex>> {
-        let mut next_regions = HashMap::new();
+    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one outgoing
+    /// edge of `kind` is attached to `region_id`.
+    fn unique_outgoing(&self, region_id: RegionId, kind: RegionEdgeKind) -> Result<Option<NodeIndex>> {
+        let mut found: Option<NodeIndex> = None;
         for edge in self.graph.edges_directed(region_id, petgraph::Outgoing) {
-            let kind = edge.weight();
-            if next_regions.contains_key(kind) {
-                return Err(ErrorKind::DuplicateEdgeKind(region_id, *kind).into());
+            if *edge.weight() != kind {
+                continue;
             }
-            next_regions.insert(kind, edge.target());
+            if found.is_some() {
+                return Err(ErrorKind::DuplicateEdgeKind(region_id, kind).into());
+            }
+            found = Some(edge.target());
         }
-        Ok(next_regions)
+        Ok(found)
     }
 
     /// Returns the unconditional-branch successor of `region_id`, if any.
     ///
     /// # Errors
-    /// Returns an error if the CFG graph is malformed (duplicate edge kinds).
+    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one `Branch`
+    /// edge leaves `region_id`.
     pub fn region_branch(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
-        let next_regions = self.following_regions(region_id)?;
-        Ok(next_regions.get(&RegionEdgeKind::Branch).copied())
+        self.unique_outgoing(region_id, RegionEdgeKind::Branch)
     }
 
     /// Returns both conditional-branch successors of `region_id`.
     ///
     /// # Errors
-    /// Returns an error if the CFG graph is malformed (duplicate edge kinds).
+    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one
+    /// `IfCaseTrue` or `IfCaseFalse` edge leaves `region_id`.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionState> {
-        let next_regions = self.following_regions(region_id)?;
         Ok(IfRegionState {
-            if_true_region: next_regions.get(&RegionEdgeKind::IfCaseTrue).copied(),
-            if_false_region: next_regions.get(&RegionEdgeKind::IfCaseFalse).copied(),
+            if_true_region: self.unique_outgoing(region_id, RegionEdgeKind::IfCaseTrue)?,
+            if_false_region: self.unique_outgoing(region_id, RegionEdgeKind::IfCaseFalse)?,
         })
     }
 
