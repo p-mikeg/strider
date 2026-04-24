@@ -1,13 +1,12 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! Tests for `Cfg` query methods: `region_insn`, `region_if`, `region_branch`,
+//! Tests for `Cfg` query methods: `region_if`, `region_branch`,
 //! `regions`, `region_ids`, and the `DuplicateEdgeKind` error.
 
 mod common;
 use common::{binary, build_cfg, make_region, make_sleigh};
 
 use cfg::{Cfg, ErrorKind, RegionEdgeKind};
-use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::StableDiGraph;
 
 fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
@@ -18,25 +17,6 @@ fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
         rsleigh::sla_spec::SLA_SPEC_X86_64,
         rsleigh::pspec::PSPEC_X86_64,
     )
-}
-
-// ── region_insn ──────────────────────────────────────────────────────────────
-
-#[test]
-fn region_insn_returns_clone_of_region_insns() {
-    let cfg = real_cfg("add");
-    let insns = cfg.region_insn(cfg.entry).unwrap();
-    assert!(!insns.is_empty());
-    // Cloning — the underlying region still has its instructions.
-    assert_eq!(cfg.graph[cfg.entry].insns.len(), insns.len());
-}
-
-#[test]
-fn region_insn_invalid_node_index_returns_error() {
-    let cfg = real_cfg("add");
-    let bogus = NodeIndex::new(10_000);
-    let err = cfg.region_insn(bogus).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidRegion(_)));
 }
 
 // ── regions / region_ids iteration ───────────────────────────────────────────

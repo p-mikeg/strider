@@ -68,20 +68,4 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     pub fn region_ids(&self) -> impl Iterator<Item = RegionId> {
         self.graph.node_indices()
     }
-
-    /// Returns the pcode instructions contained in `region_id`.
-    ///
-    /// # Errors
-    /// Returns [`ErrorKind::InvalidRegion`] when `region_id` does not exist.
-    pub fn region_insn(&self, region_id: NodeIndex) -> Result<Vec<rsleigh::Insn>> {
-        let region = self
-            .graph
-            .node_weight(region_id)
-            .ok_or(ErrorKind::InvalidRegion(region_id))?;
-        Ok(region
-            .insns
-            .iter()
-            .map(|region_insn| region_insn.insn.clone())
-            .collect())
-    }
 }
