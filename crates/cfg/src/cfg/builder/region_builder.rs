@@ -433,7 +433,80 @@ pub mod test_api {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::*;
+    use super::super::Builder;
+    use crate::cfg::options::{Options, OptionsBuilder};
+    use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, RegionInstruction};
+    use crate::error::Error;
+    use std::collections::VecDeque;
+
+    fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: machine },
+            insn_index: insn,
+        }
+    }
+
+    fn make_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        rsleigh::Sleigh::new(
+            rsleigh::sla_spec::SLA_SPEC_X86,
+            rsleigh::pspec::PSPEC_X86,
+            reader,
+        )
+        .expect("failed to create test Sleigh")
+    }
+
+    fn make_builder(
+        start_addr: u64,
+    ) -> Builder<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+        Builder::new(make_sleigh(), start_addr, OptionsBuilder::new().build())
+    }
+
+    fn make_builder_opts(
+        start_addr: u64,
+        options: Options,
+    ) -> Builder<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+        Builder::new(make_sleigh(), start_addr, options)
+    }
+
+    fn make_region_builder<'a>(
+        builder: &'a mut Builder<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
+        start: PcodeInsnAddr,
+    ) -> super::RegionBuilder<'a, rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
+        super::RegionBuilder {
+            builder,
+            start_addr: start,
+            insns: VecDeque::new(),
+            parent_edge: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn fake_insn() -> rsleigh::Insn {
+        rsleigh::Insn {
+            opcode: rsleigh::Opcode::Copy,
+            output: None,
+            inputs: vec![],
+        }
+    }
+
+    #[allow(dead_code)]
+    fn make_region(addrs: &[(u64, u64)]) -> crate::cfg::types::Region {
+        assert!(!addrs.is_empty(), "make_region requires at least one address");
+        let start = addr(addrs[0].0, addrs[0].1);
+        let insns = addrs
+            .iter()
+            .map(|&(m, i)| RegionInstruction {
+                addr: addr(m, i),
+                insn: fake_insn(),
+            })
+            .collect();
+        crate::cfg::types::Region {
+            start_addr: start,
+            insns,
+            ends_with_tail_call: false,
+        }
+    }
 
     // ── RegionBuilder::is_branch_tail_call_nocheck ────────────────────────────
 
@@ -499,7 +572,7 @@ mod tests {
         assert!(matches!(
             rb.is_branch_tail_call(addr(0x0800, 3))
                 .as_ref()
-                .map_err(|e| e.kind()),
+                .map_err(|e: &Error| e.kind()),
             Err(crate::ErrorKind::InvalidTailCall(_))
         ));
     }
