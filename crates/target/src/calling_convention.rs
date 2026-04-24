@@ -429,4 +429,29 @@ mod tests {
         };
         assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
     }
+
+    /// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
+    /// same way an unknown entry in any of the three register lists does.
+    /// Guards the open-coded `ok_or_else` in `build()` — the SP name has its
+    /// own lookup path separate from `regs_to_vns`.
+    #[test]
+    fn build_returns_error_for_unknown_stack_pointer_name() {
+        let regs = regs_for(crate::arch::SleighArch::x86_64());
+        let cc = CallingConvention {
+            stack_ptr_reg_name: "NOT_A_SP",
+            arg_passing_regs: &[],
+            callee_saved_regs: &[],
+            ret_val_regs: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+        };
+        let result = cc.build(&regs);
+        assert!(
+            matches!(
+                result.as_ref().map_err(|e| e.kind()),
+                Err(ErrorKind::UnknownRegName(n)) if n == "NOT_A_SP"
+            ),
+            "expected UnknownRegName(\"NOT_A_SP\"), got {result:?}"
+        );
+    }
 }
