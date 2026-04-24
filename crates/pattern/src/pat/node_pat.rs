@@ -295,7 +295,7 @@ impl Pattern for NodePat {
             // node.
             return self.try_match_common(ctx, node, b);
         }
-        for out in outputs.into_iter() {
+        for out in outputs {
             let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;

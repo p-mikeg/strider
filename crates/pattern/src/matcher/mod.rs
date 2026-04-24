@@ -131,10 +131,11 @@ impl<'g> Matcher<'g> {
     /// `function_arg(1)` both return `None`.  Use [`Self::function_arg_len`]
     /// for the actual population count.
     pub fn function_arg_count(&self) -> usize {
-        match self.function_arg_index().0.keys().max() {
-            Some(&m) => (m as usize) + 1,
-            None => 0,
-        }
+        self.function_arg_index()
+            .0
+            .keys()
+            .max()
+            .map_or(0, |&m| (m as usize) + 1)
     }
 
     /// Returns the number of distinct `FunctionArg` nodes in the graph.

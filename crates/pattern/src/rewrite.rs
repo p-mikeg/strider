@@ -95,9 +95,9 @@ pub fn rewrite_rule(
 /// Borrows `rules` as a slice and returns a closure bound to that borrow's
 /// lifetime, so callers can hoist the rule vec into a `LazyLock` (or any
 /// other long-lived storage) and compose the per-call closure cheaply.
-pub fn apply_rules_in_order<'a, R>(
-    rules: &'a [R],
-) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + 'a
+pub fn apply_rules_in_order<R>(
+    rules: &[R],
+) -> impl Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync + '_
 where
     R: Fn(&mut BuiltFunctionGraph, NodeId) -> Result<bool> + Send + Sync,
 {
