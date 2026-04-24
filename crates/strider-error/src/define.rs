@@ -38,7 +38,7 @@
 ///     sources: [std::io::Error];
 /// }
 ///
-/// let err: Error = ErrorKind::NotMapped(0xdead_beef).into();
+/// let err = Error::from(ErrorKind::NotMapped(0xdead_beef));
 /// assert_eq!(err.to_string(), "address 0xdeadbeef is not mapped");
 /// assert_eq!(err.locations().len(), 1);
 /// ```
