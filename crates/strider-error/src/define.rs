@@ -43,6 +43,27 @@
 /// assert_eq!(err.locations().len(), 1);
 /// ```
 ///
+/// # Caveats
+///
+/// **`.into()` loses the `#[track_caller]` chain.** The wrapper's
+/// `From<$kind>` impl is `#[track_caller]`, so `?` and explicit
+/// `Wrapper::from(kind)` both place the first entry of `err.locations()`
+/// at the user's call site. The std blanket `Into::into` is *not*
+/// `#[track_caller]`, though, so `ErrorKind::X.into()` resolves
+/// `Location::caller()` to a line inside `core/src/convert/mod.rs`
+/// rather than the user's code. The backtrace is unaffected (it's
+/// captured unconditionally inside `ErrorFields::new`), but the
+/// location chain's origin entry is misleading.
+///
+/// If you need the chain to point at your own site and don't have a
+/// `?` context handy, use `Wrapper::from(kind)` explicitly:
+///
+/// ```ignore
+/// let err = MyError::from(MyKind::Boom);   // caller site captured
+/// // vs.
+/// let err: MyError = MyKind::Boom.into();  // core::convert captured
+/// ```
+///
 /// # Cross-crate bridges
 ///
 /// Bridges that unwrap another crate's wrapper (e.g. `From<ir::Error> for
