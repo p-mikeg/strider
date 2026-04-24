@@ -1,26 +1,35 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! End-to-end smoke test against a real toolchain-produced ELF.
+//! End-to-end smoke tests against real toolchain-produced ELFs.
+//!
+//! One test per supported architecture. Each asserts that `load_elf`
+//! parses the binary, `ElfFileMemReader::from_path` accepts it, and both
+//! trait impls can read one byte at the ELF entry point.
 //!
 //! Build prerequisites first:
 //!
 //!     make -C binary_tests
 //!
-//! The test panics with a clear message if the binary is absent —
-//! matching the convention used by `cfg::cfg_integration` and
+//! Tests panic with a clear message if the binary is absent — matching
+//! the convention used by `cfg::cfg_integration` and
 //! `analyzer::analyze_binary`.
 
 use object::Object;
 use reader::{ElfFileMemReader, ReadOnlyMemory};
 
-fn binary_path() -> std::path::PathBuf {
+fn binary_path(arch: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../binary_tests/out/x64/test.elf")
+        .join("../../binary_tests/out")
+        .join(arch)
+        .join("test.elf")
 }
 
-#[test]
-fn elf_reader_loads_real_x64_binary() {
-    let path = binary_path();
+/// Loads `binary_tests/out/<arch>/test.elf` and asserts the reader
+/// impls all round-trip on it. Every supported arch in this workspace
+/// is little-endian (x86, x64, arm/EABI5, aarch64), so that's asserted
+/// uniformly here.
+fn assert_smoke(arch: &str) {
+    let path = binary_path(arch);
     assert!(
         path.exists(),
         "missing test binary at {} — run `make -C binary_tests`",
@@ -29,7 +38,11 @@ fn elf_reader_loads_real_x64_binary() {
 
     // load_elf round-trip
     let obj = reader::load_elf(path.to_str().expect("utf8 path")).unwrap();
-    assert_eq!(obj.endianness(), object::Endianness::Little);
+    assert_eq!(
+        obj.endianness(),
+        object::Endianness::Little,
+        "{arch}: expected little-endian binary",
+    );
 
     // ElfFileMemReader round-trip
     let r = ElfFileMemReader::from_path(&path).unwrap();
@@ -45,11 +58,37 @@ fn elf_reader_loads_real_x64_binary() {
         &mut buf,
     )
     .unwrap();
-    assert_eq!(n, 1, "could not read 1 byte at entry {entry:#x}");
+    assert_eq!(n, 1, "{arch}: could not read 1 byte at entry {entry:#x}");
 
     // ReadOnlyMemory read at entry returns *some* u8 value.
-    assert!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, entry, 1).is_some());
+    assert!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, entry, 1).is_some(),
+        "{arch}: ReadOnlyMemory failed at entry {entry:#x}",
+    );
 
     // At least one section exists.
-    assert!(obj.sections().next().is_some(), "real ELF has no sections?");
+    assert!(
+        obj.sections().next().is_some(),
+        "{arch}: real ELF has no sections?",
+    );
+}
+
+#[test]
+fn elf_reader_loads_real_x86_binary() {
+    assert_smoke("x86");
+}
+
+#[test]
+fn elf_reader_loads_real_x64_binary() {
+    assert_smoke("x64");
+}
+
+#[test]
+fn elf_reader_loads_real_arm_binary() {
+    assert_smoke("arm");
+}
+
+#[test]
+fn elf_reader_loads_real_aarch64_binary() {
+    assert_smoke("aarch64");
 }
