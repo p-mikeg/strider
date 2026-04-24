@@ -34,22 +34,23 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 /// Collects ELF segments into [`MemRegion`]s, keeping only those for which
 /// `filter` returns `true`.
 ///
-/// Segments with empty data are skipped. Preserves iteration order;
-/// duplicate `start_addr`s are resolved later by [`MemRegionsLookupTable`]
-/// under its "last one inserted wins" rule.
+/// Segments with empty data (e.g. `SHT_NOBITS`-equivalents, where `data()`
+/// returns `Ok(&[])`) are skipped. Preserves iteration order; duplicate
+/// `start_addr`s are resolved later by [`MemRegionsLookupTable`] under its
+/// "last one inserted wins" rule.
 ///
 /// # Errors
 ///
-/// Currently infallible after filtering (segments that fail to read are
-/// skipped), but preserves a `Result` return for future backends that may
-/// need to surface a parse error through `object::Error`.
+/// Returns an error wrapping the underlying `object::Error` if any
+/// segment's file-backed data cannot be read. Empty-data segments are
+/// skipped rather than reported.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for seg in obj.segments() {
-        let Ok(data) = seg.data() else { continue };
+        let data = seg.data()?;
         if data.is_empty() || !filter(&seg) {
             continue;
         }
@@ -61,23 +62,23 @@ pub fn elf_segments_to_mem_regions(
 /// Collects ELF sections into [`MemRegion`]s, keeping only those for which
 /// `filter` returns `true`.
 ///
-/// Sections whose `data()` call fails or returns empty bytes are always
-/// skipped (this excludes `SHT_NOBITS` sections like `.bss`). Preserves
-/// iteration order; duplicate `start_addr`s are resolved later by
-/// [`MemRegionsLookupTable`] under its "last one inserted wins" rule.
+/// Sections whose `data()` returns empty bytes (e.g. `SHT_NOBITS` like
+/// `.bss`) are skipped. Preserves iteration order; duplicate `start_addr`s
+/// are resolved later by [`MemRegionsLookupTable`] under its "last one
+/// inserted wins" rule.
 ///
 /// # Errors
 ///
-/// Currently infallible after filtering (sections that fail to read are
-/// skipped), but preserves a `Result` return for future backends that may
-/// need to surface a parse error through `object::Error`.
+/// Returns an error wrapping the underlying `object::Error` if any
+/// section's file-backed data cannot be read. Empty-data sections are
+/// skipped rather than reported.
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for sec in obj.sections() {
-        let Ok(data) = sec.data() else { continue };
+        let data = sec.data()?;
         if data.is_empty() || !filter(&sec) {
             continue;
         }

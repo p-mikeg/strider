@@ -154,6 +154,69 @@ use reader::elf::{
     elf_segments_to_mem_regions,
 };
 
+// ── malformed section surfaces as an error, not a silent skip ────────────
+
+/// Pinned contract: `elf_sections_to_mem_regions` propagates any
+/// `object::Error` from `section.data()` rather than silently skipping the
+/// offending section. NOBITS sections (where `data()` returns `Ok(&[])`) are
+/// the *only* legitimate skip path; a real `Err` means the ELF is malformed
+/// and silently dropping it would hand the caller a partially-loaded reader.
+///
+/// We synthesize the failure by pointing a PROGBITS section at a file offset
+/// past the end of the buffer, which makes `section.data()` return Err.
+#[test]
+fn elf_sections_to_mem_regions_propagates_data_error() {
+    use object::Endianness;
+    use object::elf;
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let name = w.add_section_name(b".broken");
+        let _sec = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+        w.write_shstrtab();
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0x1000,
+            sh_offset: 0xdead_beef, // past EOF → data() must fail
+            sh_size: 4,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    let obj = parse(&buf);
+    let err = elf_sections_to_mem_regions(&obj, |_| true)
+        .expect_err("malformed section must surface an error");
+    assert!(
+        matches!(err.kind(), reader::ErrorKind::Object(_)),
+        "got {:?}",
+        err.kind(),
+    );
+}
+
 // ── elf_segment_to_mem_region ─────────────────────────────────────────────
 
 #[test]
