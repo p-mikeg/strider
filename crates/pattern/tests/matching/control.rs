@@ -913,8 +913,8 @@ fn matcher_function_args_iterates_all() {
 //
 // Coverage for the new logic introduced by the trait-merge + one-step-skip
 // refactor: `true_branch`/`false_branch`/`preceded_by` skip transparent SSA
-// plumbing (`ControlState`, `IfCase`) but stop at any semantic node (`Call`,
-// `Return`, `If`, `Load`, `Store`, …).  These tests also exercise the unified
+// plumbing (`ControlState`) but stop at any semantic node (`Call`, `Return`,
+// `If`, `Load`, `Store`, …).  These tests also exercise the unified
 // `Pattern` trait dispatch — data sub-patterns nested inside control patterns
 // must still evaluate correctly without the deleted `PatAsData` adapter.
 
@@ -988,8 +988,8 @@ fn preceded_by_skips_control_state() -> ir::Result<()> {
 fn preceded_by_dead_end_returns_no_match() -> ir::Result<()> {
     // `graph_if_branches` has two Return nodes, neither preceded by a Call
     // on its control chain — the ctrl edge goes back through ControlState
-    // to an `IfCase` / `If`, not to a Call.  The pattern must cleanly fail
-    // (no match, no panic).
+    // to an `If`, not to a Call.  The pattern must cleanly fail (no match,
+    // no panic).
     let g = graph_if_branches()?;
     let m = Matcher::new(&g);
     let hits = m.find_all(&ret().preceded_by(call()).into());

@@ -17,7 +17,6 @@ pub enum NodeView {
     MemState { cf_node: NodeId, inputs: NodeIdList },
 
     If { control: NodeOutputId, cond: NodeOutputId },
-    IfCase { control: NodeOutputId, case: bool },
     Call { control: NodeOutputId, memory: NodeOutputId, target_addr: NodeOutputId, args: Vec<NodeOutputId> },
     PostCallMemState { call: NodeOutputId },
     PostCallVarState { var: Var, call: NodeOutputId },
@@ -175,12 +174,6 @@ impl crate::graph::Graph {
                 let [output] = self.node_outputs_exact(node_id);
                 self.verify_memory_kind(&[output])?;
                 NodeView::InitialMemory
-            },
-            NodeKind::IfCase(case) => {
-                let [input_control] = self.node_inputs_exact(node_id);
-                let [output_control] = self.node_outputs_exact(node_id);
-                self.verify_control_kind(&[input_control, output_control])?;
-                NodeView::IfCase { control: input_control, case: *case }
             },
             NodeKind::If => {
                 let [control, cond] = self.node_inputs_exact(node_id);

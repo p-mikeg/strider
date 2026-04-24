@@ -161,8 +161,8 @@ impl Pattern for ControlNodePat {
                         return false;
                     };
                     // One-step backward skip: walk through any transparent
-                    // `ControlState` / `IfCase` producers until we reach a
-                    // semantic node, then match the inner pattern against
+                    // `ControlState` producers until we reach a semantic
+                    // node, then match the inner pattern against
                     // that node's output.  `skip_backward_transparent`
                     // returns `ctrl_in` unchanged if the immediate producer
                     // is already semantic.
@@ -260,8 +260,8 @@ impl Pattern for ControlNodePat {
     }
 }
 
-/// Advance `ctrl_out` past transparent nodes (`ControlState` / `IfCase`)
-/// and match `pat` against the first semantic node reached.
+/// Advance `ctrl_out` past transparent nodes (`ControlState`) and match
+/// `pat` against the first semantic node reached.
 ///
 /// Uses [`walk::skip_forward_transparent`] first — that returns the first
 /// output of the reached semantic node, which is the most direct path and
@@ -299,7 +299,7 @@ fn locate_forward_semantic_node(ctx: &MatchCtx, ctrl_out: NodeOutputId) -> Optio
         }
         let (consumer_node, _) = consumers[0];
         let kind = ctx.graph.graph.node_kind(consumer_node);
-        if !matches!(kind, NodeKind::ControlState | NodeKind::IfCase(_)) {
+        if !matches!(kind, NodeKind::ControlState) {
             return Some(consumer_node);
         }
         let next = ctx.graph.graph.node_outputs(consumer_node).into_iter().next()?;

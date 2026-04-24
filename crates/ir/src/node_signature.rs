@@ -306,7 +306,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
-        NodeKind::IfCase(_) => sig!(inputs: [CTRL], outputs: [CTRL]),
 
         // ── Calls and returns ───────────────────────────────────────────────
         // Call: [control, memory, call_address, ...args].

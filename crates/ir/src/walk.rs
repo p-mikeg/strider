@@ -12,8 +12,8 @@ use crate::{
 /// `Control`-kind edges — the CFG skeleton.
 ///
 /// Data edges (value, memory, ControlPhi dispatch) are not followed, so only
-/// control-flow nodes (`Entry`, `ControlState`, `If`, `IfCase`, `Return`,
-/// `Call`, …) appear in the result.
+/// control-flow nodes (`Entry`, `ControlState`, `If`, `Return`, `Call`, …)
+/// appear in the result.
 ///
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
 /// which basic-block headers are live and which predecessor slots on `ControlState`,

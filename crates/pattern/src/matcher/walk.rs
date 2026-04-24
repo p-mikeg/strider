@@ -1,6 +1,6 @@
 //! One-step-direct walks that skip transparent SSA-join plumbing nodes
-//! (`ControlState`, `IfCase`).  Semantic nodes (`Call` / `Return` / `If` /
-//! `Load` / `Store` / everything else) terminate the walk.
+//! (`ControlState`).  Semantic nodes (`Call` / `Return` / `If` / `Load` /
+//! `Store` / everything else) terminate the walk.
 //!
 //! The helpers advance exactly one semantic step at a time: transparent SSA
 //! plumbing is skipped, but any real node stops the walk so the caller can
@@ -12,10 +12,10 @@ use ir::node::{NodeId, NodeKind, NodeOutputId};
 use super::Matcher;
 
 /// Returns `true` if `kind` is a transparent pass-through control node that
-/// the skip-helpers walk through without stopping.  Only `ControlState` and
-/// `IfCase(_)` are transparent — every other node kind terminates the walk.
+/// the skip-helpers walk through without stopping.  Only `ControlState` is
+/// transparent — every other node kind terminates the walk.
 fn is_transparent(kind: &NodeKind) -> bool {
-    matches!(kind, NodeKind::ControlState | NodeKind::IfCase(_))
+    matches!(kind, NodeKind::ControlState)
 }
 
 /// Return `node`'s first output, or `None` if the node has no outputs.
@@ -50,8 +50,7 @@ const MAX_TRANSPARENT_HOPS: usize = 64;
 /// * The hop counter exhausts (defensive cycle guard).
 ///
 /// Typical use: starting from `If.output[0]` (the true-ctrl edge), advance
-/// past any `ControlState` / `IfCase` plumbing to the next real node's ctrl
-/// output.
+/// past any `ControlState` plumbing to the next real node's ctrl output.
 pub(crate) fn skip_forward_transparent(
     matcher: &Matcher,
     mut out: NodeOutputId,
@@ -91,8 +90,8 @@ pub(crate) fn skip_forward_transparent(
 /// to match if the chain is malformed.
 ///
 /// Typical use: starting from `Return.input[0]` (the incoming ctrl edge),
-/// walk back past any `ControlState` / `IfCase` plumbing to the preceding
-/// semantic node's ctrl output.
+/// walk back past any `ControlState` plumbing to the preceding semantic
+/// node's ctrl output.
 pub(crate) fn skip_backward_transparent(
     matcher: &Matcher,
     mut input_out: NodeOutputId,
@@ -104,9 +103,9 @@ pub(crate) fn skip_backward_transparent(
             return input_out;
         }
         // Transparent: the producer's own ctrl input lives at input[0] for
-        // both `ControlState` (variadic ctrl inputs) and `IfCase` (single
-        // ctrl input).  If the producer has no inputs (shouldn't happen for
-        // a well-formed transparent node), fall back to the current output.
+        // `ControlState` (variadic ctrl inputs).  If the producer has no
+        // inputs (shouldn't happen for a well-formed transparent node), fall
+        // back to the current output.
         let inputs = matcher.fn_graph.graph.node_inputs(producer);
         match inputs.get(0) {
             Some(&prev) => input_out = prev,

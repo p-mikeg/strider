@@ -445,9 +445,6 @@ pub enum NodeKind {
     /// Conditional branch.  Consumes `(control, bool_cond)` and produces two
     /// `Control` outputs: index 0 for the true branch, index 1 for the false branch.
     If,
-    /// One arm of an `If` node used for pattern matching; `bool` is `true` for
-    /// the taken branch.
-    IfCase(bool),
 
     // ── Calls and returns ──────────────────────────────────────────────────────
     /// Function call.  Clobbers caller-saved registers and the memory token.

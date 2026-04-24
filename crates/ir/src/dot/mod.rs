@@ -21,7 +21,6 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::ControlPhi(_) | NodeKind::MemPhi | NodeKind::ValuePhi => "house",
 
         NodeKind::If => "diamond",
-        NodeKind::IfCase(_) => "trapezium",
 
         NodeKind::Load(_)
         | NodeKind::Store(_)
@@ -54,7 +53,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 
         NodeKind::ControlPhi(_) | NodeKind::MemPhi | NodeKind::ValuePhi => "\"#163030\"",
 
-        NodeKind::If | NodeKind::IfCase(_) => "\"#3a2a10\"",
+        NodeKind::If => "\"#3a2a10\"",
 
         NodeKind::Load(_) | NodeKind::Store(_) => "\"#102030\"",
 

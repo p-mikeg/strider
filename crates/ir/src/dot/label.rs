@@ -98,7 +98,6 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::ValuePhi => "φ Val".to_string(),
             NodeKind::ControlPhi(var) => format!("φ {}", self.vn_to_name(var)?),
             NodeKind::PostCallVarState(var) => format!("post-call\n{}", self.vn_to_name(var)?),
-            NodeKind::IfCase(b) => format!("if.{}", if *b { "true" } else { "false" }),
 
             // ── constants ─────────────────────────────────────────────────────
             NodeKind::BoolConst(v) => format!("const {v}"),
