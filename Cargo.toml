@@ -44,4 +44,5 @@ redundant_closure = "warn"
 map_unwrap_or    = "warn"
 match_same_arms  = "warn"
 must_use_candidate = "warn"
+missing_errors_doc = "warn"
 

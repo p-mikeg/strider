@@ -105,6 +105,14 @@ where
 #[allow(clippy::wrong_self_convention)]
 pub trait FromCtx {
     type Output;
+
+    /// Resolve this capture variable against the bindings carried by `ctx`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::MissingBinding`] when the capture variable
+    /// is not present in `ctx.bindings` — i.e. the LHS of the rewrite rule
+    /// didn't bind it.
     fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output>;
 }
 
