@@ -2,11 +2,11 @@
 //!
 //! Every builder in this file emits a trait-backed pattern directly.  Data
 //! builders (`IntBinaryOpPat`, `BoolBinaryOpPat`, `FloatBinaryOpPat`, the
-//! memory family, `PhiPat`, `FunctionArgPat`) emit
-//! [`Pat::from_dyn`](crate::pat::Pat::from_dyn) wrapping a [`NodePat`].
-//! Control builders (`CallPat`, `CallOtherPat`, `RetPat`, `IfPat`) emit
-//! [`Pat::from_ctrl`](crate::pat::Pat::from_ctrl) wrapping a
-//! [`ControlNodePat`](crate::pat::control_pat::ControlNodePat).
+//! memory family, `PhiPat`, `FunctionArgPat`) wrap a [`NodePat`]; control
+//! builders (`CallPat`, `CallOtherPat`, `RetPat`, `IfPat`) wrap a
+//! [`ControlNodePat`](crate::pat::control_pat::ControlNodePat).  Both
+//! converge on [`Pat::from_dyn`](crate::pat::Pat::from_dyn) over the
+//! unified [`Pattern`](crate::pat::traits::Pattern) trait.
 
 use std::sync::Arc;
 
@@ -634,11 +634,11 @@ impl From<CallPat> for Pat {
             ret_outputs,
             node_var,
         } = b;
-        Pat::from_ctrl(Arc::new(ControlNodePat {
+        Pat::from_dyn(Arc::new(ControlNodePat {
             kind: CtrlKind::Call {
-                target: target.map(pat_to_data),
-                args: indexed_pats_to_data(args),
-                ret_outputs: indexed_pats_to_data(ret_outputs),
+                target: target.map(Pat::into_dyn),
+                args: indexed_pats_to_dyn(args),
+                ret_outputs: indexed_pats_to_dyn(ret_outputs),
             },
             node_var,
         }))
@@ -686,10 +686,10 @@ impl From<CallOtherPat> for Pat {
             args,
             node_var,
         } = b;
-        Pat::from_ctrl(Arc::new(ControlNodePat {
+        Pat::from_dyn(Arc::new(ControlNodePat {
             kind: CtrlKind::CallOther {
                 user_op_id,
-                args: indexed_pats_to_data(args),
+                args: indexed_pats_to_dyn(args),
             },
             node_var,
         }))
@@ -738,10 +738,10 @@ impl From<RetPat> for Pat {
             ret_vals,
             node_var,
         } = b;
-        Pat::from_ctrl(Arc::new(ControlNodePat {
+        Pat::from_dyn(Arc::new(ControlNodePat {
             kind: CtrlKind::Return {
-                preceded_by: preceded_by.map(pat_to_ctrl),
-                ret_vals: indexed_pats_to_data(ret_vals),
+                preceded_by: preceded_by.map(Pat::into_dyn),
+                ret_vals: indexed_pats_to_dyn(ret_vals),
             },
             node_var,
         }))
@@ -877,62 +877,22 @@ impl From<IfPat> for Pat {
             false_branch,
             node_var,
         } = b;
-        Pat::from_ctrl(Arc::new(ControlNodePat {
+        Pat::from_dyn(Arc::new(ControlNodePat {
             kind: CtrlKind::If {
-                cond: cond.map(pat_to_data),
-                true_branch: true_branch.map(pat_to_ctrl),
-                false_branch: false_branch.map(pat_to_ctrl),
+                cond: cond.map(Pat::into_dyn),
+                true_branch: true_branch.map(Pat::into_dyn),
+                false_branch: false_branch.map(Pat::into_dyn),
             },
             node_var,
         }))
     }
 }
 
-// ── Helpers for lifting `Pat` into the typed `DynDataPat` / `DynCtrlPat` ─────
-// required by `CtrlKind`.
-//
-// `ControlNodePat` stores typed sub-patterns so the compiler enforces the
-// data-vs-control distinction at its boundary, but the fluent builders
-// accept `impl Into<Pat>` for source compatibility.  These lifts wrap a
-// `Pat` into an adapter that re-enters the dispatch through
-// `Matcher::match_output` or `Matcher::match_node_id`, so a caller passing
-// (say) a data pattern to `if_node().true_branch(...)` still gets the
-// "try each output of the control node" fallthrough.
-
-fn pat_to_data(p: Pat) -> crate::pat::traits::DynDataPat {
-    Arc::new(PatAsData(p))
-}
-
-fn pat_to_ctrl(p: Pat) -> crate::pat::traits::DynCtrlPat {
-    Arc::new(PatAsCtrl(p))
-}
-
-fn indexed_pats_to_data(v: Vec<(usize, Pat)>) -> Vec<(usize, crate::pat::traits::DynDataPat)> {
-    v.into_iter().map(|(i, p)| (i, pat_to_data(p))).collect()
-}
-
-struct PatAsData(Pat);
-
-impl crate::pat::traits::DataPattern for PatAsData {
-    fn try_match(
-        &self,
-        ctx: &crate::pat::traits::MatchCtx,
-        target: ir::node::NodeOutputId,
-        b: &mut crate::matcher::Bindings,
-    ) -> bool {
-        ctx.matcher.match_output(target, &self.0, b)
-    }
-}
-
-struct PatAsCtrl(Pat);
-
-impl crate::pat::traits::ControlPattern for PatAsCtrl {
-    fn try_match(
-        &self,
-        ctx: &crate::pat::traits::MatchCtx,
-        target: ir::node::NodeId,
-        b: &mut crate::matcher::Bindings,
-    ) -> bool {
-        ctx.matcher.match_node_id(target, &self.0, b)
-    }
+/// Lift `Vec<(usize, Pat)>` (as accepted by the fluent builders) into the
+/// `Vec<(usize, DynPat)>` that `CtrlKind` stores.  Each inner `Pat` is
+/// simply unwrapped via [`Pat::into_dyn`].
+fn indexed_pats_to_dyn(
+    v: Vec<(usize, Pat)>,
+) -> Vec<(usize, crate::pat::traits::DynPat)> {
+    v.into_iter().map(|(i, p)| (i, p.into_dyn())).collect()
 }

@@ -8,20 +8,19 @@
 use ir::node::NodeOutputId;
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{DataPattern, MatchCtx};
+use crate::pat::traits::{MatchCtx, Pattern};
 
 /// Post-match predicate that sees only the matched output.
 ///
-/// `inner` is a [`Pat`](crate::pat::Pat) (not `DynDataPat`) so the fluent
-/// builder API (`impl Into<Pat>`) can wrap either a data or control pattern
-/// uniformly; dispatch goes through
-/// [`crate::matcher::Matcher::match_output`].
+/// `inner` is a [`Pat`](crate::pat::Pat) so the fluent builder API
+/// (`impl Into<Pat>`) can wrap arbitrary patterns uniformly; dispatch goes
+/// through [`crate::matcher::Matcher::match_output`].
 pub struct WhenPat {
     pub(crate) inner: crate::pat::Pat,
     pub(crate) func: crate::pat::PredicateFn,
 }
 
-impl DataPattern for WhenPat {
+impl Pattern for WhenPat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let snap = b.clone();
         if !ctx.matcher.match_output(target, &self.inner, b) {
@@ -46,7 +45,7 @@ pub struct WhenMatchPat {
     pub(crate) func: crate::pat::MatchPredicateFn,
 }
 
-impl DataPattern for WhenMatchPat {
+impl Pattern for WhenMatchPat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let snap = b.clone();
         if !ctx.matcher.match_output(target, &self.inner, b) {

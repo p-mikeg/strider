@@ -1,16 +1,20 @@
 //! Generic control-level pattern. Covers `Call`, `CallOther`, `Return`, and
-//! `If` — the four control-level patterns whose target is a `NodeId` rather
-//! than a data `NodeOutputId`.  A single [`ControlNodePat`] struct tagged by
+//! `If` — the four control-level node kinds — under the single unified
+//! [`Pattern`] trait.  A single [`ControlNodePat`] struct tagged by
 //! [`CtrlKind`] dispatches all four.
+//!
+//! Target type is [`NodeOutputId`] (matching the rest of the engine); the
+//! `try_match` impl recovers the producing node via
+//! `ctx.graph.graph.get_node_from_output(target)` and forwards to
+//! [`Pattern::try_match_node`], which is the real workhorse.  Overriding
+//! `try_match_node` (rather than only `try_match`) also lets control
+//! patterns match zero-output semantic nodes like `Return`.
 
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::matcher::Bindings;
 use crate::matcher::walk;
-use crate::pat::Pat;
-use crate::pat::traits::{
-    CandidateKind, ControlPattern, DynCtrlPat, DynDataPat, MatchCtx,
-};
+use crate::pat::traits::{CandidateKind, DynPat, MatchCtx, Pattern};
 use crate::var::NodeVar;
 
 pub struct ControlNodePat {
@@ -20,30 +24,35 @@ pub struct ControlNodePat {
 
 pub enum CtrlKind {
     Call {
-        target: Option<DynDataPat>,
-        args: Vec<(usize, DynDataPat)>,
-        ret_outputs: Vec<(usize, DynDataPat)>,
+        target: Option<DynPat>,
+        args: Vec<(usize, DynPat)>,
+        ret_outputs: Vec<(usize, DynPat)>,
     },
     CallOther {
         user_op_id: Option<u64>,
-        args: Vec<(usize, DynDataPat)>,
+        args: Vec<(usize, DynPat)>,
     },
     Return {
-        preceded_by: Option<DynCtrlPat>,
-        ret_vals: Vec<(usize, DynDataPat)>,
+        preceded_by: Option<DynPat>,
+        ret_vals: Vec<(usize, DynPat)>,
     },
     If {
-        cond: Option<DynDataPat>,
-        true_branch: Option<DynCtrlPat>,
-        false_branch: Option<DynCtrlPat>,
+        cond: Option<DynPat>,
+        true_branch: Option<DynPat>,
+        false_branch: Option<DynPat>,
     },
 }
 
-impl ControlPattern for ControlNodePat {
-    fn try_match(&self, ctx: &MatchCtx, target: NodeId, b: &mut Bindings) -> bool {
+impl Pattern for ControlNodePat {
+    fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
+        let node = ctx.graph.graph.get_node_from_output(target);
+        self.try_match_node(ctx, node, b)
+    }
+
+    fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
         let graph = &ctx.graph.graph;
-        let kind = graph.node_kind(target);
-        let inputs: Vec<NodeOutputId> = graph.node_inputs(target).into_iter().collect();
+        let kind = graph.node_kind(node);
+        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
 
         match &self.kind {
             CtrlKind::Call {
@@ -61,7 +70,7 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !match_data(ctx, tgt_out, tgt_pat, b) {
+                    if !ctx.matcher.match_output_dyn(tgt_out, tgt_pat, b) {
                         *b = snap;
                         return false;
                     }
@@ -72,7 +81,7 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !match_data(ctx, arg_out, arg_pat, b) {
+                    if !ctx.matcher.match_output_dyn(arg_out, arg_pat, b) {
                         *b = snap;
                         return false;
                     }
@@ -80,13 +89,13 @@ impl ControlPattern for ControlNodePat {
 
                 // Call outputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
                 if !ret_outputs.is_empty() {
-                    let outputs = graph.node_outputs(target);
+                    let outputs = graph.node_outputs(node);
                     for (idx, out_pat) in ret_outputs {
                         let Some(&ret_out) = outputs.get(2 + idx) else {
                             *b = snap;
                             return false;
                         };
-                        if !match_data(ctx, ret_out, out_pat, b) {
+                        if !ctx.matcher.match_output_dyn(ret_out, out_pat, b) {
                             *b = snap;
                             return false;
                         }
@@ -94,7 +103,7 @@ impl ControlPattern for ControlNodePat {
                 }
 
                 if let Some(nv) = self.node_var
-                    && !b.bind_node_var(nv, target)
+                    && !b.bind_node_var(nv, node)
                 {
                     *b = snap;
                     return false;
@@ -122,14 +131,14 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !match_data(ctx, arg_out, arg_pat, b) {
+                    if !ctx.matcher.match_output_dyn(arg_out, arg_pat, b) {
                         *b = snap;
                         return false;
                     }
                 }
 
                 if let Some(nv) = self.node_var
-                    && !b.bind_node_var(nv, target)
+                    && !b.bind_node_var(nv, node)
                 {
                     *b = snap;
                     return false;
@@ -153,14 +162,12 @@ impl ControlPattern for ControlNodePat {
                     };
                     // One-step backward skip: walk through any transparent
                     // `ControlState` / `IfCase` producers until we reach a
-                    // semantic node, then match the inner ctrl pattern
-                    // against that node.  `skip_backward_transparent` returns
-                    // `ctrl_in` unchanged if the immediate producer is
-                    // already semantic.
+                    // semantic node, then match the inner pattern against
+                    // that node's output.  `skip_backward_transparent`
+                    // returns `ctrl_in` unchanged if the immediate producer
+                    // is already semantic.
                     let producer_out = walk::skip_backward_transparent(ctx.matcher, ctrl_in);
-                    let producer_node = ctx.graph.graph.get_node_from_output(producer_out);
-                    let wrapped = Pat::from_ctrl(call_pat.clone());
-                    if !ctx.matcher.match_node_id(producer_node, &wrapped, b) {
+                    if !ctx.matcher.match_output_dyn(producer_out, call_pat, b) {
                         *b = snap;
                         return false;
                     }
@@ -172,14 +179,14 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !match_data(ctx, rv_out, rv_pat, b) {
+                    if !ctx.matcher.match_output_dyn(rv_out, rv_pat, b) {
                         *b = snap;
                         return false;
                     }
                 }
 
                 if let Some(nv) = self.node_var
-                    && !b.bind_node_var(nv, target)
+                    && !b.bind_node_var(nv, node)
                 {
                     *b = snap;
                     return false;
@@ -202,31 +209,20 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !match_data(ctx, cond_out, cond_pat, b) {
+                    if !ctx.matcher.match_output_dyn(cond_out, cond_pat, b) {
                         *b = snap;
                         return false;
                     }
                 }
 
-                let outputs = graph.node_outputs(target);
+                let outputs = graph.node_outputs(node);
 
                 if let Some(tb_pat) = true_branch {
                     let Some(&true_ctrl) = outputs.get(0) else {
                         *b = snap;
                         return false;
                     };
-                    // One-step forward skip: advance past transparent
-                    // `ControlState` / `IfCase` consumers to the first
-                    // semantic node on the true branch.  `None` means a
-                    // dead-end (no consumer) or ambiguous fork (multiple
-                    // consumers) — treat as no match.
-                    let Some(successor_node) = skip_forward_to_semantic_node(ctx, true_ctrl)
-                    else {
-                        *b = snap;
-                        return false;
-                    };
-                    let wrapped = Pat::from_ctrl(tb_pat.clone());
-                    if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
+                    if !try_match_forward_branch(ctx, true_ctrl, tb_pat, b) {
                         *b = snap;
                         return false;
                     }
@@ -237,20 +233,14 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    let Some(successor_node) = skip_forward_to_semantic_node(ctx, false_ctrl)
-                    else {
-                        *b = snap;
-                        return false;
-                    };
-                    let wrapped = Pat::from_ctrl(fb_pat.clone());
-                    if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
+                    if !try_match_forward_branch(ctx, false_ctrl, fb_pat, b) {
                         *b = snap;
                         return false;
                     }
                 }
 
                 if let Some(nv) = self.node_var
-                    && !b.bind_node_var(nv, target)
+                    && !b.bind_node_var(nv, node)
                 {
                     *b = snap;
                     return false;
@@ -270,44 +260,37 @@ impl ControlPattern for ControlNodePat {
     }
 }
 
-/// Dispatch a data-level sub-pattern against a `NodeOutputId`.  Wraps the
-/// `DynDataPat` in a [`Pat`] so the existing
-/// [`crate::matcher::Matcher::match_output`] routing handles it uniformly.
-fn match_data(
+/// Advance `ctrl_out` past transparent nodes (`ControlState` / `IfCase`)
+/// and match `pat` against the first semantic node reached.
+///
+/// Uses [`walk::skip_forward_transparent`] first — that returns the first
+/// output of the reached semantic node, which is the most direct path and
+/// handles the common case cleanly.  When the semantic node has no
+/// outputs (e.g. a terminating `Return`) [`walk::skip_forward_transparent`]
+/// returns `None`; the fallback locates the semantic node itself via
+/// [`locate_forward_semantic_node`] and dispatches through
+/// [`Pattern::try_match_node`], which `ControlNodePat` overrides so
+/// patterns like `ret()` match zero-output nodes correctly.
+fn try_match_forward_branch(
     ctx: &MatchCtx,
-    out: NodeOutputId,
-    pat: &DynDataPat,
+    ctrl_out: NodeOutputId,
+    pat: &DynPat,
     b: &mut Bindings,
 ) -> bool {
-    let wrapped = Pat::from_dyn(pat.clone());
-    ctx.matcher.match_output(out, &wrapped, b)
+    if let Some(out) = walk::skip_forward_transparent(ctx.matcher, ctrl_out) {
+        return ctx.matcher.match_output_dyn(out, pat, b);
+    }
+    let Some(semantic_node) = locate_forward_semantic_node(ctx, ctrl_out) else {
+        return false;
+    };
+    pat.try_match_node(ctx, semantic_node, b)
 }
 
-/// Starting from `ctrl_out` (a Control-kind output on a branch edge), walk
-/// forward through transparent consumers (`ControlState` / `IfCase`) until
-/// reaching a semantic node, and return that semantic node's `NodeId`.
-///
-/// This is a node-returning counterpart to
-/// [`walk::skip_forward_transparent`], which returns the semantic node's
-/// first output.  The output-returning variant fails when the semantic node
-/// is a terminator with no outputs (e.g. `Return`); this variant succeeds in
-/// that case because callers (the `If.true_branch` / `If.false_branch` arms
-/// above) only need the node.
-///
-/// Returns `None` in the same dead-end / ambiguous-fork cases as
-/// [`walk::skip_forward_transparent`].
-fn skip_forward_to_semantic_node(ctx: &MatchCtx, ctrl_out: NodeOutputId) -> Option<NodeId> {
-    // Advance one transparent hop at a time by reusing the existing
-    // one-output-returning walker.  If it succeeds, resolve the output back
-    // to a node.  If it fails, the landed-on node may still be semantic but
-    // have no outputs — in that case we locate the semantic node directly
-    // via the consumers of the last-known transparent chain.
-    if let Some(out) = walk::skip_forward_transparent(ctx.matcher, ctrl_out) {
-        return Some(ctx.graph.graph.get_node_from_output(out));
-    }
-    // Fallback: manually walk transparent hops, returning the semantic node
-    // itself (whose `first_output` may be `None`).  Mirrors the transparency
-    // predicate used by `walk.rs`.
+/// Mirror of [`walk::skip_forward_transparent`] that returns the semantic
+/// node's [`NodeId`] instead of its first output.  Used when the semantic
+/// node has no outputs — the caller ([`try_match_forward_branch`]) needs
+/// the node.
+fn locate_forward_semantic_node(ctx: &MatchCtx, ctrl_out: NodeOutputId) -> Option<NodeId> {
     let mut out = ctrl_out;
     for _ in 0..64 {
         let consumers: Vec<_> = ctx.graph.graph.output_uses(out).collect();

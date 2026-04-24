@@ -13,7 +13,7 @@ use std::sync::Arc;
 use ir::node::{NodeId, NodeOutputId};
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{DataPattern, MatchCtx};
+use crate::pat::traits::{MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
@@ -53,9 +53,10 @@ pub enum InputsSpec {
     /// returns true and the node has exactly 2 inputs, both orderings are
     /// tried.
     ///
-    /// Sub-patterns are held as [`crate::pat::Pat`] (not `DynDataPat`) so
-    /// the fluent builder API (`impl Into<Pat>`) can compose them uniformly;
-    /// dispatch goes through [`crate::matcher::Matcher::match_output`].
+    /// Sub-patterns are held as [`crate::pat::Pat`] (not
+    /// [`DynPat`](crate::pat::traits::DynPat)) so the fluent builder API
+    /// (`impl Into<Pat>`) can compose them uniformly; dispatch goes through
+    /// [`crate::matcher::Matcher::match_output`].
     Fixed {
         pats: Vec<crate::pat::Pat>,
         commutative: CommutativeDecider,
@@ -100,7 +101,7 @@ impl InputsSpec {
     }
 }
 
-impl DataPattern for NodePat {
+impl Pattern for NodePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let node = ctx.graph.graph.get_node_from_output(target);
         let snap = b.clone();

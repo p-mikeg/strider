@@ -3,13 +3,13 @@
 use ir::node::NodeOutputId;
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{DataPattern, MatchCtx};
+use crate::pat::traits::{MatchCtx, Pattern};
 use crate::var::Var;
 
 /// Matches any output unconditionally.
 pub struct AnyPat;
 
-impl DataPattern for AnyPat {
+impl Pattern for AnyPat {
     fn try_match(&self, _: &MatchCtx, _: NodeOutputId, _: &mut Bindings) -> bool {
         true
     }
@@ -19,16 +19,15 @@ impl DataPattern for AnyPat {
 /// Produced by [`crate::pat::IntoPat::capture`] /
 /// [`crate::pat::Pat::capture_impl`].
 ///
-/// `inner` is stored as a [`Pat`](crate::pat::Pat) rather than a `DynDataPat`
-/// so the fluent builder API (`impl Into<Pat>`) can wrap either a data or
-/// control pattern uniformly; dispatch goes through
-/// [`crate::matcher::Matcher::match_output`].
+/// `inner` is stored as a [`Pat`](crate::pat::Pat) so the fluent builder
+/// API (`impl Into<Pat>`) can wrap arbitrary patterns uniformly; dispatch
+/// goes through [`crate::matcher::Matcher::match_output`].
 pub struct CapturePat {
     pub(crate) inner: crate::pat::Pat,
     pub(crate) var: Var,
 }
 
-impl DataPattern for CapturePat {
+impl Pattern for CapturePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         // Snapshot so that a failed `bind_var` after a successful inner
         // match leaves the bindings untouched.

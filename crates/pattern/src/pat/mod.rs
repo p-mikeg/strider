@@ -170,46 +170,26 @@ mod sealed {
 
 /// A graph pattern.  Cheap to clone — the inner data is reference-counted.
 #[derive(Clone)]
-pub struct Pat(PatInner);
-
-/// Internal representation of a [`Pat`].
-///
-/// Every pattern is either a data-level pattern (implements
-/// [`DataPattern`](crate::pat::traits::DataPattern), held in
-/// [`PatInner::Dyn`]) or a control-level pattern (implements
-/// [`ControlPattern`](crate::pat::traits::ControlPattern), held in
-/// [`PatInner::Ctrl`]).
-#[derive(Clone)]
-pub(crate) enum PatInner {
-    Dyn(crate::pat::traits::DynDataPat),
-    Ctrl(crate::pat::traits::DynCtrlPat),
-}
+pub struct Pat(crate::pat::traits::DynPat);
 
 impl Pat {
-    /// Constructor for data-level trait-based patterns.
-    pub(crate) fn from_dyn(d: crate::pat::traits::DynDataPat) -> Self {
-        Self(PatInner::Dyn(d))
+    /// Wrap a reference-counted [`Pattern`](crate::pat::traits::Pattern) as
+    /// a [`Pat`].
+    pub(crate) fn from_dyn(d: crate::pat::traits::DynPat) -> Self {
+        Self(d)
     }
 
-    /// Constructor for control-level trait-based patterns.
-    pub(crate) fn from_ctrl(d: crate::pat::traits::DynCtrlPat) -> Self {
-        Self(PatInner::Ctrl(d))
+    /// Borrow the inner [`DynPat`](crate::pat::traits::DynPat).
+    pub(crate) fn as_dyn(&self) -> &crate::pat::traits::DynPat {
+        &self.0
     }
 
-    /// Accessor for the trait-based data path.
-    pub(crate) fn as_dyn(&self) -> Option<&crate::pat::traits::DynDataPat> {
-        match &self.0 {
-            PatInner::Dyn(d) => Some(d),
-            PatInner::Ctrl(_) => None,
-        }
-    }
-
-    /// Accessor for the trait-based control path.
-    pub(crate) fn as_ctrl(&self) -> Option<&crate::pat::traits::DynCtrlPat> {
-        match &self.0 {
-            PatInner::Ctrl(d) => Some(d),
-            PatInner::Dyn(_) => None,
-        }
+    /// Consume this [`Pat`] and return its inner
+    /// [`DynPat`](crate::pat::traits::DynPat).  Used by builders that store
+    /// erased sub-patterns directly (avoids a wrap/unwrap on every
+    /// dispatch).
+    pub(crate) fn into_dyn(self) -> crate::pat::traits::DynPat {
+        self.0
     }
 
     /// After this pattern matches successfully, additionally bind the matched

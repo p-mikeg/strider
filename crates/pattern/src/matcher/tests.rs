@@ -106,11 +106,11 @@ fn float_var_conflict_fails() {
 
 // ── IDs are globally unique across types ──────────────────────────────────
 
-// ── Phase 1.1: Pat::Dyn dispatch smoke test ───────────────────────────────
+// ── Unified `Pattern` dispatch smoke test ─────────────────────────────────
 //
 // Constructs a `Pat::from_dyn` wrapping an `AnyPat` and confirms that
-// `Matcher::find_all` routes through the `DataPattern::try_match` path —
-// i.e. the new engine produces at least one match against a tiny graph.
+// `Matcher::find_all` routes through the `Pattern::try_match` path — i.e.
+// the engine produces at least one match against a tiny graph.
 
 #[test]
 fn dyn_pat_dispatch_routes_via_data_pattern() -> ir::Result<()> {
@@ -145,7 +145,7 @@ fn dyn_pat_dispatch_routes_via_data_pattern() -> ir::Result<()> {
     // the stable lower bound.
     assert!(
         hits.len() >= 3,
-        "Pat::Dyn → DataPattern::try_match should yield ≥3 matches, got {}",
+        "Pat → Pattern::try_match should yield ≥3 matches, got {}",
         hits.len()
     );
     Ok(())

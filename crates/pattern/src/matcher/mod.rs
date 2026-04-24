@@ -99,30 +99,18 @@ impl<'g> Matcher<'g> {
     /// for each.
     ///
     /// The search is exhaustive: every node is tried as a potential root.
-    /// Top-level `Call`, `CallOther`, `Return`, and `If` patterns use the
-    /// pre-indexed node lists (built lazily on first call) and skip the
-    /// others — routing is done through
-    /// [`crate::pat::traits::ControlPattern::candidate_kind`].
-    ///
-    /// Data patterns (NodePat) currently have no fast-path routing and fall
-    /// through to `all_nodes`. A later optimization could add
-    /// `candidate_kind` to [`crate::pat::traits::DataPattern`] to bring back
-    /// the `function_arg_nodes` fast path — deferred for now.
+    /// Patterns that advertise a [`CandidateKind`](crate::pat::traits::CandidateKind)
+    /// (`Call`, `CallOther`, `Return`, `If`) use the pre-indexed node lists
+    /// built lazily on first call; other patterns fall through to a full
+    /// scan.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let idx = self.index();
-        let candidates: &[NodeId] = if let Some(ctrl) = pat.as_ctrl() {
-            match ctrl.candidate_kind() {
-                Some(crate::pat::traits::CandidateKind::Call) => &idx.call_nodes,
-                Some(crate::pat::traits::CandidateKind::CallOther) => &idx.call_other_nodes,
-                Some(crate::pat::traits::CandidateKind::Return) => &idx.return_nodes,
-                Some(crate::pat::traits::CandidateKind::If) => &idx.if_nodes,
-                // `FunctionArg` is a data pattern, not a control pattern —
-                // reaching this arm would be a bug in a ControlPattern impl.
-                // Fall through to `all_nodes` defensively.
-                Some(crate::pat::traits::CandidateKind::FunctionArg) | None => &idx.all_nodes,
-            }
-        } else {
-            &idx.all_nodes
+        let candidates: &[NodeId] = match pat.as_dyn().candidate_kind() {
+            Some(crate::pat::traits::CandidateKind::Call) => &idx.call_nodes,
+            Some(crate::pat::traits::CandidateKind::CallOther) => &idx.call_other_nodes,
+            Some(crate::pat::traits::CandidateKind::Return) => &idx.return_nodes,
+            Some(crate::pat::traits::CandidateKind::If) => &idx.if_nodes,
+            Some(crate::pat::traits::CandidateKind::FunctionArg) | None => &idx.all_nodes,
         };
 
         candidates
@@ -212,8 +200,7 @@ impl<'g> Matcher<'g> {
     //
     // `match_output` / `match_node_id` are the single entry points combinators
     // call (via `MatchCtx.matcher`) when recursing into an inner `Pat`.  They
-    // forward directly to the pattern's `DataPattern::try_match` /
-    // `ControlPattern::try_match` impl.
+    // forward directly to the pattern's `Pattern::try_match` impl.
 
     /// Build a [`MatchCtx`](crate::pat::traits::MatchCtx) that carries both
     /// the graph and a back-reference to this matcher.  Combinators clone it
@@ -226,47 +213,50 @@ impl<'g> Matcher<'g> {
         }
     }
 
-    /// Match a `NodeOutputId` (data edge) against a pattern.  Control
-    /// patterns cannot match in a data context and return `false`.
+    /// Match a `NodeOutputId` against a pattern — single-line delegation to
+    /// the unified [`Pattern`](crate::pat::traits::Pattern) trait.
     pub(super) fn match_output(
         &self,
         output: NodeOutputId,
         pat: &Pat,
         bindings: &mut Bindings,
     ) -> bool {
-        if let Some(d) = pat.as_dyn() {
-            d.try_match(&self.ctx(), output, bindings)
-        } else {
-            // Ctrl patterns cannot match in a data context.
-            false
-        }
+        pat.as_dyn().try_match(&self.ctx(), output, bindings)
     }
 
-    /// Match a `NodeId` (control-level node) against a pattern.
-    ///
-    /// Dispatch:
-    /// * `Ctrl(d)` — direct [`crate::pat::traits::ControlPattern::try_match`]
-    ///   on the node.
-    /// * `Dyn(d)` — a data pattern used as a root candidate: try each output
-    ///   of the node against the data pattern.
+    /// Variant of [`Self::match_output`] that takes a raw
+    /// [`DynPat`](crate::pat::traits::DynPat), avoiding a [`Pat`] wrap/unwrap
+    /// when the caller is already holding the erased trait object (e.g.
+    /// `ControlNodePat`'s `CtrlKind` fields).
+    pub(crate) fn match_output_dyn(
+        &self,
+        output: NodeOutputId,
+        pat: &crate::pat::traits::DynPat,
+        bindings: &mut Bindings,
+    ) -> bool {
+        pat.try_match(&self.ctx(), output, bindings)
+    }
+
+    /// Match a `NodeId` against a pattern by iterating the node's outputs
+    /// and trying each one.  For control nodes, `output[0]` is the primary
+    /// control output and typically matches immediately when the pattern is
+    /// a `ControlNodePat`.  Bindings are snapshot/restored across each
+    /// attempt so a partial match on one output does not leak into the next.
     pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
-        let ctx = self.ctx();
-        if let Some(c) = pat.as_ctrl() {
-            return c.try_match(&ctx, node, bindings);
-        }
-        // `Pat` has exactly two variants (Dyn and Ctrl); if it isn't Ctrl it
-        // must be Dyn.  A data pattern used as a root candidate tries each
-        // output of the node against the data pattern.
-        let Some(d) = pat.as_dyn() else {
-            return false;
-        };
-        for out in self.fn_graph.graph.node_outputs(node).into_iter() {
-            let snap = bindings.clone();
-            if d.try_match(&ctx, out, bindings) {
-                return true;
-            }
-            *bindings = snap;
-        }
-        false
+        self.match_node_id_dyn(node, pat.as_dyn(), bindings)
+    }
+
+    /// [`Self::match_node_id`] against a raw [`DynPat`] — see
+    /// [`Self::match_output_dyn`].  Forwards to the pattern's
+    /// [`Pattern::try_match_node`](crate::pat::traits::Pattern::try_match_node)
+    /// which (via default impl) iterates the node's outputs, and which
+    /// `ControlNodePat` overrides to match zero-output nodes like `Return`.
+    pub(crate) fn match_node_id_dyn(
+        &self,
+        node: NodeId,
+        pat: &crate::pat::traits::DynPat,
+        bindings: &mut Bindings,
+    ) -> bool {
+        pat.try_match_node(&self.ctx(), node, bindings)
     }
 }
