@@ -102,6 +102,10 @@ fn preceded_by_no_match_when_no_call_precedes_return() -> ir::Result<()> {
 }
 
 #[test]
+#[ignore = "Step 3 switched `preceded_by` to one-step-direct semantics: the \
+           walk now stops at the first semantic predecessor (Call 0x2222) \
+           and cannot reach the earlier Call 0x1111. Revisit in the \
+           follow-up step (delete or rewrite with an explicit chain)."]
 fn preceded_by_finds_either_call_in_two_call_graph() -> ir::Result<()> {
     let g = graph_two_calls_return()?;
     let m = Matcher::new(&g);
@@ -192,6 +196,12 @@ fn if_pattern_no_match_in_flat_graph() -> ir::Result<()> {
 // ── contains / true_branch / false_branch ────────────────────────────────────
 
 #[test]
+#[ignore = "Step 3 one-step-direct semantics: the wrapping `contains(..)` \
+           shell is no longer peeled by `true_branch`, so the inner \
+           pattern sees `ContainsPat` as the target and fails. The \
+           equivalent new-API test is `true_branch(call().at(0x2345))` \
+           (single-hop). `contains` and this test are slated for deletion \
+           in the follow-up step."]
 fn true_branch_contains_call_matches() -> ir::Result<()> {
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);
@@ -220,6 +230,10 @@ fn true_branch_wrong_address_no_match() -> ir::Result<()> {
 }
 
 #[test]
+#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
+           peeled by `false_branch`. Equivalent new-API test: \
+           `false_branch(call().at(0x5678))`. Slated for deletion in the \
+           follow-up step."]
 fn false_branch_contains_call_matches() -> ir::Result<()> {
     let g = graph_if_with_call_in_false_branch()?;
     let m = Matcher::new(&g);
@@ -238,6 +252,11 @@ fn true_branch_no_match_when_call_only_in_false() -> ir::Result<()> {
 }
 
 #[test]
+#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
+           peeled by `true_branch`/`false_branch`. Equivalent new-API \
+           test: `true_branch(ret())`/`false_branch(ret())` (single-hop \
+           skip of the branch's ControlState lands directly on the Return). \
+           Slated for deletion in the follow-up step."]
 fn both_branches_contain_ret() -> ir::Result<()> {
     // In graph_if_branches both branches end in a return.
     let g = graph_if_branches()?;
@@ -250,6 +269,10 @@ fn both_branches_contain_ret() -> ir::Result<()> {
 }
 
 #[test]
+#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
+           peeled. Equivalent new-API test uses the inner `ret()` \
+           pattern directly (single-hop skip past the branch's \
+           ControlState). Slated for deletion in the follow-up step."]
 fn both_branches_constrained_simultaneously() -> ir::Result<()> {
     // Require the true branch to have a ret returning 10 AND the false branch
     // to have a ret returning 20.
@@ -301,6 +324,10 @@ fn capture_var_from_call_target_via_preceded_by() -> ir::Result<()> {
 }
 
 #[test]
+#[ignore = "Step 3 one-step-direct semantics: `contains(..)` is no longer \
+           peeled by `true_branch`. Equivalent new-API: \
+           `true_branch(call().target(var(tgt_v)))` (single-hop skip \
+           reaches the Call). Slated for deletion in the follow-up step."]
 fn capture_call_target_inside_true_branch() -> ir::Result<()> {
     let g = graph_if_with_call_in_true_branch()?;
     let m = Matcher::new(&g);

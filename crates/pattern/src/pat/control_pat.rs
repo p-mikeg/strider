@@ -3,12 +3,10 @@
 //! than a data `NodeOutputId`.  A single [`ControlNodePat`] struct tagged by
 //! [`CtrlKind`] dispatches all four.
 
-use std::collections::HashSet;
-
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::matcher::Bindings;
-use crate::matcher::traversal;
+use crate::matcher::walk;
 use crate::pat::Pat;
 use crate::pat::traits::{
     CandidateKind, ControlPattern, DynCtrlPat, DynDataPat, MatchCtx,
@@ -153,7 +151,16 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    if !preceded_by_search_ctrl(ctx, ctrl_in, call_pat, b) {
+                    // One-step backward skip: walk through any transparent
+                    // `ControlState` / `IfCase` producers until we reach a
+                    // semantic node, then match the inner ctrl pattern
+                    // against that node.  `skip_backward_transparent` returns
+                    // `ctrl_in` unchanged if the immediate producer is
+                    // already semantic.
+                    let producer_out = walk::skip_backward_transparent(ctx.matcher, ctrl_in);
+                    let producer_node = ctx.graph.graph.get_node_from_output(producer_out);
+                    let wrapped = Pat::from_ctrl(call_pat.clone());
+                    if !ctx.matcher.match_node_id(producer_node, &wrapped, b) {
                         *b = snap;
                         return false;
                     }
@@ -208,8 +215,20 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    let mut visited = HashSet::new();
-                    if !match_contains_ctrl(ctx, true_ctrl, tb_pat, b, &mut visited) {
+                    // One-step forward skip: advance past transparent
+                    // `ControlState` / `IfCase` consumers to the first
+                    // semantic node on the true branch.  `None` means a
+                    // dead-end (no consumer) or ambiguous fork (multiple
+                    // consumers) — treat as no match.
+                    let Some(successor_out) =
+                        walk::skip_forward_transparent(ctx.matcher, true_ctrl)
+                    else {
+                        *b = snap;
+                        return false;
+                    };
+                    let successor_node = ctx.graph.graph.get_node_from_output(successor_out);
+                    let wrapped = Pat::from_ctrl(tb_pat.clone());
+                    if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
                         *b = snap;
                         return false;
                     }
@@ -220,8 +239,15 @@ impl ControlPattern for ControlNodePat {
                         *b = snap;
                         return false;
                     };
-                    let mut visited = HashSet::new();
-                    if !match_contains_ctrl(ctx, false_ctrl, fb_pat, b, &mut visited) {
+                    let Some(successor_out) =
+                        walk::skip_forward_transparent(ctx.matcher, false_ctrl)
+                    else {
+                        *b = snap;
+                        return false;
+                    };
+                    let successor_node = ctx.graph.graph.get_node_from_output(successor_out);
+                    let wrapped = Pat::from_ctrl(fb_pat.clone());
+                    if !ctx.matcher.match_node_id(successor_node, &wrapped, b) {
                         *b = snap;
                         return false;
                     }
@@ -259,42 +285,4 @@ fn match_data(
 ) -> bool {
     let wrapped = Pat::from_dyn(pat.clone());
     ctx.matcher.match_output(out, &wrapped, b)
-}
-
-/// Forward walk along a ctrl chain.  Equivalent to
-/// [`traversal::match_contains`] but dispatches the inner pattern as a
-/// control-level [`DynCtrlPat`].
-///
-/// If `inner_pat` is a [`ContainsPat`](crate::pat::contains::ContainsPat),
-/// its inner is peeled first — the walker itself *is* the forward search,
-/// so an outer `Contains` shell would double-walk.
-fn match_contains_ctrl(
-    ctx: &MatchCtx,
-    ctrl_output: NodeOutputId,
-    inner_pat: &DynCtrlPat,
-    b: &mut Bindings,
-    visited: &mut HashSet<NodeId>,
-) -> bool {
-    let wrapped = match inner_pat.contains_inner() {
-        Some(peeled) => peeled.clone(),
-        None => Pat::from_ctrl(inner_pat.clone()),
-    };
-    traversal::match_contains_from_pat(ctx.matcher, ctrl_output, &wrapped, b, visited)
-}
-
-/// Backward walk from a ctrl input to find the preceding control-level node.
-///
-/// Peels any outer `Contains` shell, same rationale as
-/// [`match_contains_ctrl`].
-fn preceded_by_search_ctrl(
-    ctx: &MatchCtx,
-    ctrl_output: NodeOutputId,
-    call_pat: &DynCtrlPat,
-    b: &mut Bindings,
-) -> bool {
-    let wrapped = match call_pat.contains_inner() {
-        Some(peeled) => peeled.clone(),
-        None => Pat::from_ctrl(call_pat.clone()),
-    };
-    traversal::preceded_by_search_from_pat(ctx.matcher, ctrl_output, &wrapped, b)
 }

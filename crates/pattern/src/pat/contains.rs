@@ -15,6 +15,10 @@ use crate::pat::Pat;
 use crate::pat::traits::{ControlPattern, MatchCtx};
 
 pub struct ContainsPat {
+    // Kept for the `contains_inner` override even though the Step 3 rewrite
+    // removed the last real consumer of it.  `ContainsPat` itself goes away
+    // in the follow-up step.
+    #[allow(dead_code)]
     pub(crate) inner: Pat,
 }
 

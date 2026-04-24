@@ -4,6 +4,13 @@
 //! inner pattern), `preceded_by_search` (backward walk from a ctrl input to
 //! find a matching Call node), and `first_ctrl_output` (fetch the Control
 //! output of a node, if any).
+//!
+//! As of the Step 3 refactor (switch to one-step-direct semantics via
+//! `matcher/walk.rs`), these helpers are no longer called by
+//! `ControlNodePat::try_match`.  They remain live for `ContainsPat` which
+//! will be deleted in the follow-up step, at which point this whole module
+//! goes with it.  `#[allow(dead_code)]` silences the transitional warnings.
+#![allow(dead_code)]
 
 use std::collections::HashSet;
 
