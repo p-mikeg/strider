@@ -274,3 +274,67 @@ fn elf_exec_segments_include_pf_x_and_exclude_others() {
     assert_eq!(regions.len(), 1);
     assert_eq!(regions[0].start_addr(), 0x1000);
 }
+
+// ── Task 1: a FILTER-REJECTED malformed section is silent, not an error ──
+
+/// Pinned contract: when the filter rejects a section, the converter must
+/// NOT call `section.data()` on it — so a malformed rejected section
+/// cannot spuriously surface as an `ErrorKind::Object(_)`.
+///
+/// This is the complement of `elf_sections_to_mem_regions_propagates_data_error`:
+/// that test uses `filter: |_| true` and pins the "accepted-and-malformed ⇒
+/// error" rule; this test uses `filter: |_| false` and pins the
+/// "rejected-and-malformed ⇒ empty Ok" rule. Together they lock in
+/// filter-before-data semantics.
+#[test]
+fn elf_sections_to_mem_regions_skips_rejected_malformed_section() {
+    use object::Endianness;
+    use object::elf;
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let name = w.add_section_name(b".broken");
+        let _sec = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+        w.write_shstrtab();
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0x1000,
+            sh_offset: 0xdead_beef, // past EOF → data() would fail
+            sh_size: 4,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    let obj = parse(&buf);
+
+    // filter rejects everything, including the broken section.
+    // The converter must NOT call `section.data()` on a rejected section,
+    // so no Object(_) error surfaces.
+    let regions = elf_sections_to_mem_regions(&obj, |_| false)
+        .expect("filter-rejected malformed section must not surface an error");
+    assert!(regions.is_empty(), "nothing was accepted");
+}

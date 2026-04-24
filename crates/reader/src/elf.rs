@@ -63,17 +63,23 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if any
-/// segment's file-backed data cannot be read. Empty-data segments are
-/// skipped rather than reported.
+/// Returns an error wrapping the underlying `object::Error` if a
+/// segment accepted by `filter` has file-backed data that cannot be
+/// read. Segments rejected by `filter` are never read, so malformed
+/// rejected segments do not surface as errors. Accepted empty-data
+/// segments (e.g. `SHT_NOBITS`-equivalents) are skipped rather than
+/// reported.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for seg in obj.segments() {
+        if !filter(&seg) {
+            continue;
+        }
         let data = seg.data()?;
-        if data.is_empty() || !filter(&seg) {
+        if data.is_empty() {
             continue;
         }
         out.push(MemRegion::new(seg.address(), data.to_vec())?);
@@ -91,17 +97,23 @@ pub fn elf_segments_to_mem_regions(
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if any
-/// section's file-backed data cannot be read. Empty-data sections are
-/// skipped rather than reported.
+/// Returns an error wrapping the underlying `object::Error` if a
+/// section accepted by `filter` has file-backed data that cannot be
+/// read. Sections rejected by `filter` are never read, so malformed
+/// rejected sections do not surface as errors. Accepted empty-data
+/// sections (e.g. `SHT_NOBITS`-equivalents) are skipped rather than
+/// reported.
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for sec in obj.sections() {
+        if !filter(&sec) {
+            continue;
+        }
         let data = sec.data()?;
-        if data.is_empty() || !filter(&sec) {
+        if data.is_empty() {
             continue;
         }
         out.push(MemRegion::new(sec.address(), data.to_vec())?);
