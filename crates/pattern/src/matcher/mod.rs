@@ -14,9 +14,6 @@ pub(crate) mod commutativity;
 mod match_result;
 pub(crate) mod walk;
 
-#[cfg(test)]
-mod tests;
-
 pub use bindings::Bindings;
 pub use match_result::Match;
 

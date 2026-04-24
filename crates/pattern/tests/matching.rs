@@ -47,5 +47,8 @@ mod captures_and_predicates;
 #[path = "matching/matcher_api.rs"]
 mod matcher_api;
 
+#[path = "matching/bindings.rs"]
+mod bindings;
+
 #[path = "matching/rewrite.rs"]
 mod rewrite;
