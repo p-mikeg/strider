@@ -68,7 +68,7 @@ mod pat;
 mod rewrite;
 mod var;
 
-pub use rewrite::{BoxedRule, RewriteOutcome, apply_rules_in_order, boxed_rule, rewrite_rule};
+pub use rewrite::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
 pub use pat::traits::{BuildCtx, BuildOutcome};
 pub use pat::ctor::consts::{FromCtx, first_value_input_type};
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};

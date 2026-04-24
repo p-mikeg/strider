@@ -1,22 +1,13 @@
 //! Rule composition: [`rewrite_rule`], [`apply_rules_in_order`], [`BoxedRule`],
-//! [`boxed_rule`], and the [`RewriteOutcome`] outcome enum.
+//! [`boxed_rule`].
 
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeOutputId};
+use ir::node::NodeId;
 
 use crate::error::Result;
 use crate::matcher::Matcher;
 use crate::pat::Pat;
 use crate::pat::traits::{BuildCtx, BuildOutcome};
-
-/// Outcome of a single rewrite rule firing.
-pub enum RewriteOutcome {
-    /// Redirect the root's single value output to this [`NodeOutputId`].
-    RedirectTo(NodeOutputId),
-    /// The rule decided not to apply after all.  The caller leaves the graph
-    /// untouched and reports "no change".
-    Skip,
-}
 
 /// Build a rewrite-rule closure from an LHS and RHS [`Pat`].
 ///

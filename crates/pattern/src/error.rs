@@ -36,9 +36,9 @@ strider_error::define_error! {
         /// Signal from a rewrite-rule RHS closure that the rule doesn't apply
         /// after all.  Used by partial-oracle helpers (e.g. `eval_int_binary`
         /// on divide-by-zero) that need to opt out without surfacing a hard
-        /// error.  The [`crate::build::rewrite_rule`] interpreter converts
-        /// this error back to [`crate::build::RewriteOutcome::Skip`]; every
-        /// other error variant propagates as a real failure.
+        /// error.  The [`crate::rewrite_rule`] interpreter converts this
+        /// error back to "no change"; every other error variant propagates
+        /// as a real failure.
         #[error("rewrite rule opted to skip")]
         RewriteSkip,
 
