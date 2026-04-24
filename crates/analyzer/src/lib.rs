@@ -36,4 +36,4 @@ mod utils;
 
 pub use analyzer::Analyzer;
 pub use error::{Error, ErrorKind, Result};
-pub use target::{BuiltCallingConvention, CallingConvention, Endianess, SleighArch};
+pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

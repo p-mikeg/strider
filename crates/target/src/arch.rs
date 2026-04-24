@@ -1,6 +1,6 @@
 /// The byte order used by an architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Endianess {
+pub enum Endianness {
     /// Least-significant byte at the lowest address (x86, AArch64 LE, …).
     Little,
     /// Most-significant byte at the lowest address (MIPS BE, AArch64 BE, …).
@@ -19,7 +19,7 @@ pub struct SleighArch {
     /// The `.pspec` processor specification (register and space definitions).
     pub pspec: rsleigh::pspec::PSpec,
     /// The byte order of this architecture.
-    pub endianess: Endianess,
+    pub endianness: Endianness,
     /// The Sleigh register name of the hardware stack pointer.
     pub stack_ptr_reg_name: &'static str,
 }
@@ -30,7 +30,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64,
             pspec: rsleigh::pspec::PSPEC_X86_64,
-            endianess: Endianess::Little,
+            endianness: Endianness::Little,
             stack_ptr_reg_name: "RSP",
         }
     }
@@ -40,7 +40,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86,
             pspec: rsleigh::pspec::PSPEC_X86,
-            endianess: Endianess::Little,
+            endianness: Endianness::Little,
             stack_ptr_reg_name: "ESP",
         }
     }
@@ -50,7 +50,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE,
             pspec: rsleigh::pspec::PSPEC_MIPS32,
-            endianess: Endianess::Big,
+            endianness: Endianness::Big,
             stack_ptr_reg_name: "sp",
         }
     }
@@ -60,7 +60,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE,
             pspec: rsleigh::pspec::PSPEC_MIPS32,
-            endianess: Endianess::Little,
+            endianness: Endianness::Little,
             stack_ptr_reg_name: "sp",
         }
     }
@@ -74,7 +74,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
             pspec: rsleigh::pspec::PSPEC_ARM_V45,
-            endianess: Endianess::Little,
+            endianness: Endianness::Little,
             stack_ptr_reg_name: "sp",
         }
     }
@@ -84,7 +84,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64,
             pspec: rsleigh::pspec::PSPEC_AARCH64,
-            endianess: Endianess::Little,
+            endianness: Endianness::Little,
             stack_ptr_reg_name: "sp",
         }
     }
@@ -94,7 +94,7 @@ impl SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
             pspec: rsleigh::pspec::PSPEC_AARCH64,
-            endianess: Endianess::Big,
+            endianness: Endianness::Big,
             stack_ptr_reg_name: "sp",
         }
     }

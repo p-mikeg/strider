@@ -62,9 +62,9 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         reg: &rsleigh::Vn,
         container_reg: &rsleigh::Vn,
     ) -> u64 {
-        match self.analyzer.arch.endianess {
-            crate::Endianess::Little => 8 * (reg.addr.off - container_reg.addr.off),
-            crate::Endianess::Big => {
+        match self.analyzer.arch.endianness {
+            crate::Endianness::Little => 8 * (reg.addr.off - container_reg.addr.off),
+            crate::Endianness::Big => {
                 8 * (container_reg.size as u64 - (reg.addr.off - container_reg.addr.off))
             }
         }

@@ -18,6 +18,6 @@ pub mod arch;
 pub mod calling_convention;
 pub mod error;
 
-pub use arch::{Endianess, SleighArch};
+pub use arch::{Endianness, SleighArch};
 pub use calling_convention::{BuiltCallingConvention, CallingConvention};
 pub use error::{Error, ErrorKind, Result};
