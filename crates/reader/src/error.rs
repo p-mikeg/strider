@@ -16,11 +16,6 @@ strider_error::define_error! {
         /// An `object` crate error occurred while parsing or loading an ELF.
         #[error("failed to parse ELF: {0}")]
         Object(#[from] object::Error),
-
-        /// A test assertion failed. Exists so tests can return `Result<(), Error>`
-        /// instead of using `panic!`.
-        #[error("assertion failed: {0}")]
-        AssertionFailed(String),
     }
 }
 

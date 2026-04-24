@@ -30,13 +30,6 @@ fn not_mapped_carries_traceback_and_address() {
     assert!(matches!(err.kind(), ErrorKind::NotMapped(addr) if *addr == 0xdead_beef));
 }
 
-#[test]
-fn assertion_failed_carries_traceback_and_message() {
-    let err: Error = ErrorKind::AssertionFailed("boom".into()).into();
-    assert_has_traceback(&err);
-    assert!(err.to_string().contains("boom"), "display: {err}");
-}
-
 // ── From<io::Error> path ──────────────────────────────────────────────────
 
 #[test]
