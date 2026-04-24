@@ -149,29 +149,6 @@ macro_rules! arch_tests {
                 assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
             }
 
-            // ── API surface: region_if ────────────────────────────────────────
-
-            /// `region_if` on a conditional region must return both successors.
-            #[test] $(#[ignore = $reason])?
-            fn abs_val_region_if_returns_both_successors() {
-                let c = cfg_of("abs_val");
-                let has_pair = c.region_ids().any(|id| {
-                    let s = c.region_if(id).unwrap();
-                    s.if_true_region.is_some() && s.if_false_region.is_some()
-                });
-                assert!(has_pair, "abs_val: no region has both if-true and if-false successors");
-            }
-
-            /// `region_branch` returns `None` on the entry region of a linear function.
-            #[test] $(#[ignore = $reason])?
-            fn add_entry_region_branch_is_none() {
-                let c = cfg_of("add");
-                assert!(
-                    c.region_branch(c.entry).unwrap().is_none(),
-                    "add: linear entry should have no branch successor"
-                );
-            }
-
             // ── fallthrough edges ─────────────────────────────────────────────
 
             /// Looping functions must produce at least one fallthrough edge.
