@@ -909,3 +909,149 @@ fn matcher_function_args_iterates_all() {
     assert_eq!(collected, vec![0]);
 }
 
+// ── One-step skip semantics ───────────────────────────────────────────────────
+//
+// Coverage for the new logic introduced by the trait-merge + one-step-skip
+// refactor: `true_branch`/`false_branch`/`preceded_by` skip transparent SSA
+// plumbing (`ControlState`, `IfCase`) but stop at any semantic node (`Call`,
+// `Return`, `If`, `Load`, `Store`, …).  These tests also exercise the unified
+// `Pattern` trait dispatch — data sub-patterns nested inside control patterns
+// must still evaluate correctly without the deleted `PatAsData` adapter.
+
+#[test]
+fn true_branch_skips_control_state_to_reach_call() -> ir::Result<()> {
+    // Entry → If → (true-ctrl) → ControlState → Call(0x2345) → Return
+    let g = graph_if_with_call_in_true_branch()?;
+    let m = Matcher::new(&g);
+
+    // Unconstrained call reached through the transparent ControlState.
+    let hits_any = m.find_all(&if_node().true_branch(call()).into());
+    assert_eq!(hits_any.len(), 1, "true branch must skip CS and reach Call");
+
+    // Same walk, constrained to the specific call target.
+    let hits_addr = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
+    assert_eq!(hits_addr.len(), 1, "constrained target still matches");
+    Ok(())
+}
+
+#[test]
+fn true_branch_stops_at_first_semantic_node() -> ir::Result<()> {
+    // Entry → If → (true-ctrl) → ControlState → Call(0x1111) → Return.
+    //
+    // A forward walk from `If`'s true ctrl output must land on the first
+    // semantic node it meets — the Call — and NOT walk through it.  We
+    // therefore expect a match for `at(0x1111)` (the landed-on Call) and no
+    // match for any call() constraint that doesn't refer to that Call.
+    let g = graph_if_with_call_in_true_branch()?;
+    let m = Matcher::new(&g);
+
+    // Wrong target: there is no call with target 0x2222 on the true branch,
+    // and the walk does NOT transparently pass through Call(0x2345) to look
+    // for further Calls beyond it.
+    let hits_wrong = m.find_all(&if_node().true_branch(call().at(0x2222)).into());
+    assert!(
+        hits_wrong.is_empty(),
+        "walk must stop at Call(0x2345); Call must not be treated as transparent"
+    );
+
+    // Sanity: the actual target does match.
+    let hits_right = m.find_all(&if_node().true_branch(call().at(0x2345)).into());
+    assert_eq!(hits_right.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn preceded_by_skips_control_state() -> ir::Result<()> {
+    // Entry → Call(0x1234) → ControlState → Return.
+    //
+    // `graph_call_return` puts both the Call and the Return in the same
+    // region, so the `Return`'s control input is produced by a
+    // `ControlState` sitting between the Call and the Return (the region's
+    // join node).  The one-step-backward walk must skip that ControlState
+    // and land on the Call.
+    let g = graph_call_return()?;
+    let m = Matcher::new(&g);
+
+    let hits_any = m.find_all(&ret().preceded_by(call()).into());
+    assert_eq!(
+        hits_any.len(),
+        1,
+        "preceded_by must skip the ControlState and reach the Call"
+    );
+
+    let hits_addr = m.find_all(&ret().preceded_by(call().at(0x1234)).into());
+    assert_eq!(hits_addr.len(), 1, "constrained target still matches");
+    Ok(())
+}
+
+#[test]
+fn preceded_by_dead_end_returns_no_match() -> ir::Result<()> {
+    // `graph_if_branches` has two Return nodes, neither preceded by a Call
+    // on its control chain — the ctrl edge goes back through ControlState
+    // to an `IfCase` / `If`, not to a Call.  The pattern must cleanly fail
+    // (no match, no panic).
+    let g = graph_if_branches()?;
+    let m = Matcher::new(&g);
+    let hits = m.find_all(&ret().preceded_by(call()).into());
+    assert!(
+        hits.is_empty(),
+        "no Call exists on the ctrl chain preceding the Return"
+    );
+    Ok(())
+}
+
+#[test]
+fn find_all_call_still_uses_pre_indexed_list() -> ir::Result<()> {
+    // Sanity check for `candidate_kind()` routing survival across the trait
+    // merge.  The Matcher pre-indexes `Call` nodes; `find_all` on a
+    // `CallPat` must use that index and only consider Call roots.  A graph
+    // with a single Call at 0x1234 (plus an `IntConst(0x1234)` node that
+    // happens to share the same integer value) would produce a false
+    // positive if the routing fell through to a generic all-nodes scan.
+    let g = graph_call_return()?;
+    let m = Matcher::new(&g);
+
+    // Exact address match: one Call at 0x1234.
+    let hits = m.find_all(&call().at(0x1234).into());
+    assert_eq!(hits.len(), 1);
+    assert!(matches!(g.graph.node_kind(hits[0].root), NodeKind::Call));
+
+    // Non-matching address: the graph also contains an `IntConst(0x1234)`
+    // (the Call's target).  If routing were broken and the scan fell
+    // through to all nodes, the IntConst might be considered a candidate
+    // root.  It never matches `call()`, so the correct answer is 0.
+    let hits_wrong = m.find_all(&call().at(0xDEAD).into());
+    assert!(hits_wrong.is_empty());
+    Ok(())
+}
+
+#[test]
+fn call_with_int_const_arg_matches_via_unified_dispatch() -> ir::Result<()> {
+    // Sanity-check that data sub-patterns (`int_const(5)`) still evaluate
+    // correctly when nested inside a control pattern (`call().arg(...)`)
+    // through the unified `Pattern` trait.  Before the refactor this path
+    // went through a `PatAsData` wrapper; post-refactor it's direct
+    // trait dispatch.
+    //
+    // Graph: Entry → Call(target=0x1234, arg0=IntConst(5)) → Return.
+    let arg_vn = make_reg_vn(0, 8);
+    let mut b = ir::FunctionBuilder::new_raw(vec![arg_vn], &[arg_vn], &[], &[], None, 0)?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    let c5 = b.build_uint64_const(5);
+    b.write_variable(&arg_vn, c5)?;
+    let tgt = b.build_uint64_const(0x1234);
+    b.build_call(tgt)?;
+    b.build_return(None, &[])?;
+    let g = b.build()?;
+    let m = Matcher::new(&g);
+
+    let hits = m.find_all(&call().at(0x1234).arg(0, int_const(5)).into());
+    assert_eq!(hits.len(), 1, "nested data pattern must match via unified dispatch");
+
+    let hits_wrong = m.find_all(&call().at(0x1234).arg(0, int_const(999)).into());
+    assert!(hits_wrong.is_empty(), "wrong arg value must not match");
+    Ok(())
+}
+
