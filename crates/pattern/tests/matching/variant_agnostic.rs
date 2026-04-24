@@ -1,420 +1,293 @@
+//! Variant-agnostic `*_any` constructors.
+//!
+//! Each `*_any` constructor matches any variant in its op family and binds
+//! the actual operator to a typed op-capture variable (`IntBinaryOpVar` etc.).
+//! These tests verify:
+//!   * every op family has a working `*_any` ctor;
+//!   * the matched op variant is retrievable via `match.get_*_op`;
+//!   * `*_any` still honours family membership (int_binary_any won't match
+//!     a bool op);
+//!   * value captures (`.capture(Var)`) compose with op-variant capture.
+
+use ir::node::NodeOutputType;
 use ir::{
-    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder,
-    IntBinaryOp, IntCmpOp, IntUnaryOp,
-    node::NodeOutputType,
+    BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+    IntUnaryOp,
 };
 use pattern::*;
 
-use super::common::*;
+use super::support::{Tb, assertions as a};
 
-// ── Variant-agnostic op capture tests (Phase A2) ──────────────────────────────
+// ── Int binary ────────────────────────────────────────────────────────────────
 
-// ── int_binary_any ────────────────────────────────────────────────────────────
-
-/// Positive match: `int_binary_any` on `Add(5, 3)` captures `IntBinaryOp::Add`.
 #[test]
-fn int_binary_any_captures_add_variant() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = IntBinaryOpVar::new();
-    let hits = m.find_all(&int_binary_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one IntBinaryOp node (Add) in graph");
-    assert_eq!(
-        hits[0].get_int_binary_op(op_var),
-        Some(IntBinaryOp::Add),
-        "captured op must be Add"
+fn int_binary_any_captures_each_variant() {
+    for op in [
+        IntBinaryOp::Add,
+        IntBinaryOp::Sub,
+        IntBinaryOp::Mul,
+        IntBinaryOp::Xor,
+        IntBinaryOp::ShiftLeft,
+    ] {
+        let mut t = Tb::empty();
+        let l = t.u64(5);
+        let r = t.u64(3);
+        let v = t.int_bin(l, r, op);
+        let g = t.ret_val(v);
+
+        let ov = IntBinaryOpVar::new();
+        let m = a::unique(&g, int_binary_any(ov, int_const(5), int_const(3)));
+        assert_eq!(m.get_int_binary_op(ov), Some(op));
+    }
+}
+
+#[test]
+fn int_binary_any_retries_swap_only_for_commutative() {
+    // Commutative ops: swap should match.
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let v = t.add(l, r);
+    let g = t.ret_val(v);
+    let ov = IntBinaryOpVar::new();
+    a::matches(&g, int_binary_any(ov, int_const(3), int_const(5)), 1);
+
+    // Non-commutative op: swap must NOT match.
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let v = t.sub(l, r);
+    let g = t.ret_val(v);
+    let ov = IntBinaryOpVar::new();
+    a::none(&g, int_binary_any(ov, int_const(3), int_const(5)));
+}
+
+// ── Int unary ────────────────────────────────────────────────────────────────
+
+#[test]
+fn int_unary_any_captures_variant() {
+    for op in [IntUnaryOp::Neg, IntUnaryOp::Not] {
+        let mut t = Tb::empty();
+        let v = t.u64(42);
+        let v = t.int_un(v, op);
+        let g = t.ret_val(v);
+
+        let ov = IntUnaryOpVar::new();
+        let m = a::unique(&g, int_unary_any(ov, int_const(42)));
+        assert_eq!(m.get_int_unary_op(ov), Some(op));
+    }
+}
+
+// ── Int comparison ───────────────────────────────────────────────────────────
+
+#[test]
+fn int_cmp_any_captures_variant() {
+    for op in [
+        IntCmpOp::Equal,
+        IntCmpOp::Less,
+        IntCmpOp::Sless,
+        IntCmpOp::Carry,
+    ] {
+        let mut t = Tb::empty();
+        let l = t.u64(5);
+        let r = t.u64(3);
+        let c = t.int_cmp(l, r, op);
+        let cast = t.as_int(c, NodeOutputType::U64);
+        let g = t.ret_val(cast);
+
+        let ov = IntCmpOpVar::new();
+        let m = a::unique(&g, int_cmp_any(ov, int_const(5), int_const(3)));
+        assert_eq!(m.get_int_cmp_op(ov), Some(op));
+    }
+}
+
+#[test]
+fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
+    // Equal is commutative → swap matches.
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let c = t.int_cmp(l, r, IntCmpOp::Equal);
+    let cast = t.as_int(c, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+    let ov = IntCmpOpVar::new();
+    a::matches(&g, int_cmp_any(ov, int_const(3), int_const(5)), 1);
+
+    // Less is NOT commutative → swap rejects.
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let c = t.int_cmp(l, r, IntCmpOp::Less);
+    let cast = t.as_int(c, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+    let ov = IntCmpOpVar::new();
+    a::none(&g, int_cmp_any(ov, int_const(3), int_const(5)));
+}
+
+#[test]
+fn float_cmp_any_does_not_retry_swap() {
+    // `float_cmp_any` uses fixed_ordered — no commutativity retry at all.
+    let mut t = Tb::empty();
+    let l = t.f64(1.0);
+    let r = t.f64(2.0);
+    let c = t.fcmp(l, r, FloatCmpOp::Equal);
+    let cast = t.as_int(c, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+
+    let ov = FloatCmpOpVar::new();
+    a::none(
+        &g,
+        float_cmp_any(ov, float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits())),
     );
-    Ok(())
 }
 
-/// Positive match: `int_binary_any` on `Sub(5, 3)` captures `IntBinaryOp::Sub`.
+// ── Bool binary / unary ──────────────────────────────────────────────────────
+
 #[test]
-fn int_binary_any_captures_sub_variant() -> ir::Result<()> {
-    let g = graph_sub_5_3()?;
-    let m = Matcher::new(&g);
-    let op_var = IntBinaryOpVar::new();
-    let hits = m.find_all(&int_binary_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one IntBinaryOp node (Sub) in graph");
-    assert_eq!(
-        hits[0].get_int_binary_op(op_var),
-        Some(IntBinaryOp::Sub),
-        "captured op must be Sub"
-    );
-    Ok(())
+fn bool_binary_any_captures_variant() {
+    for op in [BoolBinaryOp::And, BoolBinaryOp::Or, BoolBinaryOp::Xor] {
+        let mut t = Tb::empty();
+        let a_ = t.boolean(true);
+        let b_ = t.boolean(false);
+        let c = t.bool_bin(a_, b_, op);
+        let cast = t.as_int(c, NodeOutputType::U64);
+        let g = t.ret_val(cast);
+
+        let ov = BoolBinaryOpVar::new();
+        let m = a::unique(&g, bool_binary_any(ov, bool_const(true), bool_const(false)));
+        assert_eq!(m.get_bool_binary_op(ov), Some(op));
+    }
 }
 
-/// `int_binary_any` does NOT match an `IntCmpOp` node.
 #[test]
-fn int_binary_any_does_not_match_cmp_node() -> ir::Result<()> {
-    let g = graph_if_branches()?;
-    let m = Matcher::new(&g);
-    let op_var = IntBinaryOpVar::new();
-    // graph_if_branches has IntCmpOp::Equal but no bare IntBinaryOp node in the
-    // preorder as a root node matching int_binary_any.
-    // find_all will walk all nodes; IntCmpOp is a different NodeKind so no match.
-    let hits = m.find_all(&int_binary_any(op_var, int_const(4), int_const(1)));
-    assert!(
-        hits.is_empty(),
-        "int_binary_any must not match IntCmpOp nodes"
-    );
-    Ok(())
+fn bool_unary_any_captures_variant() {
+    let mut t = Tb::empty();
+    let v = t.boolean(true);
+    let v = t.bool_un(v, BoolUnaryOp::Neg);
+    let cast = t.as_int(v, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+
+    let ov = BoolUnaryOpVar::new();
+    let m = a::unique(&g, bool_unary_any(ov, bool_const(true)));
+    assert_eq!(m.get_bool_unary_op(ov), Some(BoolUnaryOp::Neg));
 }
 
-/// Commutativity: `int_binary_any(op, int_const(3), int_const(5))` matches
-/// `Add(5, 3)` because Add is commutative.
+// ── Float binary / unary / cmp ───────────────────────────────────────────────
+
 #[test]
-fn int_binary_any_commutative_add_reversed() -> ir::Result<()> {
-    let g = graph_add_5_3()?;
-    let m = Matcher::new(&g);
-    let op_var = IntBinaryOpVar::new();
-    let hits = m.find_all(&int_binary_any(op_var, int_const(3), int_const(5)));
-    assert_eq!(hits.len(), 1, "commutative Add must match reversed operands");
-    assert_eq!(hits[0].get_int_binary_op(op_var), Some(IntBinaryOp::Add));
-    Ok(())
+fn float_binary_any_captures_variant() {
+    for op in [
+        FloatBinaryOp::Add,
+        FloatBinaryOp::Sub,
+        FloatBinaryOp::Mul,
+        FloatBinaryOp::Div,
+    ] {
+        let mut t = Tb::empty();
+        let l = t.f64(1.0);
+        let r = t.f64(2.0);
+        let v = t.fbin(l, r, op, NodeOutputType::F64);
+        let cast = t.float_to_int(v, NodeOutputType::U64);
+        let g = t.ret_val(cast);
+
+        let ov = FloatBinaryOpVar::new();
+        let m = a::unique(
+            &g,
+            float_binary_any(ov, float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())),
+        );
+        assert_eq!(m.get_float_binary_op(ov), Some(op));
+    }
 }
 
-/// Non-commutativity: `int_binary_any(op, int_const(3), int_const(5))` does
-/// NOT match `Sub(5, 3)` — Sub is not commutative.
 #[test]
-fn int_binary_any_non_commutative_sub_wrong_order_no_match() -> ir::Result<()> {
-    let g = graph_sub_5_3()?;
-    let m = Matcher::new(&g);
-    let op_var = IntBinaryOpVar::new();
-    // Sub is not commutative: pattern (3, 5) must not match node (5, 3).
-    let hits = m.find_all(&int_binary_any(op_var, int_const(3), int_const(5)));
-    assert!(
-        hits.is_empty(),
-        "Sub is not commutative; reversed operands must not match"
-    );
-    Ok(())
+fn float_unary_any_captures_variant() {
+    for op in [
+        FloatUnaryOp::Neg,
+        FloatUnaryOp::Abs,
+        FloatUnaryOp::Sqrt,
+        FloatUnaryOp::Ceil,
+    ] {
+        let mut t = Tb::empty();
+        let v = t.f64(9.0);
+        let v = t.fun(v, op, NodeOutputType::F64);
+        let cast = t.float_to_int(v, NodeOutputType::U64);
+        let g = t.ret_val(cast);
+
+        let ov = FloatUnaryOpVar::new();
+        let m = a::unique(&g, float_unary_any(ov, float_const(9.0f64.to_bits())));
+        assert_eq!(m.get_float_unary_op(ov), Some(op));
+    }
 }
 
-// ── int_unary_any ─────────────────────────────────────────────────────────────
-
-/// Positive match: `int_unary_any` on `Neg(add(5,3))` captures `IntUnaryOp::Neg`.
 #[test]
-fn int_unary_any_captures_neg_variant() -> ir::Result<()> {
-    let g = graph_neg_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = IntUnaryOpVar::new();
-    let hits = m.find_all(&int_unary_any(op_var, any()));
-    assert_eq!(hits.len(), 1, "one IntUnaryOp node (Neg) in graph");
-    assert_eq!(
-        hits[0].get_int_unary_op(op_var),
-        Some(IntUnaryOp::Neg),
-        "captured op must be Neg"
-    );
-    Ok(())
+fn float_cmp_any_captures_variant() {
+    for op in [
+        FloatCmpOp::Equal,
+        FloatCmpOp::NotEqual,
+        FloatCmpOp::Less,
+        FloatCmpOp::LessEqual,
+    ] {
+        let mut t = Tb::empty();
+        let l = t.f64(1.0);
+        let r = t.f64(2.0);
+        let c = t.fcmp(l, r, op);
+        let cast = t.as_int(c, NodeOutputType::U64);
+        let g = t.ret_val(cast);
+
+        let ov = FloatCmpOpVar::new();
+        let m = a::unique(
+            &g,
+            float_cmp_any(ov, float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())),
+        );
+        assert_eq!(m.get_float_cmp_op(ov), Some(op));
+    }
 }
 
-/// `int_unary_any` does NOT match in a graph with only binary ops.
+// ── Cross-family rejection ───────────────────────────────────────────────────
+
 #[test]
-fn int_unary_any_no_match_in_binary_only_graph() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = IntUnaryOpVar::new();
-    let hits = m.find_all(&int_unary_any(op_var, any()));
-    assert!(
-        hits.is_empty(),
-        "add-only graph has no IntUnaryOp nodes"
-    );
-    Ok(())
+fn int_binary_any_does_not_match_bool_op() {
+    // Graph has a BoolBinaryOp::Or; int_binary_any must not match.
+    let mut t = Tb::empty();
+    let a_ = t.boolean(true);
+    let b_ = t.boolean(false);
+    let c = t.bool_bin(a_, b_, BoolBinaryOp::Or);
+    let cast = t.as_int(c, NodeOutputType::U64);
+    let g = t.ret_val(cast);
+
+    let ov = IntBinaryOpVar::new();
+    a::none(&g, int_binary_any(ov, any(), any()));
 }
 
-// ── int_cmp_any ───────────────────────────────────────────────────────────────
+// ── Op-variant capture combined with value capture ───────────────────────────
 
-/// Positive match: `int_cmp_any` on `Equal(4, 1)` captures `IntCmpOp::Equal`.
 #[test]
-fn int_cmp_any_captures_equal_variant() -> ir::Result<()> {
-    let g = graph_if_branches()?;
-    let m = Matcher::new(&g);
-    let op_var = IntCmpOpVar::new();
-    let hits = m.find_all(&int_cmp_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one IntCmpOp node (Equal) in graph");
-    assert_eq!(
-        hits[0].get_int_cmp_op(op_var),
-        Some(IntCmpOp::Equal),
-        "captured op must be Equal"
-    );
-    Ok(())
+fn variant_any_composes_with_value_capture() {
+    let mut t = Tb::empty();
+    let l = t.u64(100);
+    let r = t.u64(50);
+    let v = t.sub(l, r);
+    let g = t.ret_val(v);
+
+    let ov = IntBinaryOpVar::new();
+    let lv = IntVar::new();
+    let rv = IntVar::new();
+    let m = a::unique(&g, int_binary_any(ov, any_int_const(lv), any_int_const(rv)));
+
+    assert_eq!(m.get_int_binary_op(ov), Some(IntBinaryOp::Sub));
+    assert_eq!(m.get_int(lv), Some(100));
+    assert_eq!(m.get_int(rv), Some(50));
 }
 
-/// `int_cmp_any` (commutative for Equal): reversed operands still match.
 #[test]
-fn int_cmp_any_equal_commutative_reversed() -> ir::Result<()> {
-    let g = graph_if_branches()?;
-    let m = Matcher::new(&g);
-    let op_var = IntCmpOpVar::new();
-    // graph has Equal(4, 1); pattern (1, 4) must still match via commutativity.
-    let hits = m.find_all(&int_cmp_any(op_var, int_const(1), int_const(4)));
-    assert_eq!(hits.len(), 1, "Equal is commutative; reversed operands must match");
-    assert_eq!(hits[0].get_int_cmp_op(op_var), Some(IntCmpOp::Equal));
-    Ok(())
-}
-
-/// `int_cmp_any` does NOT match in a graph with no comparisons.
-#[test]
-fn int_cmp_any_no_match_in_add_only_graph() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = IntCmpOpVar::new();
-    let hits = m.find_all(&int_cmp_any(op_var, any(), any()));
-    assert!(hits.is_empty(), "add-only graph has no IntCmpOp nodes");
-    Ok(())
-}
-
-// ── bool_binary_any ───────────────────────────────────────────────────────────
-
-/// Positive match: `bool_binary_any` on a `BoolBinaryOp::Or` node captures Or.
-///
-/// We build `bool_or(true, false)` explicitly. If the optimizer constant-folds
-/// it, we won't see a node — so we prevent that by using a non-constant input.
-#[test]
-fn bool_binary_any_captures_or_variant() -> ir::Result<()> {
-    // Build bool_or(cast_to_bool(any_add), true) so the Or cannot be folded.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c5 = b.build_int_const(5, NodeOutputType::U64);
-    let c3 = b.build_int_const(3, NodeOutputType::U64);
-    let sum = b.build_int_binary_operation(c5, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-    let casted = b.convert_to_bool_if_needed(sum)?;
-    let t = b.build_boolean_const(true);
-    let bor = b.build_boolean_operation(casted, t, BoolBinaryOp::Or)?;
-    let as_int = b.convert_to_int_if_needed(bor, NodeOutputType::U64)?;
-    b.build_return(Some(as_int), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = BoolBinaryOpVar::new();
-    let hits = m.find_all(&bool_binary_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one BoolBinaryOp node (Or) expected");
-    assert_eq!(
-        hits[0].get_bool_binary_op(op_var),
-        Some(BoolBinaryOp::Or),
-        "captured op must be Or"
-    );
-    Ok(())
-}
-
-/// `bool_binary_any` does NOT match in a graph with no boolean binary ops.
-#[test]
-fn bool_binary_any_no_match_in_add_only_graph() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = BoolBinaryOpVar::new();
-    let hits = m.find_all(&bool_binary_any(op_var, any(), any()));
-    assert!(hits.is_empty(), "add-only graph has no BoolBinaryOp nodes");
-    Ok(())
-}
-
-// ── bool_unary_any ────────────────────────────────────────────────────────────
-
-/// Positive match: `bool_unary_any` on `BoolUnaryOp::Neg(true)` captures Neg.
-#[test]
-fn bool_unary_any_captures_neg_variant() -> ir::Result<()> {
-    let g = graph_bool_not_return()?;
-    let m = Matcher::new(&g);
-    let op_var = BoolUnaryOpVar::new();
-    let hits = m.find_all(&bool_unary_any(op_var, any()));
-    assert_eq!(hits.len(), 1, "one BoolUnaryOp node (Neg) expected");
-    assert_eq!(
-        hits[0].get_bool_unary_op(op_var),
-        Some(BoolUnaryOp::Neg),
-        "captured op must be Neg"
-    );
-    Ok(())
-}
-
-/// `bool_unary_any` does NOT match in a graph with no boolean unary ops.
-#[test]
-fn bool_unary_any_no_match_in_add_only_graph() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = BoolUnaryOpVar::new();
-    let hits = m.find_all(&bool_unary_any(op_var, any()));
-    assert!(hits.is_empty(), "add-only graph has no BoolUnaryOp nodes");
-    Ok(())
-}
-
-// ── float_binary_any ──────────────────────────────────────────────────────────
-
-/// Positive match: `float_binary_any` on `FloatAdd(1.0, 2.0)` captures Add.
-#[test]
-fn float_binary_any_captures_add_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c1 = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
-    let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
-    b.build_return(Some(sum), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = FloatBinaryOpVar::new();
-    let hits = m.find_all(&float_binary_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one FloatBinaryOp node (Add) expected");
-    assert_eq!(
-        hits[0].get_float_binary_op(op_var),
-        Some(FloatBinaryOp::Add),
-        "captured op must be FloatBinaryOp::Add"
-    );
-    Ok(())
-}
-
-/// Positive match: `float_binary_any` on `FloatDiv` captures Div.
-#[test]
-fn float_binary_any_captures_div_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c6 = b.build_float_const(6.0f64.to_bits(), NodeOutputType::F64);
-    let c3 = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
-    let div = b.build_float_binary_op(c6, c3, FloatBinaryOp::Div, NodeOutputType::F64)?;
-    b.build_return(Some(div), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = FloatBinaryOpVar::new();
-    let hits = m.find_all(&float_binary_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one FloatBinaryOp node (Div) expected");
-    assert_eq!(
-        hits[0].get_float_binary_op(op_var),
-        Some(FloatBinaryOp::Div),
-        "captured op must be FloatBinaryOp::Div"
-    );
-    Ok(())
-}
-
-/// Commutativity: `float_binary_any(op, c2, c1)` matches `FloatAdd(c1, c2)`.
-#[test]
-fn float_binary_any_commutative_add_reversed() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c1 = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
-    let sum = b.build_float_binary_op(c1, c2, FloatBinaryOp::Add, NodeOutputType::F64)?;
-    b.build_return(Some(sum), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = FloatBinaryOpVar::new();
-    // Reversed order: pattern (2.0, 1.0) vs node (1.0, 2.0) — Add is commutative.
-    let hits = m.find_all(&float_binary_any(
-        op_var,
-        float_const(2.0f64.to_bits()),
-        float_const(1.0f64.to_bits()),
-    ));
-    assert_eq!(hits.len(), 1, "FloatAdd is commutative; reversed operands match");
-    assert_eq!(hits[0].get_float_binary_op(op_var), Some(FloatBinaryOp::Add));
-    Ok(())
-}
-
-// ── float_unary_any ───────────────────────────────────────────────────────────
-
-/// Positive match: `float_unary_any` on `FloatNeg(2.0)` captures Neg.
-#[test]
-fn float_unary_any_captures_neg_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let cv = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
-    let neg_v = b.build_float_unary_op(cv, FloatUnaryOp::Neg, NodeOutputType::F64)?;
-    b.build_return(Some(neg_v), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = FloatUnaryOpVar::new();
-    let hits = m.find_all(&float_unary_any(op_var, any()));
-    assert_eq!(hits.len(), 1, "one FloatUnaryOp node (Neg) expected");
-    assert_eq!(
-        hits[0].get_float_unary_op(op_var),
-        Some(FloatUnaryOp::Neg),
-        "captured op must be FloatUnaryOp::Neg"
-    );
-    Ok(())
-}
-
-/// `float_unary_any` does NOT match in a graph with only integer ops.
-#[test]
-fn float_unary_any_no_match_in_int_only_graph() -> ir::Result<()> {
-    let g = graph_add_return()?;
-    let m = Matcher::new(&g);
-    let op_var = FloatUnaryOpVar::new();
-    let hits = m.find_all(&float_unary_any(op_var, any()));
-    assert!(hits.is_empty(), "int-only graph has no FloatUnaryOp nodes");
-    Ok(())
-}
-
-// ── float_cmp_any ─────────────────────────────────────────────────────────────
-
-/// Positive match: `float_cmp_any` on `FloatCmp::Less(3.0, 4.0)` captures Less.
-#[test]
-fn float_cmp_any_captures_less_variant() -> ir::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c3 = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
-    let c4 = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-    let cmp = b.build_float_cmp_op(c3, c4, FloatCmpOp::Less)?;
-    b.build_return(Some(cmp), &[])?;
-    let g = b.build().expect("build failed: validator rejected graph");
-
-    let m = Matcher::new(&g);
-    let op_var = FloatCmpOpVar::new();
-    let hits = m.find_all(&float_cmp_any(op_var, any(), any()));
-    assert_eq!(hits.len(), 1, "one FloatCmpOp node (Less) expected");
-    assert_eq!(
-        hits[0].get_float_cmp_op(op_var),
-        Some(FloatCmpOp::Less),
-        "captured op must be FloatCmpOp::Less"
-    );
-    Ok(())
-}
-
-/// `float_cmp_any` captures `Equal` vs `Less` correctly across two graphs.
-#[test]
-fn float_cmp_any_equal_vs_less_distinguished() -> ir::Result<()> {
-    // Graph with FloatCmp::Equal.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r = b.create_region()?;
-    b.set_entry_region(r)?;
-    b.set_region(r);
-    let c1 = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-    let c2 = b.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
-    let cmp_eq = b.build_float_cmp_op(c1, c2, FloatCmpOp::Equal)?;
-    b.build_return(Some(cmp_eq), &[])?;
-    let g_eq = b.build().expect("build failed: validator rejected graph");
-
-    let op_var = FloatCmpOpVar::new();
-    let m_eq = Matcher::new(&g_eq);
-    let hits_eq = m_eq.find_all(&float_cmp_any(op_var, any(), any()));
-    assert_eq!(hits_eq.len(), 1);
-    assert_eq!(hits_eq[0].get_float_cmp_op(op_var), Some(FloatCmpOp::Equal));
-
-    // Graph with FloatCmp::Less.
-    let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let r2 = b2.create_region()?;
-    b2.set_entry_region(r2)?;
-    b2.set_region(r2);
-    let d1 = b2.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-    let d2 = b2.build_float_const(2.0f64.to_bits(), NodeOutputType::F64);
-    let cmp_lt = b2.build_float_cmp_op(d1, d2, FloatCmpOp::Less)?;
-    b2.build_return(Some(cmp_lt), &[])?;
-    let g_lt = b2.build().expect("build failed: validator rejected graph");
-
-    let op_var2 = FloatCmpOpVar::new();
-    let m_lt = Matcher::new(&g_lt);
-    let hits_lt = m_lt.find_all(&float_cmp_any(op_var2, any(), any()));
-    assert_eq!(hits_lt.len(), 1);
-    assert_eq!(hits_lt[0].get_float_cmp_op(op_var2), Some(FloatCmpOp::Less));
-    Ok(())
+fn unbound_op_var_returns_none() {
+    // If a pattern doesn't use an IntBinaryOpVar, `.get_int_binary_op` on it
+    // returns None.
+    let g = {
+        let mut t = Tb::empty();
+        let v = t.u64(7);
+        t.ret_val(v)
+    };
+    let m = a::first(&g, int_const(7));
+    let ov = IntBinaryOpVar::new();
+    assert_eq!(m.get_int_binary_op(ov), None);
 }

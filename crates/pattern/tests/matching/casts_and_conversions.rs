@@ -1,0 +1,203 @@
+//! Width-changing and type-converting cast patterns.
+//!
+//! Covers: `zero_extend`, `sign_extend`, `extend(ExtendOp::…)`, `truncate`,
+//! `cast_to_int`, `cast_to_bool`, `cast_to_float`, `int_to_float`,
+//! `float_to_int`, `float_to_float`, `int_bits_to_float`, `float_bits_to_int`.
+//!
+//! Because most cast producers are introduced implicitly by coercion helpers
+//! on `FunctionBuilder`, tests use those helpers to create the target nodes
+//! and then match against them with the corresponding pattern constructor.
+
+use ir::ExtendOp;
+use ir::node::NodeOutputType;
+use pattern::*;
+
+use super::support::{Tb, assertions as a};
+
+// Note on constant folding: `extend_if_needed`, `truncate_if_needed`, and
+// `convert_to_*` on `IntConst` / `BoolConst` inputs immediately fold to a
+// new const rather than emitting an Extend / Truncate / CastTo* node.  To
+// exercise the cast nodes themselves each helper below threads the value
+// through an `Add` of two constants so the operand is non-const.
+
+fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> ir::node::NodeOutputId {
+    let a_ = t.u32(a_v);
+    let b_ = t.u32(b_v);
+    t.int_bin_at(a_, b_, ir::IntBinaryOp::Add, NodeOutputType::U32)
+}
+
+fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> ir::node::NodeOutputId {
+    let a_ = t.u64(a_v);
+    let b_ = t.u64(b_v);
+    t.add(a_, b_)
+}
+
+// ── Zero / sign extend, truncate ─────────────────────────────────────────────
+
+#[test]
+fn zero_extend_matches() {
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let x = t.zext_to(s, NodeOutputType::U64);
+    let g = t.ret_val(x);
+    a::matches(&g, zero_extend(any()), 1);
+}
+
+#[test]
+fn sign_extend_matches() {
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let x = t.sext_to(s, NodeOutputType::U64);
+    let g = t.ret_val(x);
+    a::matches(&g, sign_extend(any()), 1);
+}
+
+#[test]
+fn extend_op_variant_matches_zero_and_sign() {
+    // Zero-extend graph.
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let x = t.zext_to(s, NodeOutputType::U64);
+    let g = t.ret_val(x);
+    a::matches(&g, extend(ExtendOp::ZeroExtend, any()), 1);
+    a::none(&g, extend(ExtendOp::SignExtend, any()));
+
+    // Sign-extend graph.
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let x = t.sext_to(s, NodeOutputType::U64);
+    let g = t.ret_val(x);
+    a::matches(&g, extend(ExtendOp::SignExtend, any()), 1);
+    a::none(&g, extend(ExtendOp::ZeroExtend, any()));
+}
+
+#[test]
+fn truncate_matches() {
+    let mut t = Tb::empty();
+    let s = non_const_u64(&mut t, 0xAABBCCDD, 1);
+    let x = t.trunc_to(s, NodeOutputType::U8);
+    let g = t.ret_val(x);
+    a::matches(&g, truncate(any()), 1);
+}
+
+#[test]
+fn extend_then_truncate_chain_matches() {
+    // Non-const U32 → U64 (zero-extend) → U8 (truncate).
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let ext = t.zext_to(s, NodeOutputType::U64);
+    let tr = t.trunc_to(ext, NodeOutputType::U8);
+    let g = t.ret_val(tr);
+
+    a::matches(&g, truncate(any()), 1);
+    a::matches(&g, truncate(zero_extend(any())), 1);
+}
+
+// ── CastToFloat / CastToInt / CastToBool ─────────────────────────────────────
+
+#[test]
+fn cast_to_float_matches() {
+    let mut t = Tb::empty();
+    let v = t.u32(0x3F800000); // 1.0f32 bits
+    let c = t.cast_to_float(v, NodeOutputType::F32);
+    let as_int = t.float_to_int(c, NodeOutputType::U32);
+    let g = t.ret_val(as_int);
+
+    a::matches(&g, cast_to_float(any()), 1);
+}
+
+#[test]
+fn cast_to_int_matches_via_coerce_helper() {
+    // `convert_to_int_if_needed` on a Bool produces a CastToInt node.
+    let mut t = Tb::empty();
+    let b = t.boolean(true);
+    let i = t.as_int(b, NodeOutputType::U64);
+    let g = t.ret_val(i);
+    a::matches(&g, cast_to_int(any()), 1);
+}
+
+#[test]
+fn cast_to_bool_matches_via_coerce_helper() {
+    // `convert_to_bool_if_needed` folds `IntConst(n)` into `BoolConst(n != 0)`
+    // without emitting a CastToBool, so we feed it a non-const Add.
+    let mut t = Tb::empty();
+    let s = non_const_u64(&mut t, 1, 2);
+    let b = t.as_bool(s);
+    let as_int = t.as_int(b, NodeOutputType::U64);
+    let g = t.ret_val(as_int);
+    a::matches(&g, cast_to_bool(any()), 1);
+}
+
+// ── Int ↔ Float conversions ──────────────────────────────────────────────────
+
+#[test]
+fn int_to_float_matches() {
+    let mut t = Tb::empty();
+    let v = t.u64(42);
+    let f = t.int_to_float(v, NodeOutputType::F64);
+    let as_int = t.float_to_int(f, NodeOutputType::U64);
+    let g = t.ret_val(as_int);
+    a::matches(&g, int_to_float(any()), 1);
+}
+
+#[test]
+fn float_to_int_matches() {
+    let mut t = Tb::empty();
+    let v = t.f64(1.5);
+    let i = t.float_to_int(v, NodeOutputType::U64);
+    let g = t.ret_val(i);
+    a::matches(&g, float_to_int(any()), 1);
+}
+
+#[test]
+fn float_to_float_matches() {
+    let mut t = Tb::empty();
+    let v = t.f64(1.0);
+    let f = t.float_to_float(v, NodeOutputType::F32);
+    let ff = t.float_to_float(f, NodeOutputType::F64);
+    let as_int = t.float_to_int(ff, NodeOutputType::U64);
+    let g = t.ret_val(as_int);
+    // There are two FloatToFloat nodes.
+    a::matches(&g, float_to_float(any()), 2);
+}
+
+#[test]
+fn int_bits_to_float_matches() {
+    let mut t = Tb::empty();
+    // `build_int_bits_to_float` on a const folds immediately; use a
+    // non-const input (an Add) so a real IntBitsToFloat node is emitted.
+    let a_ = t.u64(1);
+    let b_ = t.u64(2);
+    let s = t.add(a_, b_);
+    let f = t.int_bits_to_float(s, NodeOutputType::F64);
+    let as_int = t.float_to_int(f, NodeOutputType::U64);
+    let g = t.ret_val(as_int);
+    a::matches(&g, int_bits_to_float(any()), 1);
+}
+
+#[test]
+fn float_bits_to_int_matches() {
+    let mut t = Tb::empty();
+    let fa = t.f64(1.0);
+    let fb = t.f64(2.0);
+    let s = t.fbin(fa, fb, ir::FloatBinaryOp::Add, NodeOutputType::F64);
+    let i = t.float_bits_to_int(s, NodeOutputType::U64);
+    let g = t.ret_val(i);
+    a::matches(&g, float_bits_to_int(any()), 1);
+}
+
+// ── Cross-kind rejection ─────────────────────────────────────────────────────
+
+#[test]
+fn cast_patterns_are_kind_sensitive() {
+    // Graph has a ZeroExtend; patterns for unrelated casts must not match.
+    let mut t = Tb::empty();
+    let v = t.u32(1);
+    let x = t.zext_to(v, NodeOutputType::U64);
+    let g = t.ret_val(x);
+
+    a::none(&g, cast_to_int(any()));
+    a::none(&g, cast_to_bool(any()));
+    a::none(&g, truncate(any()));
+    a::none(&g, int_to_float(any()));
+}
