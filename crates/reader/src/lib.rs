@@ -2,8 +2,7 @@
 //!
 //! The crate provides:
 //!   * Generic region-based memory storage ([`MemRegion`],
-//!     [`MemRegionsLookupTable`], [`RegionsMemReader`]) that any reader
-//!     backend can compose.
+//!     [`MemRegionsLookupTable`]) that any reader backend can compose.
 //!   * The [`ReadOnlyMemory`] trait used by the optimizer's `LoadReadOnly`
 //!     pass to resolve compile-time-constant loads.
 //!   * An ELF backend in the [`elf`] module that implements both
@@ -135,32 +134,6 @@ impl MemRegionsLookupTable {
             }
         }
         None
-    }
-}
-
-// ── RegionsMemReader ──────────────────────────────────────────────────────────
-
-/// A thin wrapper around [`MemRegionsLookupTable`] that provides a `read`
-/// method for convenient use in higher-level code.
-///
-/// [`ElfFileMemReader`] uses this internally; most callers should interact
-/// with a concrete backend (like `ElfFileMemReader`) directly.
-#[derive(Debug)]
-pub struct RegionsMemReader {
-    lookup: MemRegionsLookupTable,
-}
-
-impl RegionsMemReader {
-    /// Creates a reader backed by the given lookup table.
-    pub fn new(lookup: MemRegionsLookupTable) -> Self {
-        Self { lookup }
-    }
-
-    /// Reads bytes from the region containing `addr`.
-    ///
-    /// Returns `None` when `addr` is not mapped.  Partial reads are possible.
-    pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
-        self.lookup.read(addr, out)
     }
 }
 

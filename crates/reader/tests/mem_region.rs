@@ -1,9 +1,9 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-//! Integration tests for `MemRegion`, `MemRegionsLookupTable`, and
-//! `RegionsMemReader` — the backend-agnostic layer of the reader crate.
+//! Integration tests for `MemRegion` and `MemRegionsLookupTable` — the
+//! backend-agnostic layer of the reader crate.
 
-use reader::{MemRegion, MemRegionsLookupTable, RegionsMemReader};
+use reader::{MemRegion, MemRegionsLookupTable};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -244,23 +244,3 @@ fn lookup_table_overlapping_regions_later_start_shadows_earlier() {
     assert_eq!(buf[0], 0xbb, "A's tail in overlap is shadowed");
 }
 
-// ── RegionsMemReader ──────────────────────────────────────────────────────
-
-#[test]
-fn regions_mem_reader_delegates_read() {
-    let mut r = make_region(0x4000, 8);
-    r.data = vec![10, 20, 30, 40, 50, 60, 70, 80];
-    let table = MemRegionsLookupTable::new([r]);
-    let reader = RegionsMemReader::new(table);
-    let mut buf = [0u8; 3];
-    assert_eq!(reader.read(0x4002, &mut buf), Some(3));
-    assert_eq!(buf, [30, 40, 50]);
-}
-
-#[test]
-fn regions_mem_reader_miss_returns_none() {
-    let table = MemRegionsLookupTable::new([make_region(0x4000, 8)]);
-    let reader = RegionsMemReader::new(table);
-    let mut buf = [0u8; 1];
-    assert_eq!(reader.read(0x9000, &mut buf), None);
-}

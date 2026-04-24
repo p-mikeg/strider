@@ -2,15 +2,14 @@
 //! [`rsleigh::MemReader`] trait.
 //!
 //! This module is the ELF-specific half of the `reader` crate. The generic
-//! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`,
-//! `RegionsMemReader`) lives in [`crate`] so other backends (raw blobs, PE,
-//! Mach-O, …) can reuse it.
+//! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
+//! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
 
 use std::collections::BTreeMap;
 
 use object::{Object, ObjectSection, ObjectSegment};
 
-use crate::{MemRegion, MemRegionsLookupTable, RegionsMemReader, Result, error};
+use crate::{MemRegion, MemRegionsLookupTable, Result, error};
 
 // ── ELF → MemRegion converters ────────────────────────────────────────────────
 
@@ -136,7 +135,7 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     /// In-memory representation of the mapped regions.
-    pub regions_mem_reader: RegionsMemReader,
+    pub lookup: MemRegionsLookupTable,
     /// Endianness of the source ELF. Used by the [`crate::ReadOnlyMemory`]
     /// impl when assembling bytes into a `u64`.
     pub endianness: object::Endianness,
@@ -150,9 +149,8 @@ impl ElfFileMemReader {
     /// reader is self-owning.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
-        let lookup = MemRegionsLookupTable::new(regions);
         Ok(Self {
-            regions_mem_reader: RegionsMemReader::new(lookup),
+            lookup: MemRegionsLookupTable::new(regions),
             endianness: obj.endianness(),
         })
     }
@@ -176,7 +174,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
     type Err = crate::Error;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize> {
-        self.regions_mem_reader
+        self.lookup
             .read(addr.off, out_buf)
             .ok_or_else(|| error::ErrorKind::NotMapped(addr.off).into())
     }
@@ -198,7 +196,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
             object::Endianness::Little => &mut buf[..size],
             object::Endianness::Big => &mut buf[8 - size..],
         };
-        let n = self.regions_mem_reader.read(addr, slot)?;
+        let n = self.lookup.read(addr, slot)?;
         if n != size {
             return None;
         }
