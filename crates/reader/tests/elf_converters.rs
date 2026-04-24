@@ -6,14 +6,19 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use common::elf_fixture::{SectionSpec, build_elf_with_sections};
+use common::elf_fixture::{
+    SectionSpec, SegmentSpec, build_elf_with_sections, build_elf_with_segments,
+};
 use object::Object;
-use object::read::ObjectSection;
+use object::read::{ObjectSection, ObjectSegment};
 use reader::elf::{
     elf_get_code_and_readonly_sections_as_mem_regions,
     elf_get_executable_sections_as_mem_regions,
+    elf_get_executable_segments_as_mem_regions,
     elf_section_to_mem_region,
     elf_sections_to_mem_regions,
+    elf_segment_to_mem_region,
+    elf_segments_to_mem_regions,
 };
 
 /// Parses the bytes as an ELF; panics with a clear message if parse fails.
@@ -145,14 +150,6 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     assert!(!addrs.contains(&0x4000), ".bss must be excluded");
     assert_eq!(regions.len(), 2);
 }
-
-use common::elf_fixture::{SegmentSpec, build_elf_with_segments};
-use object::read::ObjectSegment;
-use reader::elf::{
-    elf_get_executable_segments_as_mem_regions,
-    elf_segment_to_mem_region,
-    elf_segments_to_mem_regions,
-};
 
 // ── malformed section surfaces as an error, not a silent skip ────────────
 
