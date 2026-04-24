@@ -1,5 +1,4 @@
 use petgraph::stable_graph::StableDiGraph;
-use std::collections::VecDeque;
 
 /// Classifies the control-flow relationship between two CFG regions.
 ///
@@ -75,7 +74,7 @@ pub struct Region {
     /// Address of the first pcode instruction in this region.
     pub start_addr: PcodeInsnAddr,
     /// All pcode instructions, in program order.  Never empty.
-    pub insns: VecDeque<RegionInstruction>,
+    pub insns: Vec<RegionInstruction>,
     /// `true` when the region ends with an unconditional branch that the
     /// builder classified as a tail call (i.e. a jump to code outside the
     /// current function).
@@ -90,7 +89,7 @@ impl Region {
     /// that `add_region` prevents, but handled gracefully here).
     #[must_use]
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
-        match self.insns.back() {
+        match self.insns.last() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,
             None => false,
         }

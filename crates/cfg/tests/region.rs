@@ -6,7 +6,6 @@
 mod common;
 use common::{addr, make_region};
 
-use std::collections::VecDeque;
 use cfg::test_api::Region;
 
 #[test]
@@ -51,7 +50,7 @@ fn contains_addr_returns_false_for_empty_region() {
     // even if start_addr happens to match — the region has no extent.
     let r = Region {
         start_addr: addr(0x1000, 0),
-        insns: VecDeque::new(),
+        insns: Vec::new(),
         ends_with_tail_call: false,
     };
     assert!(!r.contains_addr(addr(0x1000, 0)));

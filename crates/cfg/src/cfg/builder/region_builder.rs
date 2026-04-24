@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use petgraph::graph::NodeIndex;
 
 use super::Builder;
@@ -30,7 +28,7 @@ pub(super) struct RegionBuilder<'a, R: rsleigh::MemReader> {
     /// Address of the first instruction this region will contain.
     pub(super) start_addr: PcodeInsnAddr,
     /// Instructions accumulated so far.
-    pub(super) insns: VecDeque<RegionInstruction>,
+    pub(super) insns: Vec<RegionInstruction>,
     /// The edge from the predecessor region to this one, if any.
     /// `None` only for the function entry region.
     pub(super) parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
@@ -45,7 +43,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         RegionBuilder {
             builder,
             start_addr,
-            insns: VecDeque::new(),
+            insns: Vec::new(),
             parent_edge,
         }
     }
@@ -166,7 +164,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<ProcessInsnRes> {
-        self.insns.push_back(RegionInstruction {
+        self.insns.push(RegionInstruction {
             addr,
             insn: insn.to_owned(),
         });
@@ -335,7 +333,6 @@ pub mod test_api {
     use crate::cfg::Builder;
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
-    use std::collections::VecDeque;
 
     /// Mirror of `ProcessInsnRes` for test consumers.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -365,7 +362,7 @@ pub mod test_api {
                 inner: RegionBuilder {
                     builder,
                     start_addr,
-                    insns: VecDeque::new(),
+                    insns: Vec::new(),
                     parent_edge: None,
                 },
             }
@@ -381,7 +378,7 @@ pub mod test_api {
                 inner: RegionBuilder {
                     builder,
                     start_addr,
-                    insns: VecDeque::new(),
+                    insns: Vec::new(),
                     parent_edge: Some(parent),
                 },
             }
@@ -389,13 +386,13 @@ pub mod test_api {
 
         /// Returns the accumulated instructions for this region.
         #[must_use]
-        pub fn insns(&self) -> &VecDeque<RegionInstruction> {
+        pub fn insns(&self) -> &[RegionInstruction] {
             &self.inner.insns
         }
 
         /// Pushes an instruction onto the back of the instruction queue.
         pub fn push_insn(&mut self, insn: RegionInstruction) {
-            self.inner.insns.push_back(insn);
+            self.inner.insns.push(insn);
         }
 
         /// Checks whether `target` is a tail call without validating `insn_index`.

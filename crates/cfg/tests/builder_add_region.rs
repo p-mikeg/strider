@@ -8,7 +8,6 @@ use common::{addr, make_builder, make_region};
 
 use cfg::test_api::Region;
 use cfg::{test_api, ErrorKind};
-use std::collections::VecDeque;
 
 #[test]
 fn inserts_into_graph_and_map() {
@@ -28,7 +27,7 @@ fn empty_region_returns_error() {
     let mut b = make_builder(0x1000);
     let empty = Region {
         start_addr: addr(0x1000, 0),
-        insns: VecDeque::new(),
+        insns: Vec::new(),
         ends_with_tail_call: false,
     };
     let err = test_api::add_region(&mut b, empty).unwrap_err();

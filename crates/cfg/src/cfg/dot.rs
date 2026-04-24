@@ -82,7 +82,7 @@ impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
             .ok_or(ErrorKind::InvalidRegion(node_id))?;
         let first_insn_index = node
             .insns
-            .front()
+            .first()
             .ok_or(ErrorKind::EmptyRegion(node.clone()))?
             .addr
             .insn_index;
