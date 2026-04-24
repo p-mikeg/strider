@@ -90,3 +90,51 @@ fn unique_space_returns_invalid_branch_target_error() {
     let err = rb.decode_branch_target(vn, addr(0x1000, 0)).unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)));
 }
+
+/// Pinned contract: a CONST-space relative branch target with a negative
+/// offset (two's-complement `u64`) must decode to the predecessor pcode slot,
+/// not wrap around `u64::MAX`.
+#[test]
+fn decode_branch_target_const_space_negative_offset_does_not_wrap() {
+    let mut b = make_builder(0x1000);
+    let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
+
+    // Synthetic CONST varnode: off = -2 (two's complement u64), size irrelevant.
+    let vn = Vn {
+        addr: VnAddr {
+            space: VnSpace::CONST,
+            off: (-2_i64) as u64,
+        },
+        size: 8,
+    };
+
+    // We're currently at machine 0x1000, pcode index 5. A `-2` branch target
+    // must decode to (0x1000, 3), not (0x1000, u64::MAX - 1).
+    let got = rb.decode_branch_target(vn, addr(0x1000, 5)).unwrap();
+    assert_eq!(got, addr(0x1000, 3));
+}
+
+/// Pinned contract: a CONST-space relative offset that would drive the
+/// resulting pcode index negative must error rather than wrap.
+#[test]
+fn decode_branch_target_const_space_underflow_errors() {
+    let mut b = make_builder(0x1000);
+    let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
+
+    let vn = Vn {
+        addr: VnAddr {
+            space: VnSpace::CONST,
+            off: (-5_i64) as u64,
+        },
+        size: 8,
+    };
+
+    // At (0x1000, 2) with offset -5, the resulting index would be -3.
+    let err = rb
+        .decode_branch_target(vn, addr(0x1000, 2))
+        .unwrap_err();
+    assert!(matches!(
+        err.kind(),
+        ErrorKind::InvalidBranchTargetVaErr(_, _)
+    ));
+}

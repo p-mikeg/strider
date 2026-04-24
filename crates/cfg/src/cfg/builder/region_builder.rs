@@ -67,11 +67,27 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         let default_code_space = self.builder.sleigh.default_code_space();
 
         match branch_target_var.addr.space {
-            // Relative branch: offset from the current pcode insn index
-            rsleigh::VnSpace::CONST => Ok(PcodeInsnAddr {
-                machine_addr: branch_insn_addr.machine_addr,
-                insn_index: branch_insn_addr.insn_index + branch_target_var.addr.off,
-            }),
+            // Relative branch: signed offset from the current pcode insn index.
+            // rsleigh encodes CONST-space branch targets as two's-complement in a
+            // u64, so a backward pcode-local branch comes in as `(-n) as u64`.
+            rsleigh::VnSpace::CONST => {
+                let base = branch_insn_addr.insn_index as i64;
+                let off = branch_target_var.addr.off as i64;
+                let target = base.checked_add(off).ok_or(
+                    ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
+                )?;
+                if target < 0 {
+                    return Err(ErrorKind::InvalidBranchTargetVaErr(
+                        branch_target_var,
+                        branch_insn_addr,
+                    )
+                    .into());
+                }
+                Ok(PcodeInsnAddr {
+                    machine_addr: branch_insn_addr.machine_addr,
+                    insn_index: target as u64,
+                })
+            }
             // Absolute branch: the offset IS the target machine address
             space if space == default_code_space => Ok(PcodeInsnAddr {
                 machine_addr: MachineInsnAddr {
