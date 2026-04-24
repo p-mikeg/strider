@@ -21,7 +21,7 @@ fn load_elf_parses_valid_tempfile() {
     f.write_all(&bytes).unwrap();
     f.flush().unwrap();
 
-    let obj = reader::load_elf(f.path().to_str().expect("utf8 path")).unwrap();
+    let obj = reader::load_elf(f.path()).unwrap();
     assert_eq!(obj.endianness(), Endianness::Little);
 
     // `.text` is present at 0x1000.
@@ -36,7 +36,7 @@ fn load_elf_rejects_garbage_bytes() {
     f.write_all(b"this is definitely not an ELF file").unwrap();
     f.flush().unwrap();
 
-    let err = reader::load_elf(f.path().to_str().expect("utf8 path")).unwrap_err();
+    let err = reader::load_elf(f.path()).unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::Object(_)), "got {:?}", err.kind());
 }
 

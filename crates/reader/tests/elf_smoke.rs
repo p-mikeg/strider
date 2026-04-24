@@ -37,7 +37,7 @@ fn assert_smoke(arch: &str) {
     );
 
     // load_elf round-trip
-    let obj = reader::load_elf(path.to_str().expect("utf8 path")).unwrap();
+    let obj = reader::load_elf(&path).unwrap();
     assert_eq!(
         obj.endianness(),
         object::Endianness::Little,

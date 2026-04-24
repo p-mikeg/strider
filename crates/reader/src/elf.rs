@@ -216,7 +216,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 ///
 /// Callers that only need an [`ElfFileMemReader`] should prefer
 /// [`ElfFileMemReader::from_path`], which does not leak.
-pub fn load_elf(path: &str) -> Result<object::File<'static>> {
+pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
     let data = std::fs::read(path)?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
     Ok(object::File::parse(leaked)?)
