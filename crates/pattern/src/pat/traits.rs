@@ -49,11 +49,11 @@ pub trait Pattern: Send + Sync {
     /// — the default "iterate outputs" fails for those.
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
         for out in ctx.graph.graph.node_outputs(node).into_iter() {
-            let snap = b.clone();
+            let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;
             }
-            *b = snap;
+            b.restore(mark);
         }
         false
     }

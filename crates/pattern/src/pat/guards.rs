@@ -22,18 +22,19 @@ pub struct WhenPat {
 
 impl Pattern for WhenPat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let snap = b.clone();
+        let mark = b.mark();
         if !ctx.matcher.match_output(target, &self.inner, b) {
+            b.restore(mark);
             return false;
         }
         let Some(out_ty) = ctx.graph.graph.output_kind(target).as_value() else {
-            *b = snap;
+            b.restore(mark);
             return false;
         };
         if (self.func)(ctx.graph, out_ty, target) {
             true
         } else {
-            *b = snap;
+            b.restore(mark);
             false
         }
     }
@@ -47,18 +48,19 @@ pub struct WhenMatchPat {
 
 impl Pattern for WhenMatchPat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let snap = b.clone();
+        let mark = b.mark();
         if !ctx.matcher.match_output(target, &self.inner, b) {
+            b.restore(mark);
             return false;
         }
         let Some(out_ty) = ctx.graph.graph.output_kind(target).as_value() else {
-            *b = snap;
+            b.restore(mark);
             return false;
         };
         if (self.func)(ctx.graph, out_ty, b) {
             true
         } else {
-            *b = snap;
+            b.restore(mark);
             false
         }
     }

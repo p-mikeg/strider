@@ -181,11 +181,11 @@ impl Pattern for NodePat {
             return self.try_match_common(ctx, node, None, b);
         }
         for out in outputs.into_iter() {
-            let snap = b.clone();
+            let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;
             }
-            *b = snap;
+            b.restore(mark);
         }
         false
     }
@@ -304,11 +304,13 @@ impl NodePat {
             return false;
         }
 
-        // Single snapshot used for both the commutative retry and the
+        // Single journal mark used for both the commutative retry and the
         // total-failure rollback.  Taken after `kind_match` so any bindings
         // it performed (e.g. `IntVar` capture in `IntoAnyIntConst`) survive
-        // a commutative retry of the input arm.
-        let after_kind = b.clone();
+        // a commutative retry of the input arm.  `BindingsMark` is `Copy`,
+        // so reusing it across the retry restore and the final rollback
+        // needs no clone.
+        let after_kind = b.mark();
 
         if try_once(self, ctx, node, target, b, false) {
             return true;
@@ -318,13 +320,13 @@ impl NodePat {
             && pats.len() == 2
             && commutative(ctx, node)
         {
-            *b = after_kind.clone();
+            b.restore(after_kind);
             if try_once(self, ctx, node, target, b, true) {
                 return true;
             }
         }
 
-        *b = after_kind;
+        b.restore(after_kind);
         false
     }
 }

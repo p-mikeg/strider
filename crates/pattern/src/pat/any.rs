@@ -54,16 +54,20 @@ pub struct CapturePat {
 
 impl Pattern for CapturePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        // Snapshot so that a failed `bind_var` after a successful inner
-        // match leaves the bindings untouched.
-        let snap = b.clone();
+        // Journal mark so that either the inner match or a failed
+        // `bind_var` afterwards leaves the bindings untouched on return.
+        let mark = b.mark();
         if !ctx.matcher.match_output(target, &self.inner, b) {
+            // Inner is expected to clean up its own speculative bindings,
+            // but restore here too for pattern-local cleanliness: truncate
+            // is idempotent if the inner already rolled back.
+            b.restore(mark);
             return false;
         }
         if b.bind_var(self.var, target) {
             true
         } else {
-            *b = snap;
+            b.restore(mark);
             false
         }
     }
