@@ -22,3 +22,142 @@ fn simple_text_elf_fixture_round_trips_through_elf_reader() {
         Some(0xddccbbaa),
     );
 }
+
+use object::Endianness;
+
+use common::elf_fixture::simple_text_elf_with_endian;
+
+// ── ReadOnlyMemory: space filter ──────────────────────────────────────────
+
+/// Only `VnSpace::RAM` produces a hit; other spaces always return `None`.
+#[test]
+fn ro_read_non_ram_space_returns_none() {
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::REGISTER, 0x1000, 4), None);
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::UNIQUE, 0x1000, 4), None);
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::CONST, 0x1000, 4), None);
+}
+
+// ── ReadOnlyMemory: size bounds ───────────────────────────────────────────
+
+/// `size == 0` is not a legitimate load; the trait returns `None`.
+#[test]
+fn ro_read_size_zero_returns_none() {
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 0), None);
+}
+
+/// `size > 8` exceeds what a `u64` can carry; the trait returns `None`.
+#[test]
+fn ro_read_size_greater_than_eight_returns_none() {
+    let elf = simple_text_elf(0x1000, &[0u8; 16]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 9), None);
+}
+
+// ── ReadOnlyMemory: partial read ──────────────────────────────────────────
+
+/// When the region can only supply a prefix of the requested bytes,
+/// return `None` instead of truncated data.
+#[test]
+fn ro_read_partial_region_returns_none() {
+    // region covers 0x1000..0x1004 (4 bytes)
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    // request 4 bytes starting 2 bytes before the end → only 2 available
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1002, 4), None);
+}
+
+/// An address outside any region returns `None`.
+#[test]
+fn ro_read_unmapped_address_returns_none() {
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x9000, 4), None);
+}
+
+// ── ReadOnlyMemory: endianness ────────────────────────────────────────────
+
+/// 4 bytes `01 02 03 04` as little-endian u32 = 0x04030201.
+#[test]
+fn ro_read_little_endian_u32() {
+    let elf = simple_text_elf_with_endian(
+        0x1000, &[0x01, 0x02, 0x03, 0x04], Endianness::Little,
+    );
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        Some(0x04030201)
+    );
+}
+
+/// 4 bytes `01 02 03 04` as big-endian u32 = 0x01020304.
+#[test]
+fn ro_read_big_endian_u32() {
+    let elf = simple_text_elf_with_endian(
+        0x1000, &[0x01, 0x02, 0x03, 0x04], Endianness::Big,
+    );
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        Some(0x01020304)
+    );
+}
+
+/// 8-byte read picks up the full u64 with the correct endianness.
+#[test]
+fn ro_read_little_endian_u64() {
+    let elf = simple_text_elf_with_endian(
+        0x1000,
+        &[0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89],
+        Endianness::Little,
+    );
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 8),
+        Some(0x89abcdef12345678)
+    );
+}
+
+/// 1-byte reads do not depend on endianness.
+#[test]
+fn ro_read_single_byte() {
+    let elf = simple_text_elf(0x1000, &[0xab]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 1),
+        Some(0xab)
+    );
+}
+
+use rsleigh::{MemReader, VnAddr, VnSpace};
+
+/// Pinned contract: the two traits treat short reads differently.
+///  * MemReader: partial read → Ok(n) with n < buf.len()
+///  * ReadOnlyMemory: cannot satisfy full `size` → None (no truncation)
+///
+/// This documents a deliberate design choice: ReadOnlyMemory backs the
+/// LoadReadOnly optimizer pass, which must never synthesize a constant
+/// from partial bytes. MemReader backs Sleigh instruction fetch, where
+/// a short read at the end of a section is an expected condition.
+#[test]
+fn elf_reader_partial_read_asymmetry_between_traits() {
+    // 4-byte region; MemReader request for 8 bytes at start → Ok(4).
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+
+    let mut buf = [0u8; 8];
+    let n = MemReader::read(&r, VnAddr { off: 0x1000, space: VnSpace::RAM }, &mut buf)
+        .expect("MemReader read");
+    assert_eq!(n, 4, "MemReader permits partial reads");
+    assert_eq!(&buf[..4], &[1, 2, 3, 4]);
+
+    // Same region, ReadOnlyMemory request for size=8 at start → None.
+    assert_eq!(
+        ReadOnlyMemory::read(&r, VnSpace::RAM, 0x1000, 8),
+        None,
+        "ReadOnlyMemory must not truncate",
+    );
+}
