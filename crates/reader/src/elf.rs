@@ -134,11 +134,8 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
 /// are loaded from the same ELF.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
-    /// In-memory representation of the mapped regions.
-    pub lookup: MemRegionsLookupTable,
-    /// Endianness of the source ELF. Used by the [`crate::ReadOnlyMemory`]
-    /// impl when assembling bytes into a `u64`.
-    pub endianness: object::Endianness,
+    lookup: MemRegionsLookupTable,
+    endianness: object::Endianness,
 }
 
 impl ElfFileMemReader {
