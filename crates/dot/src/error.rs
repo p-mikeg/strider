@@ -66,17 +66,7 @@ impl<E: Debug + std::fmt::Display> std::fmt::Display for Error<E> {
 impl<E: Debug + std::fmt::Display> std::fmt::Debug for Error<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{}", self.kind)?;
-        for (i, loc) in self.fields.locations.iter().enumerate() {
-            writeln!(
-                f,
-                "  at [{}] {}:{}:{}",
-                i,
-                loc.file(),
-                loc.line(),
-                loc.column()
-            )?;
-        }
-        write!(f, "{}", self.fields.backtrace)
+        self.fields.fmt_chain_and_backtrace(f)
     }
 }
 

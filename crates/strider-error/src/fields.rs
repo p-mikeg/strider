@@ -48,6 +48,24 @@ impl ErrorFields {
         self.locations.push(Location::caller());
         self
     }
+
+    /// Writes the location chain + backtrace into `f`, using the same
+    /// format that `define_error!`-generated Debug impls (and `dot::Error<E>`)
+    /// use. Callers must already have written the kind's own representation
+    /// (typically one `writeln!(f, "{}", kind)` line before this call).
+    pub fn fmt_chain_and_backtrace(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, loc) in self.locations.iter().enumerate() {
+            writeln!(
+                f,
+                "  at [{}] {}:{}:{}",
+                i,
+                loc.file(),
+                loc.line(),
+                loc.column(),
+            )?;
+        }
+        write!(f, "{}", self.backtrace)
+    }
 }
 
 /// Generates a `#[track_caller] impl From<$inner> for $outer` that decomposes
