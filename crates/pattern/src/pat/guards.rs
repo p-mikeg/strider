@@ -44,7 +44,7 @@ impl Pattern for GuardPat {
             b.restore(mark);
             return false;
         }
-        let Some(out_ty) = ctx.graph.graph.output_kind(target).as_value() else {
+        let Some(out_ty) = ctx.require_value_output(target) else {
             b.restore(mark);
             return false;
         };

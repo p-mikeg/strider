@@ -32,6 +32,20 @@ pub struct MatchCtx<'g, 'm> {
     pub(crate) matcher: &'m Matcher<'g>,
 }
 
+impl MatchCtx<'_, '_> {
+    /// Value-kind gate: returns `Some(ty)` if `target` is a value output,
+    /// `None` for Control / Memory / ControlPhi slots.  Used by `VarPat`,
+    /// `CapturePat`, and `GuardPat` because `Var` bindings refer to data
+    /// edges only — on a multi-output node this steers `try_match_node`'s
+    /// iteration to the value slot.
+    pub(crate) fn require_value_output(
+        &self,
+        target: NodeOutputId,
+    ) -> Option<NodeOutputType> {
+        self.graph.graph.output_kind(target).as_value()
+    }
+}
+
 /// The single pattern trait.  Every pattern matches against a
 /// [`NodeOutputId`] and fills bindings on success.  Buildable patterns
 /// additionally implement [`Pattern::try_build`] to materialize themselves
