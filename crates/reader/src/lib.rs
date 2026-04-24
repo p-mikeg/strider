@@ -53,6 +53,7 @@ pub struct MemRegion {
 
 impl MemRegion {
     /// Creates a new `MemRegion` loaded at `start_addr`.
+    #[must_use]
     pub fn new(start_addr: u64, data: Vec<u8>) -> Self {
         Self { start_addr, data }
     }

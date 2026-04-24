@@ -12,11 +12,21 @@ use crate::{MemRegion, MemRegionsLookupTable, Result, error};
 // ── ELF → MemRegion converters ────────────────────────────────────────────────
 
 /// Converts a single ELF segment into a [`MemRegion`].
+///
+/// # Errors
+///
+/// Returns an error wrapping the underlying `object::Error` if the
+/// segment's file-backed data cannot be read.
 pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
     Ok(MemRegion::new(segment.address(), segment.data()?.to_vec()))
 }
 
 /// Converts a single ELF section into a [`MemRegion`].
+///
+/// # Errors
+///
+/// Returns an error wrapping the underlying `object::Error` if the
+/// section's file-backed data cannot be read.
 pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
     Ok(MemRegion::new(section.address(), section.data()?.to_vec()))
 }
@@ -27,6 +37,12 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 /// Segments with empty data are skipped. Preserves iteration order;
 /// duplicate `start_addr`s are resolved later by [`MemRegionsLookupTable`]
 /// under its "last one inserted wins" rule.
+///
+/// # Errors
+///
+/// Currently infallible after filtering (segments that fail to read are
+/// skipped), but preserves a `Result` return for future backends that may
+/// need to surface a parse error through `object::Error`.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
@@ -49,6 +65,12 @@ pub fn elf_segments_to_mem_regions(
 /// skipped (this excludes `SHT_NOBITS` sections like `.bss`). Preserves
 /// iteration order; duplicate `start_addr`s are resolved later by
 /// [`MemRegionsLookupTable`] under its "last one inserted wins" rule.
+///
+/// # Errors
+///
+/// Currently infallible after filtering (sections that fail to read are
+/// skipped), but preserves a `Result` return for future backends that may
+/// need to surface a parse error through `object::Error`.
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
@@ -94,6 +116,11 @@ fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
 
 /// Returns all executable ELF segments (i.e. those with the `PF_X` flag set)
 /// as [`MemRegion`]s.
+///
+/// # Errors
+///
+/// Propagates any `object::Error` from the underlying section/segment
+/// iteration; see [`elf_segments_to_mem_regions`].
 pub fn elf_get_executable_segments_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -102,6 +129,11 @@ pub fn elf_get_executable_segments_as_mem_regions(
 
 /// Returns all executable ELF sections (i.e. those with `SHF_EXECINSTR` set)
 /// as [`MemRegion`]s.
+///
+/// # Errors
+///
+/// Propagates any `object::Error` from the underlying section iteration;
+/// see [`elf_sections_to_mem_regions`].
 pub fn elf_get_executable_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -117,6 +149,11 @@ pub fn elf_get_executable_sections_as_mem_regions(
 /// `SHT_NOBITS` section. Only sections with `SHF_ALLOC` are included — a
 /// non-loadable section like `.shstrtab` has no runtime address and is not
 /// valid for a memory reader even if it happens to be non-writable.
+///
+/// # Errors
+///
+/// Propagates any `object::Error` from the underlying section iteration;
+/// see [`elf_sections_to_mem_regions`].
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -144,6 +181,10 @@ impl ElfFileMemReader {
     /// Loads every executable section and every non-writable section with
     /// file-backed data. The parsed object is not retained — the returned
     /// reader is self-owning.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any `object::Error` from reading the selected sections.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
         Ok(Self {
@@ -155,12 +196,22 @@ impl ElfFileMemReader {
     /// Builds a reader by parsing the given ELF bytes.
     ///
     /// The bytes are parsed in-place; no leak is required.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ErrorKind::Object` if the bytes fail to parse as a valid
+    /// ELF, or any error produced by [`from_object`](Self::from_object).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let obj = object::File::parse(bytes)?;
         Self::from_object(&obj)
     }
 
     /// Builds a reader by reading and parsing an ELF file from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ErrorKind::Io` if the file cannot be read from disk, or
+    /// any error produced by [`from_bytes`](Self::from_bytes).
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let bytes = std::fs::read(path)?;
         Self::from_bytes(&bytes)
@@ -216,6 +267,11 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 ///
 /// Callers that only need an [`ElfFileMemReader`] should prefer
 /// [`ElfFileMemReader::from_path`], which does not leak.
+///
+/// # Errors
+///
+/// Returns `ErrorKind::Io` if the file cannot be read from disk, or
+/// `ErrorKind::Object` if the bytes fail to parse as a valid ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
     let data = std::fs::read(path)?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());

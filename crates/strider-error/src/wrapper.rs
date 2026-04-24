@@ -29,6 +29,7 @@ impl ErrorFields {
     /// Captures a fresh backtrace and seeds the location chain with the
     /// caller's site. Called once, at the outermost `From<ErrorKind>
     /// for Error` boundary when an error originates.
+    #[must_use]
     #[track_caller]
     pub fn new() -> Self {
         Self {
@@ -40,6 +41,7 @@ impl ErrorFields {
     /// Appends the caller's site to the existing location chain without
     /// regenerating the backtrace. Used by cross-crate bridges to extend
     /// the chain while preserving origin info.
+    #[must_use]
     #[track_caller]
     pub fn push_caller(mut self) -> Self {
         self.locations.push(Location::caller());
