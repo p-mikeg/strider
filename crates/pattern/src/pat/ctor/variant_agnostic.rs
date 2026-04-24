@@ -43,7 +43,6 @@ pub fn int_binary_any(op_var: IntBinaryOpVar, lhs: impl Into<Pat>, rhs: impl Int
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(_))
         }),
@@ -72,7 +71,6 @@ pub fn int_unary_any(op_var: IntUnaryOpVar, operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntUnaryOp(_))
         }),
@@ -110,7 +108,6 @@ pub fn int_cmp_any(op_var: IntCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<Pat>
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntCmpOp(_))
         }),
@@ -148,7 +145,6 @@ pub fn bool_binary_any(op_var: BoolBinaryOpVar, lhs: impl Into<Pat>, rhs: impl I
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(_))
         }),
@@ -177,7 +173,6 @@ pub fn bool_unary_any(op_var: BoolUnaryOpVar, operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolUnaryOp(_))
         }),
@@ -218,7 +213,6 @@ pub fn float_binary_any(
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(_))
         }),
@@ -247,7 +241,6 @@ pub fn float_unary_any(op_var: FloatUnaryOpVar, operand: impl Into<Pat>) -> Pat 
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(_))
         }),
@@ -279,7 +272,6 @@ pub fn float_cmp_any(op_var: FloatCmpOpVar, lhs: impl Into<Pat>, rhs: impl Into<
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(_))
         }),

@@ -51,7 +51,6 @@ impl IntoAnyIntConst for Var {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(_))
             }),
@@ -78,7 +77,6 @@ impl IntoAnyIntConst for IntVar {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::IntConst(v) => b.bind_int(iv, *v),
                 _ => false,
@@ -105,7 +103,6 @@ impl IntoAnyBoolConst for Var {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(_))
             }),
@@ -130,7 +127,6 @@ impl IntoAnyBoolConst for BoolVar {
             build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::BoolConst(v) => b.bind_bool(bv, *v),
                 _ => false,
@@ -157,7 +153,6 @@ impl IntoAnyFloatConst for Var {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(_))
             }),
@@ -182,7 +177,6 @@ impl IntoAnyFloatConst for FloatVar {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::FloatConst(bits) => b.bind_float(fv, *bits),
                 _ => false,

@@ -59,7 +59,6 @@ pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntUnaryOp(x) if *x == op)
         }),
@@ -94,7 +93,6 @@ pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntCmpOp(x) if *x == op)
         }),

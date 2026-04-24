@@ -33,7 +33,6 @@ pub fn int_const(v: u64) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(c) if *c == v)
         }),
@@ -51,7 +50,6 @@ pub fn bool_const(v: bool) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(c) if *c == v)
         }),
@@ -69,7 +67,6 @@ pub fn float_const(bits: u64) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(c) if *c == bits)
         }),

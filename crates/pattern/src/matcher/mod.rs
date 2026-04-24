@@ -22,100 +22,55 @@ pub use match_result::Match;
 
 // ── Matcher ───────────────────────────────────────────────────────────────────
 
-/// Precomputed per-kind `NodeId` lists used by [`Matcher::find_all`] to skip
-/// the full-graph scan when the pattern root is `Call`, `CallOther`, `Return`,
-/// or `If`.
+/// Lazy index used by the `FunctionArg` query API ([`Matcher::function_arg`],
+/// [`Matcher::function_args`], [`Matcher::function_arg_count`]).
 ///
-/// Built lazily on the first `find_all` call; `match_at` never needs it.
-struct NodeIndex {
-    call_nodes: Vec<NodeId>,
-    call_other_nodes: Vec<NodeId>,
-    return_nodes: Vec<NodeId>,
-    if_nodes: Vec<NodeId>,
-    /// `NodeId` of the canonical `FunctionArg` for each argument index.  Layer
-    /// C enforces at most one `FunctionArg` per index, so at most one entry
-    /// exists per key.
-    function_args: HashMap<u32, NodeId>,
-    all_nodes: Vec<NodeId>,
-}
+/// Built on first access; [`Matcher::match_at`] and [`Matcher::find_all`]
+/// never need it.  Layer C of the IR validator enforces at most one
+/// `FunctionArg` per index, so at most one entry exists per key.
+struct FunctionArgIndex(HashMap<u32, NodeId>);
 
 /// Executes pattern queries against a [`BuiltFunctionGraph`].
 ///
-/// Construction is O(1): the per-kind node indices used by
-/// [`Matcher::find_all`] are populated lazily on first use.  Consumers that
-/// only call [`Matcher::match_at`] (e.g. `rewrite_rule`) never pay the
-/// indexing cost.
+/// Construction is O(1); the `FunctionArg` index is built lazily on first
+/// use of a `function_arg*` query.  `find_all` does a single preorder walk
+/// of the graph each call and tries the pattern against every node.
 pub struct Matcher<'g> {
     pub(super) fn_graph: &'g BuiltFunctionGraph,
-    index: std::cell::OnceCell<NodeIndex>,
+    function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher`.  O(1); index construction is deferred until
-    /// the first [`Matcher::find_all`] call.
+    /// Creates a new `Matcher`.
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
         Self {
             fn_graph,
-            index: std::cell::OnceCell::new(),
+            function_arg_index: std::cell::OnceCell::new(),
         }
     }
 
-    /// Returns the lazily-built node index, constructing it on first access.
-    fn index(&self) -> &NodeIndex {
-        self.index.get_or_init(|| {
-            let mut call_nodes = Vec::new();
-            let mut call_other_nodes = Vec::new();
-            let mut return_nodes = Vec::new();
-            let mut if_nodes = Vec::new();
-            let mut function_args: HashMap<u32, NodeId> = HashMap::new();
-            let mut all_nodes = Vec::new();
-
+    /// Returns the lazily-built `FunctionArg` index.
+    fn function_arg_index(&self) -> &FunctionArgIndex {
+        self.function_arg_index.get_or_init(|| {
+            let mut map: HashMap<u32, NodeId> = HashMap::new();
             for node in self.fn_graph.preorder() {
-                all_nodes.push(node);
-                match self.fn_graph.graph.node_kind(node) {
-                    NodeKind::Call => call_nodes.push(node),
-                    NodeKind::CallOther { .. } => call_other_nodes.push(node),
-                    NodeKind::Return => return_nodes.push(node),
-                    NodeKind::If => if_nodes.push(node),
-                    NodeKind::FunctionArg { index, .. } => {
-                        function_args.insert(*index, node);
-                    }
-                    _ => {}
+                if let NodeKind::FunctionArg { index, .. } =
+                    self.fn_graph.graph.node_kind(node)
+                {
+                    map.insert(*index, node);
                 }
             }
-
-            NodeIndex {
-                call_nodes,
-                call_other_nodes,
-                return_nodes,
-                if_nodes,
-                function_args,
-                all_nodes,
-            }
+            FunctionArgIndex(map)
         })
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
-    /// for each.
-    ///
-    /// The search is exhaustive: every node is tried as a potential root.
-    /// Patterns that advertise a [`CandidateKind`](crate::pat::traits::CandidateKind)
-    /// (`Call`, `CallOther`, `Return`, `If`) use the pre-indexed node lists
-    /// built lazily on first call; other patterns fall through to a full
-    /// scan.
+    /// for each.  Does a preorder walk of the graph and tries every node as a
+    /// potential root.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
-        let idx = self.index();
-        let candidates: &[NodeId] = match pat.as_dyn().candidate_kind() {
-            Some(crate::pat::traits::CandidateKind::Call) => &idx.call_nodes,
-            Some(crate::pat::traits::CandidateKind::CallOther) => &idx.call_other_nodes,
-            Some(crate::pat::traits::CandidateKind::Return) => &idx.return_nodes,
-            Some(crate::pat::traits::CandidateKind::If) => &idx.if_nodes,
-            Some(crate::pat::traits::CandidateKind::FunctionArg) | None => &idx.all_nodes,
-        };
-
-        candidates
-            .iter()
-            .filter_map(|&node| {
+        self.fn_graph
+            .preorder()
+            .filter_map(|node| {
                 let mut bindings = Bindings::default();
                 if self.match_node_id(node, pat, &mut bindings) {
                     Some(Match {
@@ -150,8 +105,7 @@ impl<'g> Matcher<'g> {
     /// Returns a [`FunctionArgHandle`] for the `FunctionArg` node at argument
     /// position `index`, if the `FunctionArgDetect` pass emitted one.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'g>> {
-        let idx = self.index();
-        let node_id = *idx.function_args.get(&index)?;
+        let node_id = *self.function_arg_index().0.get(&index)?;
         self.make_function_arg_handle(node_id)
     }
 
@@ -159,8 +113,7 @@ impl<'g> Matcher<'g> {
     /// or `0` if the graph has none.  Equivalent to "the declared arg count
     /// that `FunctionArgDetect` was able to identify."
     pub fn function_arg_count(&self) -> usize {
-        let idx = self.index();
-        match idx.function_args.keys().max() {
+        match self.function_arg_index().0.keys().max() {
             Some(&m) => (m as usize) + 1,
             None => 0,
         }
@@ -169,9 +122,12 @@ impl<'g> Matcher<'g> {
     /// Iterates over every `FunctionArg` node, yielding `(index, handle)`
     /// pairs sorted ascending by index.
     pub fn function_args(&self) -> impl Iterator<Item = (u32, FunctionArgHandle<'g>)> + '_ {
-        let idx = self.index();
-        let mut pairs: Vec<(u32, NodeId)> =
-            idx.function_args.iter().map(|(&k, &v)| (k, v)).collect();
+        let mut pairs: Vec<(u32, NodeId)> = self
+            .function_arg_index()
+            .0
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect();
         pairs.sort_by_key(|(k, _)| *k);
         pairs.into_iter().filter_map(move |(k, node_id)| {
             self.make_function_arg_handle(node_id).map(|h| (k, h))

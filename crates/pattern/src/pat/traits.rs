@@ -58,14 +58,6 @@ pub trait Pattern: Send + Sync {
         false
     }
 
-    /// Routing hint for [`Matcher::find_all`](crate::matcher::Matcher::find_all).
-    /// Returns `Some(kind)` if this pattern is known to match only nodes of
-    /// a specific kind (`Call`, `If`, …), enabling the pre-indexed fast
-    /// path.  Default is `None` (full-graph scan).
-    fn candidate_kind(&self) -> Option<CandidateKind> {
-        None
-    }
-
     /// Materialize this pattern as fresh IR nodes in `ctx.graph`, using
     /// `ctx.bindings` to fill holes (captures / constant values / operator
     /// variants).  Nodes that inherit the type default to `ctx.root_ty`;
@@ -103,17 +95,3 @@ pub struct BuildCtx<'a> {
 /// every [`crate::pat::Pat`].
 pub type DynPat = Arc<dyn Pattern>;
 
-/// Hints [`Matcher::find_all`](crate::matcher::Matcher::find_all) which
-/// pre-indexed node list to iterate.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CandidateKind {
-    Call,
-    CallOther,
-    Return,
-    If,
-    /// Reserved for a future `FunctionArg` fast path — no `Pattern` impl
-    /// currently returns this variant, so `find_all` falls through to the
-    /// full-graph scan.
-    #[allow(dead_code)]
-    FunctionArg,
-}

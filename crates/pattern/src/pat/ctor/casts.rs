@@ -15,7 +15,6 @@ pub fn cast_to_bool(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::CastToBool)
         }),
@@ -32,7 +31,6 @@ pub fn cast_to_int(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::CastToInt)
         }),
@@ -49,7 +47,6 @@ pub fn cast_to_float(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::CastToFloat)
         }),
@@ -66,7 +63,6 @@ pub fn truncate(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::Truncate)
         }),
@@ -83,7 +79,6 @@ pub fn extend(op: ExtendOp, operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::Extend(actual) if *actual == op)
         }),
@@ -108,7 +103,6 @@ pub fn popcount(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::Popcount)
         }),
@@ -125,7 +119,6 @@ pub fn lzcount(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::Lzcount)
         }),

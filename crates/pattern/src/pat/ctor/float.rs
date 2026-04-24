@@ -40,7 +40,6 @@ pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatUnaryOp(x) if *x == op)
         }),
@@ -73,7 +72,6 @@ pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pa
         build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatCmpOp(x) if *x == op)
         }),
@@ -102,7 +100,6 @@ pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntToFloat)
         }),
@@ -119,7 +116,6 @@ pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatToInt)
         }),
@@ -136,7 +132,6 @@ pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatToFloat)
         }),
@@ -153,7 +148,6 @@ pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBitsToFloat)
         }),
@@ -170,7 +164,6 @@ pub fn float_bits_to_int(operand: impl Into<Pat>) -> Pat {
         build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
         outputs: crate::pat::node_pat::OutputsSpec::None,
         consumers: crate::pat::node_pat::ConsumersSpec::None,
-        candidate_kind: None,
         kind_match: Arc::new(|ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBitsToInt)
         }),

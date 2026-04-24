@@ -1,13 +1,12 @@
 //! Builder structs for [`crate::pat::Pat`].
 //!
-//! Every builder in this file emits a trait-backed pattern directly.  Data
+//! Every builder here produces a [`NodePat`] via [`Pat::from_dyn`]. Data
 //! builders (`IntBinaryOpPat`, `BoolBinaryOpPat`, `FloatBinaryOpPat`, the
-//! memory family, `PhiPat`, `FunctionArgPat`) wrap a [`NodePat`]; control
-//! builders (`CallPat`, `CallOtherPat`, `RetPat`, `IfPat`) wrap the
-//! per-kind control structs (`CallPattern`, `CallOtherPattern`,
-//! `ReturnPattern`, `IfPattern`) from [`crate::pat::control_pat`].  Both
-//! converge on [`Pat::from_dyn`](crate::pat::Pat::from_dyn) over the
-//! unified [`Pattern`](crate::pat::traits::Pattern) trait.
+//! memory family, `PhiPat`, `FunctionArgPat`) use `InputsSpec::Fixed` or
+//! `InputsSpec::Indexed`; control builders (`CallPat`, `CallOtherPat`,
+//! `RetPat`, `IfPat`) use `InputsSpec::Indexed` plus, for `If`, the
+//! `ConsumersSpec::Indexed` direct-step forward walk for branch
+//! successors.
 
 use std::sync::Arc;
 
@@ -69,7 +68,6 @@ impl From<IntBinaryOpPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(x) if *x == op)
             }),
@@ -127,7 +125,6 @@ impl From<BoolBinaryOpPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::Fixed(ir::node::NodeOutputType::Bool),
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(x) if *x == op)
             }),
@@ -187,7 +184,6 @@ impl From<FloatBinaryOpPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(x) if *x == op)
             }),
@@ -258,7 +254,6 @@ impl From<LoadPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -343,7 +338,6 @@ impl From<StorePat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -425,7 +419,6 @@ impl From<StackStorePat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -508,7 +501,6 @@ impl From<StackStorePhiPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::StackStorePhi {
                     space: actual_space,
@@ -594,7 +586,6 @@ impl From<PhiPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::ControlPhi(actual_vn) = ctx.graph.graph.node_kind(node) else {
                     return false;
@@ -697,7 +688,6 @@ impl From<CallPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: outputs_spec,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: Some(crate::pat::traits::CandidateKind::Call),
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::Call)
             }),
@@ -758,7 +748,6 @@ impl From<CallOtherPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: Some(crate::pat::traits::CandidateKind::CallOther),
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::CallOther { user_op_id: actual } = ctx.graph.graph.node_kind(node)
                 else {
@@ -832,7 +821,6 @@ impl From<RetPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: Some(crate::pat::traits::CandidateKind::Return),
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::Return)
             }),
@@ -900,7 +888,6 @@ impl From<FunctionArgPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: crate::pat::node_pat::ConsumersSpec::None,
-            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::FunctionArg {
                     source: actual_source,
@@ -1000,7 +987,6 @@ impl From<IfPat> for Pat {
             build_result_ty: crate::pat::node_pat::BuildTy::InheritRoot,
             outputs: crate::pat::node_pat::OutputsSpec::None,
             consumers: consumers_spec,
-            candidate_kind: Some(crate::pat::traits::CandidateKind::If),
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::If)
             }),

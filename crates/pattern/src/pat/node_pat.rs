@@ -23,7 +23,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use crate::error::{Error, Result};
 use crate::matcher::Bindings;
 use crate::matcher::walk;
-use crate::pat::traits::{BuildCtx, BuildOutcome, CandidateKind, MatchCtx, Pattern};
+use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
@@ -76,9 +76,6 @@ pub struct NodePat {
     /// Runs AFTER inputs/outputs/consumers match (and after each commutative
     /// retry) but BEFORE output/node captures.
     pub(crate) post_match: Option<NodeKindCheck>,
-    /// Routing hint for [`crate::matcher::Matcher::find_all`]: if `Some(k)`,
-    /// `find_all` iterates only the pre-indexed nodes of kind `k`.
-    pub(crate) candidate_kind: Option<CandidateKind>,
     pub(crate) output_var: Option<Var>,
     pub(crate) node_var: Option<NodeVar>,
 }
@@ -169,10 +166,6 @@ impl Pattern for NodePat {
             *b = snap;
         }
         false
-    }
-
-    fn candidate_kind(&self) -> Option<CandidateKind> {
-        self.candidate_kind
     }
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
