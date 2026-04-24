@@ -56,10 +56,10 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 /// Collects ELF segments into [`MemRegion`]s, keeping only those for which
 /// `filter` returns `true`.
 ///
-/// Segments with empty data (e.g. `SHT_NOBITS`-equivalents, where `data()`
-/// returns `Ok(&[])`) are skipped. Preserves iteration order; duplicate
-/// `start_addr`s are resolved later by [`MemRegionsLookupTable`] under its
-/// "last one inserted wins" rule.
+/// Segments with empty data (e.g. `PT_LOAD` with `p_filesz == 0`, where
+/// `data()` returns `Ok(&[])`) are skipped. Preserves iteration order;
+/// duplicate `start_addr`s are resolved later by [`MemRegionsLookupTable`]
+/// under its "last one inserted wins" rule.
 ///
 /// # Errors
 ///
@@ -67,8 +67,7 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 /// segment accepted by `filter` has file-backed data that cannot be
 /// read. Segments rejected by `filter` are never read, so malformed
 /// rejected segments do not surface as errors. Accepted empty-data
-/// segments (e.g. `SHT_NOBITS`-equivalents) are skipped rather than
-/// reported.
+/// segments (e.g. `p_filesz == 0`) are skipped rather than reported.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
