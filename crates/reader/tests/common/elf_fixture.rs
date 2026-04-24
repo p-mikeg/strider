@@ -304,16 +304,16 @@ pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
             abi_version: 0,
             e_type: elf::ET_EXEC,
             e_machine: elf::EM_X86_64,
-            e_entry: segments.first().map(|s| s.addr).unwrap_or(0),
+            e_entry: segments.first().map_or(0, |s| s.addr),
             e_flags: 0,
         })
         .expect("write file header");
 
         w.write_align_program_headers();
         for (i, spec) in segments.iter().enumerate() {
-            let mut p_flags = u32::from(elf::PF_R);
+            let mut p_flags = elf::PF_R;
             if spec.exec {
-                p_flags |= u32::from(elf::PF_X);
+                p_flags |= elf::PF_X;
             }
             w.write_program_header(&ProgramHeader {
                 p_type: elf::PT_LOAD,
