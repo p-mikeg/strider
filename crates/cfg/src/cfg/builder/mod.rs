@@ -105,7 +105,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///   incoming edge.
     /// - If a region contains `addr` in its *interior*, calls [`split_region`](Self::split_region)
     ///   to split it and then adds the edge to the second half.
-    /// - If no region contains `addr`, calls [`explore_new_region`](Self::explore_new_region).
+    /// - If no region contains `addr`, builds a new region via [`RegionBuilder`].
     fn explore(
         &mut self,
         parent_region: Option<(NodeIndex, RegionEdgeKind)>,
@@ -127,20 +127,8 @@ impl<R: rsleigh::MemReader> Builder<R> {
                 self.graph.add_edge(parent_region_id, region_id, edge_kind);
             }
         } else {
-            // This is not an explored region - explore it
-            self.explore_new_region(addr, parent_region)?;
+            RegionBuilder::new(self, addr, parent_region).build()?;
         }
-        Ok(())
-    }
-
-    /// Creates a [`RegionBuilder`] anchored at `start_addr` and decodes
-    /// instructions until the region is complete.
-    fn explore_new_region(
-        &mut self,
-        start_addr: PcodeInsnAddr,
-        parent_edge: Option<(NodeIndex, RegionEdgeKind)>,
-    ) -> Result<()> {
-        RegionBuilder::new(self, start_addr, parent_edge).build()?;
         Ok(())
     }
 

@@ -234,7 +234,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         }
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
-            insns: self.insns.to_owned(),
+            insns: std::mem::take(&mut self.insns),
             ends_with_tail_call,
         })?;
         if let Some((parent_id, edge_kind)) = self.parent_edge {
