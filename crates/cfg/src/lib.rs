@@ -27,3 +27,6 @@ mod cfg;
 pub mod error;
 pub use cfg::{Builder, Cfg, IfRegionState, OptionsBuilder, RegionEdgeKind, RegionId};
 pub use error::{Error, ErrorKind, Result};
+
+#[doc(hidden)]
+pub mod test_api;
