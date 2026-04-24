@@ -66,18 +66,38 @@ pub fn elf_sections_to_mem_regions(
 
 // ── Executable-only helpers ───────────────────────────────────────────────────
 
+fn segment_is_executable(seg: &object::read::Segment<'_, '_>) -> bool {
+    matches!(
+        seg.flags(),
+        object::read::SegmentFlags::Elf { p_flags }
+            if p_flags & object::elf::PF_X != 0
+    )
+}
+
+fn section_is_executable(sec: &object::read::Section<'_, '_>) -> bool {
+    matches!(
+        sec.flags(),
+        object::read::SectionFlags::Elf { sh_flags }
+            if sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0
+    )
+}
+
+fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
+    let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+        return false;
+    };
+    let is_alloc    = sh_flags & u64::from(object::elf::SHF_ALLOC)     != 0;
+    let is_exec     = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
+    let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE)     != 0;
+    is_alloc && (is_exec || !is_writable)
+}
+
 /// Returns all executable ELF segments (i.e. those with the `PF_X` flag set)
 /// as [`MemRegion`]s.
 pub fn elf_get_executable_segments_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    elf_segments_to_mem_regions(obj, |seg| {
-        matches!(
-            seg.flags(),
-            object::read::SegmentFlags::Elf { p_flags }
-                if p_flags & object::elf::PF_X != 0
-        )
-    })
+    elf_segments_to_mem_regions(obj, segment_is_executable)
 }
 
 /// Returns all executable ELF sections (i.e. those with `SHF_EXECINSTR` set)
@@ -85,13 +105,7 @@ pub fn elf_get_executable_segments_as_mem_regions(
 pub fn elf_get_executable_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, |sec| {
-        matches!(
-            sec.flags(),
-            object::read::SectionFlags::Elf { sh_flags }
-                if sh_flags & object::elf::SHF_EXECINSTR as u64 != 0
-        )
-    })
+    elf_sections_to_mem_regions(obj, section_is_executable)
 }
 
 /// Returns all sections an executed instruction or a compile-time-constant
@@ -106,15 +120,7 @@ pub fn elf_get_executable_sections_as_mem_regions(
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
-    elf_sections_to_mem_regions(obj, |sec| {
-        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
-            return false;
-        };
-        let is_alloc = sh_flags & object::elf::SHF_ALLOC as u64 != 0;
-        let is_exec = sh_flags & object::elf::SHF_EXECINSTR as u64 != 0;
-        let is_writable = sh_flags & object::elf::SHF_WRITE as u64 != 0;
-        is_alloc && (is_exec || !is_writable)
-    })
+    elf_sections_to_mem_regions(obj, section_is_code_or_readonly)
 }
 
 // ── ElfFileMemReader ──────────────────────────────────────────────────────────
