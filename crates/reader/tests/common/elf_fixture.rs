@@ -176,10 +176,9 @@ fn build_sections_elf(
 
         // Reserve one section name + index per spec, preserving order.
         let mut name_ids = Vec::with_capacity(sections.len());
-        let mut sec_indices = Vec::with_capacity(sections.len());
         for spec in sections {
             name_ids.push(w.add_section_name(spec.name));
-            sec_indices.push(w.reserve_section_index());
+            w.reserve_section_index();
         }
         let _shstrtab_idx = w.reserve_shstrtab_section_index();
 
@@ -275,7 +274,6 @@ pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
         // Section index layout: null, [one per segment], shstrtab.
         let _null_idx = w.reserve_null_section_index();
         let mut name_ids = Vec::with_capacity(segments.len());
-        let mut sec_indices = Vec::with_capacity(segments.len());
         for i in 0..segments.len() {
             // Writer::add_section_name takes &'a [u8] bound to the writer's
             // lifetime. Leaking per-call is acceptable in test-fixture code
@@ -283,7 +281,7 @@ pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
             let owned: &'static [u8] =
                 Box::leak(format!(".seg{i}").into_boxed_str().into_boxed_bytes());
             name_ids.push(w.add_section_name(owned));
-            sec_indices.push(w.reserve_section_index());
+            w.reserve_section_index();
         }
         let _shstrtab_idx = w.reserve_shstrtab_section_index();
 
@@ -356,8 +354,6 @@ pub fn build_elf_with_segments(segments: &[SegmentSpec]) -> Vec<u8> {
             });
         }
         w.write_shstrtab_section_header();
-
-        let _ = sec_indices;
     }
     buf
 }
