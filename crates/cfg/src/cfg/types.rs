@@ -88,6 +88,7 @@ impl Region {
     ///
     /// Returns `false` for regions with no instructions (an invariant violation
     /// that `add_region` prevents, but handled gracefully here).
+    #[must_use]
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         match self.insns.back() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,

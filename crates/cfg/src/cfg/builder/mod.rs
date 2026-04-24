@@ -172,10 +172,13 @@ pub mod test_api {
     //! Test-only forwarders for `Builder` internals.
 
     use super::Builder;
-    use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind, RegionGraph};
+    use crate::cfg::types::{RegionEdgeKind, RegionGraph};
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
     use std::collections::{BTreeMap, VecDeque};
+
+    pub use crate::cfg::options::Options;
+    pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
 
     pub fn add_region<R: rsleigh::MemReader>(
         b: &mut Builder<R>,
