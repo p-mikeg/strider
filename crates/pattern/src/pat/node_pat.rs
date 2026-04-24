@@ -71,6 +71,17 @@ impl KindFilter {
     }
 }
 
+/// Arbitrary `rsleigh::Vn` used as a payload-don't-care exemplar when
+/// constructing `NodeKind` variants for discriminant-only purposes
+/// (e.g. `KindFilter::exact(&NodeKind::ControlPhi(exemplar_vn()))`).
+#[inline]
+pub(crate) fn exemplar_vn() -> rsleigh::Vn {
+    rsleigh::Vn {
+        size: 0,
+        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::CONST },
+    }
+}
+
 /// Runtime decider for whether an arity-2 [`InputsSpec::Fixed`] match should
 /// retry with swapped operands.  Concrete ops fix the answer at construction
 /// (`|_, _| true` or `|_, _| false`); `*Any` patterns inspect the matched op
