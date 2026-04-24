@@ -35,9 +35,12 @@ itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 
 [workspace.lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic       = "deny"
-unreachable = "deny"
-todo        = "deny"
+unwrap_used      = "deny"
+expect_used      = "deny"
+panic            = "deny"
+unreachable      = "deny"
+todo             = "deny"
+redundant_closure = "warn"
+map_unwrap_or    = "warn"
+match_same_arms  = "warn"
 
