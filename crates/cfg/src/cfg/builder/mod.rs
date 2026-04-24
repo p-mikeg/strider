@@ -6,7 +6,7 @@ pub use region_builder::test_api as region_builder_test_api;
 
 use region_builder::RegionBuilder;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 
@@ -38,8 +38,8 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Used by `find_region_containing_addr` and `split_region`.
     pub(super) start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
     /// Pending addresses to explore, together with the parent edge they
-    /// should connect from.  Processed LIFO (depth-first).
-    pub(super) work_queue: VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>,
+    /// should connect from. Treated as a LIFO stack (depth-first traversal).
+    pub(super) work_queue: Vec<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>,
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
@@ -53,7 +53,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             options,
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
-            work_queue: VecDeque::new(),
+            work_queue: Vec::new(),
         }
     }
 
@@ -154,8 +154,8 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// cannot be located after processing, or if any region split or edge
     /// routing fails.
     pub fn build(mut self) -> Result<Cfg<R>> {
-        self.work_queue.push_back((None, self.start_pcode_addr()));
-        while let Some((parent_region, address)) = self.work_queue.pop_back() {
+        self.work_queue.push((None, self.start_pcode_addr()));
+        while let Some((parent_region, address)) = self.work_queue.pop() {
             self.explore(parent_region, address)?;
         }
         let (starting_region, _) = self
@@ -178,7 +178,7 @@ pub mod test_api {
     use crate::cfg::types::{RegionEdgeKind, RegionGraph};
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::BTreeMap;
 
     pub use crate::cfg::options::Options;
     pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
@@ -225,7 +225,7 @@ pub mod test_api {
     #[must_use]
     pub fn work_queue<R: rsleigh::MemReader>(
         b: &Builder<R>,
-    ) -> &VecDeque<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)> {
+    ) -> &Vec<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)> {
         &b.work_queue
     }
 

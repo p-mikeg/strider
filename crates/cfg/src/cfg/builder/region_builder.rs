@@ -183,7 +183,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                     let region = self.finish_current_region(false)?;
                     self.builder
                         .work_queue
-                        .push_back((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
+                        .push((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
                     Ok(ProcessInsnRes::FinishedProcessing)
                 }
             }
@@ -196,7 +196,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 // Add the true case
                 self.builder
                     .work_queue
-                    .push_back((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
+                    .push((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
                 // The false case requires calculation of the next instruction (is it in the current pcode instr or the next one)
                 let next_insn_addr = if addr.insn_index + 1 == lift_res.insns.len() as u64 {
                     PcodeInsnAddr {
@@ -215,7 +215,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 // Add the false case
                 self.builder
                     .work_queue
-                    .push_back((Some((region, RegionEdgeKind::IfCaseFalse)), next_insn_addr));
+                    .push((Some((region, RegionEdgeKind::IfCaseFalse)), next_insn_addr));
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::Return => {
