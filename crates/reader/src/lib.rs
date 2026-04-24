@@ -92,16 +92,13 @@ impl MemRegion {
     ///
     /// Returns `None` when `addr` is not within this region at all.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
-        if !self.contains(addr) {
+        let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
+        let available = self.data.len().checked_sub(offset)?;
+        if available == 0 {
             return None;
         }
-
-        let offset = (addr - self.start_addr) as usize;
-        let available = self.data.len() - offset; // safe: contains() guarantees offset < len
         let to_copy = available.min(out.len());
-
         out[..to_copy].copy_from_slice(&self.data[offset..offset + to_copy]);
-
         Some(to_copy)
     }
 }
