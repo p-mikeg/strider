@@ -107,6 +107,15 @@ macro_rules! define_error {
             }
         }
 
+        impl $crate::Traceback for $wrapper {
+            fn location_chain(&self) -> &$crate::LocationChain {
+                &self.fields.locations
+            }
+            fn origin_backtrace(&self) -> &::std::backtrace::Backtrace {
+                &self.fields.backtrace
+            }
+        }
+
         impl ::std::convert::From<$kind> for $wrapper {
             #[track_caller]
             fn from(kind: $kind) -> Self {

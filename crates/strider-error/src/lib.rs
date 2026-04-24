@@ -23,10 +23,12 @@
 //!   extending the location chain across the boundary.
 //! - [`format_traceback`] — render an error + its source chain + locations +
 //!   backtrace into a single string, for the PyO3 / logging surface.
+//! - [`Traceback`] — trait every wrapper implements; [`format_traceback`]
+//!   uses it to render locations + backtrace.
 
 mod define;
 mod fields;
 mod format;
 
-pub use fields::{ErrorFields, LocationChain};
+pub use fields::{ErrorFields, LocationChain, Traceback};
 pub use format::format_traceback;

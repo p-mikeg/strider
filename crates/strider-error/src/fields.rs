@@ -1,3 +1,11 @@
+//! Core data types shared across `strider-error` wrappers.
+//!
+//! - [`ErrorFields`] — backtrace + per-`?` location chain.
+//! - [`LocationChain`] — type alias for the chain vector.
+//! - [`Traceback`] — trait implemented by every wrapper so
+//!   [`crate::format_traceback`] can render locations/backtrace without
+//!   inspecting `Debug` output.
+
 use std::backtrace::Backtrace;
 use std::panic::Location;
 
@@ -70,4 +78,22 @@ impl ErrorFields {
         }
         write!(f, "{}", self.backtrace)
     }
+}
+
+/// Implemented by every error wrapper that carries an [`ErrorFields`] payload.
+///
+/// Supertrait on [`std::error::Error`] so that `&dyn Traceback` upcasts to
+/// `&dyn Error` for source-chain walks (trait upcasting, stable since Rust
+/// 1.86). Object-safe by design — [`crate::format_traceback`] takes
+/// `&dyn Traceback` without monomorphizing.
+///
+/// Implementations are provided automatically by
+/// [`crate::define_error!`] for non-generic wrappers, and by hand for the
+/// generic `dot::error::Error<E>`.
+pub trait Traceback: std::error::Error {
+    /// Returns the propagation chain (origin first, top-of-stack last).
+    fn location_chain(&self) -> &LocationChain;
+
+    /// Returns the backtrace captured at the origin of this error.
+    fn origin_backtrace(&self) -> &Backtrace;
 }

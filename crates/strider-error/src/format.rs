@@ -3,51 +3,58 @@
 use std::error::Error;
 use std::fmt::Write;
 
-/// Formats an error chain for display — follows `source()` all the way
-/// down, then appends the `Debug` of the top-level error (which for
-/// wrappers produced by [`crate::define_error!`] includes the location
-/// chain and backtrace).
+use crate::Traceback;
+
+/// Renders a [`Traceback`]-bearing error into a single string:
+/// Display line, source-chain walk (one `"  caused by: "` per hop),
+/// per-`?` location chain (`"  at [N] file:line:column"`), then the
+/// origin backtrace.
 ///
 /// The `strider-py` PyO3 layer calls this to produce the body of the
 /// Python exception's string representation.
 ///
 /// ```
-/// use std::error::Error;
-/// use std::fmt;
-///
-/// #[derive(Debug)]
-/// struct Oops;
-/// impl fmt::Display for Oops {
-///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-///         f.write_str("oops")
-///     }
+/// #[derive(Debug, thiserror::Error)]
+/// pub enum MyKind {
+///     #[error("something went wrong")]
+///     Oops,
 /// }
-/// impl Error for Oops {}
 ///
-/// let s = strider_error::format_traceback(&Oops);
-/// assert!(s.contains("oops"));
+/// strider_error::define_error! {
+///     pub struct MyError wraps MyKind;
+/// }
+///
+/// let err: MyError = MyKind::Oops.into();
+/// let s = strider_error::format_traceback(&err);
+/// assert!(s.starts_with("error: something went wrong"));
+/// assert!(s.contains("  at [0] "));
 /// ```
-pub fn format_traceback(err: &(dyn Error + 'static)) -> String {
+pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
     let mut out = String::new();
-    // Writing into a String is infallible; explicit let _ silences the
-    // Result from the Write trait.
+    // Writing into a String is infallible; the `let _` silences the
+    // Result produced by the fmt::Write trait.
     let _ = writeln!(out, "error: {err}");
 
-    let mut cur = err.source();
+    // Source-chain walk via the Error supertrait. `&dyn Traceback` upcasts
+    // to `&dyn Error` implicitly (trait upcasting, stable since 1.86).
+    let err_ref: &(dyn Error + 'static) = err;
+    let mut cur = err_ref.source();
     while let Some(e) = cur {
         let _ = writeln!(out, "  caused by: {e}");
         cur = e.source();
     }
 
-    // The Debug of a `define_error!`-generated wrapper starts with its
-    // Display line, which we already printed above. Strip it so the line
-    // doesn't appear twice. For any other Debug impl the first line is
-    // whatever Debug produced — preserving it is harmless.
-    let dbg = format!("{err:?}");
-    let tail = dbg.split_once('\n').map_or(dbg.as_str(), |(_first, rest)| rest);
-    if !tail.is_empty() {
-        let _ = writeln!(out);
-        let _ = write!(out, "{tail}");
+    for (i, loc) in err.location_chain().iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "  at [{}] {}:{}:{}",
+            i,
+            loc.file(),
+            loc.line(),
+            loc.column(),
+        );
     }
+
+    let _ = write!(out, "{}", err.origin_backtrace());
     out
 }

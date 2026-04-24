@@ -76,6 +76,15 @@ impl<E: Debug + std::error::Error + 'static> std::error::Error for Error<E> {
     }
 }
 
+impl<E: Debug + std::error::Error + std::fmt::Display + 'static> strider_error::Traceback for Error<E> {
+    fn location_chain(&self) -> &strider_error::LocationChain {
+        &self.fields.locations
+    }
+    fn origin_backtrace(&self) -> &std::backtrace::Backtrace {
+        &self.fields.backtrace
+    }
+}
+
 impl<E: Debug> From<ErrorKind<E>> for Error<E> {
     #[track_caller]
     fn from(kind: ErrorKind<E>) -> Self {
