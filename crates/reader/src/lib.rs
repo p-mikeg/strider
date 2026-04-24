@@ -108,11 +108,15 @@ impl MemRegion {
 
 // ── MemRegionsLookupTable ─────────────────────────────────────────────────────
 
-/// A fast lookup table over a collection of non-overlapping [`MemRegion`]s.
+/// A fast lookup table over a collection of [`MemRegion`]s, possibly overlapping.
 ///
-/// Regions are indexed by their start address in a `BTreeMap`, allowing an
-/// O(log n) candidate lookup via a range query.  When two regions have the
-/// same start address the last one inserted wins.
+/// Regions are indexed by start address in a `BTreeMap`, giving O(log n)
+/// candidate lookup via a range query. Two regions sharing the same start
+/// address collapse: the last-inserted one wins. When regions overlap at
+/// different start addresses, reads resolve by walking candidates from the
+/// highest `start_addr <= addr` downward and returning the first region that
+/// contains `addr`; this is O(log n) in the usual non-overlapping case and
+/// O(n) in the worst case where every earlier region must be consulted.
 #[derive(Debug)]
 pub struct MemRegionsLookupTable {
     /// Sorted map from region start address to the region itself.
