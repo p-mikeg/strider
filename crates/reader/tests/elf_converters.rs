@@ -1,0 +1,146 @@
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
+//! Integration tests for the free `elf_*_to_mem_region(s)` functions and
+//! the three filter helpers in `reader::elf`.
+
+#[path = "common/mod.rs"]
+mod common;
+
+use common::elf_fixture::{SectionSpec, build_elf_with_sections};
+use object::Object;
+use object::read::ObjectSection;
+use reader::elf::{
+    elf_get_code_and_readonly_sections_as_mem_regions,
+    elf_get_executable_sections_as_mem_regions,
+    elf_section_to_mem_region,
+    elf_sections_to_mem_regions,
+};
+
+/// Parses the bytes as an ELF; panics with a clear message if parse fails.
+fn parse(bytes: &[u8]) -> object::File<'_> {
+    object::File::parse(bytes).expect("parse synthetic ELF")
+}
+
+// ── elf_section_to_mem_region (single-section round-trip) ─────────────────
+
+#[test]
+fn elf_section_to_mem_region_preserves_addr_and_data() {
+    let bytes = build_elf_with_sections(&[SectionSpec::text(0x1000, vec![1, 2, 3, 4])]);
+    let obj = parse(&bytes);
+    let sec = obj
+        .section_by_name(".text")
+        .expect("find .text in synthetic ELF");
+
+    let region = elf_section_to_mem_region(&sec).expect("convert section");
+    assert_eq!(region.start_addr, 0x1000);
+    assert_eq!(region.data, vec![1, 2, 3, 4]);
+}
+
+// ── elf_sections_to_mem_regions: filter is honored ────────────────────────
+
+#[test]
+fn elf_sections_to_mem_regions_filter_rejects_all() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1]),
+        SectionSpec::rodata(0x2000, vec![2]),
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_sections_to_mem_regions(&obj, |_| false).unwrap();
+    assert!(regions.is_empty(), "filter=false must reject all");
+}
+
+#[test]
+fn elf_sections_to_mem_regions_filter_selects_subset() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1]),
+        SectionSpec::rodata(0x2000, vec![2]),
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_sections_to_mem_regions(&obj, |sec| {
+        sec.name().map(|n| n == ".text").unwrap_or(false)
+    })
+    .unwrap();
+
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].start_addr, 0x1000);
+    assert_eq!(regions[0].data, vec![1]);
+}
+
+// ── elf_sections_to_mem_regions: NOBITS sections are skipped ──────────────
+
+/// `.bss` is `SHT_NOBITS` — `section.data()` returns empty bytes. The
+/// helper treats empty-data sections as skippable regardless of filter.
+///
+/// Asserted positively (not by count) because the low-level helper honors
+/// its filter for every section the ELF contains, including the unavoidable
+/// `.shstrtab` synthetic fixtures emit. The test's subject is the NOBITS
+/// skip, not the total section count.
+#[test]
+fn elf_sections_to_mem_regions_skips_nobits() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1, 2, 3]),
+        SectionSpec::bss(0x2000, 64),
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_sections_to_mem_regions(&obj, |_| true).unwrap();
+
+    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr).collect();
+    assert!(addrs.contains(&0x1000), ".text must be present");
+    assert!(!addrs.contains(&0x2000), ".bss (NOBITS) must be skipped");
+}
+
+// ── elf_sections_to_mem_regions: same start_addr → last wins ──────────────
+
+/// When two sections share a start_addr, the BTreeMap keyed by start_addr
+/// keeps the last one inserted (iteration order = source order). Asserted
+/// positively: find the region at 0x1000 and check its data, rather than
+/// counting total regions (synthetic ELFs always include `.shstrtab@0x0`).
+#[test]
+fn elf_sections_to_mem_regions_same_start_last_wins() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec { name: b".first",  addr: 0x1000, data: vec![0xaa], exec: true,  writable: false, nobits: false },
+        SectionSpec { name: b".second", addr: 0x1000, data: vec![0xbb], exec: false, writable: false, nobits: false },
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_sections_to_mem_regions(&obj, |_| true).unwrap();
+
+    let at_1000: Vec<&reader::MemRegion> = regions.iter().filter(|r| r.start_addr == 0x1000).collect();
+    assert_eq!(at_1000.len(), 1, "duplicate start_addr must collapse to one region");
+    assert_eq!(at_1000[0].data, vec![0xbb], "later section wins on duplicate start_addr");
+}
+
+// ── elf_get_executable_sections_as_mem_regions ────────────────────────────
+
+#[test]
+fn elf_exec_sections_include_shf_execinstr_and_exclude_others() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1]),     // SHF_EXECINSTR
+        SectionSpec::rodata(0x2000, vec![2]),   // not exec
+        SectionSpec::data(0x3000, vec![3]),     // not exec
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_get_executable_sections_as_mem_regions(&obj).unwrap();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].start_addr, 0x1000);
+}
+
+// ── elf_get_code_and_readonly_sections_as_mem_regions ─────────────────────
+
+#[test]
+fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss() {
+    let bytes = build_elf_with_sections(&[
+        SectionSpec::text(0x1000, vec![1, 2]),    // exec     → include
+        SectionSpec::rodata(0x2000, vec![3, 4]),  // ro data  → include
+        SectionSpec::data(0x3000, vec![5, 6]),    // writable → exclude
+        SectionSpec::bss(0x4000, 16),             // NOBITS   → exclude (empty data)
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+
+    let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr).collect();
+    assert!(addrs.contains(&0x1000), ".text must be included");
+    assert!(addrs.contains(&0x2000), ".rodata must be included");
+    assert!(!addrs.contains(&0x3000), ".data must be excluded");
+    assert!(!addrs.contains(&0x4000), ".bss must be excluded");
+    assert_eq!(regions.len(), 2);
+}
