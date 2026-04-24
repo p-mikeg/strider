@@ -3,8 +3,9 @@
 //! Every builder in this file emits a trait-backed pattern directly.  Data
 //! builders (`IntBinaryOpPat`, `BoolBinaryOpPat`, `FloatBinaryOpPat`, the
 //! memory family, `PhiPat`, `FunctionArgPat`) wrap a [`NodePat`]; control
-//! builders (`CallPat`, `CallOtherPat`, `RetPat`, `IfPat`) wrap a
-//! [`ControlNodePat`](crate::pat::control_pat::ControlNodePat).  Both
+//! builders (`CallPat`, `CallOtherPat`, `RetPat`, `IfPat`) wrap the
+//! per-kind control structs (`CallPattern`, `CallOtherPattern`,
+//! `ReturnPattern`, `IfPattern`) from [`crate::pat::control_pat`].  Both
 //! converge on [`Pat::from_dyn`](crate::pat::Pat::from_dyn) over the
 //! unified [`Pattern`](crate::pat::traits::Pattern) trait.
 
@@ -16,7 +17,7 @@ use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 use crate::matcher::commutativity::{
     is_commutative_bool_op, is_commutative_float_op, is_commutative_int_op,
 };
-use crate::pat::control_pat::{ControlNodePat, CtrlKind};
+use crate::pat::control_pat::{CallOtherPattern, CallPattern, IfPattern, ReturnPattern};
 use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{Pat, int_const};
 use crate::var::{NodeVar, Var};
@@ -634,12 +635,10 @@ impl From<CallPat> for Pat {
             ret_outputs,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(ControlNodePat {
-            kind: CtrlKind::Call {
-                target: target.map(Pat::into_dyn),
-                args: indexed_pats_to_dyn(args),
-                ret_outputs: indexed_pats_to_dyn(ret_outputs),
-            },
+        Pat::from_dyn(Arc::new(CallPattern {
+            target: target.map(Pat::into_dyn),
+            args: indexed_pats_to_dyn(args),
+            ret_outputs: indexed_pats_to_dyn(ret_outputs),
             node_var,
         }))
     }
@@ -686,11 +685,9 @@ impl From<CallOtherPat> for Pat {
             args,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(ControlNodePat {
-            kind: CtrlKind::CallOther {
-                user_op_id,
-                args: indexed_pats_to_dyn(args),
-            },
+        Pat::from_dyn(Arc::new(CallOtherPattern {
+            user_op_id,
+            args: indexed_pats_to_dyn(args),
             node_var,
         }))
     }
@@ -738,11 +735,9 @@ impl From<RetPat> for Pat {
             ret_vals,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(ControlNodePat {
-            kind: CtrlKind::Return {
-                preceded_by: preceded_by.map(Pat::into_dyn),
-                ret_vals: indexed_pats_to_dyn(ret_vals),
-            },
+        Pat::from_dyn(Arc::new(ReturnPattern {
+            preceded_by: preceded_by.map(Pat::into_dyn),
+            ret_vals: indexed_pats_to_dyn(ret_vals),
             node_var,
         }))
     }
@@ -877,19 +872,17 @@ impl From<IfPat> for Pat {
             false_branch,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(ControlNodePat {
-            kind: CtrlKind::If {
-                cond: cond.map(Pat::into_dyn),
-                true_branch: true_branch.map(Pat::into_dyn),
-                false_branch: false_branch.map(Pat::into_dyn),
-            },
+        Pat::from_dyn(Arc::new(IfPattern {
+            cond: cond.map(Pat::into_dyn),
+            true_branch: true_branch.map(Pat::into_dyn),
+            false_branch: false_branch.map(Pat::into_dyn),
             node_var,
         }))
     }
 }
 
 /// Lift `Vec<(usize, Pat)>` (as accepted by the fluent builders) into the
-/// `Vec<(usize, DynPat)>` that `CtrlKind` stores.  Each inner `Pat` is
+/// `Vec<(usize, DynPat)>` that the control pattern structs store.  Each inner `Pat` is
 /// simply unwrapped via [`Pat::into_dyn`].
 fn indexed_pats_to_dyn(
     v: Vec<(usize, Pat)>,
