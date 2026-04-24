@@ -29,7 +29,8 @@ use std::fmt::Write;
 /// ```
 pub fn format_traceback(err: &(dyn Error + 'static)) -> String {
     let mut out = String::new();
-    // Safe: writing into a String never fails.
+    // Writing into a String is infallible; explicit let _ silences the
+    // Result from the Write trait.
     let _ = writeln!(out, "error: {err}");
 
     let mut cur = err.source();
@@ -38,7 +39,15 @@ pub fn format_traceback(err: &(dyn Error + 'static)) -> String {
         cur = e.source();
     }
 
-    let _ = writeln!(out);
-    let _ = write!(out, "{err:?}");
+    // The Debug of a `define_error!`-generated wrapper starts with its
+    // Display line, which we already printed above. Strip it so the line
+    // doesn't appear twice. For any other Debug impl the first line is
+    // whatever Debug produced — preserving it is harmless.
+    let dbg = format!("{err:?}");
+    let tail = dbg.split_once('\n').map_or(dbg.as_str(), |(_first, rest)| rest);
+    if !tail.is_empty() {
+        let _ = writeln!(out);
+        let _ = write!(out, "{tail}");
+    }
     out
 }
