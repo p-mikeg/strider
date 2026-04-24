@@ -181,7 +181,7 @@ fn setup_x86() -> Result<
     Box<dyn std::error::Error>,
 > {
     let path = binary("x86");
-    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
+    let obj = reader::load_elf(&path)?;
     let arch = analyzer::SleighArch::x86();
     let ana = make_analyzer(arch, analyzer::CallingConvention::x86_cdecl())?;
     Ok((obj, ana, arch))
@@ -196,7 +196,7 @@ fn setup_x64() -> Result<
     Box<dyn std::error::Error>,
 > {
     let path = binary("x64");
-    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
+    let obj = reader::load_elf(&path)?;
     let arch = analyzer::SleighArch::x86_64();
     let ana = make_analyzer(arch, analyzer::CallingConvention::x86_64_systemv_abi())?;
     Ok((obj, ana, arch))
@@ -211,7 +211,7 @@ fn setup_aarch64() -> Result<
     Box<dyn std::error::Error>,
 > {
     let path = binary("aarch64");
-    let obj = reader::load_elf(path.to_str().ok_or("non-utf8 path")?)?;
+    let obj = reader::load_elf(&path)?;
     let arch = analyzer::SleighArch::aarch64();
     let ana = make_analyzer(arch, analyzer::CallingConvention::aarch64_aapcs64())?;
     Ok((obj, ana, arch))
