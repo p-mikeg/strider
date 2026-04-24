@@ -1,3 +1,5 @@
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
 //! Pins the contract of the `define_error!` macro: the generated wrapper
 //! provides kind/into_kind/decompose/locations/backtrace accessors, Display
 //! delegates to the inner kind, Debug prints kind+locations+backtrace,

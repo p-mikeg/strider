@@ -1,3 +1,5 @@
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
 //! Verifies `format_traceback` produces the Display line exactly once when
 //! the wrapper's Debug impl already starts with the Display line.
 

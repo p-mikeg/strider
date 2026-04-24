@@ -1,3 +1,5 @@
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+
 //! Pins the public contract of `ErrorFields::new` and `push_caller`.
 //! These invariants are assumed by every `define_error!` wrapper and by
 //! `dot::error::Error<E>`; this file is the one place they're tested directly.

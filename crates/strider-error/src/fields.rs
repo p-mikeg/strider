@@ -27,6 +27,9 @@ impl ErrorFields {
     /// Captures a fresh backtrace and seeds the location chain with the
     /// caller's site. Called once, at the outermost `From<ErrorKind>
     /// for Error` boundary when an error originates.
+    // No Default impl: callers never want an un-tracked fields payload;
+    // every construction must go through `new()` so `#[track_caller]` lands.
+    #[allow(clippy::new_without_default)]
     #[must_use]
     #[track_caller]
     pub fn new() -> Self {
