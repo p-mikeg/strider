@@ -1,6 +1,9 @@
 mod region_builder;
 mod split;
 
+#[doc(hidden)]
+pub use region_builder::test_api as region_builder_test_api;
+
 #[cfg(test)]
 pub(super) mod testing;
 

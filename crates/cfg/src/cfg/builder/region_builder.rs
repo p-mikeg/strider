@@ -303,6 +303,134 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     }
 }
 
+#[doc(hidden)]
+pub mod test_api {
+    //! Test-only wrapper around `RegionBuilder` so integration tests can drive
+    //! its private methods directly.
+
+    use super::{ProcessInsnRes as InnerProcessInsnRes, RegionBuilder};
+    use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction};
+    use crate::cfg::Builder;
+    use crate::error::Result;
+    use petgraph::graph::NodeIndex;
+    use std::collections::VecDeque;
+
+    /// Mirror of `ProcessInsnRes` for test consumers.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ProcessInsnRes {
+        FinishedProcessing,
+        DidntFinishProcessing,
+    }
+
+    impl From<InnerProcessInsnRes> for ProcessInsnRes {
+        fn from(inner: InnerProcessInsnRes) -> Self {
+            match inner {
+                InnerProcessInsnRes::FinishedProcessing => ProcessInsnRes::FinishedProcessing,
+                InnerProcessInsnRes::DidntFinishProcessing => ProcessInsnRes::DidntFinishProcessing,
+            }
+        }
+    }
+
+    /// Owns a `RegionBuilder` for the lifetime of the test.
+    pub struct TestRegionBuilder<'a, R: rsleigh::MemReader> {
+        inner: RegionBuilder<'a, R>,
+    }
+
+    impl<'a, R: rsleigh::MemReader> TestRegionBuilder<'a, R> {
+        /// Creates a new `TestRegionBuilder` anchored at `start_addr`.
+        pub fn new(builder: &'a mut Builder<R>, start_addr: PcodeInsnAddr) -> Self {
+            Self {
+                inner: RegionBuilder {
+                    builder,
+                    start_addr,
+                    insns: VecDeque::new(),
+                    parent_edge: None,
+                },
+            }
+        }
+
+        /// Creates a new `TestRegionBuilder` with an explicit parent edge.
+        pub fn with_parent_edge(
+            builder: &'a mut Builder<R>,
+            start_addr: PcodeInsnAddr,
+            parent: (NodeIndex, RegionEdgeKind),
+        ) -> Self {
+            Self {
+                inner: RegionBuilder {
+                    builder,
+                    start_addr,
+                    insns: VecDeque::new(),
+                    parent_edge: Some(parent),
+                },
+            }
+        }
+
+        /// Returns the accumulated instructions for this region.
+        #[must_use]
+        pub fn insns(&self) -> &VecDeque<RegionInstruction> {
+            &self.inner.insns
+        }
+
+        /// Pushes an instruction onto the back of the instruction queue.
+        pub fn push_insn(&mut self, insn: RegionInstruction) {
+            self.inner.insns.push_back(insn);
+        }
+
+        /// Checks whether `target` is a tail call without validating `insn_index`.
+        #[must_use]
+        pub fn is_branch_tail_call_nocheck(&mut self, target: PcodeInsnAddr) -> bool {
+            self.inner.is_branch_tail_call_nocheck(target)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying tail-call check.
+        pub fn is_branch_tail_call(&mut self, target: PcodeInsnAddr) -> Result<bool> {
+            self.inner.is_branch_tail_call(target)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying branch-target decode.
+        pub fn decode_branch_target(
+            &mut self,
+            vn: rsleigh::Vn,
+            at: PcodeInsnAddr,
+        ) -> Result<PcodeInsnAddr> {
+            self.inner.decode_branch_target(vn, at)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying instruction-processing path.
+        pub fn process_new_insn(
+            &mut self,
+            insn: &rsleigh::Insn,
+            at: PcodeInsnAddr,
+            lift: &rsleigh::LiftRes,
+        ) -> Result<ProcessInsnRes> {
+            self.inner.process_new_insn(insn, at, lift).map(Into::into)
+        }
+
+        /// # Errors
+        /// Propagates errors from the underlying instruction-processing path.
+        pub fn process_insn(
+            &mut self,
+            insn: &rsleigh::Insn,
+            at: PcodeInsnAddr,
+            lift: &rsleigh::LiftRes,
+        ) -> Result<ProcessInsnRes> {
+            self.inner.process_insn(insn, at, lift).map(Into::into)
+        }
+
+        /// # Errors
+        /// Returns `NoInstructionsRegionBuilder` if the region has no instructions.
+        pub fn finish_current_region(
+            &mut self,
+            ends_with_tail_call: bool,
+        ) -> Result<NodeIndex> {
+            self.inner.finish_current_region(ends_with_tail_call)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::testing::*;

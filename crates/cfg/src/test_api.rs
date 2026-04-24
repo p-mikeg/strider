@@ -7,4 +7,8 @@
 #[doc(hidden)]
 pub use crate::cfg::test_api::*;
 
-// Task 4 will add region_builder and dot re-exports here.
+#[doc(hidden)]
+pub use crate::cfg::region_builder_test_api::{ProcessInsnRes, TestRegionBuilder};
+
+#[doc(hidden)]
+pub use crate::cfg::dot_test_api::vn_to_name;
