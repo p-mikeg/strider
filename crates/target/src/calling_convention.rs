@@ -363,11 +363,17 @@ mod tests {
                 .name_to_vn(c.stack_ptr_name)
                 .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
             assert_eq!(built.stack_ptr_vn, sp, "{}: stack_ptr_vn", c.name);
-            assert!(
-                !built.callee_saved_regs.contains(&built.stack_ptr_vn),
-                "{}: stack pointer must not be listed as callee-saved",
-                c.name,
-            );
+            for (label, set) in [
+                ("arg_passing_regs", &built.arg_passing_regs),
+                ("callee_saved_regs", &built.callee_saved_regs),
+                ("ret_val_regs", &built.ret_val_regs),
+            ] {
+                assert!(
+                    !set.contains(&built.stack_ptr_vn),
+                    "{}: stack pointer must not appear in {label}",
+                    c.name,
+                );
+            }
             assert_eq!(
                 built.stack_arg_offsets,
                 c.stack_arg_offsets.to_vec(),
