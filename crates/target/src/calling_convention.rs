@@ -148,7 +148,12 @@ impl CallingConvention {
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
+    /// Callee-saved: EBX, ESI, EDI, EBP
     /// Return value: EAX, EDX
+    ///
+    /// ESP is the stack pointer (see `stack_ptr_reg_name`) and is not listed
+    /// as callee-saved — `ret` pops the 4-byte return address, so the caller
+    /// observes SP shifted by `ret_stack_pop` across the call.
     #[must_use]
     pub fn x86_cdecl() -> CallingConvention {
         CallingConvention {
