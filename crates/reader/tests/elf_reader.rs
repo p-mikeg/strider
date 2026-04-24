@@ -188,3 +188,73 @@ fn elf_reader_from_elf_segments_picks_exec_only() {
         None,
     );
 }
+
+use common::reader_contract::{
+    assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
+    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_reads,
+    assert_readonly_rejects_bad_sizes, assert_readonly_rejects_non_ram_spaces,
+    assert_readonly_returns_none,
+};
+
+/// Runs the backend-agnostic reader contract against an
+/// `ElfFileMemReader` built from a synthetic single-section ELF.
+#[test]
+fn elf_reader_satisfies_mem_reader_contract() {
+    let elf = simple_text_elf(0x1000, &[0x11, 0x22, 0x33, 0x44]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+
+    // full read
+    assert_mem_reader_reads(&r, 0x1000, &[0x11, 0x22, 0x33, 0x44]);
+    // unmapped → NotMapped(addr)
+    assert_mem_reader_unmapped_is_not_mapped_error(&r, 0x9000);
+    // partial: ask 6, get 4
+    assert_mem_reader_partial_read_ok(&r, 0x1000, 6, 4);
+}
+
+#[test]
+fn elf_reader_satisfies_read_only_memory_contract() {
+    let elf = simple_text_elf(0x1000, &[0x11, 0x22, 0x33, 0x44]);
+    let r = ElfFileMemReader::from_bytes(&elf).unwrap();
+
+    assert_readonly_reads(&r, rsleigh::VnSpace::RAM, 0x1000, 4, 0x44332211);
+    assert_readonly_returns_none(&r, rsleigh::VnSpace::RAM, 0x9000, 4);
+    assert_readonly_rejects_non_ram_spaces(&r, 0x1000);
+    assert_readonly_rejects_bad_sizes(&r, 0x1000);
+}
+
+use std::io::Write as _;
+use tempfile::NamedTempFile;
+
+/// `from_object` on an already-parsed ELF yields a reader with the same
+/// mapped data as `from_bytes` on the underlying bytes.
+#[test]
+fn elf_reader_from_object_matches_from_bytes() {
+    let elf = simple_text_elf(0x1000, &[1, 2, 3, 4]);
+    let from_bytes = ElfFileMemReader::from_bytes(&elf).unwrap();
+    let parsed = object::File::parse(&elf[..]).unwrap();
+    let from_obj = ElfFileMemReader::from_object(&parsed).unwrap();
+
+    for addr in [0x1000u64, 0x1001, 0x1002, 0x1003] {
+        let mut a = [0u8; 1];
+        let mut b = [0u8; 1];
+        let na = rsleigh::MemReader::read(&from_bytes, rsleigh::VnAddr { off: addr, space: rsleigh::VnSpace::RAM }, &mut a).unwrap();
+        let nb = rsleigh::MemReader::read(&from_obj,   rsleigh::VnAddr { off: addr, space: rsleigh::VnSpace::RAM }, &mut b).unwrap();
+        assert_eq!((na, a), (nb, b), "read mismatch at {addr:#x}");
+    }
+}
+
+/// `from_path` on a tempfile containing valid ELF bytes succeeds and the
+/// resulting reader can read the mapped region.
+#[test]
+fn elf_reader_from_path_reads_temp_elf() {
+    let elf = simple_text_elf(0x1000, &[0xde, 0xad, 0xbe, 0xef]);
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(&elf).unwrap();
+    f.flush().unwrap();
+
+    let r = ElfFileMemReader::from_path(f.path()).unwrap();
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 4),
+        Some(0xefbeadde),
+    );
+}
