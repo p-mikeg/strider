@@ -5,8 +5,6 @@
 //! region-lookup machinery (`MemRegion`, `MemRegionsLookupTable`) lives in
 //! [`crate`] so other backends (raw blobs, PE, Mach-O, …) can reuse it.
 
-use std::collections::BTreeMap;
-
 use object::{Object, ObjectSection, ObjectSegment};
 
 use crate::{MemRegion, MemRegionsLookupTable, Result, error};
@@ -26,48 +24,44 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 /// Collects ELF segments into [`MemRegion`]s, keeping only those for which
 /// `filter` returns `true`.
 ///
-/// Segments with empty data are always skipped.  If two segments share the
-/// same start address, the last one encountered is kept.
+/// Segments with empty data are skipped. Preserves iteration order;
+/// duplicate `start_addr`s are resolved later by [`MemRegionsLookupTable`]
+/// under its "last one inserted wins" rule.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
-    let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
-
+    let mut out = Vec::new();
     for seg in obj.segments() {
         let Ok(data) = seg.data() else { continue };
         if data.is_empty() || !filter(&seg) {
             continue;
         }
-        let region = elf_segment_to_mem_region(&seg)?;
-        by_start.insert(region.start_addr, region);
+        out.push(MemRegion::new(seg.address(), data.to_vec()));
     }
-
-    Ok(by_start.into_values().collect())
+    Ok(out)
 }
 
 /// Collects ELF sections into [`MemRegion`]s, keeping only those for which
 /// `filter` returns `true`.
 ///
 /// Sections whose `data()` call fails or returns empty bytes are always
-/// skipped (this excludes `SHT_NOBITS` sections like `.bss`). If two sections
-/// share the same start address, the last one encountered is kept.
+/// skipped (this excludes `SHT_NOBITS` sections like `.bss`). Preserves
+/// iteration order; duplicate `start_addr`s are resolved later by
+/// [`MemRegionsLookupTable`] under its "last one inserted wins" rule.
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
 ) -> Result<Vec<MemRegion>> {
-    let mut by_start: BTreeMap<u64, MemRegion> = BTreeMap::new();
-
+    let mut out = Vec::new();
     for sec in obj.sections() {
         let Ok(data) = sec.data() else { continue };
         if data.is_empty() || !filter(&sec) {
             continue;
         }
-        let region = elf_section_to_mem_region(&sec)?;
-        by_start.insert(region.start_addr, region);
+        out.push(MemRegion::new(sec.address(), data.to_vec()));
     }
-
-    Ok(by_start.into_values().collect())
+    Ok(out)
 }
 
 // ── Executable-only helpers ───────────────────────────────────────────────────

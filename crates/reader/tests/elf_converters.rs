@@ -89,24 +89,25 @@ fn elf_sections_to_mem_regions_skips_nobits() {
     assert!(!addrs.contains(&0x2000), ".bss (NOBITS) must be skipped");
 }
 
-// ── elf_sections_to_mem_regions: same start_addr → last wins ──────────────
+// ── elf_sections_to_mem_regions: same start_addr → last wins (via table) ──
 
-/// When two sections share a start_addr, the BTreeMap keyed by start_addr
-/// keeps the last one inserted (iteration order = source order). Asserted
-/// positively: find the region at 0x1000 and check its data, rather than
-/// counting total regions (synthetic ELFs always include `.shstrtab@0x0`).
+/// When two sections share a start_addr, the helpers preserve both entries
+/// in iteration order; `MemRegionsLookupTable` collapses them by its own
+/// "last insert wins" rule. Read through the table to exercise the real,
+/// user-visible behavior.
 #[test]
-fn elf_sections_to_mem_regions_same_start_last_wins() {
+fn elf_sections_same_start_last_wins_via_lookup_table() {
     let bytes = build_elf_with_sections(&[
         SectionSpec { name: b".first",  addr: 0x1000, data: vec![0xaa], exec: true,  writable: false, nobits: false },
         SectionSpec { name: b".second", addr: 0x1000, data: vec![0xbb], exec: false, writable: false, nobits: false },
     ]);
     let obj = parse(&bytes);
     let regions = elf_sections_to_mem_regions(&obj, |_| true).unwrap();
+    let table = reader::MemRegionsLookupTable::new(regions);
 
-    let at_1000: Vec<&reader::MemRegion> = regions.iter().filter(|r| r.start_addr == 0x1000).collect();
-    assert_eq!(at_1000.len(), 1, "duplicate start_addr must collapse to one region");
-    assert_eq!(at_1000[0].data, vec![0xbb], "later section wins on duplicate start_addr");
+    let mut buf = [0u8; 1];
+    assert_eq!(table.read(0x1000, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xbb, "later section wins on duplicate start_addr");
 }
 
 // ── elf_get_executable_sections_as_mem_regions ────────────────────────────
