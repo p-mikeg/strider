@@ -26,6 +26,15 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 /// inside `*_const_with!` macros are wrapped in
 /// [`crate::error::ErrorKind::RewriteClosure`] (via
 /// [`crate::error::Error::rewrite_closure`]).
+///
+/// # Single-value-output constraint
+///
+/// The LHS root must have exactly one value output — the rule redirects that
+/// output's uses to the RHS-built output.  Rooting a rule on a multi-output
+/// node (any `Call`, `Load`, `Store`, control-flow node) returns an
+/// `IrError` from `node_outputs_exact::<1>`.  If you need to rewrite a
+/// multi-slot producer, operate on the value slot explicitly (e.g. match
+/// the slot-consumer rather than the producer).
 pub fn rewrite_rule(
     lhs: impl Into<Pat>,
     rhs: impl Into<Pat>,
