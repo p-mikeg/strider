@@ -124,7 +124,7 @@ fn cond_branch_enqueues_both_cases() {
     let res = rb.process_new_insn(&cbr, addr(base, pos), &lift).unwrap();
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 
-    let queue: Vec<_> = test_api::work_queue(&b).iter().cloned().collect();
+    let queue: Vec<_> = test_api::work_queue(&b).to_vec();
     assert_eq!(queue.len(), 2, "CondBranch must enqueue both true and false targets");
 
     // Exactly one IfCaseTrue and one IfCaseFalse were enqueued.
