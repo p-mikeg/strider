@@ -259,6 +259,18 @@ mod tests {
                 stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
                 ret_stack_pop: 0,
             },
+            Case {
+                name: "AArch64 AAPCS64",
+                cc: CallingConvention::aarch64_aapcs64,
+                arch: crate::arch::SleighArch::aarch64,
+                arg_count: 8,
+                callee_saved_count: 12,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 8, 16, 24],
+                ret_stack_pop: 0,
+            },
         ]
     }
 
