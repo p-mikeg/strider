@@ -123,11 +123,18 @@ impl MemRegionsLookupTable {
     ///
     /// Returns `None` when no region contains `addr`.
     /// Partial reads are possible — see [`MemRegion::read`].
+    ///
+    /// Candidates are walked from highest `start_addr <= addr` downward: the
+    /// usual no-overlap case returns on the first candidate, but if a later,
+    /// shorter region sits inside an earlier one the outer region is consulted
+    /// for addresses past the inner region's end.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
-        // Find the last region whose start_addr <= addr, then confirm addr is
-        // actually inside it (start_addr alone is not sufficient).
-        let (_, region) = self.regions.range(..=addr).next_back()?;
-        region.read(addr, out)
+        for (_, region) in self.regions.range(..=addr).rev() {
+            if let Some(n) = region.read(addr, out) {
+                return Some(n);
+            }
+        }
+        None
     }
 }
 

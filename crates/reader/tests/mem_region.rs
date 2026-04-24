@@ -206,6 +206,27 @@ fn lookup_table_cross_boundary_read_stops_at_first_region_end() {
 ///
 /// This falls out of the BTreeMap range query but the BEHAVIOR matters to
 /// callers; future backends that register overlapping regions must know.
+/// Pinned contract: when a later-starting region is *shorter* and does not
+/// cover `addr`, lookup must fall through to an earlier region that does.
+/// Without this, overlapping regions silently lose data.
+#[test]
+fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
+    // Outer A: [0x1000..0x1020), all 0xaa
+    // Inner B: [0x1010..0x1014), all 0xbb  (shorter, starts inside A)
+    let a = MemRegion::new(0x1000, vec![0xaa; 0x20]);
+    let b = MemRegion::new(0x1010, vec![0xbb; 0x04]);
+    let table = MemRegionsLookupTable::new([a, b]);
+    let mut buf = [0u8; 1];
+
+    // 0x1018 is in A's tail but past B's end.
+    assert_eq!(table.read(0x1018, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xaa, "should fall through to A when B does not cover addr");
+
+    // Inside B's range, B still wins (existing "later start wins" rule).
+    assert_eq!(table.read(0x1011, &mut buf), Some(1));
+    assert_eq!(buf[0], 0xbb);
+}
+
 #[test]
 fn lookup_table_overlapping_regions_later_start_shadows_earlier() {
     let a = MemRegion::new(0x1000, vec![0xaa; 0x20]); // [0x1000..0x1020)
