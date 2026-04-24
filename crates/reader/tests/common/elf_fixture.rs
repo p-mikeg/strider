@@ -109,8 +109,8 @@ fn build_one_section_elf(opts: OneSectionOpts<'_>) -> Vec<u8> {
 
         w.write_shstrtab_section_header();
 
-        debug_assert_eq!(sec_idx.0, 1);
-        debug_assert_eq!(shstrtab_idx.0, 2);
+        assert_eq!(sec_idx.0, 1);
+        assert_eq!(shstrtab_idx.0, 2);
     }
     buf
 }
