@@ -1,19 +1,28 @@
-//! Generic node-level data pattern. Covers the vast majority of data-level
-//! patterns with a single struct parameterised by a kind-match closure, an
-//! `InputsSpec`, and optional post-match / capture hooks.
+//! Generic node-level data pattern. Covers the vast majority of patterns
+//! (data and control) with a single struct parameterised by a kind-match
+//! closure, an `InputsSpec`, an `OutputsSpec`, a `ConsumersSpec`, and
+//! optional post-match / capture hooks.
 //!
 //! `InputsSpec::None` handles zero-input patterns (constants, `InitialVar`,
 //! `FunctionArg`); `InputsSpec::Fixed` covers unary / binary / cmp ops with
 //! optional commutative retry; `InputsSpec::Indexed` covers sparse
 //! positional matching for memory ops (`Load` / `Store` / `StackStore` /
-//! `StackStorePhi`) and `Phi`.
+//! `StackStorePhi`), `Phi`, and the control patterns (`Call`, `CallOther`,
+//! `Return`, `If`).
+//!
+//! `OutputsSpec::Indexed` constrains the `NodeOutputId` at specific output
+//! positions — used by `Call` for return-value captures.
+//!
+//! `ConsumersSpec::Indexed` constrains the single consumer node of a given
+//! output — used by `If` for branch successors (direct-step forward walk).
 
 use std::sync::Arc;
 
 use ir::node::{NodeId, NodeOutputId};
 
 use crate::matcher::Bindings;
-use crate::pat::traits::{MatchCtx, Pattern};
+use crate::matcher::walk;
+use crate::pat::traits::{CandidateKind, MatchCtx, Pattern};
 use crate::var::{NodeVar, Var};
 
 /// Closure type used by [`NodePat::kind_match`] and [`NodePat::post_match`].
@@ -27,21 +36,26 @@ pub(crate) type NodeKindCheck =
 pub(crate) type CommutativeDecider =
     Arc<dyn Fn(&MatchCtx, NodeId) -> bool + Send + Sync>;
 
-/// A generic node-level data pattern. Covers every data pattern with the
-/// shape "check node kind, match inputs in some arrangement, optionally
-/// bind output/node captures".
+/// A generic node-level pattern. Covers every pattern shape: "check node
+/// kind, match inputs in some arrangement, optionally constrain outputs
+/// and consumers, optionally bind output/node captures".
 pub struct NodePat {
     /// Checks the node's kind (and any kind-embedded data — e.g. constants,
     /// varnodes, spaces, offsets, phi offsets). May bind typed-constant
-    /// values or operator variants. Has access to graph side-tables via
-    /// `MatchCtx` (needed for `StackStorePhi::offsets`).
+    /// values or operator variants.
     pub(crate) kind_match: NodeKindCheck,
     /// How to match the node's inputs.
     pub(crate) inputs: InputsSpec,
-    /// Runs AFTER inputs match (and after each commutative retry) but BEFORE
-    /// output/node captures. This is where `*Any` patterns bind the
-    /// op-variant — the bind must retry alongside input rebinding.
+    /// Optional constraints on the node's outputs (by position).
+    pub(crate) outputs: OutputsSpec,
+    /// Optional constraints on the single consumer of outputs (by position).
+    pub(crate) consumers: ConsumersSpec,
+    /// Runs AFTER inputs/outputs/consumers match (and after each commutative
+    /// retry) but BEFORE output/node captures.
     pub(crate) post_match: Option<NodeKindCheck>,
+    /// Routing hint for [`crate::matcher::Matcher::find_all`]: if `Some(k)`,
+    /// `find_all` iterates only the pre-indexed nodes of kind `k`.
+    pub(crate) candidate_kind: Option<CandidateKind>,
     pub(crate) output_var: Option<Var>,
     pub(crate) node_var: Option<NodeVar>,
 }
@@ -52,19 +66,12 @@ pub enum InputsSpec {
     /// Arity N with ordered operand matching. When `commutative(ctx, node)`
     /// returns true and the node has exactly 2 inputs, both orderings are
     /// tried.
-    ///
-    /// Sub-patterns are held as [`crate::pat::Pat`] (not
-    /// [`DynPat`](crate::pat::traits::DynPat)) so the fluent builder API
-    /// (`impl Into<Pat>`) can compose them uniformly; dispatch goes through
-    /// [`crate::matcher::Matcher::match_output`].
     Fixed {
         pats: Vec<crate::pat::Pat>,
         commutative: CommutativeDecider,
     },
     /// Sparse positional constraints: only the listed input indices are
     /// matched against their sub-patterns; unlisted slots are unconstrained.
-    /// Used by memory patterns (addr / data at specific indices) and phi
-    /// patterns (per-predecessor constraints).
     Indexed(Vec<(usize, crate::pat::Pat)>),
 }
 
@@ -101,27 +108,76 @@ impl InputsSpec {
     }
 }
 
+/// Constraints on output slots by position.  Each entry's sub-pattern is
+/// matched against the `NodeOutputId` at that output index.
+pub enum OutputsSpec {
+    None,
+    Indexed(Vec<(usize, crate::pat::Pat)>),
+}
+
+/// Constraints on the consumer of an output slot by position.  For each
+/// entry, the helper finds the single consumer of `outputs[i]` (via
+/// [`walk::next_control_node`]) and matches the sub-pattern as a node.  If
+/// the output has zero or multiple consumers, the match fails.
+pub enum ConsumersSpec {
+    None,
+    Indexed(Vec<(usize, crate::pat::Pat)>),
+}
+
 impl Pattern for NodePat {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let node = ctx.graph.graph.get_node_from_output(target);
+        self.try_match_common(ctx, node, Some(target), b)
+    }
+
+    fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
+        let outputs = ctx.graph.graph.node_outputs(node);
+        if outputs.is_empty() {
+            // Zero-output nodes (e.g. `Return`) can't be reached via the
+            // default "iterate outputs" loop; match directly against the
+            // node with no target output.
+            return self.try_match_common(ctx, node, None, b);
+        }
+        for out in outputs.into_iter() {
+            let snap = b.clone();
+            if self.try_match(ctx, out, b) {
+                return true;
+            }
+            *b = snap;
+        }
+        false
+    }
+
+    fn candidate_kind(&self) -> Option<CandidateKind> {
+        self.candidate_kind
+    }
+}
+
+impl NodePat {
+    /// Core match pipeline shared by output-rooted (`try_match`) and
+    /// node-rooted (`try_match_node` for zero-output nodes) entry points.
+    /// `target` is the `NodeOutputId` the match started from, if any — it
+    /// drives `output_var` binding and is otherwise unused.
+    fn try_match_common(
+        &self,
+        ctx: &MatchCtx,
+        node: NodeId,
+        target: Option<NodeOutputId>,
+        b: &mut Bindings,
+    ) -> bool {
         let snap = b.clone();
 
-        // 1) Kind check (may bind typed-constant values).
         if !(self.kind_match)(ctx, node, b) {
             *b = snap;
             return false;
         }
 
-        // 2) Match inputs, with snapshot/restore around the whole thing so
-        //    the post_match + captures also participate in the commutative
-        //    retry.
         let after_kind = b.clone();
 
         if try_once(self, ctx, node, target, b, false) {
             return true;
         }
 
-        // Commutative retry (arity-2 Fixed only, commutative decider true).
         if let InputsSpec::Fixed { pats, commutative } = &self.inputs
             && pats.len() == 2
             && commutative(ctx, node)
@@ -141,7 +197,7 @@ fn try_once(
     pat: &NodePat,
     ctx: &MatchCtx,
     node: NodeId,
-    target: NodeOutputId,
+    target: Option<NodeOutputId>,
     b: &mut Bindings,
     swap: bool,
 ) -> bool {
@@ -154,7 +210,6 @@ fn try_once(
                 return false;
             }
             if swap {
-                // only valid for arity 2
                 let (Some(&i0), Some(&i1)) = (inputs.get(0), inputs.get(1)) else {
                     return false;
                 };
@@ -191,16 +246,46 @@ fn try_once(
         }
     }
 
-    // (b) post_match (op-var binding for *Any patterns)
+    // (b) match outputs by index (NodeOutputId sub-patterns)
+    if let OutputsSpec::Indexed(items) = &pat.outputs {
+        let outputs = ctx.graph.graph.node_outputs(node);
+        for (i, p) in items {
+            let Some(&out) = outputs.get(*i) else {
+                return false;
+            };
+            if !match_one(ctx, out, p, b) {
+                return false;
+            }
+        }
+    }
+
+    // (c) match single consumer of outputs by index
+    if let ConsumersSpec::Indexed(items) = &pat.consumers {
+        let outputs = ctx.graph.graph.node_outputs(node);
+        for (i, p) in items {
+            let Some(&out) = outputs.get(*i) else {
+                return false;
+            };
+            let Some(consumer) = walk::next_control_node(ctx.matcher, out) else {
+                return false;
+            };
+            if !ctx.matcher.match_node_id(consumer, p, b) {
+                return false;
+            }
+        }
+    }
+
+    // (d) post_match (op-var binding for *Any patterns)
     if let Some(pm) = &pat.post_match
         && !pm(ctx, node, b)
     {
         return false;
     }
 
-    // (c) output/node captures — output_var first, then node_var
-    if let Some(v) = pat.output_var
-        && !b.bind_var(v, target)
+    // (e) output/node captures — output_var only meaningful when matched
+    // from an output (target is Some); skipped for zero-output nodes.
+    if let (Some(v), Some(tgt)) = (pat.output_var, target)
+        && !b.bind_var(v, tgt)
     {
         return false;
     }

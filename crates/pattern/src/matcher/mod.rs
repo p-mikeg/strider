@@ -224,40 +224,12 @@ impl<'g> Matcher<'g> {
         pat.as_dyn().try_match(&self.ctx(), output, bindings)
     }
 
-    /// Variant of [`Self::match_output`] that takes a raw
-    /// [`DynPat`](crate::pat::traits::DynPat), avoiding a [`Pat`] wrap/unwrap
-    /// when the caller is already holding the erased trait object (e.g.
-    /// the per-kind control pattern structs' sub-pattern fields).
-    pub(crate) fn match_output_dyn(
-        &self,
-        output: NodeOutputId,
-        pat: &crate::pat::traits::DynPat,
-        bindings: &mut Bindings,
-    ) -> bool {
-        pat.try_match(&self.ctx(), output, bindings)
-    }
-
-    /// Match a `NodeId` against a pattern by iterating the node's outputs
-    /// and trying each one.  For control nodes, `output[0]` is the primary
-    /// control output and typically matches immediately when the pattern is
-    /// a per-kind control struct (`CallPattern`, `ReturnPattern`, ...).
-    /// Bindings are snapshot/restored across each attempt so a partial
-    /// match on one output does not leak into the next.
-    pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
-        self.match_node_id_dyn(node, pat.as_dyn(), bindings)
-    }
-
-    /// [`Self::match_node_id`] against a raw [`DynPat`] — see
-    /// [`Self::match_output_dyn`].  Forwards to the pattern's
+    /// Match a `NodeId` against a pattern via
     /// [`Pattern::try_match_node`](crate::pat::traits::Pattern::try_match_node)
-    /// which (via default impl) iterates the node's outputs; the per-kind
-    /// control structs override it to match zero-output nodes like `Return`.
-    pub(crate) fn match_node_id_dyn(
-        &self,
-        node: NodeId,
-        pat: &crate::pat::traits::DynPat,
-        bindings: &mut Bindings,
-    ) -> bool {
-        pat.try_match_node(&self.ctx(), node, bindings)
+    /// — which iterates the node's outputs (default impl) or matches the
+    /// node directly (zero-output nodes like `Return`, via `NodePat`'s
+    /// override).
+    pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
+        pat.as_dyn().try_match_node(&self.ctx(), node, bindings)
     }
 }

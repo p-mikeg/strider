@@ -10,7 +10,6 @@ mod ctor;
 
 pub(crate) mod traits;
 pub(crate) mod node_pat;
-pub(crate) mod control_pat;
 pub(crate) mod any;
 pub(crate) mod guards;
 pub use builders::{
@@ -48,6 +47,9 @@ impl IntoAnyIntConst for Var {
     fn into_any_int_const_pat(self) -> Pat {
         // Match any IntConst; bind the output to `self` via NodePat.output_var.
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(_))
             }),
@@ -64,6 +66,9 @@ impl IntoAnyIntConst for IntVar {
         // Match any IntConst; bind the concrete value to the IntVar.
         let iv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::IntConst(v) => b.bind_int(iv, *v),
                 _ => false,
@@ -86,6 +91,9 @@ pub trait IntoAnyBoolConst: sealed::SealedAnyBoolConst {
 impl IntoAnyBoolConst for Var {
     fn into_any_bool_const_pat(self) -> Pat {
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(_))
             }),
@@ -101,6 +109,9 @@ impl IntoAnyBoolConst for BoolVar {
     fn into_any_bool_const_pat(self) -> Pat {
         let bv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::BoolConst(v) => b.bind_bool(bv, *v),
                 _ => false,
@@ -123,6 +134,9 @@ pub trait IntoAnyFloatConst: sealed::SealedAnyFloatConst {
 impl IntoAnyFloatConst for Var {
     fn into_any_float_const_pat(self) -> Pat {
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(|ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(_))
             }),
@@ -138,6 +152,9 @@ impl IntoAnyFloatConst for FloatVar {
     fn into_any_float_const_pat(self) -> Pat {
         let fv = self;
         Pat::from_dyn(Arc::new(crate::pat::node_pat::NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, b| match ctx.graph.graph.node_kind(node) {
                 NodeKind::FloatConst(bits) => b.bind_float(fv, *bits),
                 _ => false,
@@ -182,14 +199,6 @@ impl Pat {
     /// Borrow the inner [`DynPat`](crate::pat::traits::DynPat).
     pub(crate) fn as_dyn(&self) -> &crate::pat::traits::DynPat {
         &self.0
-    }
-
-    /// Consume this [`Pat`] and return its inner
-    /// [`DynPat`](crate::pat::traits::DynPat).  Used by builders that store
-    /// erased sub-patterns directly (avoids a wrap/unwrap on every
-    /// dispatch).
-    pub(crate) fn into_dyn(self) -> crate::pat::traits::DynPat {
-        self.0
     }
 
     /// After this pattern matches successfully, additionally bind the matched

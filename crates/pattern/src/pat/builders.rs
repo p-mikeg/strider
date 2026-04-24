@@ -17,7 +17,6 @@ use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
 use crate::matcher::commutativity::{
     is_commutative_bool_op, is_commutative_float_op, is_commutative_int_op,
 };
-use crate::pat::control_pat::{CallOtherPattern, CallPattern, IfPattern, ReturnPattern};
 use crate::pat::node_pat::{InputsSpec, NodePat};
 use crate::pat::{Pat, int_const};
 use crate::var::{NodeVar, Var};
@@ -66,6 +65,9 @@ impl From<IntBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::IntBinaryOp(x) if *x == op)
             }),
@@ -119,6 +121,9 @@ impl From<BoolBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolBinaryOp(x) if *x == op)
             }),
@@ -174,6 +179,9 @@ impl From<FloatBinaryOpPat> for Pat {
             InputsSpec::fixed_ordered(vec![b.lhs, b.rhs])
         };
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatBinaryOp(x) if *x == op)
             }),
@@ -240,6 +248,9 @@ impl From<LoadPat> for Pat {
             indexed.push((1, addr_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -320,6 +331,9 @@ impl From<StorePat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -397,6 +411,9 @@ impl From<StackStorePat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 matches!(
                     ctx.graph.graph.node_kind(node),
@@ -475,6 +492,9 @@ impl From<StackStorePhiPat> for Pat {
             indexed.push((2, data_pat));
         }
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::StackStorePhi {
                     space: actual_space,
@@ -556,6 +576,9 @@ impl From<PhiPat> for Pat {
             node_var,
         } = b;
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::ControlPhi(actual_vn) = ctx.graph.graph.node_kind(node) else {
                     return false;
@@ -635,10 +658,34 @@ impl From<CallPat> for Pat {
             ret_outputs,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(CallPattern {
-            target: target.map(Pat::into_dyn),
-            args: indexed_pats_to_dyn(args),
-            ret_outputs: indexed_pats_to_dyn(ret_outputs),
+        // Call inputs: [ctrl(0), mem(1), target(2), arg0(3), arg1(4), ...].
+        let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
+        if let Some(tgt) = target {
+            indexed_inputs.push((2, tgt));
+        }
+        for (i, p) in args {
+            indexed_inputs.push((3 + i, p));
+        }
+        // Call outputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
+        let outputs_spec = if ret_outputs.is_empty() {
+            crate::pat::node_pat::OutputsSpec::None
+        } else {
+            let indexed = ret_outputs
+                .into_iter()
+                .map(|(i, p)| (2 + i, p))
+                .collect();
+            crate::pat::node_pat::OutputsSpec::Indexed(indexed)
+        };
+        Pat::from_dyn(Arc::new(NodePat {
+            outputs: outputs_spec,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: Some(crate::pat::traits::CandidateKind::Call),
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::Call)
+            }),
+            inputs: InputsSpec::Indexed(indexed_inputs),
+            post_match: None,
+            output_var: None,
             node_var,
         }))
     }
@@ -685,9 +732,23 @@ impl From<CallOtherPat> for Pat {
             args,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(CallOtherPattern {
-            user_op_id,
-            args: indexed_pats_to_dyn(args),
+        // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), ...].
+        let indexed_inputs: Vec<(usize, Pat)> =
+            args.into_iter().map(|(i, p)| (2 + i, p)).collect();
+        Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: Some(crate::pat::traits::CandidateKind::CallOther),
+            kind_match: Arc::new(move |ctx, node, _b| {
+                let NodeKind::CallOther { user_op_id: actual } = ctx.graph.graph.node_kind(node)
+                else {
+                    return false;
+                };
+                user_op_id.is_none_or(|id| *actual == id)
+            }),
+            inputs: InputsSpec::Indexed(indexed_inputs),
+            post_match: None,
+            output_var: None,
             node_var,
         }))
     }
@@ -735,9 +796,27 @@ impl From<RetPat> for Pat {
             ret_vals,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(ReturnPattern {
-            preceded_by: preceded_by.map(Pat::into_dyn),
-            ret_vals: indexed_pats_to_dyn(ret_vals),
+        // Return inputs: [ctrl(0), mem(1), retval0(2), retval1(3), ...].
+        // preceded_by matches against the ctrl input (index 0); the default
+        // Pattern::try_match on the sub-pattern does get_node_from_output,
+        // which is the direct-step backward walk.
+        let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
+        if let Some(prev) = preceded_by {
+            indexed_inputs.push((0, prev));
+        }
+        for (i, p) in ret_vals {
+            indexed_inputs.push((2 + i, p));
+        }
+        Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: Some(crate::pat::traits::CandidateKind::Return),
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::Return)
+            }),
+            inputs: InputsSpec::Indexed(indexed_inputs),
+            post_match: None,
+            output_var: None,
             node_var,
         }))
     }
@@ -795,6 +874,9 @@ impl From<FunctionArgPat> for Pat {
             node_var,
         } = b;
         Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: crate::pat::node_pat::ConsumersSpec::None,
+            candidate_kind: None,
             kind_match: Arc::new(move |ctx, node, _b| {
                 let NodeKind::FunctionArg {
                     source: actual_source,
@@ -872,20 +954,34 @@ impl From<IfPat> for Pat {
             false_branch,
             node_var,
         } = b;
-        Pat::from_dyn(Arc::new(IfPattern {
-            cond: cond.map(Pat::into_dyn),
-            true_branch: true_branch.map(Pat::into_dyn),
-            false_branch: false_branch.map(Pat::into_dyn),
+        // If inputs: [ctrl(0), cond(1)]. Outputs: [true-ctrl(0), false-ctrl(1)].
+        let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
+        if let Some(c) = cond {
+            indexed_inputs.push((1, c));
+        }
+        let mut indexed_consumers: Vec<(usize, Pat)> = Vec::new();
+        if let Some(tb) = true_branch {
+            indexed_consumers.push((0, tb));
+        }
+        if let Some(fb) = false_branch {
+            indexed_consumers.push((1, fb));
+        }
+        let consumers_spec = if indexed_consumers.is_empty() {
+            crate::pat::node_pat::ConsumersSpec::None
+        } else {
+            crate::pat::node_pat::ConsumersSpec::Indexed(indexed_consumers)
+        };
+        Pat::from_dyn(Arc::new(NodePat {
+            outputs: crate::pat::node_pat::OutputsSpec::None,
+            consumers: consumers_spec,
+            candidate_kind: Some(crate::pat::traits::CandidateKind::If),
+            kind_match: Arc::new(|ctx, node, _b| {
+                matches!(ctx.graph.graph.node_kind(node), NodeKind::If)
+            }),
+            inputs: InputsSpec::Indexed(indexed_inputs),
+            post_match: None,
+            output_var: None,
             node_var,
         }))
     }
-}
-
-/// Lift `Vec<(usize, Pat)>` (as accepted by the fluent builders) into the
-/// `Vec<(usize, DynPat)>` that the control pattern structs store.  Each inner `Pat` is
-/// simply unwrapped via [`Pat::into_dyn`].
-fn indexed_pats_to_dyn(
-    v: Vec<(usize, Pat)>,
-) -> Vec<(usize, crate::pat::traits::DynPat)> {
-    v.into_iter().map(|(i, p)| (i, p.into_dyn())).collect()
 }

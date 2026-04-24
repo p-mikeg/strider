@@ -55,6 +55,9 @@ decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
 /// Matches an integer unary operation with the given `op`.
 pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        outputs: crate::pat::node_pat::OutputsSpec::None,
+        consumers: crate::pat::node_pat::ConsumersSpec::None,
+        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntUnaryOp(x) if *x == op)
         }),
@@ -85,6 +88,9 @@ pub fn int_cmp(op: IntCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
         InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()])
     };
     Pat::from_dyn(Arc::new(NodePat {
+        outputs: crate::pat::node_pat::OutputsSpec::None,
+        consumers: crate::pat::node_pat::ConsumersSpec::None,
+        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntCmpOp(x) if *x == op)
         }),

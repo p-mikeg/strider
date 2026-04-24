@@ -26,6 +26,9 @@ pub fn var(v: Var) -> Pat {
 /// Matches an `IntConst` node with value exactly `v`.
 pub fn int_const(v: u64) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        outputs: crate::pat::node_pat::OutputsSpec::None,
+        consumers: crate::pat::node_pat::ConsumersSpec::None,
+        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::IntConst(c) if *c == v)
         }),
@@ -39,6 +42,9 @@ pub fn int_const(v: u64) -> Pat {
 /// Matches a `BoolConst` node with value exactly `v`.
 pub fn bool_const(v: bool) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        outputs: crate::pat::node_pat::OutputsSpec::None,
+        consumers: crate::pat::node_pat::ConsumersSpec::None,
+        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::BoolConst(c) if *c == v)
         }),
@@ -52,6 +58,9 @@ pub fn bool_const(v: bool) -> Pat {
 /// Matches a `FloatConst` node with the exact bit pattern `bits`.
 pub fn float_const(bits: u64) -> Pat {
     Pat::from_dyn(Arc::new(NodePat {
+        outputs: crate::pat::node_pat::OutputsSpec::None,
+        consumers: crate::pat::node_pat::ConsumersSpec::None,
+        candidate_kind: None,
         kind_match: Arc::new(move |ctx, node, _b| {
             matches!(ctx.graph.graph.node_kind(node), NodeKind::FloatConst(c) if *c == bits)
         }),
