@@ -165,28 +165,26 @@ fn elf_reader_partial_read_asymmetry_between_traits() {
 use common::elf_fixture::{SegmentSpec, build_elf_with_segments};
 use object::File;
 
-/// `from_elf_segments` picks up only the executable segment, not other
-/// PT_LOADs. Addresses outside the executable segment's range are
-/// unmapped.
+/// `elf_get_executable_segments_as_mem_regions` picks up only the
+/// executable segment, not other PT_LOADs. Addresses outside the
+/// executable segment's range are unmapped.
 #[test]
-fn elf_reader_from_elf_segments_picks_exec_only() {
+fn elf_exec_segments_only_yield_mapped_regions() {
+    use reader::MemRegionsLookupTable;
+    use reader::elf::elf_get_executable_segments_as_mem_regions;
+
     let bytes = build_elf_with_segments(&[
         SegmentSpec { addr: 0x1000, data: vec![0xaa, 0xbb], exec: true },
         SegmentSpec { addr: 0x2000, data: vec![0xcc, 0xdd], exec: false },
     ]);
     let obj = File::parse(&bytes[..]).unwrap();
-    let r = ElfFileMemReader::from_elf_segments(&obj).unwrap();
+    let regions = elf_get_executable_segments_as_mem_regions(&obj).unwrap();
+    let table = MemRegionsLookupTable::new(regions);
 
-    // exec segment is reachable
-    assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 2),
-        Some(0xbbaa),
-    );
-    // non-exec segment is not reachable via from_elf_segments
-    assert_eq!(
-        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x2000, 2),
-        None,
-    );
+    let mut buf = [0u8; 2];
+    assert_eq!(table.read(0x1000, &mut buf), Some(2));
+    assert_eq!(buf, [0xaa, 0xbb]);
+    assert_eq!(table.read(0x2000, &mut buf), None);
 }
 
 use common::reader_contract::{

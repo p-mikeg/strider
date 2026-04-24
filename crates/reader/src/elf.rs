@@ -170,32 +170,6 @@ impl ElfFileMemReader {
         let bytes = std::fs::read(path)?;
         Self::from_bytes(&bytes)
     }
-
-    /// Builds a reader from the executable **segments** of `obj`.
-    ///
-    /// Kept for callers that need the legacy exec-segments-only behaviour. Most
-    /// callers should use [`ElfFileMemReader::from_object`] instead.
-    pub fn from_elf_segments(obj: &object::File<'_>) -> Result<Self> {
-        let regions = elf_get_executable_segments_as_mem_regions(obj)?;
-        let lookup = MemRegionsLookupTable::new(regions);
-        Ok(Self {
-            regions_mem_reader: RegionsMemReader::new(lookup),
-            endianness: obj.endianness(),
-        })
-    }
-
-    /// Builds a reader from the executable **sections** of `obj`.
-    ///
-    /// Kept for callers that need the legacy exec-sections-only behaviour.
-    /// Most callers should use [`ElfFileMemReader::from_object`] instead.
-    pub fn from_elf_sections(obj: &object::File<'_>) -> Result<Self> {
-        let regions = elf_get_executable_sections_as_mem_regions(obj)?;
-        let lookup = MemRegionsLookupTable::new(regions);
-        Ok(Self {
-            regions_mem_reader: RegionsMemReader::new(lookup),
-            endianness: obj.endianness(),
-        })
-    }
 }
 
 impl rsleigh::MemReader for ElfFileMemReader {
