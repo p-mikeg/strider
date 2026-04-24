@@ -161,3 +161,30 @@ fn elf_reader_partial_read_asymmetry_between_traits() {
         "ReadOnlyMemory must not truncate",
     );
 }
+
+use common::elf_fixture::{SegmentSpec, build_elf_with_segments};
+use object::File;
+
+/// `from_elf_segments` picks up only the executable segment, not other
+/// PT_LOADs. Addresses outside the executable segment's range are
+/// unmapped.
+#[test]
+fn elf_reader_from_elf_segments_picks_exec_only() {
+    let bytes = build_elf_with_segments(&[
+        SegmentSpec { addr: 0x1000, data: vec![0xaa, 0xbb], exec: true },
+        SegmentSpec { addr: 0x2000, data: vec![0xcc, 0xdd], exec: false },
+    ]);
+    let obj = File::parse(&bytes[..]).unwrap();
+    let r = ElfFileMemReader::from_elf_segments(&obj).unwrap();
+
+    // exec segment is reachable
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x1000, 2),
+        Some(0xbbaa),
+    );
+    // non-exec segment is not reachable via from_elf_segments
+    assert_eq!(
+        ReadOnlyMemory::read(&r, rsleigh::VnSpace::RAM, 0x2000, 2),
+        None,
+    );
+}

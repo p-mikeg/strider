@@ -144,3 +144,72 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
     assert!(!addrs.contains(&0x4000), ".bss must be excluded");
     assert_eq!(regions.len(), 2);
 }
+
+use common::elf_fixture::{SegmentSpec, build_elf_with_segments};
+use object::read::ObjectSegment;
+use reader::elf::{
+    elf_get_executable_segments_as_mem_regions,
+    elf_segment_to_mem_region,
+    elf_segments_to_mem_regions,
+};
+
+// ── elf_segment_to_mem_region ─────────────────────────────────────────────
+
+#[test]
+fn elf_segment_to_mem_region_preserves_addr_and_data() {
+    let bytes = build_elf_with_segments(&[SegmentSpec {
+        addr: 0x1000,
+        data: vec![1, 2, 3, 4],
+        exec: true,
+    }]);
+    let obj = parse(&bytes);
+    let seg = obj.segments().next().expect("at least one segment");
+
+    let region = elf_segment_to_mem_region(&seg).expect("convert segment");
+    assert_eq!(region.start_addr, 0x1000);
+    assert_eq!(region.data, vec![1, 2, 3, 4]);
+}
+
+// ── elf_segments_to_mem_regions: filter honored ───────────────────────────
+
+#[test]
+fn elf_segments_to_mem_regions_filter_rejects_all() {
+    let bytes = build_elf_with_segments(&[
+        SegmentSpec { addr: 0x1000, data: vec![1], exec: true },
+        SegmentSpec { addr: 0x2000, data: vec![2], exec: false },
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_segments_to_mem_regions(&obj, |_| false).unwrap();
+    assert!(regions.is_empty());
+}
+
+#[test]
+fn elf_segments_to_mem_regions_filter_selects_exec_only() {
+    let bytes = build_elf_with_segments(&[
+        SegmentSpec { addr: 0x1000, data: vec![1], exec: true },
+        SegmentSpec { addr: 0x2000, data: vec![2], exec: false },
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_segments_to_mem_regions(&obj, |seg| matches!(
+        seg.flags(),
+        object::read::SegmentFlags::Elf { p_flags }
+            if p_flags & object::elf::PF_X != 0,
+    ))
+    .unwrap();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].start_addr, 0x1000);
+}
+
+// ── elf_get_executable_segments_as_mem_regions ────────────────────────────
+
+#[test]
+fn elf_exec_segments_include_pf_x_and_exclude_others() {
+    let bytes = build_elf_with_segments(&[
+        SegmentSpec { addr: 0x1000, data: vec![1], exec: true },   // PF_X
+        SegmentSpec { addr: 0x2000, data: vec![2], exec: false },  // no PF_X
+    ]);
+    let obj = parse(&bytes);
+    let regions = elf_get_executable_segments_as_mem_regions(&obj).unwrap();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].start_addr, 0x1000);
+}
