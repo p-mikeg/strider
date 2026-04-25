@@ -109,12 +109,7 @@ impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
             .graph
             .node_weight(node_id)
             .ok_or(ErrorKind::InvalidRegion(node_id))?;
-        let first_insn_index = node
-            .insns
-            .first()
-            .ok_or(ErrorKind::EmptyRegion(node.start_addr))?
-            .addr
-            .insn_index;
+        let first_insn_index = node.start_addr.insn_index;
         let start_addr = node.start_addr.machine_addr.addr;
 
         // Build node label once
