@@ -25,25 +25,23 @@ impl FunctionBuilder {
             .iter()
             .map(|var| self.read_variable(var))
             .collect::<Result<_>>()?;
+        self.validate_value_inputs(&arg_passing)?;
+
         let clobbered: SmallVec<[_; 4]> = self.call_cloberred_variables.iter().copied().collect();
 
-        let clobbered_outputs: SmallVec<[NodeOutputId; 4]> = self
-            .call_cloberred_variables
-            .iter()
-            .map(|var| self.read_variable(var))
-            .collect::<Result<_>>()?;
-
-        let cloberred_kinds: SmallVec<[NodeOutputKind; 4]> = clobbered_outputs
-            .iter()
-            .map(|v| self.graph().output_kind(*v))
-            .collect();
-
-        self.validate_value_inputs(&arg_passing)?;
-        for k in &cloberred_kinds {
+        // Single pass over clobbered variables: read, validate kind, collect
+        // kinds. Preserves the offending NodeOutputId in the error (was
+        // previously emitted as NodeOutputId::default() — unactionable).
+        let mut cloberred_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
+        for var in &self.call_cloberred_variables {
+            let out = self.read_variable(var)?;
+            let k = self.graph().output_kind(out);
             if !k.is_value() {
-                return Err(ErrorKind::ExpectedValue(NodeOutputId::default(), *k).into());
+                return Err(ErrorKind::ExpectedValue(out, k).into());
             }
+            cloberred_kinds.push(k);
         }
+
         let addr_kind = self.graph().output_kind(call_address);
         if !addr_kind.is_value() {
             return Err(ErrorKind::ExpectedValue(call_address, addr_kind).into());
