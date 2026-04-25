@@ -710,6 +710,119 @@ fn layer_a_accepts_bool_post_call_var_state() {
 }
 
 #[test]
+fn layer_c_mem_phi_arity_mismatch() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_out],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+    let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
+
+    // MemPhi with two memory inputs but the owning ControlState has one predecessor.
+    let mem_phi = graph.create_node(
+        NodeKind::MemPhi,
+        [cs_phi_out, init_mem_out, init_mem_out],
+        [NodeOutputKind::Memory],
+    );
+    let mem_phi_out = graph.node_outputs(mem_phi).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [cs_ctrl_out, mem_phi_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiValueArityMismatch {
+                expected_predecessors: 1,
+                actual_values: 2,
+                ..
+            }
+        )),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_c_value_phi_arity_mismatch() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_out],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+    let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
+
+    let c1 = graph.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let c1_out = graph.node_outputs(c1).into_iter().next().unwrap();
+
+    // ValuePhi with two value inputs but the owning ControlState has one predecessor.
+    let vp = graph.create_node(
+        NodeKind::ValuePhi,
+        [cs_phi_out, c1_out, c1_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let vp_out = graph.node_outputs(vp).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [cs_ctrl_out, init_mem_out, vp_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiValueArityMismatch {
+                expected_predecessors: 1,
+                actual_values: 2,
+                ..
+            }
+        )),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_a_rejects_wrong_output_count() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    // IntConst expects exactly one output but we give it two.
+    let bad = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [
+            NodeOutputKind::OutputType(NodeOutputType::U64),
+            NodeOutputKind::OutputType(NodeOutputType::U64),
+        ],
+    );
+    let bad_out0 = graph.node_outputs(bad).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(_mem).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem, bad_out0], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e|
+            matches!(e, ValidationError::NodeOutputCountMismatch { node, expected: 1, actual: 2 } if *node == bad)
+        ),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
 fn layer_c_rejects_control_state_with_zero_predecessors() {
     // ControlState has a variadic head_len of 0, so Layer A's count check
     // (>= 0) accepts zero inputs and Layer C's per-predecessor loop is a
