@@ -133,7 +133,7 @@ pub struct PreOrderContext<N> {
 impl<N: Copy> PreOrderContext<N> {
     /// Creates an empty context.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { stack: Vec::new() }
     }
 
@@ -232,7 +232,7 @@ pub struct PostOrderContext<N> {
 impl<N: Copy> PostOrderContext<N> {
     /// Creates an empty context.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { stack: Vec::new() }
     }
 

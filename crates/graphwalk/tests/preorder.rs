@@ -69,8 +69,7 @@ test_preorder! {
 #[test]
 fn empty_roots_yields_nothing() {
     let g = graphmock::graph("a -> b");
-    let order: Vec<_> = entity_preorder(&g, core::iter::empty()).collect();
-    assert!(order.is_empty());
+    assert!(entity_preorder(&g, core::iter::empty()).next().is_none());
 }
 
 #[test]

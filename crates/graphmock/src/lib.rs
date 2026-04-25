@@ -30,7 +30,7 @@ pub struct Graph {
 
 impl Graph {
     #[must_use]
-    pub fn entry(&self) -> NodeId {
+    pub const fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
@@ -66,6 +66,17 @@ impl Graph {
     }
 }
 
+/// Build a [`Graph`] from a tiny edge-list DSL.
+///
+/// Each non-blank line has the form `pred[, pred…] -> succ[, succ…]`. Whitespace
+/// around names is trimmed. Names are interned: a name's first appearance creates
+/// a node, later appearances reuse the same id.
+///
+/// # Panics
+///
+/// Panics if a non-blank line does not contain exactly one `->` separator. This
+/// helper is test-only; the input is a hard-coded literal in callers, so a
+/// malformed line is a programmer error rather than a runtime condition.
 #[must_use]
 pub fn graph(input: &str) -> Graph {
     let mut graph = Graph {
@@ -81,10 +92,12 @@ pub fn graph(input: &str) -> Graph {
         // graphmock is a test-only DSL helper; input is a hard-coded string in
         // downstream tests, so a malformed line is a programmer error, not a
         // runtime condition that deserves error plumbing.
-        #[allow(clippy::unwrap_used)]
-        let [preds, succs]: [&str; 2] = line.split("->").collect::<Vec<_>>().try_into().unwrap();
-        let preds = preds.split(',').map(|pred| pred.trim());
-        let succs: Vec<_> = succs.split(',').map(|succ| succ.trim()).collect();
+        #[allow(clippy::panic)]
+        let (preds, succs) = line
+            .split_once("->")
+            .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));
+        let preds = preds.split(',').map(str::trim);
+        let succs: Vec<_> = succs.split(',').map(str::trim).collect();
 
         for pred in preds {
             let pred = graph.get_or_create(pred);
@@ -146,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_grpah() {
+    fn loop_graph() {
         let _ = graph(
             "
             a -> b
@@ -190,6 +203,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::many_single_char_names)]
     fn fan_out_and_fan_in() {
         // a, b -> c, d adds 4 edges.
         let g = graph("a, b -> c, d");

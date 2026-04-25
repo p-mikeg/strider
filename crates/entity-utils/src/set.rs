@@ -35,6 +35,18 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.clear();
     }
 
+    /// Returns the number of entities currently in the set.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.bitset.len()
+    }
+
+    /// Returns `true` if the set contains no entities.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.bitset.is_empty()
+    }
+
     /// Returns `true` if `entity` is a member of the set.
     #[must_use]
     pub fn contains(&self, entity: E) -> bool {
@@ -74,6 +86,15 @@ impl<E: EntityRef> Iterator for Iter<'_, E> {
     }
 }
 
+impl<'a, E: EntityRef> IntoIterator for &'a DenseEntitySet<E> {
+    type Item = E;
+    type IntoIter = Iter<'a, E>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 impl<E> Default for DenseEntitySet<E> {
     fn default() -> Self {
         Self {
@@ -87,7 +108,7 @@ impl<E: EntityRef> FromIterator<E> for DenseEntitySet<E> {
     fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
         let iter = iter.into_iter();
         let (min_size, _) = iter.size_hint();
-        let mut set = DenseEntitySet::with_capacity(min_size);
+        let mut set = Self::with_capacity(min_size);
         for entity in iter {
             set.insert(entity);
         }
@@ -186,5 +207,36 @@ mod tests {
         s.remove(Id(99));
         assert!(s.contains(Id(1)));
         assert!(!s.contains(Id(99)));
+    }
+
+    #[test]
+    fn len_and_is_empty_track_membership() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+        s.insert(Id(1));
+        s.insert(Id(2));
+        assert_eq!(s.len(), 2);
+        assert!(!s.is_empty());
+        s.insert(Id(1)); // idempotent
+        assert_eq!(s.len(), 2);
+        s.remove(Id(1));
+        assert_eq!(s.len(), 1);
+        s.clear();
+        assert_eq!(s.len(), 0);
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn into_iter_for_ref_yields_same_as_iter() {
+        let s: DenseEntitySet<Id> = [Id(3), Id(1), Id(4)].into_iter().collect();
+        let by_iter: Vec<_> = s.iter().collect();
+        let by_for: Vec<_> = (&s).into_iter().collect();
+        assert_eq!(by_iter, by_for);
+        let mut by_for_sugar = Vec::new();
+        for id in &s {
+            by_for_sugar.push(id);
+        }
+        assert_eq!(by_iter, by_for_sugar);
     }
 }

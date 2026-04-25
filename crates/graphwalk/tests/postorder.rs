@@ -55,7 +55,7 @@ test_postorder! {
     "a -> b
     b -> c
     c -> d",
-    expect![[r#"
+    expect![[r"
         ent:a
          ent:b
           ent:c
@@ -64,7 +64,7 @@ test_postorder! {
           ex:c
          ex:b
         ex:a
-    "#]],
+    "]],
     expect!["a b c d"]
 }
 
@@ -72,7 +72,7 @@ test_postorder! {
     diamond,
     "a -> b, c
     b, c -> d",
-    expect![[r#"
+    expect![[r"
         ent:a
          ent:c
           ent:d
@@ -81,7 +81,7 @@ test_postorder! {
          ent:b
          ex:b
         ex:a
-    "#]],
+    "]],
     expect!["a b c d"]
 }
 
@@ -91,7 +91,7 @@ test_postorder! {
     b -> c, d
     c -> d
     d -> e",
-    expect![[r#"
+    expect![[r"
         ent:a
          ent:c
           ent:d
@@ -102,7 +102,7 @@ test_postorder! {
          ent:b
          ex:b
         ex:a
-    "#]],
+    "]],
     expect!["a b c d e"]
 }
 
@@ -111,7 +111,7 @@ test_postorder! {
     "a -> b
     b -> c
     c -> b, e",
-    expect![[r#"
+    expect![[r"
         ent:a
          ent:b
           ent:c
@@ -120,7 +120,7 @@ test_postorder! {
           ex:c
          ex:b
         ex:a
-    "#]],
+    "]],
     expect!["a b c e"]
 }
 
@@ -130,7 +130,7 @@ test_postorder! {
     b -> c, d
     c, d -> e
     e -> b, f",
-    expect![[r#"
+    expect![[r"
         ent:a
          ent:b
           ent:d
@@ -143,7 +143,7 @@ test_postorder! {
           ex:c
          ex:b
         ex:a
-    "#]],
+    "]],
     expect!["a b c d e f"]
 }
 
@@ -204,7 +204,7 @@ fn nop_tracker_on_a_tree() {
     // Each node is visited exactly once even though NopTracker never records visits;
     // this only holds because the input really is a tree.
     assert_eq!(order.len(), 4);
-    let mut sorted = order.clone();
+    let mut sorted = order;
     sorted.sort();
     assert_eq!(sorted, vec!["a", "b", "c", "d"]);
 }
