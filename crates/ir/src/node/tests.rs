@@ -342,3 +342,20 @@ fn type_info_table_matches_variants() {
         assert_eq!(ty.is_float(), *is_float);
     }
 }
+
+#[test]
+fn try_from_u32_size_to_node_output_type() {
+    assert_eq!(NodeOutputType::try_from(1u32).unwrap(), NodeOutputType::U8);
+    assert_eq!(NodeOutputType::try_from(2u32).unwrap(), NodeOutputType::U16);
+    assert_eq!(NodeOutputType::try_from(4u32).unwrap(), NodeOutputType::U32);
+    assert_eq!(NodeOutputType::try_from(8u32).unwrap(), NodeOutputType::U64);
+    assert_eq!(NodeOutputType::try_from(16u32).unwrap(), NodeOutputType::U128);
+    assert_eq!(NodeOutputType::try_from(32u32).unwrap(), NodeOutputType::U256);
+    for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 64] {
+        let err = NodeOutputType::try_from(bad).expect_err("invalid size");
+        assert!(
+            matches!(err.kind(), crate::error::ErrorKind::UnsupportedOutputSize(n) if *n == bad),
+            "wrong error kind for {bad}: {err:?}"
+        );
+    }
+}
