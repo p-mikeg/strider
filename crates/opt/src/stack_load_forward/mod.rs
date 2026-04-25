@@ -194,14 +194,14 @@ fn probe(
                 return None;
             }
             // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-            let inputs_vec: Vec<NodeOutputId> = fg.graph.node_inputs(node).into_iter().collect();
-            if inputs_vec.len() < 2 {
+            let inputs = fg.graph.node_inputs(node);
+            if inputs.len() < 2 {
                 return None;
             }
-            let phi_token = inputs_vec[0];
-            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs_vec.len() - 1);
-            for pred_mem in &inputs_vec[1..] {
-                preds.push(probe(fg, *pred_mem, offset, load_size, load_ty, visited)?);
+            let phi_token = inputs[0];
+            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs.len() - 1);
+            for pred_mem in inputs.into_iter().skip(1) {
+                preds.push(probe(fg, pred_mem, offset, load_size, load_ty, visited)?);
             }
             Some(ResolveShape::Phi { phi_token, preds })
         }
