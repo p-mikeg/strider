@@ -242,6 +242,16 @@ fn detect_stack_args(
             NodeKind::Load(s) => s,
             _ => continue,
         };
+        // Guard: every load in this K-group must share `space`. The grouping
+        // logic above keys only on `j` (the offset slot), not on space, so a
+        // multi-space lifter could in principle place two loads at the same
+        // offset in different spaces. Skip the whole group on mismatch rather
+        // than silently merging.
+        if loads.iter().any(|&l| {
+            !matches!(*fg.graph.node_kind(l), NodeKind::Load(s) if s == space)
+        }) {
+            continue;
+        }
         // Collect (load, out_type) pairs and find the max byte size.
         let mut load_types: Vec<(NodeId, NodeOutputType)> = Vec::with_capacity(loads.len());
         for load in &loads {
