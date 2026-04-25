@@ -372,8 +372,11 @@ mod tests {
         }
     }
 
-    /// Every register resolved by a preset must have the architecture's
-    /// natural word size.
+    /// Every register resolved by a preset (including the stack pointer) must
+    /// have the architecture's natural word size.  SP is included because
+    /// `StackStoreDetect` and the analyzer's stack-arg machinery assume an
+    /// SP-sized address — an undersized SP would silently miscompute offsets
+    /// downstream and produce no diagnostic from this crate.
     #[test]
     fn presets_resolved_registers_have_expected_size() {
         for c in cases() {
@@ -383,6 +386,7 @@ mod tests {
                 .iter()
                 .chain(&built.callee_saved_regs)
                 .chain(&built.ret_val_regs)
+                .chain(std::iter::once(&built.stack_ptr_vn))
             {
                 assert_eq!(
                     vn.size, c.reg_size_bytes,
