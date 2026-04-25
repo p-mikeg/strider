@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn iter_is_fused() {
         fn assert_fused<I: core::iter::FusedIterator>(_: &I) {}
-        let s: DenseEntitySet<Id> = [Id(1)].into_iter().collect();
+        let s: DenseEntitySet<Id> = core::iter::once(Id(1)).collect();
         let it = s.iter();
         assert_fused(&it);
     }

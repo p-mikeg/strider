@@ -118,11 +118,11 @@ pub fn graph(input: &str) -> Graph {
             .split_once("->")
             .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));
 
-        #[allow(clippy::panic)]
         let check_name = |name: &str| {
-            if name.is_empty() {
-                panic!("graphmock: empty node name in line: {line:?}");
-            }
+            assert!(
+                !name.is_empty(),
+                "graphmock: empty node name in line: {line:?}"
+            );
         };
 
         let preds: Vec<&str> = preds.split(',').map(str::trim).collect();
