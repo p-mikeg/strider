@@ -65,3 +65,56 @@ test_preorder! {
     e -> b, f",
     expect!["a b d e f c"]
 }
+
+#[test]
+fn empty_roots_yields_nothing() {
+    let g = graphmock::graph("a -> b");
+    let order: Vec<_> = entity_preorder(&g, core::iter::empty()).collect();
+    assert!(order.is_empty());
+}
+
+#[test]
+fn self_loop_visits_node_once() {
+    let g = graphmock::graph("a -> a");
+    let order = entity_preorder(&g, [g.entry()])
+        .map(|n| g.name(n).to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(order, vec!["a".to_owned()]);
+}
+
+#[test]
+fn multi_root_disjoint_subgraphs_visits_both() {
+    // Two disjoint chains: a -> b and x -> y. We pass both roots in.
+    let g = graphmock::graph(
+        "a -> b
+         x -> y",
+    );
+    let a = g.node("a");
+    let x = g.node("x");
+    let order = entity_preorder(&g, [a, x])
+        .map(|n| g.name(n).to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(order.len(), 4);
+    // Either {a, b} appears before {x, y} or vice versa, but each chain is
+    // contiguous in pre-order. We assert both nodes from each chain appear.
+    for name in ["a", "b", "x", "y"] {
+        assert!(order.iter().any(|s| s == name), "missing {name} in {order:?}");
+    }
+}
+
+#[test]
+fn repeated_successor_is_visited_once() {
+    // a -> b appears twice as a successor of a (because we say so).  The pre-order
+    // walk must still visit b exactly once.  This exercises the "skip if already
+    // visited" loop in PreOrderContext::next.
+    let g = graphmock::graph(
+        "a -> b, b
+         b -> c",
+    );
+    let order = entity_preorder(&g, [g.entry()])
+        .map(|n| g.name(n).to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(order.len(), 3);
+    let count_b = order.iter().filter(|s| *s == "b").count();
+    assert_eq!(count_b, 1);
+}
