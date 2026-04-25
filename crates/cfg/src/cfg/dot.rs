@@ -82,7 +82,7 @@ pub mod test_api {
 
 pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
 
-impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
+impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     type Node = NodeIndex;
     type Error = Error;
     type State = ();
