@@ -263,8 +263,36 @@ impl Graph {
     /// output.
     ///
     /// Removes `input_id` from the old output's use-list and inserts it into
-    /// `output_id`'s use-list.
+    /// `output_id`'s use-list. If `input_id`'s owner node is cacheable, the
+    /// stale dedup-cache entry is evicted so that a later `create_node` with
+    /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
+    /// now-modified node.
     pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+        // If the owning node is cacheable, evict its current dedup-cache entry
+        // *before* mutating the input. The key is built from the current
+        // (kind, inputs, output_kinds) triple, which is about to change.
+        let owner = self.inputs[input_id].node_id;
+        if self.nodes[owner].kind.is_cacheable() {
+            let input_outputs: Vec<NodeOutputId> = self.nodes[owner]
+                .inputs
+                .as_slice(&self.input_pool)
+                .iter()
+                .map(|&iid| self.inputs[iid].output_id)
+                .collect();
+            let output_kinds: Vec<NodeOutputKind> = self.nodes[owner]
+                .outputs
+                .as_slice(&self.output_pool)
+                .iter()
+                .map(|&oid| self.outputs[oid].kind)
+                .collect();
+            let stale_key = (
+                Node::new(self.nodes[owner].kind),
+                input_outputs,
+                output_kinds,
+            );
+            self.node_to_id.remove(&stale_key);
+        }
+
         // Remove the input usage on the current output id
         self.unlink_input_from_output_list(input_id);
         self.inputs[input_id].output_id = output_id;
@@ -1115,6 +1143,63 @@ mod tests {
 
         let inputs_slice = graph.nodes[sink].inputs.as_slice(&graph.input_pool);
         assert_eq!(graph.inputs[inputs_slice[0]].input_index, 0);
+    }
+
+    /// `update_input` on an input belonging to a cacheable node must evict the
+    /// stale dedup-cache entry. Otherwise a later `create_node` with the
+    /// original `(kind, inputs, outputs)` triple returns the now-modified
+    /// node, which has different inputs — silent miscompilation by the
+    /// optimizer (which calls `update_input` via `replace_all_uses`).
+    #[test]
+    fn update_input_on_cacheable_evicts_stale_cache_entry() {
+        use crate::ops::IntBinaryOp;
+        let mut graph = Graph::new();
+
+        let a = graph.create_node(
+            NodeKind::IntConst(1),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let b = graph.create_node(
+            NodeKind::IntConst(2),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let c = graph.create_node(
+            NodeKind::IntConst(3),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let [a_out] = graph.node_outputs_exact::<1>(a).unwrap();
+        let [b_out] = graph.node_outputs_exact::<1>(b).unwrap();
+        let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+        let ty = NodeOutputKind::OutputType(NodeOutputType::U32);
+
+        // Cache key inserted: (Add, [a, b], [ty]) → add_ab.
+        let add_ab = graph.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [a_out, b_out],
+            [ty],
+        );
+
+        // Redirect input[0] from a → c. Node now actually has inputs [c, b],
+        // but the cache (if not maintained) still maps [a, b] → add_ab.
+        let in0 = graph.node_input_id_at(add_ab, 0);
+        graph.update_input(in0, c_out);
+
+        // Re-create with the ORIGINAL key. Must NOT return add_ab — its
+        // current inputs are [c, b], not [a, b].
+        let fresh = graph.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [a_out, b_out],
+            [ty],
+        );
+        assert_ne!(
+            add_ab, fresh,
+            "the stale cache entry must be evicted — re-creating the original \
+             (kind, inputs, outputs) triple after update_input has redirected \
+             one of those inputs must produce a fresh NodeId"
+        );
     }
 
     /// `update_input` where the new output equals the old output must leave
