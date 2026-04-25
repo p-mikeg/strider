@@ -265,7 +265,7 @@ impl Optimizer for KnownBits {
         let mut outputs: Vec<NodeOutputId> = Vec::new();
         for &node_id in &nodes {
             outputs.clear();
-            outputs.extend(function.graph.node_outputs(node_id).into_iter());
+            outputs.extend(function.graph.node_outputs(node_id));
             for &out in &outputs {
                 let Some(ty) = function.graph.output_kind(out).as_value() else {
                     continue;

@@ -81,7 +81,7 @@ impl Optimizer for ConstantFold {
         let mut consumers: Vec<NodeId> = Vec::new();
         while let Some(node_id) = work.pop() {
             consumers.clear();
-            for out in function.graph.node_outputs(node_id).into_iter() {
+            for out in function.graph.node_outputs(node_id) {
                 for (consumer, _) in function.graph.output_uses(out) {
                     consumers.push(consumer);
                 }
