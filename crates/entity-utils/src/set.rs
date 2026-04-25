@@ -16,11 +16,13 @@ pub struct DenseEntitySet<E> {
 
 impl<E: EntityRef> DenseEntitySet<E> {
     /// Creates an empty set.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates an empty set pre-allocated for at least `capacity` entities.
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             bitset: CompoundBitSet::with_capacity(capacity),
@@ -34,6 +36,7 @@ impl<E: EntityRef> DenseEntitySet<E> {
     }
 
     /// Returns `true` if `entity` is a member of the set.
+    #[must_use]
     pub fn contains(&self, entity: E) -> bool {
         self.bitset.contains(entity.index())
     }
@@ -49,6 +52,7 @@ impl<E: EntityRef> DenseEntitySet<E> {
     }
 
     /// Returns an iterator over all entities currently in the set.
+    #[must_use]
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {
             inner: self.bitset.iter(),
@@ -88,5 +92,96 @@ impl<E: EntityRef> FromIterator<E> for DenseEntitySet<E> {
             set.insert(entity);
         }
         set
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_entity::entity_impl;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+    struct Id(u32);
+    entity_impl!(Id);
+
+    #[test]
+    fn new_and_default_are_empty() {
+        let s: DenseEntitySet<Id> = DenseEntitySet::new();
+        assert!(!s.contains(Id(0)));
+        assert!(s.iter().next().is_none());
+
+        let s: DenseEntitySet<Id> = DenseEntitySet::default();
+        assert!(!s.contains(Id(0)));
+    }
+
+    #[test]
+    fn with_capacity_zero_is_valid() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::with_capacity(0);
+        assert!(s.iter().next().is_none());
+        s.insert(Id(0));
+        assert!(s.contains(Id(0)));
+    }
+
+    #[test]
+    fn insert_contains_remove() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        assert!(!s.contains(Id(3)));
+        s.insert(Id(3));
+        assert!(s.contains(Id(3)));
+        s.remove(Id(3));
+        assert!(!s.contains(Id(3)));
+    }
+
+    #[test]
+    fn double_insert_is_idempotent() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        s.insert(Id(7));
+        s.insert(Id(7));
+        let collected: Vec<_> = s.iter().collect();
+        assert_eq!(collected, vec![Id(7)]);
+    }
+
+    #[test]
+    fn iter_yields_in_ascending_index_order() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        for &i in &[5u32, 1, 9, 2, 1] {
+            s.insert(Id(i));
+        }
+        let collected: Vec<_> = s.iter().collect();
+        assert_eq!(collected, vec![Id(1), Id(2), Id(5), Id(9)]);
+    }
+
+    #[test]
+    fn clear_removes_everything() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        s.insert(Id(0));
+        s.insert(Id(100));
+        s.clear();
+        assert!(!s.contains(Id(0)));
+        assert!(!s.contains(Id(100)));
+        assert!(s.iter().next().is_none());
+    }
+
+    #[test]
+    fn from_iter_dedups() {
+        let s: DenseEntitySet<Id> =
+            [Id(2), Id(1), Id(2), Id(3)].into_iter().collect();
+        let collected: Vec<_> = s.iter().collect();
+        assert_eq!(collected, vec![Id(1), Id(2), Id(3)]);
+    }
+
+    #[test]
+    fn from_iter_empty() {
+        let s: DenseEntitySet<Id> = core::iter::empty().collect();
+        assert!(s.iter().next().is_none());
+    }
+
+    #[test]
+    fn remove_unmembered_is_noop() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        s.insert(Id(1));
+        s.remove(Id(99));
+        assert!(s.contains(Id(1)));
+        assert!(!s.contains(Id(99)));
     }
 }
