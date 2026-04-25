@@ -1,12 +1,11 @@
-use std::collections::VecDeque;
-
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
@@ -237,11 +236,12 @@ impl Optimizer for KnownBits {
 
         // ── Phase 1: propagate known bits via worklist ────────────────────────
         // Re-evaluate a node only when one of its inputs' Kb just changed.
+        // `WorkSet` is the shared dedup-FIFO worklist used by ConstantFold
+        // and DeadBranchElimination — same FIFO + dedup semantics, no
+        // local re-implementation.
         let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
-        let mut queued: FxHashSet<NodeId> = nodes.iter().copied().collect();
-        let mut work: VecDeque<NodeId> = nodes.iter().copied().collect();
-        while let Some(node_id) = work.pop_front() {
-            queued.remove(&node_id);
+        let mut work = WorkSet::seeded(nodes.iter().copied());
+        while let Some(node_id) = work.pop() {
             let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
                 continue;
             };
@@ -251,9 +251,7 @@ impl Optimizer for KnownBits {
             }
             // Re-queue every consumer of `out`.
             for (consumer, _idx) in function.graph.output_uses(out) {
-                if queued.insert(consumer) {
-                    work.push_back(consumer);
-                }
+                work.push(consumer);
             }
         }
 
