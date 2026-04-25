@@ -61,7 +61,6 @@ fn track_caller_on_question_mark_points_at_question_mark_site() {
     // This test pins that `?` on a `Result<_, $src>` -> Result<_, $wrapper>
     // places the location at the `?` line in *this* function, not inside
     // the generated From impl.
-    #[track_caller]
     fn probe() -> Result<(), MyError> {
         let _ = std::fs::File::open("/definitely/not/a/real/path")?; // << expected loc line
         Ok(())
