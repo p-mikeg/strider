@@ -389,7 +389,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
         // Strip the XML declaration and DOCTYPE that `dot` emits — they can
         // confuse HTML parsers when the SVG is inlined in a <body>.
         if let Some(pos) = svg.find("<svg") {
-            svg = svg[pos..].to_owned();
+            svg.drain(..pos);
         }
         Ok(HTML_SVG_TEMPLATE.replace("__SVG__", &svg))
     }
