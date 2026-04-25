@@ -13,7 +13,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::stack_store::{SpExpr, decompose_sp, ranges_disjoint};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -45,9 +45,10 @@ impl Optimizer for StackLoadForward {
             .preorder()
             .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Load(_)))
             .collect();
+        let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         for load in loads {
-            result |= try_forward_load(function, load, self.stack_ptr_vn)?;
+            result |= try_forward_load(function, load, self.stack_ptr_vn, &mut memo)?;
         }
         Ok(result)
     }
@@ -60,6 +61,7 @@ fn try_forward_load(
     fg: &mut BuiltFunctionGraph,
     load: NodeId,
     sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
     let [mem, addr] = fg.graph.node_inputs_exact::<2>(load)?;
@@ -69,7 +71,8 @@ fn try_forward_load(
     };
 
     let mut visiting = std::collections::HashSet::new();
-    let Some(SpExpr::Terminal { base: _, offset }) = decompose_sp(fg, addr, sp_vn, &mut visiting)
+    let Some(SpExpr::Terminal { base: _, offset }) =
+        decompose_sp(fg, addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };

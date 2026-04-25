@@ -32,6 +32,7 @@ extern crate self as opt;
 
 pub mod error;
 mod pipeline;
+mod sp_expr;
 pub use error::{Error, ErrorKind, Result};
 mod constant_fold;
 mod dead_branch;

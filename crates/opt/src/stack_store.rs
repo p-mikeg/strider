@@ -8,175 +8,11 @@
 //! arguments.
 
 use ir::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
-use ir::{BuiltFunctionGraph, IntBinaryOp};
+use ir::BuiltFunctionGraph;
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-
-/// Decomposed stack-pointer expression.
-///
-/// `Terminal` carries the output we treat as the SP base (either
-/// `InitialVar(sp)` or a `ControlPhi(sp)` node whose predecessors couldn't be
-/// fully reduced — e.g. a loop-header self-reference).  Tracking the base
-/// explicitly keeps stores taken from different SP versions distinct.
-pub(crate) enum SpExpr {
-    /// `base + offset`, where `base` is an SP-rooted node.
-    Terminal { base: NodeOutputId, offset: i64 },
-    /// `ControlPhi(stack_ptr)` where every predecessor resolves to
-    /// `InitialVar(stack_ptr) + offsets[j]`.
-    Phi { phi_node: NodeId, offsets: Vec<i64> },
-}
-
-impl SpExpr {
-    fn shifted(self, delta: i64) -> Self {
-        match self {
-            SpExpr::Terminal { base, offset } => SpExpr::Terminal {
-                base,
-                offset: offset.wrapping_add(delta),
-            },
-            SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
-                phi_node,
-                offsets: offsets.into_iter().map(|o| o.wrapping_add(delta)).collect(),
-            },
-        }
-    }
-}
-
-/// True when `[a_off, a_off + a_size)` and `[b_off, b_off + b_size)` do not
-/// overlap.  Used by shadow / forward walks in both
-/// [`crate::stack_load_forward`] and [`crate::function_args`].
-pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
-    a_off + a_size <= b_off || b_off + b_size <= a_off
-}
-
-/// Reads an integer-constant output as a signed 64-bit value, sign-extended
-/// from its declared bit width.  Returns `None` if `out` is not an integer
-/// constant or its type isn't one of `U8`/`U16`/`U32`/`U64`.  SP arithmetic
-/// happens modulo `2^width`, so a constant like `0xFFFFFFF8` in a U32 slot
-/// represents `-8`, not `4294967288` — `NodeOutputType::get_signed_int` is the
-/// single source of truth for that mapping.
-fn int_const_signed(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
-    let c = fg.int_const_val(out)?;
-    fg.graph.output_kind(out).as_value()?.get_signed_int(c)
-}
-
-/// Recursively decomposes `out` into `InitialVar(sp) + K` or the per-branch
-/// equivalent, walking through `Add`/`Sub` with a constant operand and
-/// `ControlPhi(sp)` nodes.  Returns `None` when the expression cannot be
-/// reduced to the stack pointer plus constants only.
-///
-/// `visiting` guards against data-flow cycles through `ControlPhi` back-edges
-/// (e.g. a loop-header phi whose predecessor is `sp_phi - 4`).
-pub(crate) fn decompose_sp(
-    fg: &BuiltFunctionGraph,
-    out: NodeOutputId,
-    sp_vn: rsleigh::Vn,
-    visiting: &mut std::collections::HashSet<NodeId>,
-) -> Option<SpExpr> {
-    let node = fg.graph.get_node_from_output(out);
-    if !visiting.insert(node) {
-        // Cycle: the expression refers to itself through a back-edge; we
-        // cannot express it as `sp + K`.
-        return None;
-    }
-    let result = match *fg.graph.node_kind(node) {
-        NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
-            base: out,
-            offset: 0,
-        }),
-        NodeKind::ControlPhi(vn) if vn == sp_vn => {
-            // Try to resolve every predecessor to `InitialVar(sp) + K_j` so
-            // that we can emit a `StackStorePhi`.  If any predecessor can't
-            // be reduced (loop back-edge, nested phi, …), fall back to using
-            // this phi itself as an opaque SP base — the store still lives
-            // at a fixed offset from whatever SP value reaches this program
-            // point, which is all `CallStackArgCollect` needs.
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() < 2 {
-                // Bare phi with no value predecessors: treat as opaque base.
-                Some(SpExpr::Terminal {
-                    base: out,
-                    offset: 0,
-                })
-            } else {
-                let mut offsets = Vec::with_capacity(inputs.len() - 1);
-                let mut bases = Vec::with_capacity(inputs.len() - 1);
-                let mut ok = true;
-                for pred_input in inputs.into_iter().skip(1) {
-                    match decompose_sp(fg, pred_input, sp_vn, visiting) {
-                        Some(SpExpr::Terminal { base, offset }) => {
-                            bases.push(base);
-                            offsets.push(offset);
-                        }
-                        _ => {
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    // If every predecessor resolves to the same (base, offset)
-                    // — e.g. two CFG edges feeding the phi both trace back to
-                    // the same `sub esp, 4` node — the phi is structurally
-                    // redundant.  Collapse to a plain Terminal so the store
-                    // becomes a regular StackStore rather than a degenerate
-                    // StackStorePhi([C, C, …]).
-                    if bases.iter().all(|&b| b == bases[0])
-                        && offsets.iter().all(|&o| o == offsets[0])
-                    {
-                        Some(SpExpr::Terminal {
-                            base: bases[0],
-                            offset: offsets[0],
-                        })
-                    } else {
-                        Some(SpExpr::Phi {
-                            phi_node: node,
-                            offsets,
-                        })
-                    }
-                } else {
-                    // Phi is SP-rooted but has a cycle / unresolvable
-                    // predecessor — treat it as an opaque base.
-                    Some(SpExpr::Terminal {
-                        base: out,
-                        offset: 0,
-                    })
-                }
-            }
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() == 2 {
-                let l = inputs[0];
-                let r = inputs[1];
-                if let Some(c) = int_const_signed(fg, r) {
-                    decompose_sp(fg, l, sp_vn, visiting).map(|e| e.shifted(c))
-                } else if let Some(c) = int_const_signed(fg, l) {
-                    decompose_sp(fg, r, sp_vn, visiting).map(|e| e.shifted(c))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() == 2 {
-                let l = inputs[0];
-                let r = inputs[1];
-                int_const_signed(fg, r).and_then(|c| {
-                    decompose_sp(fg, l, sp_vn, visiting).map(|e| e.shifted(c.wrapping_neg()))
-                })
-            } else {
-                None
-            }
-        }
-        _ => None,
-    };
-    visiting.remove(&node);
-    result
-}
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
 /// Rewrites one `Store` node into the matching `StackStore` / `StackStorePhi`
 /// form when its address resolves to a known SP offset (or per-branch phi of
@@ -185,6 +21,7 @@ fn try_detect_stack_store(
     fg: &mut BuiltFunctionGraph,
     node_id: NodeId,
     sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     let space = match *fg.graph.node_kind(node_id) {
         NodeKind::Store(space) => space,
@@ -196,7 +33,7 @@ fn try_detect_stack_store(
     let [old_mem_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
 
     let mut visiting = std::collections::HashSet::new();
-    let Some(expr) = decompose_sp(fg, addr, sp_vn, &mut visiting) else {
+    let Some(expr) = decompose_sp(fg, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -267,9 +104,10 @@ impl StackStoreDetect {
 impl Optimizer for StackStoreDetect {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let nodes: Vec<NodeId> = function.preorder().collect();
+        let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         for node_id in nodes {
-            result |= try_detect_stack_store(function, node_id, self.stack_ptr_vn)?;
+            result |= try_detect_stack_store(function, node_id, self.stack_ptr_vn, &mut memo)?;
         }
         Ok(result)
     }

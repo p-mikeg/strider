@@ -15,7 +15,7 @@
 //!   of `InitialVar(R)`'s output to point at the new node.
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
-//!   nodes whose address decomposes (via [`stack_store::decompose_sp`]) to
+//!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
 //!   `InitialVar(sp) + K` with `K == cc.stack_arg_offsets[j]`.  Reject any
 //!   whose memory input is reachable backward from a shadowing store — the
 //!   walk is a DFS through memory predecessors that treats `MemPhi` as a
@@ -36,7 +36,7 @@ use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::stack_store::{SpExpr, decompose_sp, ranges_disjoint};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 
 /// Replaces register-passed and stack-passed argument reads with canonical
 /// [`NodeKind::FunctionArg`][ir::node::NodeKind::FunctionArg] nodes.  Intended
@@ -180,6 +180,7 @@ fn detect_stack_args(
     // `K` is a convention offset, and (b) nothing on its memory chain may
     // alias that slot (DFS shadow check).  If *any* load at offset K is
     // shadowed, the whole K-group is disqualified (conservative).
+    let mut memo: SpExprMemo = Default::default();
     let mut groups: std::collections::HashMap<usize, Vec<NodeId>> =
         std::collections::HashMap::new();
     let mut disqualified: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -196,7 +197,7 @@ fn detect_stack_args(
         let load_size = load_ty.byte_size() as i64;
         let mut visiting = std::collections::HashSet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(fg, addr, sp_vn, &mut visiting)
+            decompose_sp(fg, addr, sp_vn, &mut memo, &mut visiting)
         else {
             continue;
         };
