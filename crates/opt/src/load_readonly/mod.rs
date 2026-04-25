@@ -9,6 +9,16 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// Resolves `Load` nodes with constant addresses against a
 /// [`ReadOnlyMemory`] image, replacing them with the loaded constant value.
 ///
+/// # Endianness
+///
+/// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] returns a `u64`
+/// that already represents the target's *numeric* value — the impl is
+/// responsible for byte-swapping according to the target's endianness
+/// (see `reader::ElfFileMemReader`'s `read` for an LE/BE example). This
+/// pass then masks the result to the load's output type via
+/// [`NodeOutputType::get_unsigned_int`][ir::node::NodeOutputType::get_unsigned_int].
+/// Callers must not double-swap.
+///
 /// Wrap a concrete memory implementation and add this optimizer to the pipeline:
 ///
 /// ```ignore
