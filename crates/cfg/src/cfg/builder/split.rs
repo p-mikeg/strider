@@ -14,7 +14,9 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///
     /// Retaining `region_id` for the second half avoids having to update:
     /// - outgoing edges (children) of the original region, and
-    /// - any work-queue entries that still reference `region_id` as a parent.
+    /// - any work-queue entries that still reference `region_id` as a parent
+    ///   (including the popped item that triggered this split — its parent
+    ///   pointer carries forward to the second half automatically).
     ///
     /// The following fixups ARE performed manually:
     /// 1. Incoming edges (parents) are rewired to the first region.
@@ -28,13 +30,6 @@ impl<R: rsleigh::MemReader> Builder<R> {
         region_id: NodeIndex,
         addr: PcodeInsnAddr,
     ) -> Result<NodeIndex> {
-        // The idea here is to swap the region_id to be the **SECOND** region after the split and create a new one for the first one
-        // Why? there are 4 things that break when we want to change the region_id
-        // 1. The parents of the current region_id should be those of the first region - we will fix it by hand
-        // 2. The children of the current region_id should be those of the second region - solved due to replacement
-        // 3. The items in the queue that use region_id as parent should point to the second region - solved due to replacement
-        // 4. The parent of the popped work-queue item that triggered the split should also point to the second region
-
         let second_region = self
             .graph
             .node_weight_mut(region_id)
