@@ -48,17 +48,16 @@ impl<R: rsleigh::MemReader> Builder<R> {
         if split_index == 0 {
             return Ok(region_id);
         }
-        // split the insns in 2 based on the split index -  split_off stores the first part in place
-        // so we should replace the 2 values
-        let second_region_insns = second_region.insns.split_off(split_index);
-        let first_region_insns = std::mem::replace(&mut second_region.insns, second_region_insns);
-        let second_region_id = region_id;
+        // `split_off(at)` returns elements at-and-after `at`, leaving elements before `at`
+        // in `second_region.insns`. Swap them so `second_region` keeps its identity but
+        // owns the second half of the original instruction stream.
+        let upper = second_region.insns.split_off(split_index);
+        let first_region_insns = std::mem::replace(&mut second_region.insns, upper);
         let first_region_start_addr = second_region.start_addr;
         second_region.start_addr = addr;
 
-        // We need to update the region location in the mapping to get the correct one when accessed later
-        self.start_addr_to_region_id
-            .insert(second_region.start_addr, second_region_id);
+        // Re-index the (now-second) region under its new start address.
+        self.start_addr_to_region_id.insert(addr, region_id);
 
         let first_region = self.add_region(Region {
             start_addr: first_region_start_addr,
@@ -69,7 +68,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // second region inherits all parents of the original region
         let parent_edges: Vec<_> = self
             .graph
-            .edges_directed(second_region_id, petgraph::Incoming)
+            .edges_directed(region_id, petgraph::Incoming)
             .map(|e| (e.id(), e.source(), *e.weight()))
             .collect();
 
@@ -81,7 +80,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
         // link the first and the second regions with fallthrough
         self.graph
-            .add_edge(first_region, second_region_id, RegionEdgeKind::Fallthrough);
-        Ok(second_region_id)
+            .add_edge(first_region, region_id, RegionEdgeKind::Fallthrough);
+        Ok(region_id)
     }
 }

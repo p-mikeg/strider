@@ -253,15 +253,13 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<ProcessInsnRes> {
-        let existing_region = self.builder.start_addr_to_region_id.get(&addr);
-        // If we already processed the instruction - we fell through to an already processed region
-        if let Some(region_id) = existing_region {
-            let region_id = *region_id;
-            // The parent region falls through to this region
+        // If `addr` is the start of an already-explored region, the current region
+        // fell through to it: finalise the current region and add a Fallthrough edge.
+        if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
             let region = self.finish_current_region(false)?;
             self.builder
                 .graph
-                .add_edge(region, region_id, RegionEdgeKind::Fallthrough);
+                .add_edge(region, existing_region_id, RegionEdgeKind::Fallthrough);
             return Ok(ProcessInsnRes::FinishedProcessing);
         }
         self.process_new_insn(insn, addr, lift_res)
