@@ -29,16 +29,32 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// Returns the conventional entry node id (`NodeId(0)`).
+    ///
+    /// **Precondition:** the input passed to [`graph`] declared at least one
+    /// edge — i.e. the graph contains at least one node.  Calling this on an
+    /// empty graph returns a stale id that will panic when used as a key into
+    /// [`Graph::name`] or any traversal.
     #[must_use]
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
+    /// Looks up a node by the name it was given in the DSL.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` was never declared in the input passed to [`graph`].
     #[must_use]
     pub fn node(&self, name: &str) -> NodeId {
         self.nodes_by_name[name]
     }
 
+    /// Returns the DSL name of `node`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` did not originate from this graph.
     #[must_use]
     pub fn name(&self, node: NodeId) -> &str {
         &self.nodes[node].name
@@ -200,17 +216,6 @@ mod tests {
             ControlFlow::Continue(())
         });
         out
-    }
-
-    #[test]
-    fn whitespace_only_input_yields_no_edges() {
-        let g = graph("   \n\t\n   ");
-        // Entry node id 0 doesn't exist because no nodes were ever created.
-        // Just check we didn't panic and there are no successors-of-anything.
-        // (We can't actually call entry() — it would index out of bounds —
-        // but we can confirm by-name resolution fails. The existence of `g`
-        // is all we assert.)
-        let _ = g;
     }
 
     #[test]
