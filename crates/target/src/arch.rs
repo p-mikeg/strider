@@ -71,7 +71,7 @@ impl SleighArch {
     /// architecture descriptor.
     ///
     /// Uses the `ARM8_le` Sleigh spec with the `ARM_v45` processor spec, which
-    /// matches the `-marm` compilation target in `binary_tests/arch/arm.mk`.
+    /// matches the `-marm` compilation target in `fixtures/arch/arm.mk`.
     #[must_use]
     pub fn arm() -> SleighArch {
         SleighArch {

@@ -560,7 +560,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     Ok(())
 }
 
-/// Real-world pattern from `binary_tests/test.c::struct_test` at `-O0 -m32`:
+/// Real-world pattern from `fixtures/test.c::struct_test` at `-O0 -m32`:
 /// the prologue spills a callee-saved register / arg to a 4-byte stack slot
 /// via `StackStore u32`, then the body reads a single byte of that slot via
 /// `Load u8` at the same SP offset.  The load is narrower than the store,

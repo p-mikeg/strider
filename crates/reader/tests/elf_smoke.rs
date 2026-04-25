@@ -8,7 +8,7 @@
 //!
 //! Build prerequisites first:
 //!
-//!     make -C binary_tests
+//!     make -C fixtures
 //!
 //! Tests panic with a clear message if the binary is absent — matching
 //! the convention used by `cfg::cfg_integration` and
@@ -19,12 +19,12 @@ use reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn binary_path(arch: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../binary_tests/out")
+        .join("../../fixtures/out")
         .join(arch)
         .join("test.elf")
 }
 
-/// Loads `binary_tests/out/<arch>/test.elf` and asserts the reader
+/// Loads `fixtures/out/<arch>/test.elf` and asserts the reader
 /// impls all round-trip on it. Every supported arch in this workspace
 /// is little-endian (x86, x64, arm/EABI5, aarch64), so that's asserted
 /// uniformly here.
@@ -32,7 +32,7 @@ fn assert_smoke(arch: &str) {
     let path = binary_path(arch);
     assert!(
         path.exists(),
-        "missing test binary at {} — run `make -C binary_tests`",
+        "missing test binary at {} — run `make -C fixtures`",
         path.display(),
     );
 

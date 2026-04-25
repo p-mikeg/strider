@@ -11,9 +11,9 @@
 //! supported target.  Every module contains the same suite of structural
 //! assertions; only the binary path and Sleigh spec differ.
 //!
-//! Test binaries live in `binary_tests/out/<arch>` and are built with:
+//! Test binaries live in `fixtures/out/<arch>` and are built with:
 //!
-//!   make -C `binary_tests`
+//!   make -C `fixtures`
 //!
 //! ARM 32-bit tests are all `#[ignore]` because `BranchIndirect` is not yet
 //! handled as a region terminator — unignore them once that is fixed.

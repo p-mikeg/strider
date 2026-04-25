@@ -68,7 +68,7 @@ The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeli
 # Build
 cargo build --workspace
 
-# Run the example (reads binary_tests/binary_test, writes cfg.html + graph.html)
+# Run the example (reads fixtures/binary_test, writes cfg.html + graph.html)
 cargo run --example analyzer
 
 # Tests

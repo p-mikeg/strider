@@ -18,16 +18,16 @@
 //!
 //! Build the test binaries first:
 //!
-//!   make -C binary_tests
+//!   make -C fixtures
 
 // ── binary path ───────────────────────────────────────────────────────────────
 
 /// Returns the path to the test binary for `arch`.
 ///
-/// Binaries live at `<workspace_root>/binary_tests/out/<arch>/test.elf`.
+/// Binaries live at `<workspace_root>/fixtures/out/<arch>/test.elf`.
 fn binary(arch: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../binary_tests/out")
+        .join("../../fixtures/out")
         .join(arch)
         .join("test.elf")
 }
