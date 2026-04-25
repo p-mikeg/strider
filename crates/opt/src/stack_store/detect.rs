@@ -28,7 +28,7 @@ fn try_detect_stack_store(
     let [memory, addr, data] = fg.graph.node_inputs_exact::<3>(node_id)?;
     let [old_mem_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
 
-    let mut visiting = std::collections::HashSet::new();
+    let mut visiting = rustc_hash::FxHashSet::default();
     let Some(expr) = decompose_sp(fg, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };

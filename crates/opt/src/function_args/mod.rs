@@ -179,7 +179,7 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i64;
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = rustc_hash::FxHashSet::default();
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(fg, addr, sp_vn, &mut memo, &mut visiting)
         else {

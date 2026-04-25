@@ -85,7 +85,7 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let mut visiting = std::collections::HashSet::new();
+    let mut visiting = rustc_hash::FxHashSet::default();
     let Some(SpExpr::Terminal { base: _, offset }) =
         decompose_sp(fg, addr, sp_vn, memo, &mut visiting)
     else {
@@ -98,7 +98,7 @@ fn try_forward_load(
     // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = rustc_hash::FxHashSet::default();
     let Some(shape) = probe(fg, mem, offset, load_size, load_ty, &mut visited) else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -150,7 +150,7 @@ fn probe(
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
-    visited: &mut std::collections::HashSet<NodeOutputId>,
+    visited: &mut rustc_hash::FxHashSet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     let node = fg.graph.get_node_from_output(mem);
     match *fg.graph.node_kind(node) {
