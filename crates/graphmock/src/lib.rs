@@ -13,7 +13,7 @@ use std::ops::ControlFlow;
 use cranelift_entity::{PrimaryMap, entity_impl};
 use graphwalk::{GraphRef, PredGraphRef};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 entity_impl!(NodeId);
 
@@ -219,7 +219,7 @@ mod tests {
         );
         let a1 = g.node("a");
         let a2 = g.node("a");
-        assert!(a1 == a2);
+        assert_eq!(a1, a2);
         assert_eq!(succs(&g, a1), vec!["b"]);
         assert_eq!(preds(&g, a1), vec!["b"]);
     }

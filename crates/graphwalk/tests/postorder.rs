@@ -163,7 +163,7 @@ fn self_loop_emits_pre_and_post_once() {
     assert_eq!(events.len(), 2);
     assert!(matches!(events[0].0, WalkPhase::Pre));
     assert!(matches!(events[1].0, WalkPhase::Post));
-    assert!(events[0].1 == events[1].1, "Pre and Post events should be for the same node");
+    assert_eq!(events[0].1, events[1].1);
 }
 
 #[test]
