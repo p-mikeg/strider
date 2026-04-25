@@ -23,10 +23,11 @@ per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_find
     Aarch64: "BUG-20: KnownBits/ConstFold collapses chain before pattern matches",
     Arm:     "BUG-20: KnownBits/ConstFold collapses chain before pattern matches",
 });
+// if_returns_const: BUG-21 (width-aware int_const matching) is fixed for mips32le/mips32be.
+// Arm still hits a pre-existing Bool→AnyInt validation error in the pipeline
+// (separate issue, not BUG-21).
 per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts, ignore = {
-    Arm:      "BUG-21: 32-bit IntConst(-50) sign-extension differs from u32/u64 expectations",
-    Mips32le: "BUG-21: 32-bit IntConst(-50) sign-extension differs from u32/u64 expectations",
-    Mips32be: "BUG-21: 32-bit IntConst(-50) sign-extension differs from u32/u64 expectations",
+    Arm: "pre-existing Bool→AnyInt validation error in ARM if_returns_const pipeline (not BUG-21)",
 });
 per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call, ignore = {
@@ -65,7 +66,15 @@ fn xor_chain_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
 
 fn if_const_pattern_finds_two_consts(g: &ir::BuiltFunctionGraph) {
     // After RedundantPhis, both arms of the If feed a Phi resolving to either
-    // IntConst(100) or IntConst(-50 as u64).  Pin both constants.
+    // IntConst(100) or IntConst(-50).  Pin both constants.
+    //
+    // On 32-bit archs (arm, mips32) the -50 constant lives in a U32 IntConst
+    // (0xffff_ffce).  On x86-64, the compiler zero-extends a 32-bit move so the
+    // constant appears as IntConst(0xffff_ffce) at U64 width, which is the same
+    // bit pattern but semantically +4294967246 (not -50) at U64.  The raw
+    // has_constant check covers all archs correctly:
+    //   has_constant(g, 0xffff_ffce) matches the node regardless of its output type
+    //   because the stored u128 value equals u128::from(0xffff_ffce as u64).
     assert!(has_constant(g, 100),
             "expected IntConst(100) — true-branch return value");
     let neg50_u32 = (-50i32) as u32 as u64;
