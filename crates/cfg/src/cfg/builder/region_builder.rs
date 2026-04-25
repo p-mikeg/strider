@@ -106,28 +106,22 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         let default_code_space = self.builder.sleigh.default_code_space();
 
         match branch_target_var.addr.space {
-            // Relative branch: signed offset from the current pcode insn index.
-            // rsleigh encodes CONST-space branch targets as two's-complement in a
-            // u64, so a backward pcode-local branch comes in as `(-n) as u64`.
-            // The resulting index must land within the current machine
-            // instruction's pcode sequence: `0 <= target < lift_res.insns.len()`.
-            // An out-of-range index would otherwise be silently skipped by the
-            // build loop, advancing to the next machine instruction and
-            // producing a wrong CFG with no diagnostic.
+            // CONST-space: pcode-local relative branch. The "address" is a
+            // signed offset on the *pcode index* within the same machine
+            // instruction, two's-complement-encoded into the u64 `off` (so
+            // `(-n) as u64` for backward branches). `cast_signed` is the
+            // bit-pattern-preserving u64→i64 reinterpretation; `checked_add_signed`
+            // catches either-direction overflow on the resulting index. The
+            // bounds check then ensures the target lies in `0..lift_res.insns.len()` —
+            // an out-of-range index would otherwise be silently skipped by the
+            // build loop, which would advance past the end of the current
+            // machine instruction's pcode sequence and produce a wrong CFG with
+            // no diagnostic.
             rsleigh::VnSpace::CONST => {
-                // CONST-space encodes the pcode-target offset as a
-                // two's-complement i64 stored in a u64 (so a backward branch
-                // arrives as `(-n) as u64`). `cast_signed` is the bit-pattern-
-                // preserving u64→i64 reinterpretation; `checked_add_signed`
-                // catches either-direction overflow on the index addition.
                 let off = branch_target_var.addr.off.cast_signed();
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or(
                     ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
                 )?;
-                // The resulting index must land within the current machine
-                // instruction's pcode sequence: `target < lift_res.insns.len()`.
-                // An out-of-range index would otherwise be silently skipped by
-                // the build loop, producing a wrong CFG with no diagnostic.
                 let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
                 if target >= pcode_count {
                     return Err(ErrorKind::InvalidBranchTargetVaErr(
