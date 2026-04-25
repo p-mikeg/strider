@@ -80,7 +80,7 @@ impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
         let first_insn_index = node
             .insns
             .first()
-            .ok_or(ErrorKind::EmptyRegion(node.clone()))?
+            .ok_or_else(|| ErrorKind::EmptyRegion(node.start_addr))?
             .addr
             .insn_index;
         let start_addr = node.start_addr.machine_addr.addr;

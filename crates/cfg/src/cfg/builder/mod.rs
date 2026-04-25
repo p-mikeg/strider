@@ -64,7 +64,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Returns [`ErrorKind::EmptyRegion`] if `region.insns` is empty.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty() {
-            return Err(ErrorKind::EmptyRegion(region).into());
+            return Err(ErrorKind::EmptyRegion(region.start_addr).into());
         }
 
         let start_addr = region.start_addr;

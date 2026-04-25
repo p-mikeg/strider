@@ -1,4 +1,4 @@
-use crate::cfg::{PcodeInsnAddr, Region};
+use crate::cfg::PcodeInsnAddr;
 use petgraph::graph::NodeIndex;
 
 #[derive(Debug, thiserror::Error)]
@@ -9,8 +9,8 @@ pub enum ErrorKind {
     #[error("generic sleigh error {0:?}")]
     GenericSleighError(String),
 
-    #[error("empty region {0:?}")]
-    EmptyRegion(Region),
+    #[error("region at {0:?} has no instructions")]
+    EmptyRegion(PcodeInsnAddr),
 
     #[error("invalid branch target variable {0:?} at opcode {1:?}")]
     InvalidBranchTargetVaErr(rsleigh::Vn, PcodeInsnAddr),
