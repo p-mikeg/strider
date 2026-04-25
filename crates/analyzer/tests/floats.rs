@@ -8,76 +8,59 @@ use ir::{FloatBinaryOp, FloatCmpOp};
 use ir::node::NodeKind;
 
 per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
-    X86:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    X64:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Arm:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Mips32le: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Mips32be: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
+    X86:      "BUG-8: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
+    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on aarch64",
 });
 per_arch_test!("floats", "f64_arith",    has_four_float_binops, ignore = {
-    X86:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    X64:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Arm:      "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Mips32le: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
-    Mips32be: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on any arch",
+    X86:      "BUG-8: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
+    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on aarch64",
+    Mips32le: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on mips32",
+    Mips32be: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on mips32",
 });
 per_arch_test!("floats", "f32_to_f64",   has_float_to_float, ignore = {
-    X86:      "BUG-9: float conversion lowering panics with type errors",
-    X64:      "BUG-9: float conversion lowering panics with type errors",
-    Aarch64:  "BUG-9: float conversion lowering panics with type errors",
-    Arm:      "BUG-9: float conversion lowering panics with type errors",
-    Mips32le: "BUG-9: float conversion lowering panics with type errors",
-    Mips32be: "BUG-9: float conversion lowering panics with type errors",
+    X86:      "BUG-9: float conversion lowering type error (not a float value)",
+    X64:      "BUG-9: float conversion lowering type error (not a float value)",
+    Aarch64:  "BUG-9: float conversion lowering type error (not a float value)",
+    Arm:      "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32le: "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32be: "BUG-9: float conversion lowering type error (not a float value)",
 });
 per_arch_test!("floats", "f64_to_f32",   has_float_to_float, ignore = {
-    X86:      "BUG-9: float conversion lowering panics with type errors",
-    X64:      "BUG-9: float conversion lowering panics with type errors",
-    Aarch64:  "BUG-9: float conversion lowering panics with type errors",
-    Arm:      "BUG-9: float conversion lowering panics with type errors",
-    Mips32le: "BUG-9: float conversion lowering panics with type errors",
-    Mips32be: "BUG-9: float conversion lowering panics with type errors",
+    X86:      "BUG-9: float conversion lowering type error (not a float value)",
+    X64:      "BUG-9: float conversion lowering type error (not a float value)",
+    Aarch64:  "BUG-9: float conversion lowering type error (not a float value)",
+    Arm:      "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32le: "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32be: "BUG-9: float conversion lowering type error (not a float value)",
 });
 per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
-    X86:      "BUG-9: float conversion lowering panics with type errors",
-    X64:      "BUG-9: float conversion lowering panics with type errors",
-    Aarch64:  "BUG-9: float conversion lowering panics with type errors",
-    Arm:      "BUG-9: float conversion lowering panics with type errors",
-    Mips32le: "BUG-9: float conversion lowering panics with type errors",
-    Mips32be: "BUG-9: float conversion lowering panics with type errors",
+    X86:      "BUG-9: x86 analyze_cfg errors on 10-byte x87 output size",
+    Aarch64:  "BUG-9: int_to_float not producing IntToFloat node on aarch64",
 });
 per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
-    X86:      "BUG-9: float conversion lowering panics with type errors",
-    X64:      "BUG-9: float conversion lowering panics with type errors",
-    Aarch64:  "BUG-9: float conversion lowering panics with type errors",
-    Arm:      "BUG-9: float conversion lowering panics with type errors",
-    Mips32le: "BUG-9: float conversion lowering panics with type errors",
-    Mips32be: "BUG-9: float conversion lowering panics with type errors",
+    X86:      "BUG-9: float conversion lowering type error (not a float value)",
+    X64:      "BUG-9: float conversion lowering type error (not a float value)",
+    Aarch64:  "BUG-9: float conversion lowering type error (not a float value)",
+    Arm:      "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32le: "BUG-9: float conversion lowering type error (not a float value)",
+    Mips32be: "BUG-9: float conversion lowering type error (not a float value)",
 });
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
-    X86:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    X64:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Aarch64:  "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Arm:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Mips32le: "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Mips32be: "BUG-10: float comparison emits Bool to AnyInt-expecting node",
+    X86:      "BUG-10: float comparison lowering error on x86 (analyze_cfg failure)",
+    X64:      "BUG-10: float comparison has fewer than 2 conditionals on x64",
+    Arm:      "BUG-10: float comparison lowering error on arm (not a bool value)",
 });
 per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
-    X86:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    X64:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Aarch64:  "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Arm:      "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Mips32le: "BUG-10: float comparison emits Bool to AnyInt-expecting node",
-    Mips32be: "BUG-10: float comparison emits Bool to AnyInt-expecting node",
+    X86:      "BUG-10: float comparison lowering error on x86 (analyze_cfg failure)",
+    X64:      "BUG-10: float comparison has fewer than 2 conditionals on x64",
+    Arm:      "BUG-10: float comparison lowering error on arm (analyze_cfg failure)",
 });
 per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
-    X86:      "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
-    X64:      "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
-    Aarch64:  "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
-    Arm:      "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
-    Mips32le: "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
-    Mips32be: "BUG-11: float negation not lowered to FloatUnaryOp::Neg",
+    X86:      "BUG-11: float negation not lowered to FloatUnaryOp::Neg on x86",
+    X64:      "BUG-11: float negation not lowered to FloatUnaryOp::Neg on x64",
+    Aarch64:  "BUG-11: float negation not lowered to FloatUnaryOp::Neg on aarch64",
+    Mips32le: "BUG-11: float negation not lowered to FloatUnaryOp::Neg on mips32",
+    Mips32be: "BUG-11: float negation not lowered to FloatUnaryOp::Neg on mips32",
 });
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {

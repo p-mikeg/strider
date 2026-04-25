@@ -152,13 +152,11 @@ impl CallingConvention {
                 "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
             ],
             ret_val_regs: &["x0", "x1"],
-            // AArch64 float return regs.  Use d0/d1 (8-byte double-precision
-            // view) instead of q0/q1 (16-byte vector view) to avoid U128
-            // shift-constant materialisation in write_reg_vn (see
-            // analyzer-known-issues BUG-13).  d0/d1 is the natural width for
-            // C `float`/`double` return values, which is what user code
-            // actually queries.
-            ret_val_regs_float: &["d0", "d1"],
+            // AArch64 SIMD return regs (16-byte vector; contain s0/d0/q0
+            // sub-registers).  Now that vn_mask + build_int_const support
+            // U128, the ABI-correct q0/q1 (16-byte) is preferred over d0/d1
+            // (which was a workaround for the U128 panic — BUG-13).
+            ret_val_regs_float: &["q0", "q1"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
         }
