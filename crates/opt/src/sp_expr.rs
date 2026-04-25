@@ -6,6 +6,14 @@
 //! returns either a `Terminal { base, offset }` or a `Phi { node, offsets[] }`.
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
+//!
+//! Invariant: `Phi { offsets[j] }` requires every predecessor `j` to itself
+//! decompose to a `Terminal { base: InitialVar(sp), offset }`. A predecessor
+//! that fails to decompose, or that decomposes to a nested `Phi`, makes the
+//! whole walk return `None` rather than fabricate a Terminal — callers depend
+//! on `offset` being literally correct (e.g. on conventions where
+//! `stack_arg_offsets[0] == 0`, a fabricated `offset = 0` would be silently
+//! misclassified as the first stack argument).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 

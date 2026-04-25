@@ -99,7 +99,9 @@ impl Optimizer for FunctionArgDetect {
         // the use-list of surviving producers like `InitialVar(sp)`, which
         // confuses downstream consumers that walk use-lists — e.g. the dot
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
-        changed |= crate::worklist::detach_unreachable_nodes(function);
+        // The detach result is hygiene-only (post-pass return values are
+        // ignored by the pipeline); don't escalate it into `Changed`.
+        let _ = crate::worklist::detach_unreachable_nodes(function);
         Ok(changed)
     }
 }
