@@ -160,6 +160,9 @@ mod tests {
         assert!(!s.contains(Id(0)));
         assert!(!s.contains(Id(100)));
         assert!(s.iter().next().is_none());
+        // Verify re-insert after clear works (bitset is fully reset).
+        s.insert(Id(0));
+        assert!(s.contains(Id(0)));
     }
 
     #[test]
