@@ -55,6 +55,7 @@ pub struct FunctionBuilder {
 
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`FunctionGraph`].
+    #[must_use] 
     pub fn body(&self) -> &FunctionGraph {
         &self.function
     }
@@ -216,6 +217,7 @@ impl FunctionBuilder {
 
     /// Returns the calling convention's return-value registers, in ABI order.
     /// Empty for synthetic test builds that didn't supply a convention.
+    #[must_use] 
     pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
         &self.ret_val_vars
     }

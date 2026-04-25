@@ -67,6 +67,7 @@ pub struct BuiltFunctionGraph {
 impl BuiltFunctionGraph {
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from [`BuiltFunctionGraph::entry`].
+    #[must_use] 
     pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(&self.graph, self.entry)
     }
@@ -81,6 +82,7 @@ impl BuiltFunctionGraph {
 
     /// Returns a [`GraphDotDumper`](crate::dot::GraphDotDumper) that can render
     /// this function graph to a `.dot` / `.html` file.
+    #[must_use] 
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,

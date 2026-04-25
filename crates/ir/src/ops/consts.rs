@@ -8,6 +8,7 @@ use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 impl BuiltFunctionGraph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type), or `None` if the output is not an integer constant.
+    #[must_use] 
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.graph.output_kind(out).as_value()?;
         if !ty.is_integer() {
@@ -22,6 +23,7 @@ impl BuiltFunctionGraph {
 
     /// Returns the boolean constant value of `out`, or `None` if it is not a
     /// `BoolConst` node.
+    #[must_use] 
     pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
         if !self.graph.output_kind(out).is_bool() {
             return None;
@@ -35,6 +37,7 @@ impl BuiltFunctionGraph {
 
     /// Returns the raw bits of a float constant, or `None` if the output is
     /// not a `FloatConst` node.
+    #[must_use] 
     pub fn float_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.graph.output_kind(out).as_value()?;
         if !ty.is_float() {

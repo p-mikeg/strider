@@ -78,6 +78,7 @@ impl NodeOutputType {
 
     /// Returns the canonical name of this type as a static string.
     #[inline]
+    #[must_use] 
     pub fn as_str(self) -> &'static str {
         self.info().name
     }
@@ -86,12 +87,14 @@ impl NodeOutputType {
     ///
     /// Both `Bool` and `U8` return 1.
     #[inline]
+    #[must_use] 
     pub fn byte_size(self) -> usize {
         self.info().byte_size as usize
     }
 
     /// Returns the width of this type **in bits** (`byte_size * 8`).
     #[inline]
+    #[must_use] 
     pub fn bit_width(self) -> usize {
         self.byte_size() * 8
     }
@@ -101,12 +104,14 @@ impl NodeOutputType {
     /// Returns `true` for `Bool`, `U8`, `U16`, `U32`, `U64`, `F32`, and `F64`.
     /// Returns `false` for `U128` and `U256`.
     #[inline]
+    #[must_use] 
     pub fn fits_u64(self) -> bool {
         self.byte_size() <= 8
     }
 
     /// Returns `true` if this type is `Bool`.
     #[inline]
+    #[must_use] 
     pub fn is_bool(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Bool)
     }
@@ -114,12 +119,14 @@ impl NodeOutputType {
     /// Returns `true` if this type is one of the unsigned integer variants
     /// (U8, U16, U32, U64, U128, U256).
     #[inline]
+    #[must_use] 
     pub fn is_integer(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Int)
     }
 
     /// Returns `true` if this type is `F32` or `F64`.
     #[inline]
+    #[must_use] 
     pub fn is_float(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Float)
     }
@@ -127,6 +134,7 @@ impl NodeOutputType {
     /// Returns the unsigned integer type with the same byte size.
     /// (Bool→U8, F32→U32, F64→U64, Ux→Ux)
     #[inline]
+    #[must_use] 
     pub fn to_natural_int_type(self) -> NodeOutputType {
         match self.byte_size() {
             1 => NodeOutputType::U8,
@@ -145,6 +153,7 @@ impl NodeOutputType {
     /// The truncation ensures that bits beyond the type's width are cleared,
     /// matching the hardware behaviour of narrower registers.
     #[inline]
+    #[must_use] 
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
             NodeOutputType::Bool => None,
@@ -163,6 +172,7 @@ impl NodeOutputType {
     /// Casting through the signed type of the same width sign-extends the
     /// value to 64 bits.
     #[inline]
+    #[must_use] 
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
             NodeOutputType::Bool => None,
@@ -182,6 +192,7 @@ impl NodeOutputType {
     /// since those widths either are not integer or cannot be represented in 64
     /// bits.
     #[inline]
+    #[must_use] 
     pub fn sign_extend(self, val: u64) -> Option<u64> {
         self.get_signed_int(val).map(|v| v as u64)
     }
@@ -228,6 +239,7 @@ pub enum NodeOutputKind {
 impl NodeOutputKind {
     /// Returns `true` if this is a value output (`OutputType` variant).
     #[inline]
+    #[must_use] 
     pub fn is_value(self) -> bool {
         matches!(self, Self::OutputType(..))
     }
@@ -235,6 +247,7 @@ impl NodeOutputKind {
     /// Returns the inner [`NodeOutputType`] if this is a value output,
     /// otherwise `None`.
     #[inline]
+    #[must_use] 
     pub fn as_value(self) -> Option<NodeOutputType> {
         match self {
             Self::OutputType(v) => Some(v),
@@ -278,24 +291,28 @@ impl NodeOutputKind {
 
     /// Returns `true` if this is a control-flow edge.
     #[inline]
+    #[must_use] 
     pub fn is_control(self) -> bool {
         self == Self::Control
     }
 
     /// Returns `true` if this is a control-phi dispatch edge.
     #[inline]
+    #[must_use] 
     pub fn is_control_phi(self) -> bool {
         self == Self::ControlPhi
     }
 
     /// Returns `true` if this is a memory edge.
     #[inline]
+    #[must_use] 
     pub fn is_memory(self) -> bool {
         self == Self::Memory
     }
 
     /// Returns `true` if this is a value output carrying a `Bool` type.
     #[inline]
+    #[must_use] 
     pub fn is_bool(self) -> bool {
         if let Some(output_type) = self.as_value() {
             output_type.is_bool()
@@ -306,6 +323,7 @@ impl NodeOutputKind {
 
     /// Returns `true` if this is a value output carrying an integer type.
     #[inline]
+    #[must_use] 
     pub fn is_integer(self) -> bool {
         if let Some(output_type) = self.as_value() {
             output_type.is_integer()
@@ -331,6 +349,7 @@ pub struct NodeOutput {
 
 impl NodeOutput {
     /// Creates a new `NodeOutput` with no uses yet.
+    #[must_use] 
     pub fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self {
         NodeOutput {
             kind,
@@ -361,6 +380,7 @@ pub struct NodeInput {
 
 impl NodeInput {
     /// Creates a new `NodeInput` not yet linked into any use list.
+    #[must_use] 
     pub fn new(output_id: NodeOutputId, node_id: NodeId, input_index: u32) -> Self {
         NodeInput {
             output_id,
@@ -589,6 +609,7 @@ impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
     /// (`BoolConst`, `IntConst`, or `FloatConst`).
     #[inline]
+    #[must_use] 
     pub fn is_const(self) -> bool {
         matches!(
             self,
@@ -603,6 +624,7 @@ impl NodeKind {
     /// `ControlState`, `ControlPhi`) or that must always produce a fresh node
     /// (e.g. `Return`) are not cacheable.
     #[inline]
+    #[must_use] 
     pub fn is_cacheable(&self) -> bool {
         !matches!(
             self,
@@ -627,6 +649,7 @@ impl NodeKind {
     /// [`NodeKind::MemPhi`], [`NodeKind::StackStorePhi`], or
     /// [`NodeKind::ValuePhi`].
     #[inline]
+    #[must_use] 
     pub fn is_phi(&self) -> bool {
         matches!(
             self,
@@ -651,6 +674,7 @@ pub struct Node {
 
 impl Node {
     /// Creates a new node with the given kind and empty input/output lists.
+    #[must_use] 
     pub fn new(kind: NodeKind) -> Self {
         Self {
             kind,

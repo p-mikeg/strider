@@ -18,6 +18,7 @@ use crate::{
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
 /// which basic-block headers are live and which predecessor slots on `ControlState`,
 /// `ControlPhi`, and `MemPhi` nodes are dead.
+#[must_use] 
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> HashSet<NodeId> {
     let mut visited = HashSet::new();
     let mut worklist = vec![entry];
@@ -48,6 +49,7 @@ pub struct GraphWalkSuccs<'a>(&'a Graph);
 impl<'a> GraphWalkSuccs<'a> {
     /// Wraps `graph` in a `GraphWalkSuccs` adaptor.
     #[inline]
+    #[must_use] 
     pub fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
@@ -112,6 +114,7 @@ pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 ///
 /// `entry` is guaranteed to be the last node returned if it has no inputs (as should be the case
 /// with every well-formed graph).
+#[must_use] 
 pub fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
