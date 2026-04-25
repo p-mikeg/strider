@@ -107,19 +107,15 @@ impl DotStyle {
         }
     }
 
-    /// Like [`Self::dark`] but with CFG-appropriate node sizing: `Courier` font
-    /// (known metrics in viz.js) and extra margin so multiline labels fit.
+    /// Like [`Self::dark`] but with CFG-appropriate node typography: replaces the
+    /// generic `monospace` font with `Courier`, whose character-width metrics
+    /// are bundled into the Graphviz/viz.js layout engine. Without this swap,
+    /// multiline labels overflow their node boxes in WASM-rendered HTML.
     #[must_use]
     pub fn dark_cfg() -> Self {
         let mut s = Self::dark();
-        // Replace the generic "monospace" entry with "Courier", which has
-        // well-known character-width metrics in the bundled Graphviz/viz.js
-        // layout engine, preventing text from overflowing node boxes.
         if let Some(e) = s.node.iter_mut().find(|(k, _)| *k == "fontname") {
             e.1 = "Courier";
-        }
-        if let Some(e) = s.node.iter_mut().find(|(k, _)| *k == "margin") {
-            e.1 = "0.2";
         }
         s
     }
