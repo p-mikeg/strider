@@ -102,7 +102,7 @@ fn decompose_sp_inner(
             offset: 0,
         }),
         NodeKind::ControlPhi(vn) if vn == sp_vn => {
-            decompose_sp_phi(fg, out, node, sp_vn, memo, visiting)
+            decompose_sp_phi(fg, node, sp_vn, memo, visiting)
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
             let inputs = fg.graph.node_inputs(node);
@@ -136,26 +136,36 @@ fn decompose_sp_inner(
 
 fn decompose_sp_phi(
     fg: &BuiltFunctionGraph,
-    out: NodeOutputId,
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
     let inputs = fg.graph.node_inputs(node);
+    // A ControlPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
+    // values. Fewer than 2 inputs means no actual predecessor — the phi is
+    // either malformed or has been simplified mid-pass; we cannot prove
+    // SP-rooted, so return None rather than fabricate a Terminal that lies
+    // about base/offset.
     if inputs.len() < 2 {
-        return Some(SpExpr::Terminal { base: out, offset: 0 });
+        return None;
     }
     let mut offsets = Vec::with_capacity(inputs.len() - 1);
     let mut bases = Vec::with_capacity(inputs.len() - 1);
     for pred_input in inputs.into_iter().skip(1) {
-        match decompose_sp(fg, pred_input, sp_vn, memo, visiting) {
-            Some(SpExpr::Terminal { base, offset }) => {
-                bases.push(base);
-                offsets.push(offset);
-            }
-            _ => return Some(SpExpr::Terminal { base: out, offset: 0 }),
-        }
+        // If any predecessor is not a Terminal SP-rooted expression we
+        // cannot describe this phi as InitialVar(sp) + K on every branch.
+        // Fail closed (None) — callers' lookups against `stack_arg_offsets`
+        // depend on `offset` being correct, and on conventions where
+        // stack_arg_offsets[0] == 0 a fabricated `offset = 0` would be
+        // silently misclassified as the first stack arg.
+        let SpExpr::Terminal { base, offset } =
+            decompose_sp(fg, pred_input, sp_vn, memo, visiting)?
+        else {
+            return None;
+        };
+        bases.push(base);
+        offsets.push(offset);
     }
     if bases.iter().all(|&b| b == bases[0]) && offsets.iter().all(|&o| o == offsets[0]) {
         Some(SpExpr::Terminal { base: bases[0], offset: offsets[0] })
@@ -369,6 +379,62 @@ mod tests {
         assert!(
             !memo.contains_key(&c),
             "decompose_sp must not cache None verdicts (cycle-truncation cannot be distinguished from genuine 'not SP-rooted' here)"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_phi_with_non_sp_pred_returns_none() -> crate::Result<()> {
+        // A ControlPhi(sp) whose predecessor value is NOT SP-rooted must
+        // decompose to None.  Previously decompose_sp_phi fabricated a
+        // Terminal{base: phi_output, offset: 0} on this path; callers
+        // ignored `base` but trusted `offset == 0`, which on conventions
+        // where stack_arg_offsets[0] == 0 (AArch64/ARM AAPCS) could
+        // misclassify a non-SP-rooted phi as the first stack argument or
+        // wrongly forward a load over it.
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let entry = b.create_region()?;
+        let a = b.create_region()?;
+        let bb = b.create_region()?;
+        let c = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        // entry: if cond goto a else goto bb
+        b.set_region(entry);
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, a, bb)?;
+
+        // a: sp = sp - 4 (SP-rooted)
+        b.set_region(a);
+        let sp_a = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let sp_minus_4 =
+            b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_minus_4)?;
+        b.build_branch(c)?;
+
+        // bb: sp = 0xDEAD_BEEF (NOT SP-rooted — a literal value pretending
+        // to be a new SP).
+        b.set_region(bb);
+        let bogus = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32);
+        b.write_variable(&sp, bogus)?;
+        b.build_branch(c)?;
+
+        // c: read sp.  The phi at c has two predecessor values: the SP-rooted
+        // one from `a` and the bogus const from `bb`.  decompose_sp must
+        // refuse to claim "this is sp + K" for that phi.
+        b.set_region(c);
+        let sp_at_c = b.read_variable(&sp)?;
+        b.build_return(Some(sp_at_c), &[])?;
+        let fg = b.build()?;
+
+        let mut memo = SpExprMemo::default();
+        let mut visiting = FxHashSet::default();
+        let r = decompose_sp(&fg, sp_at_c, sp, &mut memo, &mut visiting);
+        assert!(
+            r.is_none(),
+            "expected None for ControlPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
         );
         Ok(())
     }
