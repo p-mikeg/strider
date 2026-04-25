@@ -255,9 +255,14 @@ impl Optimizer for KnownBits {
 
         // ── Phase 2: replace fully-determined outputs with constants ──────────
         let mut result = OptimizationResult::NoChange;
+        // Reused across iterations: snapshot of `node_outputs` so the body can
+        // call `replace_all_uses` (which mutates `function.graph`) without
+        // holding a borrow into the graph's output slice.
+        let mut outputs: Vec<NodeOutputId> = Vec::new();
         for &node_id in &nodes {
-            let outputs: Vec<_> = function.graph.node_outputs(node_id).into_iter().collect();
-            for out in outputs {
+            outputs.clear();
+            outputs.extend(function.graph.node_outputs(node_id).into_iter());
+            for &out in &outputs {
                 let Some(ty) = function.graph.output_kind(out).as_value() else {
                     continue;
                 };

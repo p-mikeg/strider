@@ -74,14 +74,13 @@ impl Optimizer for ConstantFold {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
+        // Buffer reused across iterations to snapshot outputs before each
+        // rule sweep. Each iteration clears and refills it, avoiding a
+        // fresh `Vec` allocation per node visit.
+        let mut outs_before: Vec<NodeOutputId> = Vec::new();
         while let Some(node_id) = work.pop() {
-            // Snapshot outputs before each rule sweep so we can re-enqueue
-            // consumers when an output is replaced.
-            let outs_before: Vec<NodeOutputId> = function
-                .graph
-                .node_outputs(node_id)
-                .into_iter()
-                .collect();
+            outs_before.clear();
+            outs_before.extend(function.graph.node_outputs(node_id).into_iter());
             let r = apply_identity_rules(function, node_id)?
                 | apply_const_eval_rules(function, node_id)?
                 | apply_bool_float_rules(function, node_id)?
