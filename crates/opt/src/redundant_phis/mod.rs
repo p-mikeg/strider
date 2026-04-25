@@ -1,15 +1,15 @@
-use rustc_hash::FxHashSet as HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::error::{ErrorKind, Result};
 use crate::pipeline::{OptimizationResult, Optimizer};
-use ir::node::NodeId;
+use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 /// Replaces all uses of `output` with `value`.  Returns `true` if at least one
 /// use was replaced.
 fn replace_output_uses(
     function: &mut ir::BuiltFunctionGraph,
-    output: ir::node::NodeOutputId,
-    value: ir::node::NodeOutputId,
+    output: NodeOutputId,
+    value: NodeOutputId,
 ) -> Result<bool> {
     let mut changed = false;
     let mut cursor = function.graph.output_use_cursor(output);
@@ -43,7 +43,7 @@ fn cleanup_if_dead(function: &mut ir::BuiltFunctionGraph, node_id: NodeId) -> Op
 fn remove_phis(
     function: &mut ir::BuiltFunctionGraph,
     node_id: NodeId,
-    reachable: &HashSet<NodeId>,
+    reachable: &FxHashSet<NodeId>,
 ) -> Result<OptimizationResult> {
     match function.graph.node_kind(node_id) {
         // ControlPhi and MemPhi have identical input layouts after the builder
@@ -57,7 +57,7 @@ fn remove_phis(
         // ControlState.inputs[j]'s producer is in the CFG-reachable set.
         // We deduplicate by NodeOutputId so that two edges from the same
         // predecessor (unusual but valid) count as one.
-        ir::node::NodeKind::ControlPhi(..) | ir::node::NodeKind::MemPhi => {
+        NodeKind::ControlPhi(..) | NodeKind::MemPhi => {
             let inputs = function.graph.node_inputs(node_id);
             if inputs.is_empty() {
                 return Ok(OptimizationResult::NoChange);
@@ -66,14 +66,14 @@ fn remove_phis(
             let control_state_id = function.graph.output_definition(phi_token).0;
             let ctrl_inputs = function.graph.node_inputs(control_state_id);
 
-            let reachable_ctrl: HashSet<ir::node::NodeOutputId> = ctrl_inputs
+            let reachable_ctrl: FxHashSet<NodeOutputId> = ctrl_inputs
                 .into_iter()
                 .filter(|ctrl_in| reachable.contains(&function.graph.output_definition(*ctrl_in).0))
                 .collect();
 
             // Values from live predecessors only: positionally, inputs[j + 1]
             // is the value on predecessor ctrl_inputs[j].
-            let live_values: HashSet<ir::node::NodeOutputId> = ctrl_inputs
+            let live_values: FxHashSet<NodeOutputId> = ctrl_inputs
                 .into_iter()
                 .enumerate()
                 .filter(|&(_j, ctrl_in)| {
@@ -121,9 +121,9 @@ fn remove_phis(
                 Ok(cleanup_if_dead(function, node_id))
             }
         }
-        ir::node::NodeKind::ControlState => {
+        NodeKind::ControlState => {
             let node_inputs = function.graph.node_inputs(node_id);
-            let reachable_inputs: HashSet<ir::node::NodeOutputId> = node_inputs
+            let reachable_inputs: FxHashSet<NodeOutputId> = node_inputs
                 .into_iter()
                 .filter(|inp| reachable.contains(&function.graph.output_definition(*inp).0))
                 .collect();
@@ -160,7 +160,7 @@ pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
     fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let reachable: HashSet<NodeId> =
+        let reachable: FxHashSet<NodeId> =
             ir::walk::cfg_reachable(&function.graph, function.entry)
                 .into_iter()
                 .collect();
@@ -172,9 +172,9 @@ impl Optimizer for RedundantPhis {
             .filter(|&n| {
                 matches!(
                     function.graph.node_kind(n),
-                    ir::node::NodeKind::ControlPhi(_)
-                        | ir::node::NodeKind::MemPhi
-                        | ir::node::NodeKind::ControlState
+                    NodeKind::ControlPhi(_)
+                        | NodeKind::MemPhi
+                        | NodeKind::ControlState
                 )
             })
             .collect();
