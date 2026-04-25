@@ -13,14 +13,6 @@ mod tests;
 
 use rules::*;
 
-// ── Public optimizer ──────────────────────────────────────────────────────────
-
-/// Folds constant expressions and applies algebraic identities.
-///
-/// Handles full constant evaluation for all arithmetic, comparison, boolean,
-/// truncation, and extension operations.  Also applies identities such as
-/// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
-/// a & (C1 & C2)`.
 /// Lowers a `CastToFloat` node to the appropriate specific form based on the
 /// actual input type:
 ///
@@ -68,6 +60,14 @@ fn try_lower_cast_to_float(
     Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
 }
 
+// ── Public optimizer ──────────────────────────────────────────────────────────
+
+/// Folds constant expressions and applies algebraic identities.
+///
+/// Handles full constant evaluation for all arithmetic, comparison, boolean,
+/// truncation, and extension operations.  Also applies identities such as
+/// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
+/// a & (C1 & C2)`.
 pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
