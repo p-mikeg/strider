@@ -14,6 +14,17 @@ pub(super) fn eval_int_binary(
     r: u64,
     ty: NodeOutputType,
 ) -> Option<u64> {
+    // Defensive: IntConst(u64) values are not guaranteed to be masked to the
+    // declared type's width — `make_int_const` stores the raw u64, and the
+    // analyzer's vn_io lifter feeds raw Sleigh `VnAddr.off` values through.
+    // Operations safe under masking-commutativity (Add, Sub, Mul, And, Or,
+    // Xor, ShiftLeft) would still produce the right answer because the final
+    // `ty.get_unsigned_int(raw)` cancels any high bits, but Div, Rem, and
+    // ShiftRight are NOT commutative with masking and would give wrong
+    // results. Mask once at entry; the `?` skips evaluation entirely for
+    // U128/U256 (consistent with the existing per-arm fallthroughs).
+    let l = ty.get_unsigned_int(l)?;
+    let r = ty.get_unsigned_int(r)?;
     let bits = ty.bit_width() as u64;
     // Shift amounts are masked to prevent UB; u32 is required by wrapping_shl/shr.
     let shift = |s: u64| -> u32 { (s & (bits - 1)) as u32 };
@@ -82,6 +93,19 @@ pub(super) fn eval_int_binary(
 
 /// Evaluates a comparison on two constant integer values.
 pub(super) fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool> {
+    // See `eval_int_binary` — mask both inputs to `ty` at entry. The
+    // unsigned comparisons (Equal, Less, LessEqual, Carry, Borrow) operate
+    // on raw u64s and would otherwise return wrong answers for U8/U16/U32
+    // IntConsts that carry high bits beyond the type width. The signed
+    // arms (`Sless`, `Scarry`, …) re-mask via `get_signed_int` so the
+    // double-mask is idempotent for them.
+    let l = ty
+        .get_unsigned_int(l)
+        .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty))?;
+    let r = ty
+        .get_unsigned_int(r)
+        .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty))?;
+
     Ok(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,

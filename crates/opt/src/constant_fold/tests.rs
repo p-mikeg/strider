@@ -1251,3 +1251,99 @@ fn srem_narrow_int_min_neg_one_skips() {
         None,
     );
 }
+
+#[test]
+fn eval_int_binary_unsigned_div_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // U8 Div with l carrying high garbage bits beyond U8.
+    // Masked: 0xFF / 2 = 0x7F. Unmasked-eval: 0x1FF / 2 = 0xFF (wrong).
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Div, 0x1FF, 2, NodeOutputType::U8),
+        Some(0x7F),
+        "Div must mask inputs to U8 before division"
+    );
+}
+
+#[test]
+fn eval_int_binary_unsigned_rem_unmasked_u16() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFFFF % 0x10 = 0x0F. Unmasked-eval: 0x1FFFF % 0x10 = 0x0F.
+    // Pick a divisor that distinguishes: 0xFFFF % 7 = 1, 0x1FFFF % 7 = 5.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Rem, 0x1FFFF, 7, NodeOutputType::U16),
+        Some(1),
+        "Rem must mask inputs to U16 before remainder"
+    );
+}
+
+#[test]
+fn eval_int_binary_unsigned_shr_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFF >> 1 = 0x7F. Unmasked-eval: 0x1FF >> 1 = 0xFF, masked = 0xFF.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftRight, 0x1FF, 1, NodeOutputType::U8),
+        Some(0x7F),
+        "ShiftRight must mask the input to U8 before shifting"
+    );
+}
+
+#[test]
+fn eval_int_cmp_equal_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFF == 0xFF → true. Unmasked-eval: 0x1FF != 0xFF → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Equal, 0x1FF, 0xFF, NodeOutputType::U8).unwrap(),
+        "Equal must mask both sides to U8 before comparing"
+    );
+}
+
+#[test]
+fn eval_int_cmp_less_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Less, 0x100, 0x01, NodeOutputType::U8).unwrap(),
+        "Less must mask both sides to U8 before comparing"
+    );
+}
+
+#[test]
+fn eval_int_cmp_carry_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 + 0x00 → no carry. Unmasked-eval: 0x100 + 0 = 0x100 > 0xFF → false-carry.
+    assert!(
+        !eval_int_cmp(IntCmpOp::Carry, 0x100, 0, NodeOutputType::U8).unwrap(),
+        "Carry must mask both sides before checking overflow"
+    );
+}
+
+#[test]
+fn eval_int_cmp_borrow_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Borrow, 0x100, 0x01, NodeOutputType::U8).unwrap(),
+        "Borrow must mask both sides to U8 before comparing"
+    );
+}
