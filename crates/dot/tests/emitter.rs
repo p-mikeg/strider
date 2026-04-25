@@ -11,7 +11,7 @@ use dot::{DotEmitter, DotStyle};
 fn empty_emitter_produces_minimal_digraph() {
     let style = DotStyle::empty();
     let out = DotEmitter::new("G", &style).finish();
-    assert_eq!(out, "digraph G {\n}\n");
+    assert_eq!(out, "digraph \"G\" {\n}\n");
 }
 
 #[test]
@@ -82,4 +82,27 @@ fn finish_appends_closing_brace_and_newline_exactly_once() {
     let out = DotEmitter::new("G", &style).finish();
     assert_eq!(out.matches('}').count(), 1);
     assert!(out.ends_with("}\n"));
+}
+
+#[test]
+fn digraph_name_with_special_chars_is_quoted_and_escaped() {
+    let style = DotStyle::empty();
+    let out = DotEmitter::new("my graph \"X\"", &style).finish();
+    // The name lives inside double-quotes, internal quotes are backslash-escaped.
+    assert!(
+        out.starts_with("digraph \"my graph \\\"X\\\"\" {\n"),
+        "expected quoted+escaped header, got: {out}",
+    );
+}
+
+#[test]
+fn digraph_name_with_backslash_is_doubled() {
+    let style = DotStyle::empty();
+    let out = DotEmitter::new("path\\sub", &style).finish();
+    // A bare backslash in the name doubles, since `escape_dot_label` only
+    // passes through `\n`/`\l`/`\r` and a bare `\s` is not one of those.
+    assert!(
+        out.starts_with("digraph \"path\\\\sub\" {\n"),
+        "expected doubled backslash, got: {out}",
+    );
 }

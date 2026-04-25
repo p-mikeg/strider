@@ -200,7 +200,14 @@ impl DotEmitter {
     #[must_use]
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
-        s.push_str(&format!("digraph {name} {{\n"));
+        // Always wrap the digraph name in double-quotes (with `"` and `\`
+        // escaped via the same rules as a label) so any caller-supplied
+        // name — including one with whitespace or punctuation — produces
+        // valid DOT. Graphviz parses quoted and bare identifiers
+        // identically when the bare form is legal.
+        s.push_str("digraph \"");
+        s.push_str(&escape_dot_label(name));
+        s.push_str("\" {\n");
 
         emit_attr_block(&mut s, "graph", &style.graph);
         emit_attr_block(&mut s, "node", &style.node);
