@@ -15,7 +15,10 @@
 
 mod cfg;
 pub mod error;
-pub use cfg::{Builder, Cfg, IfRegionState, OptionsBuilder, RegionEdgeKind, RegionId};
+pub use cfg::{
+    Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, Region, RegionEdgeKind,
+    RegionId, RegionInstruction,
+};
 pub use error::{Error, ErrorKind, Result};
 
 #[doc(hidden)]
