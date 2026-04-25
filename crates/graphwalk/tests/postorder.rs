@@ -208,3 +208,24 @@ fn nop_tracker_on_a_tree() {
     sorted.sort();
     assert_eq!(sorted, vec!["a", "b", "c", "d"]);
 }
+
+#[test]
+fn duplicate_root_visited_once() {
+    // PostOrderContext::next_event drops a second Pre for an already-visited
+    // node.  Passing the same root twice must yield exactly one (Pre, Post)
+    // pair, not two — this is what makes idempotent root lists safe.
+    let g = graphmock::graph("a -> b");
+    let a = g.node("a");
+    let mut po = entity_postorder(&g, [a, a]);
+    let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();
+    let pre_a = events
+        .iter()
+        .filter(|(p, n)| matches!(p, WalkPhase::Pre) && *n == a)
+        .count();
+    let post_a = events
+        .iter()
+        .filter(|(p, n)| matches!(p, WalkPhase::Post) && *n == a)
+        .count();
+    assert_eq!(pre_a, 1, "expected one Pre event for `a`, got {events:?}");
+    assert_eq!(post_a, 1, "expected one Post event for `a`, got {events:?}");
+}
