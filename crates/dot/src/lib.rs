@@ -140,9 +140,12 @@ impl DotStyle {
 /// Escapes a string for use as a DOT double-quoted label.
 ///
 /// - `"` → `\"`
-/// - `\` → `\\`
-/// - newline → `\n` (Graphviz left-justified line break)
-/// - carriage-return stripped
+/// - `\` (followed by recognised DOT label escape `n`/`l`/`r`) is
+///   passed through verbatim so callers can hand-emit DOT line breaks
+///   (`\n` centre-justified, `\l` left-justified, `\r` right-justified).
+/// - `\` (followed by anything else) → `\\`
+/// - literal newline → `\n` (the DOT centre-justify line-break escape).
+/// - any other character (including literal `\r`) is passed through unchanged.
 fn escape_dot_label(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
