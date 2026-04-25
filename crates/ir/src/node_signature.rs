@@ -257,8 +257,11 @@ const REF: Slot = Slot {
     name: "ref",
     role: R::Ref,
 };
+// Per-predecessor value input for ControlPhi / ValuePhi. AnyValue (not AnyInt)
+// because flag-register phis are routinely Bool-typed — same rationale as
+// ARG / RET / CALL_OUT above.
 const IN_PHI: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "in",
     role: R::In,
 };
@@ -313,8 +316,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // ControlPhi: [phi_token, ...per-predecessor values].
         // ValuePhi: same shape as ControlPhi but not tied to a source varnode.
+        // Output is AnyValue (not AnyInt): the phi's output type matches its
+        // value inputs, which routinely include Bool-typed flag-register phis.
         NodeKind::ControlPhi(_) | NodeKind::ValuePhi => {
-            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL])
+            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL])
         }
 
         // ── Conditional branch ──────────────────────────────────────────────

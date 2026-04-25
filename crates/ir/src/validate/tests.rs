@@ -618,3 +618,43 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
         "expected NodeInputKindMismatch on MemPhi input[1], got: {errs:?}"
     );
 }
+
+#[test]
+fn layer_a_accepts_bool_value_phi_inputs() {
+    // ControlPhi / ValuePhi value inputs (the IN_PHI variadic tail) must
+    // accept Bool-typed values: real binaries phi-merge x86 flag registers
+    // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
+    let phi_token = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+
+    let bc = graph.create_node(
+        NodeKind::BoolConst(true),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let bc_out = graph.node_outputs(bc).into_iter().next().unwrap();
+
+    // ValuePhi taking [phi_token, bool_value] — the Bool flows through IN_PHI.
+    let vp = graph.create_node(
+        NodeKind::ValuePhi,
+        [phi_token, bc_out],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let vp_out = graph.node_outputs(vp).into_iter().next().unwrap();
+
+    // Use the phi'd value so the validator's reachability walk hits it.
+    graph.create_node(NodeKind::Return, [cs_ctrl, mem, vp_out], []);
+
+    validate(&graph, entry).expect("Bool-typed value phi inputs must validate");
+}
