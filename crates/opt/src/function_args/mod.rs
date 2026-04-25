@@ -219,9 +219,8 @@ fn detect_stack_args(
         // Space from first load (all loads in a K-group share the same memory
         // space).  Per-load output types may differ — pick the widest.
         let first = loads[0];
-        let space = match *fg.graph.node_kind(first) {
-            NodeKind::Load(s) => s,
-            _ => continue,
+        let NodeKind::Load(space) = *fg.graph.node_kind(first) else {
+            continue;
         };
         // Guard: every load in this K-group must share `space`. The grouping
         // logic above keys only on `j` (the offset slot), not on space, so a

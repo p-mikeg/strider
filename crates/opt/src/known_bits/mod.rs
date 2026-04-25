@@ -70,14 +70,13 @@ fn node_known_bits(
     let kind = *fg.graph.node_kind(node_id);
 
     // Find the first integer value output.
-    let out = match fg
+    let Some(out) = fg
         .graph
         .node_outputs(node_id)
         .into_iter()
         .find(|&o| fg.graph.output_kind(o).is_integer())
-    {
-        Some(o) => o,
-        None => return Ok(None),
+    else {
+        return Ok(None);
     };
     let out_kind = fg.graph.output_kind(out);
     let ty = out_kind.as_value_or_err()?;

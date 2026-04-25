@@ -19,9 +19,8 @@ fn try_detect_stack_store(
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
-    let space = match *fg.graph.node_kind(node_id) {
-        NodeKind::Store(space) => space,
-        _ => return Ok(OptimizationResult::NoChange),
+    let NodeKind::Store(space) = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
     };
 
     // Store inputs: [memory, addr, data].
