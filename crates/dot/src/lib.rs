@@ -59,6 +59,11 @@ pub trait GraphDotDumper {
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node>;
 
     /// Emits DOT statements (nodes + edges) for a single graph node.
+    ///
+    /// # Errors
+    /// Returns the dumper's own error type (`Self::Error`) if the dumper
+    /// cannot produce DOT for `node` — for example, if a referenced subnode
+    /// is missing or the dumper's data source returns an I/O error.
     fn dump_as_dot(
         &self,
         node: Self::Node,
@@ -77,6 +82,7 @@ pub struct DotStyle {
 
 impl DotStyle {
     /// Returns a dark-background theme suitable for modern editors / terminals.
+    #[must_use]
     pub fn dark() -> Self {
         Self {
             graph: vec![
@@ -103,6 +109,7 @@ impl DotStyle {
 
     /// Like [`dark`] but with CFG-appropriate node sizing: `Courier` font
     /// (known metrics in viz.js) and extra margin so multiline labels fit.
+    #[must_use]
     pub fn dark_cfg() -> Self {
         let mut s = Self::dark();
         // Replace the generic "monospace" entry with "Courier", which has
@@ -118,6 +125,7 @@ impl DotStyle {
     }
 
     /// Returns an empty theme (no default attributes).
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             graph: vec![],
@@ -193,6 +201,7 @@ pub struct DotEmitter {
 
 impl DotEmitter {
     /// Creates a new emitter for a digraph named `name` with the given style.
+    #[must_use]
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
         s.push_str(&format!("digraph {name} {{\n"));
@@ -236,6 +245,7 @@ impl DotEmitter {
     }
 
     /// Finalises the digraph and returns the complete DOT string.
+    #[must_use]
     pub fn finish(mut self) -> String {
         self.out.push_str("}\n");
         self.out
@@ -292,6 +302,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
     }
 
     /// Returns the raw DOT source string.
+    ///
+    /// # Errors
+    /// Forwards any `Self::Error` returned by the underlying
+    /// [`GraphDotDumper::dump_as_dot`] for any node.
     pub fn as_dot(&self) -> Result<String, G::Error> {
         self.build_dot()
     }
@@ -299,6 +313,12 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Calls the system `dot` binary to render SVG from the DOT source.
     ///
     /// Returns an error if `dot` is not installed or the conversion fails.
+    ///
+    /// # Errors
+    /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
+    /// - [`ErrorKind::SvgConversionError`] if the system `dot` binary cannot
+    ///   be spawned, returns a non-zero exit status, or its stdin/stdout
+    ///   pipes cannot be opened.
     pub fn as_svg(&self) -> Result<String, G::Error> {
         let dot_src = self.as_dot()?;
 
@@ -339,6 +359,9 @@ impl<G: GraphDotDumper> GraphDot<G> {
     ///
     /// Requires the system `dot` binary.  For a browser-rendered interactive
     /// viewer that works without `dot`, use [`as_html_from_dot`] instead.
+    ///
+    /// # Errors
+    /// Same as [`as_svg`].
     pub fn as_html_from_svg(&self) -> Result<String, G::Error> {
         let mut svg = self.as_svg()?;
         // Strip the XML declaration and DOCTYPE that `dot` emits — they can
@@ -355,6 +378,9 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// The DOT source is embedded as a JSON string inside a
     /// `<script type="application/json">` element, so it is safe regardless of
     /// what characters appear in node labels.
+    ///
+    /// # Errors
+    /// Same as [`as_dot`].
     pub fn as_html_from_dot(&self) -> Result<String, G::Error> {
         let dot_src = self.as_dot()?;
         Ok(HTML_DOT_TEMPLATE.replace("__DOT_JSON__", &json_quote(&dot_src)))
@@ -363,12 +389,19 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Writes an interactive HTML viewer for this graph to `out_path`.
     ///
     /// Uses client-side Graphviz WASM rendering — no local `dot` binary needed.
+    ///
+    /// # Errors
+    /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
+    /// - [`ErrorKind::IoError`] if writing `out_path` fails.
     pub fn dump_as_html(&self, out_path: &str) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_html_from_dot()?)?;
         Ok(())
     }
 
     /// Writes the raw DOT source to `out_path`.
+    ///
+    /// # Errors
+    /// Same as [`dump_as_html`].
     pub fn dump_as_dot(&self, out_path: &str) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_dot()?)?;
         Ok(())

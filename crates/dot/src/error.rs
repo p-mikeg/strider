@@ -32,21 +32,25 @@ pub struct Error<E: Debug> {
 
 impl<E: Debug> Error<E> {
     /// Returns a reference to the underlying `ErrorKind`.
+    #[must_use]
     pub fn kind(&self) -> &ErrorKind<E> {
         &self.kind
     }
 
     /// Consumes the wrapper and returns the owned `ErrorKind`.
+    #[must_use]
     pub fn into_kind(self) -> ErrorKind<E> {
         *self.kind
     }
 
     /// Splits the wrapper into its boxed kind and shared fields.
+    #[must_use]
     pub fn decompose(self) -> (Box<ErrorKind<E>>, ErrorFields) {
         (self.kind, self.fields)
     }
 
     /// Returns the per-`?` propagation chain (origin first).
+    #[must_use]
     pub fn locations(&self) -> &LocationChain {
         &self.fields.locations
     }
