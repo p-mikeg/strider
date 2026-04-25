@@ -74,6 +74,18 @@ pub fn fake_insn() -> rsleigh::Insn {
     }
 }
 
+/// Synthetic `LiftRes` carrying `n_insns` `Copy` pcode ops and an arbitrary
+/// machine length. Intended for tests that exercise code reading only
+/// `lift_res.insns.len()` (e.g. `decode_branch_target`'s upper-bound check) —
+/// the actual `Insn` content is irrelevant for those paths.
+#[must_use]
+pub fn fake_lift_res(n_insns: usize) -> rsleigh::LiftRes {
+    rsleigh::LiftRes {
+        insns: (0..n_insns).map(|_| fake_insn()).collect(),
+        machine_insn_len: 1,
+    }
+}
+
 /// Builds a `Region` from `(machine_addr, insn_index)` pairs.
 ///
 /// # Panics

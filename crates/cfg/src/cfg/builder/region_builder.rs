@@ -77,13 +77,21 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     ///
     /// Pcode encodes branch targets in two ways:
     /// - **Relative** (`VnSpace::CONST`): the target is a pcode-instruction
-    ///   index *offset* within the same machine instruction.
+    ///   index *offset* within the same machine instruction. The resulting
+    ///   index must lie within `lift_res.insns` — Sleigh's intra-instruction
+    ///   contract guarantees CONST-space branches stay inside the current
+    ///   machine instruction's pcode sequence.
     /// - **Absolute** (default code space): the target is a raw virtual
     ///   address; the pcode index is implicitly 0 (start of machine insn).
+    ///
+    /// `lift_res` is the lifted result for the machine instruction containing
+    /// the branch — only its `insns.len()` is read, to bound the CONST-space
+    /// target index.
     fn decode_branch_target(
         &self,
         branch_target_var: rsleigh::Vn,
         branch_insn_addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
     ) -> Result<PcodeInsnAddr> {
         let default_code_space = self.builder.sleigh.default_code_space();
 
@@ -91,13 +99,18 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             // Relative branch: signed offset from the current pcode insn index.
             // rsleigh encodes CONST-space branch targets as two's-complement in a
             // u64, so a backward pcode-local branch comes in as `(-n) as u64`.
+            // The resulting index must land within the current machine
+            // instruction's pcode sequence: `0 <= target < lift_res.insns.len()`.
+            // An out-of-range index would otherwise be silently skipped by the
+            // build loop, advancing to the next machine instruction and
+            // producing a wrong CFG with no diagnostic.
             rsleigh::VnSpace::CONST => {
                 let base = branch_insn_addr.insn_index as i64;
                 let off = branch_target_var.addr.off as i64;
                 let target = base.checked_add(off).ok_or(
                     ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
                 )?;
-                if target < 0 {
+                if target < 0 || (target as u64) >= lift_res.insns.len() as u64 {
                     return Err(ErrorKind::InvalidBranchTargetVaErr(
                         branch_target_var,
                         branch_insn_addr,
@@ -194,7 +207,8 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
 
         match insn.opcode {
             rsleigh::Opcode::Branch => {
-                let branch_target_addr = self.decode_branch_target(insn.inputs[0], addr)?;
+                let branch_target_addr =
+                    self.decode_branch_target(insn.inputs[0], addr, lift_res)?;
                 let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
                 let region = self.finish_current_region(is_tail_call)?;
                 if !is_tail_call {
@@ -206,7 +220,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::CondBranch => {
-                let target_addr = self.decode_branch_target(insn.inputs[0], addr)?;
+                let target_addr = self.decode_branch_target(insn.inputs[0], addr, lift_res)?;
 
                 // We reached the end of the current region
                 let region = self.finish_current_region(false)?;
@@ -400,13 +414,16 @@ pub mod test_api {
         }
 
         /// # Errors
-        /// Propagates errors from the underlying branch-target decode.
+        /// Propagates errors from the underlying branch-target decode,
+        /// including out-of-range CONST-space pcode indices (target index
+        /// negative or `>= lift.insns.len()`).
         pub fn decode_branch_target(
             &self,
             vn: rsleigh::Vn,
             at: PcodeInsnAddr,
+            lift: &rsleigh::LiftRes,
         ) -> Result<PcodeInsnAddr> {
-            self.inner.decode_branch_target(vn, at)
+            self.inner.decode_branch_target(vn, at, lift)
         }
 
         /// # Errors
