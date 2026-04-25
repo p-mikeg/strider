@@ -363,11 +363,13 @@ pub mod test_api {
     //! Test-only wrapper around `RegionBuilder` so integration tests can drive
     //! its private methods directly.
 
-    use super::{ProcessInsnRes as InnerProcessInsnRes, RegionBuilder};
+    use super::RegionBuilder;
     use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction};
     use crate::cfg::Builder;
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
+
+    pub use super::ProcessInsnRes;
 
     /// Test-only forwarder for the private free function `next_pcode_addr`.
     ///
@@ -379,22 +381,6 @@ pub mod test_api {
         lift: &rsleigh::LiftRes,
     ) -> Result<PcodeInsnAddr> {
         super::next_pcode_addr(addr, lift)
-    }
-
-    /// Mirror of `ProcessInsnRes` for test consumers.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum ProcessInsnRes {
-        FinishedProcessing,
-        DidntFinishProcessing,
-    }
-
-    impl From<InnerProcessInsnRes> for ProcessInsnRes {
-        fn from(inner: InnerProcessInsnRes) -> Self {
-            match inner {
-                InnerProcessInsnRes::FinishedProcessing => ProcessInsnRes::FinishedProcessing,
-                InnerProcessInsnRes::DidntFinishProcessing => ProcessInsnRes::DidntFinishProcessing,
-            }
-        }
     }
 
     /// Owns a `RegionBuilder` for the lifetime of the test.
@@ -475,7 +461,7 @@ pub mod test_api {
             at: PcodeInsnAddr,
             lift: &rsleigh::LiftRes,
         ) -> Result<ProcessInsnRes> {
-            self.inner.process_new_insn(insn, at, lift).map(Into::into)
+            self.inner.process_new_insn(insn, at, lift)
         }
 
         /// # Errors
@@ -486,7 +472,7 @@ pub mod test_api {
             at: PcodeInsnAddr,
             lift: &rsleigh::LiftRes,
         ) -> Result<ProcessInsnRes> {
-            self.inner.process_insn(insn, at, lift).map(Into::into)
+            self.inner.process_insn(insn, at, lift)
         }
 
         /// # Errors
