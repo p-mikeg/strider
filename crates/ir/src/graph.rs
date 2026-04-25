@@ -72,8 +72,7 @@ impl Graph {
     pub fn stack_phi_offsets(&self, node_id: NodeId) -> &[i64] {
         self.stack_phi_offsets
             .get(&node_id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Associates a list of per-predecessor SP-relative offsets with a

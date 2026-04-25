@@ -104,8 +104,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::IntConst(v) => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("const {v:#x}{ty}")
             }
             NodeKind::FloatConst(bits) => match self.out_type(node) {
@@ -124,8 +123,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 let space = self.pretty_vnspace(*space);
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(" {}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(" {}", t.as_str()));
                 format!("Load{ty}\n← {space}")
             }
             NodeKind::Store(space) => {
@@ -133,8 +131,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 // data is input 2; memory and addr are 0 and 1
                 let ty = self
                     .input_type(node, 2)
-                    .map(|t| format!(" {}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(" {}", t.as_str()));
                 format!("Store{ty}\n→ {space}")
             }
             NodeKind::StackStore { space, offset } => {
@@ -142,16 +139,14 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 // data is input 2; memory and base are 0 and 1
                 let ty = self
                     .input_type(node, 2)
-                    .map(|t| format!(" {}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(" {}", t.as_str()));
                 format!("StackStore{ty}\n→ {space}[sp{}]", signed_offset(*offset))
             }
             NodeKind::StackStorePhi { space } => {
                 let space = self.pretty_vnspace(*space);
                 let ty = self
                     .input_type(node, 2)
-                    .map(|t| format!(" {}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(" {}", t.as_str()));
                 let offsets = self.graph.stack_phi_offsets(node);
                 let offsets_str = if offsets.is_empty() {
                     "?".to_string()
@@ -167,48 +162,47 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
             // ── casts / width changes ─────────────────────────────────────────
             NodeKind::Truncate => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("Truncate\n{from} → {to}")
             }
             NodeKind::Extend(op) => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::CastToBool => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
                 format!("Cast → bool\nfrom {from}")
             }
             NodeKind::CastToInt => {
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("Cast → {to}\nfrom bool")
             }
             NodeKind::Popcount => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("Popcount\n{from} → {to}")
             }
             NodeKind::Lzcount => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("Lzcount\n{from} → {to}")
             }
             // ── arithmetic / logical ──────────────────────────────────────────
             NodeKind::IntBinaryOp(op) => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("{op:?}{ty}")
             }
             NodeKind::IntUnaryOp(op) => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::IntCmpOp(op) => {
-                let operand = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let operand = self.input_type(node, 0).map_or("?", |t| t.as_str());
                 format!("{op:?}\n{operand} → bool")
             }
             NodeKind::BoolBinaryOp(op) => format!("{op:?}:bool"),
@@ -218,49 +212,48 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::FloatBinaryOp(op) => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("{op:?}{ty}")
             }
             NodeKind::FloatUnaryOp(op) => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("{op:?}\n{from} \u{2192} {to}")
             }
             NodeKind::FloatCmpOp(op) => {
-                let operand = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
+                let operand = self.input_type(node, 0).map_or("?", |t| t.as_str());
                 format!("{op:?}\n{operand} \u{2192} bool")
             }
 
             // ── float / integer conversions ───────────────────────────────────
             NodeKind::IntToFloat => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("IntToFloat\n{from} \u{2192} {to}")
             }
             NodeKind::FloatToInt => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("FloatToInt\n{from} \u{2192} {to}")
             }
             NodeKind::FloatToFloat => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("FloatToFloat\n{from} \u{2192} {to}")
             }
             NodeKind::IntBitsToFloat => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("bitcast\n{from} \u{2192} {to}")
             }
             NodeKind::FloatBitsToInt => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("bitcast\n{from} \u{2192} {to}")
             }
             NodeKind::CastToFloat => {
-                let from = self.input_type(node, 0).map(|t| t.as_str()).unwrap_or("?");
-                let to = self.out_type(node).map(|t| t.as_str()).unwrap_or("?");
+                let from = self.input_type(node, 0).map_or("?", |t| t.as_str());
+                let to = self.out_type(node).map_or("?", |t| t.as_str());
                 format!("CastToFloat\n{from} \u{2192} {to}")
             }
 
@@ -268,29 +261,25 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::CallOther { user_op_id } => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!("\n→ {}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!("\n→ {}", t.as_str()));
                 format!("CallOther #{user_op_id}{ty}")
             }
             NodeKind::SegmentOp { op_id } => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("SegmentOp #{op_id}{ty}")
             }
             NodeKind::CPoolRef => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("CPoolRef{ty}")
             }
             NodeKind::New => {
                 let ty = self
                     .out_type(node)
-                    .map(|t| format!(":{}", t.as_str()))
-                    .unwrap_or_default();
+                    .map_or_else(String::new, |t| format!(":{}", t.as_str()));
                 format!("New{ty}")
             }
 
