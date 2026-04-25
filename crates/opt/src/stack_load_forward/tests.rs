@@ -752,3 +752,92 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     );
     Ok(())
 }
+
+/// Diamond MemPhi where one predecessor stores a *wider* value at the load
+/// offset (triggering narrow-load synthesis) and the other predecessor has
+/// no matching store (forces a bail).  Without the probe/realize split, the
+/// narrow synthesis on the first predecessor leaks a `Truncate` node into
+/// the graph as an orphan even though the overall walk returns `None`.
+#[test]
+fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+    use crate::Optimizer;
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let entry = b.create_region()?;
+    let then_r = b.create_region()?;
+    let else_r = b.create_region()?;
+    let merge = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then_r, else_r)?;
+
+    // then: *(sp+0) = U64 wide value (will trigger narrow synthesis at the
+    // U32 load below).
+    b.set_region(then_r);
+    let sp_t = b.read_variable(&sp)?;
+    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABE, NodeOutputType::U64);
+    b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
+    b.build_branch(merge)?;
+
+    // else: no store at sp+0 — forces resolve to bail.
+    b.set_region(else_r);
+    b.build_branch(merge)?;
+
+    // merge: load U32 from sp+0.  resolve walks pred(then) first (narrow
+    // synthesis would create a Truncate), then pred(else) returns None.
+    b.set_region(merge);
+    let sp_m = b.read_variable(&sp)?;
+    let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    // Normalize the graph (Store → StackStore, single-pred phi collapse)
+    // BEFORE measuring the leak baseline, so that the SSD-introduced node
+    // changes don't show up as a "leak" attributable to SLF.
+    let mut prep = OptimizerPipeline::new();
+    prep.add(ConstantFold);
+    prep.add(RedundantPhis);
+    prep.add(StackStoreDetect::new(sp));
+    prep.run(&mut fg)?;
+
+    let total_truncate_before = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .count();
+    let total_value_phi_before = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .count();
+
+    // Run StackLoadForward in isolation so the leak attributable to it is
+    // observable directly (a multi-pass pipeline would obscure the
+    // attribution).
+    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg)?;
+
+    // The load must NOT have been forwarded (one branch has no matching
+    // store), AND no orphan Truncate / ValuePhi may remain in the arena.
+    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(reachable_loads, 1, "load must remain — bail expected");
+
+    let total_truncate_after = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .count();
+    let total_value_phi_after = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .count();
+    assert_eq!(
+        total_truncate_after, total_truncate_before,
+        "abort path leaked an orphan Truncate node",
+    );
+    assert_eq!(
+        total_value_phi_after, total_value_phi_before,
+        "abort path leaked an orphan ValuePhi node",
+    );
+    Ok(())
+}

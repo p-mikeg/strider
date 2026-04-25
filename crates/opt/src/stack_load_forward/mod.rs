@@ -93,11 +93,16 @@ fn try_forward_load(
     };
 
     let load_size = load_ty.byte_size() as i64;
+    // Two-phase walk: probe is read-only and decides whether forwarding
+    // can succeed; only on full success does realize commit fresh nodes
+    // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
+    // partial walks that fail downstream from leaving orphan nodes in
+    // the arena.
     let mut visited = std::collections::HashSet::new();
-    let Some(forwarded) = resolve(fg, mem, offset, load_size, load_ty, endianness, &mut visited)
-    else {
+    let Some(shape) = probe(fg, mem, offset, load_size, load_ty, &mut visited) else {
         return Ok(OptimizationResult::NoChange);
     };
+    let forwarded = realize(fg, shape, load_ty, endianness)?;
 
     let changed = fg.replace_all_uses(load_out, forwarded)?;
     if changed {
@@ -106,21 +111,47 @@ fn try_forward_load(
     Ok(OptimizationResult::from_changed(changed))
 }
 
-/// Walks memory backward from `mem` looking for a provable source of the
-/// bytes `[offset, offset + load_size)` at type `load_ty`.  Returns
-/// `Some(value_output)` when we can pin them to a stored value; `None`
-/// otherwise (conservative bail).  When the walk crosses a [`NodeKind::MemPhi`]
-/// and every predecessor resolves to a value, a fresh [`NodeKind::ValuePhi`]
-/// is synthesized sharing the `MemPhi`'s phi-token and returned.
-fn resolve(
-    fg: &mut BuiltFunctionGraph,
+/// Description of how to materialize a forwarded value.  Built by
+/// [`probe`] (which is read-only) and consumed by [`realize`] (which is
+/// the only function that creates fresh IR nodes for forwarding).  Splitting
+/// the walk this way prevents a partial probe — one that succeeds for some
+/// MemPhi predecessors and fails for others — from leaking orphan nodes
+/// (`Truncate`, `ShiftRight`, `ValuePhi`) into the graph arena.
+enum ResolveShape {
+    /// The forwarded value is an existing graph output and no new IR is
+    /// needed.
+    Existing(NodeOutputId),
+    /// Narrow-load-from-wider-store at a matching offset.  `realize`
+    /// synthesizes `Truncate(data)` (LE) or `Truncate(ShiftRight(data, k))`
+    /// (BE) using `data_ty` to size the shift.
+    Narrow {
+        data: NodeOutputId,
+        data_ty: ir::node::NodeOutputType,
+    },
+    /// MemPhi resolution.  `realize` recursively materializes each
+    /// predecessor first; if every predecessor materializes to the same
+    /// `NodeOutputId` it returns that one without creating a `ValuePhi`,
+    /// otherwise it creates a `ValuePhi { phi_token, vals... }`.
+    Phi {
+        phi_token: NodeOutputId,
+        preds: Vec<ResolveShape>,
+    },
+}
+
+/// Read-only walk of the memory chain backward from `mem` looking for a
+/// provable source of the bytes `[offset, offset + load_size)` at type
+/// `load_ty`.  Mirrors the structure of the previous `resolve` but does
+/// not touch `fg.graph`; on success, returns a [`ResolveShape`] tree that
+/// [`realize`] can turn into IR nodes.  Returns `None` if forwarding
+/// cannot be proven.
+fn probe(
+    fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
-    endianness: Endianness,
     visited: &mut std::collections::HashSet<NodeOutputId>,
-) -> Option<NodeOutputId> {
+) -> Option<ResolveShape> {
     let node = fg.graph.get_node_from_output(mem);
     match *fg.graph.node_kind(node) {
         NodeKind::StackStore {
@@ -137,45 +168,18 @@ fn resolve(
             let store_size = data_ty.byte_size() as i64;
             if k == offset {
                 if data_ty == load_ty {
-                    Some(data)
+                    Some(ResolveShape::Existing(data))
                 } else if data_ty.is_integer()
                     && load_ty.is_integer()
                     && load_ty.byte_size() < data_ty.byte_size()
                 {
-                    // Narrow-load-from-wider-store at matching offset.
-                    // - LE: load bytes are the low `load_size` bytes of the
-                    //   stored value → `Truncate(data)`.
-                    // - BE: load bytes are the high `load_size` bytes →
-                    //   `Truncate(ShiftRight(data, (store_size - load_size) * 8))`.
-                    //   `ShiftRight` is the *logical* right-shift (zero-fill),
-                    //   which is the correct synthesis since we just need the
-                    //   high bytes positioned in the low end before truncating.
-                    let shifted = match endianness {
-                        Endianness::Little => data,
-                        Endianness::Big => {
-                            let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64)
-                                * 8;
-                            let shift_const = fg.make_int_const(shift_bits, data_ty).ok()?;
-                            let shr = fg.graph.create_node(
-                                NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
-                                [data, shift_const],
-                                [NodeOutputKind::OutputType(data_ty)],
-                            );
-                            fg.graph.node_outputs(shr).into_iter().next()?
-                        }
-                    };
-                    let trunc = fg.graph.create_node(
-                        NodeKind::Truncate,
-                        [shifted],
-                        [NodeOutputKind::OutputType(load_ty)],
-                    );
-                    fg.graph.node_outputs(trunc).into_iter().next()
+                    Some(ResolveShape::Narrow { data, data_ty })
                 } else {
                     None
                 }
             } else if ranges_disjoint(k, store_size, offset, load_size) {
                 let prev_mem = inputs[0];
-                resolve(fg, prev_mem, offset, load_size, load_ty, endianness, visited)
+                probe(fg, prev_mem, offset, load_size, load_ty, visited)
             } else {
                 None
             }
@@ -195,27 +199,83 @@ fn resolve(
                 return None;
             }
             let phi_token = inputs_vec[0];
-            let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(inputs_vec.len() - 1);
+            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs_vec.len() - 1);
             for pred_mem in &inputs_vec[1..] {
-                let v = resolve(fg, *pred_mem, offset, load_size, load_ty, endianness, visited)?;
-                resolved.push(v);
+                preds.push(probe(fg, *pred_mem, offset, load_size, load_ty, visited)?);
             }
-            // Dedup: if all per-predecessor results are identical, skip the
-            // ValuePhi — returning the common value directly keeps the graph
+            Some(ResolveShape::Phi { phi_token, preds })
+        }
+        _ => None,
+    }
+}
+
+/// Materializes a [`ResolveShape`] into a concrete `NodeOutputId`,
+/// creating any new IR nodes (`Truncate`, `ShiftRight`, `ValuePhi`) only
+/// once the entire shape is known.  The dedup of identical predecessor
+/// values for `Phi` happens here as well: if every realized predecessor
+/// shares the same output id, no `ValuePhi` is created.
+///
+/// `Result<_, _>` is needed only because `make_int_const` can fail when
+/// the IR rejects the requested constant; structurally the realization
+/// is a deterministic walk over the shape tree.
+fn realize(
+    fg: &mut BuiltFunctionGraph,
+    shape: ResolveShape,
+    load_ty: ir::node::NodeOutputType,
+    endianness: Endianness,
+) -> crate::Result<NodeOutputId> {
+    match shape {
+        ResolveShape::Existing(out) => Ok(out),
+        ResolveShape::Narrow { data, data_ty } => {
+            // - LE: load bytes are the low `load_size` bytes of the stored
+            //   value → `Truncate(data)`.
+            // - BE: load bytes are the high `load_size` bytes →
+            //   `Truncate(ShiftRight(data, (store_size - load_size) * 8))`.
+            //   `ShiftRight` is the *logical* right-shift (zero-fill), the
+            //   correct synthesis since we want the high bytes positioned
+            //   in the low end before truncating.
+            let shifted = match endianness {
+                Endianness::Little => data,
+                Endianness::Big => {
+                    let shift_bits =
+                        ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
+                    let shift_const = fg.make_int_const(shift_bits, data_ty)?;
+                    let shr = fg.graph.create_node(
+                        NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
+                        [data, shift_const],
+                        [NodeOutputKind::OutputType(data_ty)],
+                    );
+                    let [out] = fg.graph.node_outputs_exact::<1>(shr)?;
+                    out
+                }
+            };
+            let trunc = fg.graph.create_node(
+                NodeKind::Truncate,
+                [shifted],
+                [NodeOutputKind::OutputType(load_ty)],
+            );
+            let [out] = fg.graph.node_outputs_exact::<1>(trunc)?;
+            Ok(out)
+        }
+        ResolveShape::Phi { phi_token, preds } => {
+            let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
+            for p in preds {
+                resolved.push(realize(fg, p, load_ty, endianness)?);
+            }
+            // Dedup: if all per-predecessor results coincide, skip the
+            // ValuePhi — returning the common value keeps the graph
             // smaller and exposes it to later passes more cleanly.
             if resolved.iter().all(|v| *v == resolved[0]) {
-                return Some(resolved[0]);
+                return Ok(resolved[0]);
             }
-            // Synthesize a ValuePhi [phi_token, val_0, val_1, ...].
             let value_phi = fg.graph.create_node(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
             );
-            let outputs = fg.graph.node_outputs(value_phi);
-            Some(outputs.into_iter().next()?)
+            let [out] = fg.graph.node_outputs_exact::<1>(value_phi)?;
+            Ok(out)
         }
-        _ => None,
     }
 }
 
