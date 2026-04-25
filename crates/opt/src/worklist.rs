@@ -55,16 +55,17 @@ impl WorkSet {
 /// reachable consumers (e.g. `DeadBranchElimination`, `FunctionArgDetect`).
 pub(crate) fn detach_unreachable_nodes(fg: &mut BuiltFunctionGraph) -> OptimizationResult {
     let reachable: FxHashSet<NodeId> = fg.preorder().collect();
-    let mut changed = false;
-    for node_id in fg.all_node_ids().collect::<Vec<_>>() {
-        if !reachable.contains(&node_id) && !fg.graph.node_inputs(node_id).is_empty() {
-            fg.graph.detach_node_inputs(node_id);
-            changed = true;
-        }
+    // Two-phase: gather the targets up-front (releases the borrow on `fg`
+    // and prunes "no inputs to detach" cases) before mutating the graph.
+    let to_detach: Vec<NodeId> = fg
+        .all_node_ids()
+        .filter(|n| !reachable.contains(n) && !fg.graph.node_inputs(*n).is_empty())
+        .collect();
+    if to_detach.is_empty() {
+        return OptimizationResult::NoChange;
     }
-    if changed {
-        OptimizationResult::Changed
-    } else {
-        OptimizationResult::NoChange
+    for node_id in to_detach {
+        fg.graph.detach_node_inputs(node_id);
     }
+    OptimizationResult::Changed
 }
