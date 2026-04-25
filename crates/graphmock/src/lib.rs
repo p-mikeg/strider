@@ -96,10 +96,21 @@ pub fn graph(input: &str) -> Graph {
         let (preds, succs) = line
             .split_once("->")
             .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));
-        let preds = preds.split(',').map(str::trim);
-        let succs: Vec<_> = succs.split(',').map(str::trim).collect();
 
-        for pred in preds {
+        #[allow(clippy::panic)]
+        let check_name = |name: &str| {
+            if name.is_empty() {
+                panic!("graphmock: empty node name in line: {line:?}");
+            }
+        };
+
+        let preds: Vec<&str> = preds.split(',').map(str::trim).collect();
+        let succs: Vec<&str> = succs.split(',').map(str::trim).collect();
+        for name in preds.iter().chain(succs.iter()) {
+            check_name(name);
+        }
+
+        for pred in &preds {
             let pred = graph.get_or_create(pred);
             for succ in &succs {
                 let succ = graph.get_or_create(succ);
@@ -236,5 +247,25 @@ mod tests {
         assert_eq!(a1, a2);
         assert_eq!(succs(&g, a1), vec!["b"]);
         assert_eq!(preds(&g, a1), vec!["b"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn empty_succ_token_panics() {
+        // "a -> " trims to ("a", ""): the empty successor used to silently
+        // create a phantom node.  Reject as malformed.
+        let _ = graph("a -> ");
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn empty_pred_token_panics() {
+        let _ = graph(" -> b");
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn trailing_comma_panics() {
+        let _ = graph("a, -> b");
     }
 }
