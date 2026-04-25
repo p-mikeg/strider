@@ -54,6 +54,13 @@ pub enum ErrorKind {
     #[error("opcode {0:?} has too few inputs: expected at least {1}, got {2}")]
     TooFewInputs(rsleigh::Opcode, usize, usize),
 
+    #[error("Subpiece byte_offset {byte_offset} out of range for input size {input_size} (opcode {opcode:?})")]
+    SubpieceOffsetOutOfRange {
+        opcode: rsleigh::Opcode,
+        byte_offset: u64,
+        input_size: u32,
+    },
+
     /// A test assertion failed. Exists so tests can return `Result<(), Error>`
     /// instead of using `panic!`.
     #[error("assertion failed: {0}")]
