@@ -149,27 +149,6 @@ fn remove_phis(
     }
 }
 
-/// Detaches the inputs of every node that is not reachable from the entry.
-///
-/// Unreachable nodes can only be consumed by other unreachable nodes, so
-/// severing their inputs is always safe.  This cleans up dead-block residue
-/// left behind by `DeadBranchElimination`.
-fn detach_unreachable_nodes(function: &mut ir::BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: HashSet<ir::node::NodeId> = function.preorder().collect();
-    let mut changed = false;
-    for node_id in function.all_node_ids().collect::<Vec<_>>() {
-        if !reachable.contains(&node_id) && !function.graph.node_inputs(node_id).is_empty() {
-            function.graph.detach_node_inputs(node_id);
-            changed = true;
-        }
-    }
-    if changed {
-        OptimizationResult::Changed
-    } else {
-        OptimizationResult::NoChange
-    }
-}
-
 /// Eliminates `ControlPhi`, `MemPhi`, and `ControlState` nodes that have only
 /// one reachable predecessor, replacing them with that predecessor's value.
 /// Also detaches the inputs of any node that is not reachable from the entry.
@@ -201,7 +180,7 @@ impl Optimizer for RedundantPhis {
         for node_id in candidates {
             res |= remove_phis(function, node_id, &reachable)?;
         }
-        res |= detach_unreachable_nodes(function);
+        res |= crate::worklist::detach_unreachable_nodes(function);
         Ok(res)
     }
 }

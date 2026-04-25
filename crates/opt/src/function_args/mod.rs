@@ -99,27 +99,8 @@ impl Optimizer for FunctionArgDetect {
         // the use-list of surviving producers like `InitialVar(sp)`, which
         // confuses downstream consumers that walk use-lists — e.g. the dot
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
-        changed |= detach_unreachable_nodes(function);
+        changed |= crate::worklist::detach_unreachable_nodes(function);
         Ok(changed)
-    }
-}
-
-/// Clears the inputs of every node not reachable from the function entry.
-/// Mirrors [`crate::RedundantPhis`]' dead-block cleanup for the zombie nodes
-/// this pass leaves behind.
-fn detach_unreachable_nodes(fg: &mut BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: std::collections::HashSet<NodeId> = fg.preorder().collect();
-    let mut changed = false;
-    for node_id in fg.all_node_ids().collect::<Vec<_>>() {
-        if !reachable.contains(&node_id) && !fg.graph.node_inputs(node_id).is_empty() {
-            fg.graph.detach_node_inputs(node_id);
-            changed = true;
-        }
-    }
-    if changed {
-        OptimizationResult::Changed
-    } else {
-        OptimizationResult::NoChange
     }
 }
 
