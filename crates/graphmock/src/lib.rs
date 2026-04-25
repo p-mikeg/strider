@@ -23,22 +23,43 @@ struct Node {
     succs: Vec<NodeId>,
 }
 
+/// A small directed graph built from the [`graph`] DSL, used as a fixture
+/// for `graphwalk` traversal tests.
+///
+/// `&Graph` implements [`graphwalk::GraphRef`] and [`graphwalk::PredGraphRef`],
+/// so it plugs straight into [`graphwalk::PreOrder`] / [`graphwalk::PostOrder`].
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
 }
 
 impl Graph {
+    /// Returns the conventional entry node id (`NodeId(0)`).
+    ///
+    /// **Precondition:** the input passed to [`graph`] declared at least one
+    /// edge — i.e. the graph contains at least one node.  Calling this on an
+    /// empty graph returns a stale id that will panic when used as a key into
+    /// [`Graph::name`] or any traversal.
     #[must_use]
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
+    /// Looks up a node by the name it was given in the DSL.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `name` was never declared in the input passed to [`graph`].
     #[must_use]
     pub fn node(&self, name: &str) -> NodeId {
         self.nodes_by_name[name]
     }
 
+    /// Returns the DSL name of `node`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` did not originate from this graph.
     #[must_use]
     pub fn name(&self, node: NodeId) -> &str {
         &self.nodes[node].name
@@ -96,10 +117,21 @@ pub fn graph(input: &str) -> Graph {
         let (preds, succs) = line
             .split_once("->")
             .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));
-        let preds = preds.split(',').map(str::trim);
-        let succs: Vec<_> = succs.split(',').map(str::trim).collect();
 
-        for pred in preds {
+        let check_name = |name: &str| {
+            assert!(
+                !name.is_empty(),
+                "graphmock: empty node name in line: {line:?}"
+            );
+        };
+
+        let preds: Vec<&str> = preds.split(',').map(str::trim).collect();
+        let succs: Vec<&str> = succs.split(',').map(str::trim).collect();
+        for name in preds.iter().chain(succs.iter()) {
+            check_name(name);
+        }
+
+        for pred in &preds {
             let pred = graph.get_or_create(pred);
             for succ in &succs {
                 let succ = graph.get_or_create(succ);
@@ -192,17 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_only_input_yields_no_edges() {
-        let g = graph("   \n\t\n   ");
-        // Entry node id 0 doesn't exist because no nodes were ever created.
-        // Just check we didn't panic and there are no successors-of-anything.
-        // (We can't actually call entry() — it would index out of bounds —
-        // but we can confirm by-name resolution fails. The existence of `g`
-        // is all we assert.)
-        let _ = g;
-    }
-
-    #[test]
     #[allow(clippy::many_single_char_names)]
     fn fan_out_and_fan_in() {
         // a, b -> c, d adds 4 edges.
@@ -236,5 +257,25 @@ mod tests {
         assert_eq!(a1, a2);
         assert_eq!(succs(&g, a1), vec!["b"]);
         assert_eq!(preds(&g, a1), vec!["b"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn empty_succ_token_panics() {
+        // "a -> " trims to ("a", ""): the empty successor used to silently
+        // create a phantom node.  Reject as malformed.
+        let _ = graph("a -> ");
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn empty_pred_token_panics() {
+        let _ = graph(" -> b");
+    }
+
+    #[test]
+    #[should_panic(expected = "graphmock: empty node name")]
+    fn trailing_comma_panics() {
+        let _ = graph("a, -> b");
     }
 }

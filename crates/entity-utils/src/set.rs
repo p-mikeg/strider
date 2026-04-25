@@ -73,6 +73,9 @@ impl<E: EntityRef> DenseEntitySet<E> {
     }
 }
 
+/// Iterator over a [`DenseEntitySet`] in ascending entity-index order.
+///
+/// Returned by [`DenseEntitySet::iter`] and `<&DenseEntitySet>::into_iter`.
 pub struct Iter<'a, E> {
     inner: cranelift_bitset::compound::Iter<'a>,
     _marker: PhantomData<E>,
@@ -85,6 +88,10 @@ impl<E: EntityRef> Iterator for Iter<'_, E> {
         self.inner.next().map(E::new)
     }
 }
+
+// `cranelift_bitset::compound::Iter` keeps yielding `None` once exhausted,
+// so the wrapper is naturally fused.
+impl<E: EntityRef> core::iter::FusedIterator for Iter<'_, E> {}
 
 impl<'a, E: EntityRef> IntoIterator for &'a DenseEntitySet<E> {
     type Item = E;
@@ -107,8 +114,8 @@ impl<E> Default for DenseEntitySet<E> {
 impl<E: EntityRef> FromIterator<E> for DenseEntitySet<E> {
     fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
         let iter = iter.into_iter();
-        let (min_size, _) = iter.size_hint();
-        let mut set = Self::with_capacity(min_size);
+        let (lower, upper) = iter.size_hint();
+        let mut set = Self::with_capacity(upper.unwrap_or(lower));
         for entity in iter {
             set.insert(entity);
         }
@@ -238,5 +245,13 @@ mod tests {
             by_for_sugar.push(id);
         }
         assert_eq!(by_iter, by_for_sugar);
+    }
+
+    #[test]
+    fn iter_is_fused() {
+        fn assert_fused<I: core::iter::FusedIterator>(_: &I) {}
+        let s: DenseEntitySet<Id> = core::iter::once(Id(1)).collect();
+        let it = s.iter();
+        assert_fused(&it);
     }
 }
