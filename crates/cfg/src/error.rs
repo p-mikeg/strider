@@ -15,6 +15,9 @@ pub enum ErrorKind {
     #[error("invalid branch target variable {0:?} at opcode {1:?}")]
     InvalidBranchTargetVaErr(rsleigh::Vn, PcodeInsnAddr),
 
+    #[error("branch instruction at {0:?} has no target operand")]
+    MissingBranchTarget(PcodeInsnAddr),
+
     #[error("invalid tail call at opcode {0:?}")]
     InvalidTailCall(PcodeInsnAddr),
 

@@ -184,3 +184,55 @@ fn finish_current_region_empty_insns_returns_error() {
     let err = rb.finish_current_region(false).unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));
 }
+
+// ── empty-inputs branch / condbranch rejection ──────────────────────────────
+
+/// Pinned contract: a `Branch` pcode instruction with empty inputs is
+/// rejected with `MissingBranchTarget` rather than panicking on
+/// `insn.inputs[0]`.
+#[test]
+fn process_new_insn_branch_with_empty_inputs_errors() {
+    let mut b = make_builder(0x1000);
+    let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
+    // The `lift_res` content doesn't matter — `process_new_insn`'s Branch
+    // arm errors before reading `lift_res`.
+    let lift = common::fake_lift_res(1);
+
+    let bad_insn = rsleigh::Insn {
+        opcode: rsleigh::Opcode::Branch,
+        inputs: vec![],
+        output: None,
+    };
+
+    let err = rb
+        .process_new_insn(&bad_insn, addr(0x1000, 0), &lift)
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), ErrorKind::MissingBranchTarget(_)),
+        "expected MissingBranchTarget; got {:?}",
+        err.kind()
+    );
+}
+
+/// Symmetric pinned contract for `CondBranch`.
+#[test]
+fn process_new_insn_condbranch_with_empty_inputs_errors() {
+    let mut b = make_builder(0x1000);
+    let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
+    let lift = common::fake_lift_res(1);
+
+    let bad_insn = rsleigh::Insn {
+        opcode: rsleigh::Opcode::CondBranch,
+        inputs: vec![],
+        output: None,
+    };
+
+    let err = rb
+        .process_new_insn(&bad_insn, addr(0x1000, 0), &lift)
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), ErrorKind::MissingBranchTarget(_)),
+        "expected MissingBranchTarget; got {:?}",
+        err.kind()
+    );
+}

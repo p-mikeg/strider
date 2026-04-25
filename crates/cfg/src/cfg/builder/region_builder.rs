@@ -216,8 +216,11 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
 
         match insn.opcode {
             rsleigh::Opcode::Branch => {
-                let branch_target_addr =
-                    self.decode_branch_target(insn.inputs[0], addr, lift_res)?;
+                let target_var = *insn
+                    .inputs
+                    .first()
+                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
                 let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
                 let region = self.finish_current_region(is_tail_call)?;
                 if !is_tail_call {
@@ -229,7 +232,11 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::CondBranch => {
-                let target_addr = self.decode_branch_target(insn.inputs[0], addr, lift_res)?;
+                let target_var = *insn
+                    .inputs
+                    .first()
+                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
 
                 // We reached the end of the current region
                 let region = self.finish_current_region(false)?;
