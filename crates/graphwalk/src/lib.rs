@@ -190,6 +190,7 @@ pub struct PreOrder<G: GraphRef, V> {
 
 impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
     /// Creates a pre-order traversal starting from `roots`.
+    #[must_use]
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         let mut ctx = PreOrderContext::new();
         ctx.reset(roots);
@@ -225,6 +226,7 @@ where
 pub type TreePreOrder<G> = PreOrder<G, NopTracker>;
 
 /// Internal stack-based state for a post-order DFS traversal.
+#[derive(Debug)]
 pub struct PostOrderContext<N> {
     stack: Vec<(WalkPhase, N)>,
 }
@@ -321,6 +323,7 @@ pub struct PostOrder<G: GraphRef, V> {
 
 impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
     /// Creates a post-order traversal starting from `roots`.
+    #[must_use]
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         let mut ctx = PostOrderContext::new();
         ctx.reset(roots);
