@@ -32,7 +32,7 @@ fn build_pushes(n: usize) -> ir::BuiltFunctionGraph {
             .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
             .unwrap();
         b.write_variable(&sp, sp_v).unwrap();
-        let data = b.build_int_const(u64::from(i), NodeOutputType::U32);
+        let data = b.build_int_const(i, NodeOutputType::U32);
         b.build_store(sp_v, data, rsleigh::VnSpace::RAM).unwrap();
     }
     b.build_return(None, &[]).unwrap();

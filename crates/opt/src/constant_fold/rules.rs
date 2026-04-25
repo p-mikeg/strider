@@ -344,8 +344,17 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                         .get_unsigned_int_u128(v)
                         .ok_or_else(pattern::Error::skip)?;
                     let bits = input_ty.bit_width() as u32;
+                    // Lzcount fold is only computable when the input type
+                    // fits in u128.  Wider widths (U256) skip cleanly — the
+                    // rule simply doesn't fire and the IR keeps the Lzcount
+                    // node as opaque.
+                    if bits > 128 {
+                        return Err(pattern::Error::skip());
+                    }
                     if masked == 0 {
                         u128::from(bits)
+                    } else if bits == 128 {
+                        u128::from(masked.leading_zeros())
                     } else {
                         u128::from((masked << (128 - bits)).leading_zeros())
                     }

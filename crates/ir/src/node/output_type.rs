@@ -241,6 +241,27 @@ impl NodeOutputType {
     }
 }
 
+impl TryFrom<u32> for NodeOutputType {
+    type Error = crate::error::Error;
+
+    fn try_from(value: u32) -> crate::error::Result<Self> {
+        match value {
+            1 => Ok(Self::U8),
+            2 => Ok(Self::U16),
+            4 => Ok(Self::U32),
+            8 => Ok(Self::U64),
+            16 => Ok(Self::U128),
+            32 => Ok(Self::U256),
+            n => Err(crate::error::ErrorKind::UnsupportedOutputSize(n).into()),
+        }
+    }
+}
+
+impl std::fmt::Display for NodeOutputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::NodeOutputType;
@@ -314,27 +335,5 @@ mod tests {
             NodeOutputType::U128.get_signed_int_i128(max_pos),
             Some(i128::MAX)
         );
-    }
-}
-
-impl TryFrom<u32> for NodeOutputType {
-    type Error = crate::error::Error;
-
-    fn try_from(value: u32) -> crate::error::Result<Self> {
-        match value {
-            1 => Ok(Self::U8),
-            2 => Ok(Self::U16),
-            4 => Ok(Self::U32),
-            8 => Ok(Self::U64),
-            16 => Ok(Self::U128),
-            32 => Ok(Self::U256),
-            n => Err(crate::error::ErrorKind::UnsupportedOutputSize(n).into()),
-        }
-    }
-}
-
-impl std::fmt::Display for NodeOutputType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
     }
 }

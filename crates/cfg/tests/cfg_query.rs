@@ -10,7 +10,7 @@ use cfg::{Cfg, ErrorKind, RegionEdgeKind};
 use petgraph::stable_graph::StableDiGraph;
 
 fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
-    let p = binary("x64");
+    let p = binary("x64", fn_name);
     build_cfg(
         p.to_str().unwrap(),
         fn_name,

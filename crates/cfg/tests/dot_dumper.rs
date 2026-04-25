@@ -10,7 +10,7 @@ use common::{binary, build_cfg};
 use dot::{DotStyle, GraphDot};
 
 fn cfg_for(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
-    let p = binary("x64");
+    let p = binary("x64", fn_name);
     build_cfg(
         p.to_str().unwrap(),
         fn_name,

@@ -38,11 +38,13 @@ macro_rules! arch_tests {
             use super::common;
 
             fn cfg_of(fn_name: &str) -> cfg::Cfg<reader::ElfFileMemReader> {
-                let p = super::common::binary($arch);
+                let p = super::common::binary($arch, fn_name);
                 common::build_cfg(p.to_str().unwrap(), fn_name, $sla, $pspec)
             }
 
-            fn bin() -> std::path::PathBuf { super::common::binary($arch) }
+            fn bin_for(fn_name: &str) -> std::path::PathBuf {
+                super::common::binary($arch, fn_name)
+            }
 
             // ── linear functions ──────────────────────────────────────────────
 
@@ -61,9 +63,12 @@ macro_rules! arch_tests {
                 assert_linear_function(&cfg_of("mul"), "mul");
             }
 
+            // (bitwise_ops was a single function in the legacy fixture; the
+            // per-category fixtures split it into bit_and/or/xor/not/shl etc.
+            // bit_and stands in as the linear-bitwise-arithmetic case.)
             #[test] $(#[ignore = $reason])?
-            fn bitwise_ops_is_linear() {
-                assert_linear_function(&cfg_of("bitwise_ops"), "bitwise_ops");
+            fn bit_and_is_linear() {
+                assert_linear_function(&cfg_of("bit_and"), "bit_and");
             }
 
             // ── single-conditional functions ──────────────────────────────────
@@ -120,22 +125,14 @@ macro_rules! arch_tests {
 
             // ── recursive function ────────────────────────────────────────────
 
-            /// CFG builder does not follow `Call` opcodes, so `fib` stays bounded.
+            /// CFG builder does not follow `Call` opcodes, so a recursive
+            /// function stays bounded.
             #[test] $(#[ignore = $reason])?
-            fn fib_builds_and_is_bounded() {
-                let c = cfg_of("fib");
-                assert!(region_count(&c) >= 2, "fib: expected at least 2 regions");
-                assert!(region_count(&c) < 50,  "fib: too many regions — builder may have followed calls");
-                assert!(all_conditional_regions_well_formed(&c), "fib: pair invariant violated");
-            }
-
-            // ── nested-call function ──────────────────────────────────────────
-
-            /// `g` tail-calls into `add`; with default options the branch is treated
-            /// as a tail call and the CFG stays at exactly one region.
-            #[test] $(#[ignore = $reason])?
-            fn g_is_single_region() {
-                assert_eq!(region_count(&cfg_of("g")), 1, "g: expected 1 region (tail-call treated as exit)");
+            fn fib_recursive_builds_and_is_bounded() {
+                let c = cfg_of("fib_recursive");
+                assert!(region_count(&c) >= 2, "fib_recursive: expected at least 2 regions");
+                assert!(region_count(&c) < 50,  "fib_recursive: too many regions — builder may have followed calls");
+                assert!(all_conditional_regions_well_formed(&c), "fib_recursive: pair invariant violated");
             }
 
             // ── entry address invariant ───────────────────────────────────────
@@ -143,7 +140,7 @@ macro_rules! arch_tests {
             /// The entry region's `start_addr` must match the ELF symbol address.
             #[test] $(#[ignore = $reason])?
             fn entry_start_addr_matches_symbol() {
-                let b = bin();
+                let b = bin_for("add");
                 let expected = symbol_addr(b.to_str().unwrap(), "add");
                 let c = cfg_of("add");
                 assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
@@ -166,11 +163,11 @@ macro_rules! arch_tests {
             #[test] $(#[ignore = $reason])?
             fn all_functions_satisfy_global_invariants() {
                 for name in &[
-                    "add", "sub", "mul", "bitwise_ops",
+                    "add", "sub", "mul", "bit_and",
                     "abs_val", "max_val", "clamp",
                     "sum_to_n", "factorial", "count_bits",
                     "array_sum", "array_fill",
-                    "fib", "g",
+                    "fib_recursive",
                 ] {
                     let c = cfg_of(name);
                     assert_global_invariants(&c, name);

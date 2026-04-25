@@ -5,12 +5,39 @@
 use cfg::Cfg;
 use object::{Object, ObjectSymbol};
 
-/// Returns the path to the test binary for `arch` under `fixtures/out/<arch>/test.elf`.
-pub fn binary(arch: &str) -> std::path::PathBuf {
+/// Maps a fixture function name to the category file that defines it.
+/// The original monolithic `test.c` was split into per-category fixtures
+/// (`fixtures/cases/<category>.c`) by the analyzer-crate review; this map
+/// preserves the cfg-integration test interface across that split.
+pub fn category_for_fn(fn_name: &str) -> &'static str {
+    match fn_name {
+        // arithmetic.c
+        "add" | "sub" | "mul" | "udiv" | "umod" | "sdiv" | "smod"
+        | "bit_and" | "bit_or" | "bit_xor" | "bit_not"
+        | "shl" | "lshr" | "ashr" | "negate" => "arithmetic",
+        // control.c
+        "abs_val" | "max_val" | "clamp" | "select_three"
+        | "sum_to_n" | "factorial" | "count_bits"
+        | "nested_loops" | "early_return" => "control",
+        // memory.c
+        "array_sum" | "array_fill" | "array_copy" | "pointer_chase"
+        | "struct_field_load" | "struct_field_store" | "tagged_union_read" => "memory",
+        // calls.c
+        "fib_recursive" | "mutual_a" | "mutual_b" | "nested_3deep"
+        | "repeat_call_pair" | "pass_through" | "apply_indirect"
+        | "leaf" | "mid" | "pair_a" => "calls",
+        other => panic!("unknown fixture function {other:?} — add it to category_for_fn"),
+    }
+}
+
+/// Returns the path to the test binary for `(arch, fn_name)` under
+/// `fixtures/out/<arch>/<category>.elf`.  The category is derived from
+/// the function name via [`category_for_fn`].
+pub fn binary(arch: &str, fn_name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")
         .join(arch)
-        .join("test.elf")
+        .join(format!("{}.elf", category_for_fn(fn_name)))
 }
 
 /// Resolves a named symbol's start address from an ELF file on disk.
