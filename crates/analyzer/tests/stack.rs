@@ -14,19 +14,14 @@ per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call
     Mips32le: "BUG-12: external_take_ptr call not emitted as Call node",
     Mips32be: "BUG-12: external_take_ptr call not emitted as Call node",
 });
+// large_local_array: BUG-13 (AArch64 U128 array-init constant) is fixed by
+// the IntConst u128 widening — this is the regression coverage for that fix.
 per_arch_test!("stack", "large_local_array",     large_local_has_stack_store_and_loop, ignore = {
-    Aarch64: "BUG-13: AArch64 emits 128-bit constant for array init; analyzer can't store u128",
     Arm:     "BUG-14: optimizer pipeline panics on ARM large_local_array",
 });
 per_arch_test!("stack", "inplace_swap",          swap_has_two_loads_and_two_stores);
-per_arch_test!("stack", "recursive_stack_growth", rec_stack_has_call_and_stores, ignore = {
-    X86:      "BUG-6: compiler tail-call elision converts recursive call into branch",
-    X64:      "BUG-6: compiler tail-call elision converts recursive call into branch",
-    Aarch64:  "BUG-6: compiler tail-call elision converts recursive call into branch",
-    Arm:      "BUG-6: compiler tail-call elision converts recursive call into branch",
-    Mips32le: "BUG-6: compiler tail-call elision converts recursive call into branch",
-    Mips32be: "BUG-6: compiler tail-call elision converts recursive call into branch",
-});
+// recursive_stack_growth: BUG-6 (tail-call elision) fixed by Makefile flag.
+per_arch_test!("stack", "recursive_stack_growth", rec_stack_has_call_and_stores);
 
 fn volatile_preserves_three_stores(g: &ir::BuiltFunctionGraph) {
     // *p = v; *p = v+1; *p = v+2  — opt must not collapse these.

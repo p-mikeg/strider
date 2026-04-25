@@ -30,14 +30,8 @@ per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds
     Arm: "pre-existing Bool→AnyInt validation error in ARM if_returns_const pipeline (not BUG-21)",
 });
 per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
-per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call, ignore = {
-    X86:      "BUG-6: tail-call elision",
-    X64:      "BUG-6: tail-call elision",
-    Aarch64:  "BUG-6: tail-call elision",
-    Arm:      "BUG-6: tail-call elision",
-    Mips32le: "BUG-6: tail-call elision",
-    Mips32be: "BUG-6: tail-call elision",
-});
+// recursive_with_accumulator: BUG-6 (tail-call elision) fixed by Makefile flag.
+per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
 fn mac_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
     // Pattern: add(mul(?, ?), ?)

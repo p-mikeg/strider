@@ -20,7 +20,13 @@ ARCHES := x86 x64 aarch64 arm mips32le mips32be
 CASES  := $(notdir $(basename $(wildcard cases/*.c)))
 
 # Common warning-flag set: every fixture must compile clean.
-COMMON_CFLAGS := -Wall -Wextra -Werror -Wno-unused-parameter
+# -fno-optimize-sibling-calls: keep recursive / wrapper calls visible as
+#   real `call` instructions in the lifted p-code.  Without this GCC turns
+#   them into branches and the analyzer's Call-counting pattern queries
+#   fail for reasons that are compiler-specific rather than analyzer bugs
+#   (BUG-6 in analyzer-known-issues).
+COMMON_CFLAGS := -Wall -Wextra -Werror -Wno-unused-parameter \
+                 -fno-optimize-sibling-calls
 
 .PHONY: all clean $(ARCHES)
 
