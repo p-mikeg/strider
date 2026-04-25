@@ -182,5 +182,5 @@ fn finish_current_region_empty_insns_returns_error() {
     let mut b = make_builder(0x1000);
     let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
     let err = rb.finish_current_region(false).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::NoInstructionsRegionBuilder));
+    assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));
 }

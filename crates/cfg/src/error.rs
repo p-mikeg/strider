@@ -24,9 +24,6 @@ pub enum ErrorKind {
     #[error("failed spliting region {0:?} into 2 parts at {1:?}")]
     FailedSplitingRegion(NodeIndex, PcodeInsnAddr),
 
-    #[error("builder about to build an empty instruction region")]
-    NoInstructionsRegionBuilder,
-
     #[error("invalid register vn")]
     InvalidRegVn(rsleigh::Vn),
 

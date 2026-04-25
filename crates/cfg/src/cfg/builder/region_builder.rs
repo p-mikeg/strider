@@ -247,12 +247,10 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
 
     /// Finalises the region that has been accumulating instructions.
     ///
-    /// Calls `Builder::add_region` and, if there is a parent edge, adds
-    /// that edge to the graph.  Returns the new region's [`NodeIndex`].
+    /// Calls `Builder::add_region` (which enforces non-emptiness via
+    /// [`ErrorKind::EmptyRegion`]) and, if there is a parent edge, adds that
+    /// edge to the graph. Returns the new region's [`NodeIndex`].
     fn finish_current_region(&mut self, ends_with_tail_call: bool) -> Result<NodeIndex> {
-        if self.insns.is_empty() {
-            return Err(ErrorKind::NoInstructionsRegionBuilder.into());
-        }
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
             insns: std::mem::take(&mut self.insns),
@@ -449,7 +447,7 @@ pub mod test_api {
         }
 
         /// # Errors
-        /// Returns `NoInstructionsRegionBuilder` if the region has no instructions.
+        /// Returns [`ErrorKind::EmptyRegion`] if the region has no instructions.
         pub fn finish_current_region(
             &mut self,
             ends_with_tail_call: bool,
