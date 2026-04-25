@@ -1275,26 +1275,27 @@ mod tests {
         assert!(nodes.contains(&c), "c must appear in use-list");
     }
 
-    /// `node_outputs_exact` must panic when asked for a count that does not
-    /// match the actual number of outputs.
+    /// `node_outputs_exact` must return `Err(WrongOutputCount)` when asked
+    /// for a count that does not match the actual number of outputs.
     #[test]
-    #[should_panic]
-    fn node_outputs_exact_panics_on_wrong_count() {
+    fn node_outputs_exact_errors_on_wrong_count() {
         let mut graph = Graph::new();
         let node = graph.create_node(
             NodeKind::IntConst(0),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::U8)],
         );
-        // Node has 1 output; requesting 2 must panic.
-        graph.node_outputs_exact::<2>(node).unwrap();
+        let err = graph.node_outputs_exact::<2>(node).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            crate::error::ErrorKind::WrongOutputCount(_, 2, 1)
+        ));
     }
 
-    /// `node_inputs_exact` must panic when asked for a count that does not
-    /// match the actual number of inputs.
+    /// `node_inputs_exact` must return `Err(WrongInputCount)` when asked for
+    /// a count that does not match the actual number of inputs.
     #[test]
-    #[should_panic]
-    fn node_inputs_exact_panics_on_wrong_count() {
+    fn node_inputs_exact_errors_on_wrong_count() {
         let mut graph = Graph::new();
         let src = graph.create_node(
             NodeKind::IntConst(0),
@@ -1306,7 +1307,10 @@ mod tests {
         let sink = graph.create_node(NodeKind::Return, [], []);
         graph.add_node_input(sink, out).unwrap(); // exactly 1 input
 
-        // Asking for 2 must panic.
-        graph.node_inputs_exact::<2>(sink).unwrap();
+        let err = graph.node_inputs_exact::<2>(sink).unwrap_err();
+        assert!(matches!(
+            err.kind(),
+            crate::error::ErrorKind::WrongInputCount(_, 2, 1)
+        ));
     }
 }
