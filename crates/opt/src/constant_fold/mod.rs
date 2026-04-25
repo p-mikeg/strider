@@ -51,21 +51,21 @@ fn try_lower_cast_to_float(
 
     // 2. Float→float precision change.
     if in_ty.is_float() {
-        let new_out = fg.make_float_to_float_node( input, out_ty)?;
+        let new_out = fg.make_float_to_float_node(input, out_ty)?;
         return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // Input is integer from here.
 
     // 3. Integer constant → float constant (same bits).
-    if let Some(bits) = fg.int_const_val( input) {
-        let new_out = fg.make_float_const( bits, out_ty)?;
+    if let Some(bits) = fg.int_const_val(input) {
+        let new_out = fg.make_float_const(bits, out_ty)?;
         return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
     }
 
     // 4. Non-constant integer → explicit IntBitsToFloat.
-    let new_out = fg.make_int_bits_to_float_node( input, out_ty)?;
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses( out, new_out)?))
+    let new_out = fg.make_int_bits_to_float_node(input, out_ty)?;
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
 }
 
 pub struct ConstantFold;
