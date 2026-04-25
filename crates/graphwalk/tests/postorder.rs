@@ -146,3 +146,65 @@ test_postorder! {
     "#]],
     expect!["a b c d e f"]
 }
+
+#[test]
+fn empty_roots_yields_nothing() {
+    let g = graphmock::graph("a -> b");
+    let mut po = entity_postorder(&g, core::iter::empty());
+    assert!(po.next().is_none());
+    assert!(po.next_event().is_none());
+}
+
+#[test]
+fn self_loop_emits_pre_and_post_once() {
+    let g = graphmock::graph("a -> a");
+    let mut po = entity_postorder(&g, [g.entry()]);
+    let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();
+    assert_eq!(events.len(), 2);
+    assert!(matches!(events[0].0, WalkPhase::Pre));
+    assert!(matches!(events[1].0, WalkPhase::Post));
+    assert!(events[0].1 == events[1].1, "Pre and Post events should be for the same node");
+}
+
+#[test]
+fn multi_root_preserves_root_order_in_rpo() {
+    // Doc-comment in PostOrderContext::reset promises: if `u` precedes `v` in
+    // `roots` and there's no path from v to u, then `u` precedes `v` in any RPO.
+    // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
+    let g = graphmock::graph(
+        "a -> b
+         x -> y",
+    );
+    let a = g.node("a");
+    let x = g.node("x");
+    let mut po: Vec<_> = entity_postorder(&g, [a, x]).collect();
+    po.reverse(); // RPO
+    let names: Vec<_> = po.iter().map(|&n| g.name(n).to_owned()).collect();
+    let pos_a = names.iter().position(|s| s == "a").unwrap();
+    let pos_x = names.iter().position(|s| s == "x").unwrap();
+    assert!(
+        pos_a < pos_x,
+        "expected a (first root) to precede x in RPO, got {names:?}"
+    );
+}
+
+#[test]
+fn nop_tracker_on_a_tree() {
+    use graphwalk::{PostOrder, NopTracker};
+
+    // Tree (no cycles, no joins): a -> {b, c}; b -> d.
+    let g = graphmock::graph(
+        "a -> b, c
+         b -> d",
+    );
+
+    let order: Vec<_> = PostOrder::<&Graph, NopTracker>::new(&g, [g.entry()])
+        .map(|n| g.name(n).to_owned())
+        .collect();
+    // Each node is visited exactly once even though NopTracker never records visits;
+    // this only holds because the input really is a tree.
+    assert_eq!(order.len(), 4);
+    let mut sorted = order.clone();
+    sorted.sort();
+    assert_eq!(sorted, vec!["a", "b", "c", "d"]);
+}
