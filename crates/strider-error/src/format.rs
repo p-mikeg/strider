@@ -31,8 +31,6 @@ use crate::Traceback;
 /// ```
 pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
     let mut out = String::new();
-    // Writing into a String is infallible; the `let _` silences the
-    // Result produced by the fmt::Write trait.
     let _ = writeln!(out, "error: {err}");
 
     let mut cur = Error::source(err);
@@ -41,9 +39,6 @@ pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
         cur = e.source();
     }
 
-    // Reuse the same chain+backtrace formatting that Debug impls use
-    // (ErrorFields::fmt_chain_and_backtrace). Writing into a String is
-    // infallible; the `let _` silences the fmt::Result.
     let _ = crate::fields::write_chain_and_backtrace(
         err.location_chain(),
         err.origin_backtrace(),
