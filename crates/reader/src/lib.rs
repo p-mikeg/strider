@@ -101,10 +101,18 @@ impl MemRegion {
 
     /// Reads bytes starting at `addr` into `out`.
     ///
-    /// Returns the number of bytes copied, which may be less than `out.len()`
-    /// if `addr + out.len()` extends past the end of this region.
-    ///
-    /// Returns `None` when `addr` is not within this region at all.
+    /// Returns:
+    /// - `Some(n)` when [`contains(addr)`](Self::contains) — `n` is the number
+    ///   of bytes copied, with `n <= out.len()`. `n` is less than `out.len()`
+    ///   when `addr + out.len()` extends past the end of this region; in
+    ///   particular, `n == 0` when `out` is empty (the address is mapped but
+    ///   the caller asked for zero bytes).
+    /// - `None` when `!contains(addr)` — that is, `addr < start_addr` or
+    ///   `addr >= end_addr`. A zero-byte read at exactly `end_addr` returns
+    ///   `None` rather than `Some(0)`, mirroring the rule that `end_addr`
+    ///   itself is not part of the region. Note that for an empty region
+    ///   (`data.len() == 0`), `start_addr == end_addr`, so every address
+    ///   satisfies `addr >= end_addr` and reads always return `None`.
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let offset = usize::try_from(addr.checked_sub(self.start_addr)?).ok()?;
         let available = self.data.len().checked_sub(offset)?;
