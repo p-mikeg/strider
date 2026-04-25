@@ -91,7 +91,6 @@ impl<R: rsleigh::MemReader> Builder<R> {
     }
 
     /// Returns the pcode address corresponding to the function entry point.
-    #[inline]
     fn start_pcode_addr(&self) -> PcodeInsnAddr {
         PcodeInsnAddr {
             machine_addr: self.start_addr,
