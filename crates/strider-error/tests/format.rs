@@ -39,6 +39,10 @@ fn format_traceback_prints_wrapper_display_exactly_once() {
         "expected the Display line once; got {count} occurrences in:\n{s}",
     );
     assert!(s.contains("  at [0] "), "locations dropped; got:\n{s}");
+    assert!(
+        !s.contains("caused by:"),
+        "source-less error must not emit a caused-by line; got:\n{s}",
+    );
 }
 
 #[test]
