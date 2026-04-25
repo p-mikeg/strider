@@ -114,12 +114,21 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             // build loop, advancing to the next machine instruction and
             // producing a wrong CFG with no diagnostic.
             rsleigh::VnSpace::CONST => {
-                let base = branch_insn_addr.insn_index as i64;
-                let off = branch_target_var.addr.off as i64;
-                let target = base.checked_add(off).ok_or(
+                // CONST-space encodes the pcode-target offset as a
+                // two's-complement i64 stored in a u64 (so a backward branch
+                // arrives as `(-n) as u64`). `cast_signed` is the bit-pattern-
+                // preserving u64→i64 reinterpretation; `checked_add_signed`
+                // catches either-direction overflow on the index addition.
+                let off = branch_target_var.addr.off.cast_signed();
+                let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or(
                     ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
                 )?;
-                if target < 0 || (target as u64) >= lift_res.insns.len() as u64 {
+                // The resulting index must land within the current machine
+                // instruction's pcode sequence: `target < lift_res.insns.len()`.
+                // An out-of-range index would otherwise be silently skipped by
+                // the build loop, producing a wrong CFG with no diagnostic.
+                let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
+                if target >= pcode_count {
                     return Err(ErrorKind::InvalidBranchTargetVaErr(
                         branch_target_var,
                         branch_insn_addr,
@@ -128,7 +137,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 }
                 Ok(PcodeInsnAddr {
                     machine_addr: branch_insn_addr.machine_addr,
-                    insn_index: target as u64,
+                    insn_index: target,
                 })
             }
             // Absolute branch: the offset IS the target machine address
