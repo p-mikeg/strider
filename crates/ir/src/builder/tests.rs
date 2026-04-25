@@ -664,6 +664,79 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
     Ok(())
 }
 
+// ── extend_if_needed with non-integer input ───────────────────────────────
+
+/// Regression for BUG-3/10: `extend_if_needed` with a Bool input must
+/// insert a `CastToInt` coercion so the resulting value is typed as an
+/// integer.  Before the fix the `Extend` node's signature (`AnyInt` input)
+/// was violated and the validator rejected the graph with
+/// "OutputType(Bool), expected AnyInt".
+///
+/// Concretely: MIPS/ARM comparison instructions emit a Bool result that
+/// may then be zero-extended into a wider register.  The coerce path must
+/// be: BoolOp → CastToInt → (no Extend needed if sizes already match, or
+/// → Extend if narrower).
+#[test]
+fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
+    let mut b = empty_builder()?;
+
+    // Build a Bool value: an integer comparison 1 < 2 (always true, but
+    // not folded at this layer — the builder does not constant-fold cmps).
+    let lhs = b.build_int_const(1, NodeOutputType::U32).unwrap();
+    let rhs = b.build_int_const(2, NodeOutputType::U32).unwrap();
+    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
+
+    // Sanity: the comparison result is Bool-typed.
+    assert_eq!(
+        b.graph().output_kind(bool_val),
+        NodeOutputKind::OutputType(NodeOutputType::Bool),
+        "comparison must produce Bool"
+    );
+
+    // Extend the Bool into a U32 — this is the path that broke before the fix.
+    let extended = b.extend_if_needed(bool_val, NodeOutputType::U32, ExtendOp::ZeroExtend)?;
+
+    // The result must be U32-typed.
+    assert_eq!(
+        b.graph().output_kind(extended),
+        NodeOutputKind::OutputType(NodeOutputType::U32),
+        "extend_if_needed must produce U32 when requested"
+    );
+
+    // No Extend node must have a Bool-typed input — that was the invalid state.
+    // Walk every Extend node in the graph and verify its first input is AnyInt.
+    for n in b.graph().nodes.keys() {
+        if matches!(b.graph().node_kind(n), NodeKind::Extend(_)) {
+            let inputs = b.graph().node_inputs(n);
+            let first_input = inputs.into_iter().next().expect("Extend has one input");
+            let input_kind = b.graph().output_kind(first_input);
+            assert_ne!(
+                input_kind,
+                NodeOutputKind::OutputType(NodeOutputType::Bool),
+                "Extend node must never receive a Bool input; found one at {n:?}"
+            );
+        }
+    }
+
+    // The fix routes through CastToInt.  Assert the output traces back through
+    // a CastToInt node (possibly with a further Extend on top of it).
+    fn find_cast_to_int_ancestor(g: &crate::graph::Graph, output: NodeOutputId) -> bool {
+        let node = g.get_node_from_output(output);
+        if matches!(g.node_kind(node), NodeKind::CastToInt) {
+            return true;
+        }
+        g.node_inputs(node)
+            .into_iter()
+            .any(|inp| find_cast_to_int_ancestor(g, inp))
+    }
+    assert!(
+        find_cast_to_int_ancestor(b.graph(), extended),
+        "a CastToInt node must appear on the path from the Bool value to the extended result"
+    );
+
+    Ok(())
+}
+
 // ── post-call SP adjust ─────────────────────────────────────────────────
 
 /// Fake 8-byte stack pointer varnode in the REGISTER space.
