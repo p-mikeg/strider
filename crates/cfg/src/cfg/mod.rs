@@ -15,7 +15,7 @@ pub use dot::test_api as dot_test_api;
 #[doc(hidden)]
 pub use builder::region_builder_test_api;
 pub use query::IfRegionState;
-pub use types::{PcodeInsnAddr, Region, RegionEdgeKind};
+pub use types::{PcodeInsnAddr, RegionEdgeKind};
 
 use types::RegionGraph;
 
