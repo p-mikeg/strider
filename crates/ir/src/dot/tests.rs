@@ -377,3 +377,39 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         "if.true must have ≥1 outgoing edge:\n{dot}"
     );
 }
+
+/// Rendering a Call node with at least one clobbered output must succeed
+/// even when the caller passes `call_clobbered: &[]` (which is what every
+/// existing test does). Previously this panicked with an OOB slice index.
+#[test]
+fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let target = graph.create_node(
+        NodeKind::IntConst(0x1000),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let target_out = graph.node_outputs(target).into_iter().next().unwrap();
+    // One Bool clobbered output, but `call_clobbered` slice is empty.
+    let call = graph.create_node(
+        NodeKind::Call,
+        [entry_ctrl, mem, target_out],
+        [
+            NodeOutputKind::Control,
+            NodeOutputKind::Memory,
+            NodeOutputKind::OutputType(NodeOutputType::Bool),
+        ],
+    );
+    let call_ctrl = graph.node_outputs(call).into_iter().next().unwrap();
+    let call_mem = graph.node_outputs(call).into_iter().nth(1).unwrap();
+    let clob_out = graph.node_outputs(call).into_iter().nth(2).unwrap();
+    graph.create_node(NodeKind::Return, [call_ctrl, call_mem, clob_out], []);
+
+    // Render must not panic.
+    let dot = render(&graph, entry);
+    assert!(dot.contains("clob0"), "expected synthetic clob0 label, got:\n{dot}");
+}
