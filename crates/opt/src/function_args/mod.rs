@@ -112,9 +112,22 @@ fn detect_register_args(
     fg: &mut BuiltFunctionGraph,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
+    // Build a Vn → NodeId map in a single graph scan rather than scanning
+    // `all_node_ids()` once per arg register (which made this O(args × nodes)).
+    // `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`),
+    // so we still rely on the builder's invariant of at most one InitialVar
+    // per varnode.
+    let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
+        rustc_hash::FxHashMap::default();
+    for n in fg.all_node_ids() {
+        if let NodeKind::InitialVar(vn) = *fg.graph.node_kind(n) {
+            initial_vars.insert(vn, n);
+        }
+    }
+
     let mut result = OptimizationResult::NoChange;
     for (i, reg) in arg_passing_regs.iter().enumerate() {
-        let Some(initial_var) = find_initial_var(fg, *reg) else {
+        let Some(&initial_var) = initial_vars.get(reg) else {
             continue;
         };
         let [old_out] = fg.graph.node_outputs_exact::<1>(initial_var)?;
@@ -419,16 +432,6 @@ fn mem_chain_is_dirty(
 /// (e.g. `Control` / `Memory`).
 fn value_byte_size(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
     fg.graph.output_kind(out).as_value().map(|t| t.byte_size() as i64)
-}
-
-/// Locates the unique `InitialVar(reg)` node in the graph, if any.
-///
-/// `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`), so
-/// they're found by linear scan; however the builder only creates one per
-/// variable at entry-region setup, so at most one candidate exists.
-fn find_initial_var(fg: &BuiltFunctionGraph, reg: rsleigh::Vn) -> Option<ir::node::NodeId> {
-    fg.all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::InitialVar(v) if *v == reg))
 }
 
 #[cfg(test)]
