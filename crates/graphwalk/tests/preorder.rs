@@ -117,3 +117,27 @@ fn repeated_successor_is_visited_once() {
     let count_b = order.iter().filter(|s| *s == "b").count();
     assert_eq!(count_b, 1);
 }
+
+#[test]
+fn multi_root_visited_in_reverse_iteration_order() {
+    // Doc-comment in PreOrderContext::reset promises: if `u` precedes `v` in
+    // `roots` and there's no path from v to u, then `v` is visited before `u`
+    // in pre-order (LIFO stack semantics — the OPPOSITE of post-order).
+    // Build two disjoint chains (a -> b, x -> y) and pass roots in [a, x] order.
+    let g = graphmock::graph(
+        "a -> b
+         x -> y",
+    );
+    let a = g.node("a");
+    let x = g.node("x");
+    let order: Vec<_> = entity_preorder(&g, [a, x])
+        .map(|n| g.name(n).to_owned())
+        .collect();
+    let pos_a = order.iter().position(|s| s == "a").unwrap();
+    let pos_x = order.iter().position(|s| s == "x").unwrap();
+    assert!(
+        pos_x < pos_a,
+        "expected x (second root) to precede a in pre-order \
+         (LIFO root visit order), got {order:?}"
+    );
+}

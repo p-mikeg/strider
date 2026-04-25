@@ -118,22 +118,24 @@ pub fn graph(input: &str) -> Graph {
             .split_once("->")
             .unwrap_or_else(|| panic!("graphmock: line missing `->`: {line:?}"));
 
-        let check_name = |name: &str| {
+        let check_nonempty = |name: &str| {
             assert!(
                 !name.is_empty(),
                 "graphmock: empty node name in line: {line:?}"
             );
         };
 
-        let preds: Vec<&str> = preds.split(',').map(str::trim).collect();
+        // `succs` is iterated once per pred, so it must be collected.  `preds`
+        // is iterated only once, so we stream it and validate each name inline.
         let succs: Vec<&str> = succs.split(',').map(str::trim).collect();
-        for name in preds.iter().chain(succs.iter()) {
-            check_name(name);
+        for &succ in &succs {
+            check_nonempty(succ);
         }
 
-        for pred in &preds {
+        for pred in preds.split(',').map(str::trim) {
+            check_nonempty(pred);
             let pred = graph.get_or_create(pred);
-            for succ in &succs {
+            for &succ in &succs {
                 let succ = graph.get_or_create(succ);
                 graph.add_succ(pred, succ);
             }
