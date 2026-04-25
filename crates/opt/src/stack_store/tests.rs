@@ -518,7 +518,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     b.set_region(region);
 
     // Only one push, at sp - 4.  If the convention expects [0, 4, 8, …]
-    // then call_sp_adjust = -4 and slot_0 would be at -4.  But if we
+    // then chain_anchor_offset = -4 and slot_0 would be at -4.  But if we
     // designed a convention where stack_arg_offsets[0] != 0 we'd
     // effectively simulate a missing slot.  Here we instead use an
     // offset table that expects slot_0 = -4 and slot_1 = 0.  Since

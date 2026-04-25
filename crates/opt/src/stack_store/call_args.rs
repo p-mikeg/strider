@@ -19,12 +19,13 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// init stores appear on the memory chain but chronologically *before* the
 /// arg pushes, so the chain walker sees them only *after* walking past the
 /// real pushes.  Requiring chain-order contiguity — each next store must be
-/// at `call_sp_adjust + stack_arg_offsets[next_arg]` — makes us stop at the
-/// first such interloper instead of greedily scooping them up as args.
+/// at `chain_anchor_offset + stack_arg_offsets[next_arg]` — makes us stop at
+/// the first such interloper instead of greedily scooping them up as args.
 ///
-/// The first store on the chain anchors `call_sp_adjust` (the SP value at
-/// the call site).  Whether it is *itself* the first arg depends on the
-/// architecture:
+/// The first store on the chain anchors `chain_anchor_offset` (the byte
+/// offset of that first store, used as the relative origin for subsequent
+/// arg-slot expectations).  Whether the anchor store is *itself* the first
+/// arg depends on the architecture:
 ///   * On x86 / x86-64 the `call` instruction pushes a return address, so
 ///     the most-recent store is the ret-addr push (not an arg) and
 ///     `stack_arg_offsets[0]` is `+4` / `+8`.
@@ -46,7 +47,7 @@ fn collect_stack_args_in_chain_order(
     let mut cur = mem;
     let mut anchor_base: Option<NodeOutputId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
-    let mut call_sp_adjust: Option<i64> = None;
+    let mut chain_anchor_offset: Option<i64> = None;
     let mut args: Vec<NodeOutputId> = Vec::new();
     loop {
         let node = fg.graph.get_node_from_output(cur);
@@ -74,9 +75,9 @@ fn collect_stack_args_in_chain_order(
             // different SP-relative spaces.
             _ => return args,
         }
-        match call_sp_adjust {
+        match chain_anchor_offset {
             None => {
-                call_sp_adjust = Some(offset);
+                chain_anchor_offset = Some(offset);
                 // On architectures where `stack_arg_offsets[0] == 0` the
                 // first store on the chain is itself arg 0 (e.g. AArch64).
                 if stack_arg_offsets[0] == 0 {
