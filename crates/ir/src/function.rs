@@ -24,9 +24,10 @@ pub struct FunctionGraph {
 
 impl FunctionGraph {
     /// Creates a `FunctionGraph` with all ids set to their reserved
-    /// (invalid) sentinel values.  Used as a placeholder before the
-    /// real entry nodes are emitted.
-    pub fn new_invalid() -> Self {
+    /// (invalid) sentinel values.  Used as a placeholder by the builder
+    /// before the real entry nodes are emitted; not part of the public
+    /// surface because consumers should never observe a partial graph.
+    pub(crate) fn new_invalid() -> Self {
         Self {
             graph: Graph::new(),
             entry: NodeId::reserved_value(),

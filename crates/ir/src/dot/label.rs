@@ -187,7 +187,11 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::CastToBool => format!("Cast → bool\nfrom {}", self.input_type_str(node, 0)),
-            NodeKind::CastToInt => format!("Cast → {}\nfrom bool", self.out_type_str(node)),
+            NodeKind::CastToInt => format!(
+                "Cast → {}\nfrom {}",
+                self.out_type_str(node),
+                self.input_type_str(node, 0),
+            ),
             NodeKind::Popcount => {
                 let from = self.input_type_str(node, 0);
                 let to = self.out_type_str(node);
@@ -226,7 +230,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::IntToFloat => {
                 let from = self.input_type_str(node, 0);
                 let to = self.out_type_str(node);
-                format!("IntToFloat\n{from} \u{2192} {to}")
+                format!("IntToFloat\n{from} → {to}")
             }
             NodeKind::FloatToInt => format!(
                 "FloatToInt\n{} → {}",
