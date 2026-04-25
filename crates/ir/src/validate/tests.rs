@@ -708,3 +708,31 @@ fn layer_a_accepts_bool_post_call_var_state() {
 
     validate(&graph, entry).expect("Bool-typed PostCallVarState must validate");
 }
+
+#[test]
+fn layer_c_rejects_control_state_with_zero_predecessors() {
+    // ControlState has a variadic head_len of 0, so Layer A's count check
+    // (>= 0) accepts zero inputs and Layer C's per-predecessor loop is a
+    // no-op. Without an explicit check, a zero-pred ControlState slips
+    // through validation entirely.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [cs_ctrl, mem], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::EmptyControlStatePredecessors { control_state } if *control_state == cs
+        )),
+        "expected EmptyControlStatePredecessors, got: {errs:?}"
+    );
+}

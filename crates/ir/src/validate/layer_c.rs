@@ -49,7 +49,17 @@ pub(super) fn check_layer_c_control_state(graph: &Graph, errs: &mut Vec<Validati
         if !matches!(graph.node_kind(node), NodeKind::ControlState) {
             continue;
         }
-        for (idx, target) in graph.node_inputs(node).into_iter().enumerate() {
+        let inputs = graph.node_inputs(node);
+        if inputs.is_empty() {
+            // ControlState's signature is variadic with head_len 0, so Layer A's
+            // count threshold is satisfied by zero inputs; without this check a
+            // zero-predecessor ControlState would pass the validator silently.
+            errs.push(ValidationError::EmptyControlStatePredecessors {
+                control_state: node,
+            });
+            continue;
+        }
+        for (idx, target) in inputs.into_iter().enumerate() {
             let kind = graph.output_kind(target);
             if kind != NodeOutputKind::Control {
                 let (producer, _) = graph.output_definition(target);

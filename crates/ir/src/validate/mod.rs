@@ -189,6 +189,9 @@ pub enum ValidationError {
         producer_kind: NodeOutputKind,
     },
 
+    #[error("ControlState {control_state:?} has zero predecessors")]
+    EmptyControlStatePredecessors { control_state: NodeId },
+
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \
          {producer_kind:?}; expected ControlPhi from a ControlState"
