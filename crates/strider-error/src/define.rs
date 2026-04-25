@@ -208,7 +208,7 @@ macro_rules! define_error {
 /// Expands to:
 ///
 /// ```text
-/// impl ::core::convert::From<InnerError> for OuterError {
+/// impl ::std::convert::From<InnerError> for OuterError {
 ///     #[track_caller]
 ///     fn from(e: InnerError) -> Self {
 ///         let (kind, fields) = e.decompose();
@@ -222,7 +222,7 @@ macro_rules! define_error {
 #[macro_export]
 macro_rules! bridge_error {
     ($inner:ty => $outer:ident, $outer_kind:ident :: $variant:ident) => {
-        impl ::core::convert::From<$inner> for $outer {
+        impl ::std::convert::From<$inner> for $outer {
             #[track_caller]
             fn from(e: $inner) -> Self {
                 let (kind, fields) = e.decompose();
