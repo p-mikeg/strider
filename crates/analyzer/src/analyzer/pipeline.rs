@@ -54,6 +54,7 @@ impl Analyzer {
         ));
         p.add(opt::StackLoadForward::from_convention(
             &self.calling_convention,
+            &self.arch,
         ));
         p.add_post_pass(opt::CallStackArgCollect::from_convention(
             &self.calling_convention,

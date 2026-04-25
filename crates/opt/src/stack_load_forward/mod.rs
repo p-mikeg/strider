@@ -6,10 +6,11 @@
 //! `MemPhi`'s phi-token.
 //!
 //! Must be wired into the pipeline with the calling convention's stack-pointer
-//! varnode (see [`StackLoadForward::new`]).
+//! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -24,20 +25,31 @@ use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 pub struct StackLoadForward {
     /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
     pub stack_ptr_vn: rsleigh::Vn,
+    /// Target endianness — controls how a narrow load from a wider store is
+    /// synthesised (LE: low bytes via `Truncate`; BE: high bytes via
+    /// `Truncate(ShiftRight(data, (store_size - load_size) * 8))`).
+    pub endianness: Endianness,
 }
 
 impl StackLoadForward {
-    /// Creates a new pass for the given stack-pointer varnode.
+    /// Creates a new pass for the given stack-pointer varnode and target
+    /// endianness.
     #[must_use]
-    pub fn new(stack_ptr_vn: rsleigh::Vn) -> Self {
-        Self { stack_ptr_vn }
+    pub fn new(stack_ptr_vn: rsleigh::Vn, endianness: Endianness) -> Self {
+        Self {
+            stack_ptr_vn,
+            endianness,
+        }
     }
 
-    /// Creates a new pass whose stack-pointer varnode is taken from the
-    /// supplied calling convention.
+    /// Creates a new pass whose stack-pointer varnode is taken from `cc` and
+    /// whose endianness is taken from `arch`.
     #[must_use]
-    pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_ptr_vn)
+    pub fn from_convention(
+        cc: &target::BuiltCallingConvention,
+        arch: &target::SleighArch,
+    ) -> Self {
+        Self::new(cc.stack_ptr_vn, arch.endianness)
     }
 }
 
@@ -50,7 +62,7 @@ impl Optimizer for StackLoadForward {
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         for load in loads {
-            result |= try_forward_load(function, load, self.stack_ptr_vn, &mut memo)?;
+            result |= try_forward_load(function, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)
     }
@@ -63,6 +75,7 @@ fn try_forward_load(
     fg: &mut BuiltFunctionGraph,
     load: NodeId,
     sp_vn: rsleigh::Vn,
+    endianness: Endianness,
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
@@ -81,7 +94,8 @@ fn try_forward_load(
 
     let load_size = load_ty.byte_size() as i64;
     let mut visited = std::collections::HashSet::new();
-    let Some(forwarded) = resolve(fg, mem, offset, load_size, load_ty, &mut visited) else {
+    let Some(forwarded) = resolve(fg, mem, offset, load_size, load_ty, endianness, &mut visited)
+    else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -104,6 +118,7 @@ fn resolve(
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
+    endianness: Endianness,
     visited: &mut std::collections::HashSet<NodeOutputId>,
 ) -> Option<NodeOutputId> {
     let node = fg.graph.get_node_from_output(mem);
@@ -127,15 +142,31 @@ fn resolve(
                     && load_ty.is_integer()
                     && load_ty.byte_size() < data_ty.byte_size()
                 {
-                    // Narrow-load-from-wider-store at matching offset: on
-                    // little-endian targets the load's bytes are exactly the
-                    // low `load_size` bytes of the stored value, so a
-                    // `Truncate` captures them.  Every calling-convention
-                    // preset currently wired to this pass is LE; if a BE
-                    // preset is added, this arm must be gated on endianness.
+                    // Narrow-load-from-wider-store at matching offset.
+                    // - LE: load bytes are the low `load_size` bytes of the
+                    //   stored value → `Truncate(data)`.
+                    // - BE: load bytes are the high `load_size` bytes →
+                    //   `Truncate(ShiftRight(data, (store_size - load_size) * 8))`.
+                    //   `ShiftRight` is the *logical* right-shift (zero-fill),
+                    //   which is the correct synthesis since we just need the
+                    //   high bytes positioned in the low end before truncating.
+                    let shifted = match endianness {
+                        Endianness::Little => data,
+                        Endianness::Big => {
+                            let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64)
+                                * 8;
+                            let shift_const = fg.make_int_const(shift_bits, data_ty).ok()?;
+                            let shr = fg.graph.create_node(
+                                NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
+                                [data, shift_const],
+                                [NodeOutputKind::OutputType(data_ty)],
+                            );
+                            fg.graph.node_outputs(shr).into_iter().next()?
+                        }
+                    };
                     let trunc = fg.graph.create_node(
                         NodeKind::Truncate,
-                        [data],
+                        [shifted],
                         [NodeOutputKind::OutputType(load_ty)],
                     );
                     fg.graph.node_outputs(trunc).into_iter().next()
@@ -144,7 +175,7 @@ fn resolve(
                 }
             } else if ranges_disjoint(k, store_size, offset, load_size) {
                 let prev_mem = inputs[0];
-                resolve(fg, prev_mem, offset, load_size, load_ty, visited)
+                resolve(fg, prev_mem, offset, load_size, load_ty, endianness, visited)
             } else {
                 None
             }
@@ -166,7 +197,7 @@ fn resolve(
             let phi_token = inputs_vec[0];
             let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(inputs_vec.len() - 1);
             for pred_mem in &inputs_vec[1..] {
-                let v = resolve(fg, *pred_mem, offset, load_size, load_ty, visited)?;
+                let v = resolve(fg, *pred_mem, offset, load_size, load_ty, endianness, visited)?;
                 resolved.push(v);
             }
             // Dedup: if all per-predecessor results are identical, skip the
