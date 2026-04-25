@@ -219,11 +219,18 @@ impl DotEmitter {
     /// Emits a node statement.  The `label` is automatically escaped for DOT.
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
         let label = escape_dot_label(label);
-        self.out
-            .push_str(&format!("  \"{id}\" [label=\"{label}\", shape={shape}"));
+        self.out.push_str("  \"");
+        self.out.push_str(id);
+        self.out.push_str("\" [label=\"");
+        self.out.push_str(&label);
+        self.out.push_str("\", shape=");
+        self.out.push_str(shape);
 
         for (k, v) in extra {
-            self.out.push_str(&format!(", {k}={v}"));
+            self.out.push_str(", ");
+            self.out.push_str(k);
+            self.out.push('=');
+            self.out.push_str(v);
         }
 
         self.out.push_str("];\n");
@@ -231,7 +238,11 @@ impl DotEmitter {
 
     /// Emits a directed edge statement.
     pub fn edge(&mut self, from: &str, to: &str, extra: &[(&str, &str)]) {
-        self.out.push_str(&format!("  \"{from}\" -> \"{to}\""));
+        self.out.push_str("  \"");
+        self.out.push_str(from);
+        self.out.push_str("\" -> \"");
+        self.out.push_str(to);
+        self.out.push('"');
 
         if !extra.is_empty() {
             self.out.push_str(" [");
@@ -239,7 +250,9 @@ impl DotEmitter {
                 if i != 0 {
                     self.out.push_str(", ");
                 }
-                self.out.push_str(&format!("{k}={v}"));
+                self.out.push_str(k);
+                self.out.push('=');
+                self.out.push_str(v);
             }
             self.out.push(']');
         }
@@ -260,9 +273,15 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
         return;
     }
 
-    out.push_str(&format!("  {name} [\n"));
+    out.push_str("  ");
+    out.push_str(name);
+    out.push_str(" [\n");
     for (k, v) in attrs {
-        out.push_str(&format!("    {k}={v},\n"));
+        out.push_str("    ");
+        out.push_str(k);
+        out.push('=');
+        out.push_str(v);
+        out.push_str(",\n");
     }
     out.push_str("  ];\n\n");
 }
