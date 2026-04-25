@@ -377,16 +377,17 @@ impl<G: GraphDotDumper> GraphDot<G> {
             .spawn()
             .map_err(|e| svg_err(e.to_string()))?;
 
-        {
-            let stdin = child
-                .stdin
-                .as_mut()
-                .ok_or_else(|| svg_err("failed to open dot stdin".to_owned()))?;
-
-            stdin
-                .write_all(dot_src.as_bytes())
-                .map_err(|e| svg_err(e.to_string()))?;
-        }
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| svg_err("failed to open dot stdin".to_owned()))?;
+        stdin
+            .write_all(dot_src.as_bytes())
+            .map_err(|e| svg_err(e.to_string()))?;
+        // Closing stdin signals EOF to `dot` so it produces SVG and exits.
+        // `wait_with_output` would also drop it on our behalf, but doing it
+        // here makes the lifecycle obvious at the call site.
+        drop(stdin);
 
         let output = child
             .wait_with_output()
