@@ -172,18 +172,15 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
         match insn.opcode {
             rsleigh::Opcode::Branch => {
                 let branch_target_addr = self.decode_branch_target(insn.inputs[0], addr)?;
-                if self.is_branch_tail_call(branch_target_addr)? {
-                    // The tail call marks the end of control flow for this specific path.
-                    let _region = self.finish_current_region(true)?;
-                    Ok(ProcessInsnRes::FinishedProcessing)
-                } else {
-                    // We reached the end of the current bb but we know the next address to jump to so enqueue it
-                    let region = self.finish_current_region(false)?;
+                let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
+                let region = self.finish_current_region(is_tail_call)?;
+                if !is_tail_call {
+                    // Not a tail call — enqueue the target so the builder explores it next.
                     self.builder
                         .work_queue
                         .push((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
-                    Ok(ProcessInsnRes::FinishedProcessing)
                 }
+                Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::CondBranch => {
                 let target_addr = self.decode_branch_target(insn.inputs[0], addr)?;
