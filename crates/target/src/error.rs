@@ -4,7 +4,7 @@
 pub enum ErrorKind {
     /// A register name listed in the target description does not resolve
     /// to a known Sleigh register for the active architecture.
-    #[error("unknown register name by sleigh {0:?}")]
+    #[error("unknown sleigh register name {0:?}")]
     UnknownRegName(String),
 }
 
