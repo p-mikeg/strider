@@ -230,6 +230,17 @@ fn next_pcode_addr_non_overflowing_advance_succeeds() {
     assert_eq!(next, addr(0x1004, 0));
 }
 
+/// Pinned contract: when `addr.insn_index + 1 < lift_res.insns.len()`,
+/// `next_pcode_addr` increments `insn_index` and keeps `machine_addr`
+/// unchanged. Covers the function's other (non-machine-advance) branch.
+#[test]
+fn next_pcode_addr_within_machine_insn_advances_pcode_index() {
+    let lift = fake_lift_res(4);
+    let cur = addr(0x1000, 1);
+    let next = cfg::test_api::next_pcode_addr(cur, &lift).unwrap();
+    assert_eq!(next, addr(0x1000, 2));
+}
+
 /// Pinned contract: a CONST-space relative branch target whose computed pcode
 /// index equals `lift_res.insns.len()` (the first index past the last valid
 /// slot) must also be rejected — the bound is exclusive.
