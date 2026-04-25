@@ -98,6 +98,10 @@ fn debug_prints_location_markers() {
     let dbg = format!("{err:?}");
     assert!(dbg.contains("boom"), "Debug should start with Display line; got {dbg:?}");
     assert!(dbg.contains("  at [0] "), "Debug should include location[0]; got {dbg:?}");
+    assert!(
+        dbg.lines().any(|l| l.starts_with("  at [0] ") && l.matches(':').count() >= 2),
+        "location format must include both line and column (`file:line:col`); got {dbg:?}",
+    );
 }
 
 #[test]
