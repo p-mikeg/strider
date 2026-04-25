@@ -75,15 +75,17 @@ impl Analyzer {
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
-    /// across all regions of `cfg`.
+    /// across all regions of `cfg`, sorted in a deterministic order.
     ///
     /// The result is used to pre-declare every variable the IR builder must
-    /// track.
+    /// track.  Determinism is required so that downstream `VarId` numbering
+    /// (and any node IDs the IR cache derives from it) is stable across runs.
     pub(super) fn find_all_unique_vns<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Vec<rsleigh::Vn> {
-        let mut all_vns: std::collections::HashSet<rsleigh::Vn> = std::collections::HashSet::new();
+        let mut all_vns: std::collections::HashSet<rsleigh::Vn> =
+            std::collections::HashSet::new();
         for region in cfg.regions() {
             for wrapped in region.insns.iter() {
                 for vn in wrapped.insn.all_vns() {
@@ -91,7 +93,11 @@ impl Analyzer {
                 }
             }
         }
-        all_vns.iter().copied().collect()
+        let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
+        // Deterministic order: (space-shortcut, offset, size).  HashSet
+        // iteration would otherwise depend on the random hasher seed.
+        vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
+        vns
     }
 
     /// Translates a complete control-flow graph into an [`ir::BuiltFunctionGraph`].
