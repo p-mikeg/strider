@@ -17,6 +17,7 @@ pub struct Worklist<E> {
 
 impl<E: EntityRef> Worklist<E> {
     /// Creates an empty worklist.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             worklist: VecDeque::new(),
@@ -25,8 +26,27 @@ impl<E: EntityRef> Worklist<E> {
     }
 
     /// Returns `true` if the worklist contains no pending entities.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.worklist.is_empty()
+    }
+
+    /// Number of entities currently queued.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.worklist.len()
+    }
+
+    /// Returns `true` if `entity` is currently queued.
+    #[must_use]
+    pub fn contains(&self, entity: E) -> bool {
+        self.workset.contains(entity)
+    }
+
+    /// Removes every queued entity.
+    pub fn clear(&mut self) {
+        self.worklist.clear();
+        self.workset.clear();
     }
 
     /// Adds `entity` to the back of the queue.
@@ -101,5 +121,88 @@ mod tests {
         }
         // Order of first occurrence preserved; duplicates dropped.
         assert_eq!(got, vec![Id(1), Id(2), Id(3)]);
+    }
+
+    #[test]
+    fn new_and_default_are_empty() {
+        let wl: Worklist<Id> = Worklist::new();
+        assert!(wl.is_empty());
+        assert_eq!(wl.len(), 0);
+
+        let wl: Worklist<Id> = Worklist::default();
+        assert!(wl.is_empty());
+        assert_eq!(wl.len(), 0);
+    }
+
+    #[test]
+    fn enqueue_dequeue_roundtrip() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.enqueue(Id(0));
+        assert!(!wl.is_empty());
+        assert_eq!(wl.len(), 1);
+        assert!(wl.contains(Id(0)));
+
+        assert_eq!(wl.dequeue(), Some(Id(0)));
+        assert!(wl.is_empty());
+        assert!(!wl.contains(Id(0)));
+        assert_eq!(wl.dequeue(), None);
+    }
+
+    #[test]
+    fn fifo_order_across_distinct_entities() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        for i in 0..5 {
+            wl.enqueue(Id(i));
+        }
+        let mut got = Vec::new();
+        while let Some(e) = wl.dequeue() {
+            got.push(e);
+        }
+        assert_eq!(got, (0..5).map(Id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn re_enqueue_after_dequeue_is_allowed() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.enqueue(Id(42));
+        assert_eq!(wl.dequeue(), Some(Id(42)));
+
+        wl.enqueue(Id(42));
+        assert_eq!(wl.dequeue(), Some(Id(42)));
+        assert_eq!(wl.dequeue(), None);
+    }
+
+    #[test]
+    fn extend_dedups() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.extend([Id(1), Id(2), Id(1)]);
+        assert_eq!(wl.len(), 2);
+        assert_eq!(wl.dequeue(), Some(Id(1)));
+        assert_eq!(wl.dequeue(), Some(Id(2)));
+        assert_eq!(wl.dequeue(), None);
+    }
+
+    #[test]
+    fn clear_empties_both_queue_and_set() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.extend([Id(1), Id(2), Id(3)]);
+        wl.clear();
+        assert!(wl.is_empty());
+        assert_eq!(wl.len(), 0);
+        assert!(!wl.contains(Id(1)));
+
+        // After clear, re-enqueue still works (workset must really be empty,
+        // not just have stale entries).
+        wl.enqueue(Id(1));
+        assert_eq!(wl.dequeue(), Some(Id(1)));
+    }
+
+    #[test]
+    fn contains_only_while_queued() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.enqueue(Id(5));
+        assert!(wl.contains(Id(5)));
+        let _ = wl.dequeue();
+        assert!(!wl.contains(Id(5)));
     }
 }
