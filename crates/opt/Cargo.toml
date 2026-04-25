@@ -11,6 +11,26 @@ rsleigh.workspace = true
 target.workspace = true
 strider-error.workspace = true
 thiserror = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "constant_fold"
+harness = false
+
+[[bench]]
+name = "known_bits"
+harness = false
+
+[[bench]]
+name = "stack_store"
+harness = false
+
+[[bench]]
+name = "default_pipeline"
+harness = false
 
 [lints]
 workspace = true
