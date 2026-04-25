@@ -197,7 +197,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
-        let v = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        let v = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32).unwrap();
         b.build_return(Some(v), &[])?;
         let fg = b.build()?;
         assert_eq!(int_const_signed(&fg, v), Some(-4));
@@ -231,7 +231,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4, NodeOutputType::U32);
+        let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
         let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
@@ -251,7 +251,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
-        let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32).unwrap();
         let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
@@ -272,7 +272,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4, NodeOutputType::U32);
+        let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
         let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
@@ -301,7 +301,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
-        let c = b.build_int_const(0x1000, NodeOutputType::U32);
+        let c = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
@@ -324,9 +324,9 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4, NodeOutputType::U32);
-        let eight = b.build_int_const(8, NodeOutputType::U32);
-        let twelve = b.build_int_const(12, NodeOutputType::U32);
+        let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+        let eight = b.build_int_const(8, NodeOutputType::U32).unwrap();
+        let twelve = b.build_int_const(12, NodeOutputType::U32).unwrap();
         let s1 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         let s2 = b.build_int_binary_operation(s1, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
         let s3 =
@@ -360,7 +360,7 @@ mod tests {
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
-        let c = b.build_int_const(0x1000, NodeOutputType::U32);
+        let c = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();

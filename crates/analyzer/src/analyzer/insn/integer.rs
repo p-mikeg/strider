@@ -112,7 +112,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             let bit_shift = byte_offset * 8;
             let shift_const = self
                 .builder
-                .build_int_const(bit_shift, insn.inputs[0].size.try_into()?);
+                .build_int_const(bit_shift, insn.inputs[0].size.try_into()?)?;
             self.builder.build_int_binary_operation(
                 input,
                 shift_const,
@@ -165,7 +165,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let lo_bits = lo_ty.bit_width() as u64;
         let hi_wide = self.builder.convert_to_int_if_needed(hi_int, out_ty)?;
         let lo_wide = self.builder.convert_to_int_if_needed(lo_int, out_ty)?;
-        let shift_amt = self.builder.build_int_const(lo_bits, out_ty);
+        let shift_amt = self.builder.build_int_const(lo_bits, out_ty)?;
         let hi_shifted = self.builder.build_int_binary_operation(
             hi_wide,
             shift_amt,
@@ -198,7 +198,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let shifted = if lsb == 0 {
             x_int
         } else {
-            let lsb_const = self.builder.build_int_const(lsb as u64, x_nat_ty);
+            let lsb_const = self.builder.build_int_const(lsb as u64, x_nat_ty)?;
             self.builder.build_int_binary_operation(
                 x_int,
                 lsb_const,
@@ -213,7 +213,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             } else {
                 (1u64 << len) - 1
             };
-            let mask = self.builder.build_int_const(mask_val, narrow_ty);
+            let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
             self.builder.build_int_binary_operation(
                 narrowed,
                 mask,
@@ -255,7 +255,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
         let not_mask_shifted = !mask_shifted;
 
-        let not_m_const = self.builder.build_int_const(not_mask_shifted, out_ty);
+        let not_m_const = self.builder.build_int_const(not_mask_shifted, out_ty)?;
         let cleared = self.builder.build_int_binary_operation(
             dest_wide,
             not_m_const,
@@ -263,7 +263,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             out_ty,
         )?;
 
-        let mask_const = self.builder.build_int_const(mask_raw, out_ty);
+        let mask_const = self.builder.build_int_const(mask_raw, out_ty)?;
         let src_masked = self.builder.build_int_binary_operation(
             src_wide,
             mask_const,
@@ -274,7 +274,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let src_positioned = if lsb == 0 {
             src_masked
         } else {
-            let lsb_const = self.builder.build_int_const(lsb as u64, out_ty);
+            let lsb_const = self.builder.build_int_const(lsb as u64, out_ty)?;
             self.builder.build_int_binary_operation(
                 src_masked,
                 lsb_const,
@@ -301,7 +301,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             .as_ref()
             .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
         let out_ty: ir::ValueType = out_vn.size.try_into()?;
-        let elem_const = self.builder.build_int_const(elem_size, out_ty);
+        let elem_const = self.builder.build_int_const(elem_size, out_ty)?;
         let scaled = self.builder.build_int_binary_operation(
             index,
             elem_const,

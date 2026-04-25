@@ -82,6 +82,12 @@ pub enum ErrorKind {
     #[error("unsupported node output size: {0} bytes")]
     UnsupportedOutputSize(u32),
 
+    /// `build_int_const` was called with a `NodeOutputType` whose width
+    /// exceeds 64 bits. The IR stores integer constants as `u64`, so values
+    /// of width `U128` or `U256` cannot be faithfully represented.
+    #[error("cannot build an IntConst of type {0}: constants are stored as u64")]
+    IntConstWidthExceedsU64(NodeOutputType),
+
     /// An input slot was already part of a use-list when it should be fresh.
     #[error("input {0:?} is already linked")]
     InputAlreadyLinked(NodeInputId),

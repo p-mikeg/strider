@@ -13,10 +13,10 @@ use common::{make_fn, make_fn_with_var, reg_vn, return_kind};
 #[test]
 fn default_pipeline_folds_int_chain() -> opt::Result<()> {
     let mut fg = make_fn(|b| {
-        let c1 = b.build_int_const(1, NodeOutputType::U64);
-        let c2 = b.build_int_const(2, NodeOutputType::U64);
-        let c3 = b.build_int_const(3, NodeOutputType::U64);
-        let c4 = b.build_int_const(4, NodeOutputType::U64);
+        let c1 = b.build_int_const(1, NodeOutputType::U64).unwrap();
+        let c2 = b.build_int_const(2, NodeOutputType::U64).unwrap();
+        let c3 = b.build_int_const(3, NodeOutputType::U64).unwrap();
+        let c4 = b.build_int_const(4, NodeOutputType::U64).unwrap();
         let a = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
         let bb = b.build_int_binary_operation(a, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(bb, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
@@ -40,10 +40,10 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, t, f)?;
     b.set_region(t);
-    let v = b.build_int_const(1, ir::ValueType::U64);
+    let v = b.build_int_const(1, ir::ValueType::U64).unwrap();
     b.build_return(Some(v), &[])?;
     b.set_region(f);
-    let v2 = b.build_int_const(2, ir::ValueType::U64);
+    let v2 = b.build_int_const(2, ir::ValueType::U64).unwrap();
     b.build_return(Some(v2), &[])?;
     let mut fg = b.build()?;
 
@@ -63,7 +63,7 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
 /// completion without error.
 #[test]
 fn default_pipeline_validates_at_end() -> opt::Result<()> {
-    let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64)))?;
+    let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64).unwrap()))?;
     default_pipeline().run(&mut fg)?;
     Ok(())
 }
@@ -74,8 +74,8 @@ fn default_pipeline_validates_at_end() -> opt::Result<()> {
 fn default_pipeline_known_bits_cooperates_with_constant_fold() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 1);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let ff = b.build_int_const(0xFF, NodeOutputType::U8);
-        let f0 = b.build_int_const(0xF0, NodeOutputType::U8);
+        let ff = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
+        let f0 = b.build_int_const(0xF0, NodeOutputType::U8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         Ok(b.build_int_binary_operation(or_, f0, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
@@ -88,7 +88,7 @@ fn default_pipeline_known_bits_cooperates_with_constant_fold() -> opt::Result<()
 #[test]
 fn manual_pipeline_matches_default_for_simple_input() -> opt::Result<()> {
     let mut fg = make_fn(|b| {
-        let c = b.build_int_const(7, NodeOutputType::U64);
+        let c = b.build_int_const(7, NodeOutputType::U64).unwrap();
         Ok(c)
     })?;
     let mut p = opt::OptimizerPipeline::new();

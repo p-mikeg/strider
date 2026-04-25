@@ -43,7 +43,7 @@ fn every_int_unary_op_validates() {
         let r = b.create_region().unwrap();
         b.set_entry_region(r).unwrap();
         b.set_region(r);
-        let v = b.build_int_const(0xFF, NodeOutputType::U32);
+        let v = b.build_int_const(0xFF, NodeOutputType::U32).unwrap();
         let res = b
             .build_int_unary_operation(v, op, NodeOutputType::U32)
             .unwrap();
@@ -99,7 +99,7 @@ fn extend_and_truncate_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
-    let v8 = b.build_int_const(0xFF, NodeOutputType::U8);
+    let v8 = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
     let v32_zero = b
         .extend_if_needed(v8, NodeOutputType::U32, ExtendOp::ZeroExtend)
         .unwrap();
@@ -165,7 +165,7 @@ fn float_int_conversions_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
-    let i = b.build_int_const(42, NodeOutputType::U32);
+    let i = b.build_int_const(42, NodeOutputType::U32).unwrap();
     let f = b.build_int_to_float(i, NodeOutputType::F32).unwrap();
     let back = b.build_float_to_int(f, NodeOutputType::U32).unwrap();
     let bits = b
@@ -202,7 +202,7 @@ fn region_join_with_phi_validates() {
     b.build_branch(join).unwrap();
 
     b.set_region(join);
-    let v = b.build_int_const(7, NodeOutputType::U32);
+    let v = b.build_int_const(7, NodeOutputType::U32).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     b.build().unwrap();
 }
@@ -213,8 +213,8 @@ fn loads_and_stores_validate() {
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
-    let addr = b.build_int_const(0x1000, NodeOutputType::U64);
-    let data = b.build_int_const(0xABCD, NodeOutputType::U32);
+    let addr = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
+    let data = b.build_int_const(0xABCD, NodeOutputType::U32).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)

@@ -152,7 +152,7 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(output_id)? {
-            return Ok(self.build_int_const(val, output_type));
+            return self.build_int_const(val, output_type);
         }
 
         if curr_output_type.byte_size() <= output_type.byte_size() {
@@ -178,10 +178,10 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
-            return Ok(match op {
+            return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u64, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
-            });
+            };
         }
 
         if !output_type.is_integer() {

@@ -88,7 +88,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             if shift_value != 0 {
                 let shift_const = self
                     .builder
-                    .build_int_const(shift_value, container_reg.size.try_into()?);
+                    .build_int_const(shift_value, container_reg.size.try_into()?)?;
                 read_reg_val = self.builder.build_int_binary_operation(
                     curr_reg_val,
                     shift_const,
@@ -132,7 +132,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         } else {
             let shift_const = self
                 .builder
-                .build_int_const(shift_bits, container_reg.size.try_into()?);
+                .build_int_const(shift_bits, container_reg.size.try_into()?)?;
             self.builder.build_int_binary_operation(
                 val,
                 shift_const,
@@ -145,7 +145,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let reg_mask = crate::utils::vn_mask(reg)?;
         let reg_mask_val = self
             .builder
-            .build_int_const(reg_mask, container_reg.size.try_into()?);
+            .build_int_const(reg_mask, container_reg.size.try_into()?)?;
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
             shifted_value,
@@ -157,7 +157,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let container_mask = crate::utils::vn_mask(&container_reg)? & (!reg_mask);
         let container_mask_val = self
             .builder
-            .build_int_const(container_mask, container_reg.size.try_into()?);
+            .build_int_const(container_mask, container_reg.size.try_into()?)?;
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val,
             container_reg_val,

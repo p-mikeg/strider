@@ -32,9 +32,9 @@ fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
 #[test]
 fn known_bits_or_then_and() -> Result<()> {
     let mut fg2 = make_fn(|b| {
-        let x_seed = b.build_int_const(0, NodeOutputType::U64);
-        let c7 = b.build_int_const(7, NodeOutputType::U64);
-        let c4 = b.build_int_const(4, NodeOutputType::U64);
+        let x_seed = b.build_int_const(0, NodeOutputType::U64).unwrap();
+        let c7 = b.build_int_const(7, NodeOutputType::U64).unwrap();
+        let c4 = b.build_int_const(4, NodeOutputType::U64).unwrap();
         let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)?)
     })?;
@@ -50,9 +50,9 @@ fn known_bits_or_then_and() -> Result<()> {
 #[test]
 fn known_bits_and_mask_then_and() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0xFF, NodeOutputType::U8);
-        let f0 = b.build_int_const(0xF0, NodeOutputType::U8);
-        let f = b.build_int_const(0x0F, NodeOutputType::U8);
+        let x = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
+        let f0 = b.build_int_const(0xF0, NodeOutputType::U8).unwrap();
+        let f = b.build_int_const(0x0F, NodeOutputType::U8).unwrap();
         let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
         Ok(b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
@@ -68,7 +68,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
 /// loop or report spurious changes.
 #[test]
 fn known_bits_const_no_change() -> Result<()> {
-    let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64)))?;
+    let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64).unwrap()))?;
     assert!(!KnownBits.optimize(&mut fg)?.changed());
     Ok(())
 }
@@ -78,9 +78,9 @@ fn known_bits_const_no_change() -> Result<()> {
 #[test]
 fn known_bits_popcount_range() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0xFF, NodeOutputType::U8);
+        let x = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
         let pc = b.build_popcount(x, NodeOutputType::U8)?;
-        let mask = b.build_int_const(0xF0, NodeOutputType::U8);
+        let mask = b.build_int_const(0xF0, NodeOutputType::U8).unwrap();
         Ok(b.build_int_binary_operation(pc, mask, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
     let mut changed = true;
@@ -99,10 +99,10 @@ fn known_bits_popcount_range() -> Result<()> {
 #[test]
 fn known_bits_shift_right_upper_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0x55, NodeOutputType::U8); // any value
-        let four = b.build_int_const(4, NodeOutputType::U8);
+        let x = b.build_int_const(0x55, NodeOutputType::U8).unwrap(); // any value
+        let four = b.build_int_const(4, NodeOutputType::U8).unwrap();
         let shr = b.build_int_binary_operation(x, four, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
-        let mask_high = b.build_int_const(0xF0, NodeOutputType::U8);
+        let mask_high = b.build_int_const(0xF0, NodeOutputType::U8).unwrap();
         Ok(b.build_int_binary_operation(shr, mask_high, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
     let mut changed = true;
@@ -118,10 +118,10 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
 #[test]
 fn known_bits_shift_left_lower_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0xFF, NodeOutputType::U8);
-        let five = b.build_int_const(5, NodeOutputType::U8);
+        let x = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
+        let five = b.build_int_const(5, NodeOutputType::U8).unwrap();
         let shl = b.build_int_binary_operation(x, five, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?;
-        let mask_low = b.build_int_const(0x1F, NodeOutputType::U8);
+        let mask_low = b.build_int_const(0x1F, NodeOutputType::U8).unwrap();
         Ok(b.build_int_binary_operation(shl, mask_low, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
     let mut changed = true;
@@ -137,12 +137,12 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
 #[test]
 fn known_bits_long_or_and_chain() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let mut acc = b.build_int_const(0, NodeOutputType::U64);
+        let mut acc = b.build_int_const(0, NodeOutputType::U64).unwrap();
         for i in 0..8u64 {
-            let bit = b.build_int_const(1u64 << i, NodeOutputType::U64);
+            let bit = b.build_int_const(1u64 << i, NodeOutputType::U64).unwrap();
             acc = b.build_int_binary_operation(acc, bit, IntBinaryOp::Or, NodeOutputType::U64)?;
         }
-        let mask = b.build_int_const(0xFF, NodeOutputType::U64);
+        let mask = b.build_int_const(0xFF, NodeOutputType::U64).unwrap();
         Ok(b.build_int_binary_operation(acc, mask, IntBinaryOp::And, NodeOutputType::U64)?)
     })?;
     let mut changed = true;
@@ -159,9 +159,9 @@ fn known_bits_long_or_and_chain() -> Result<()> {
 #[test]
 fn known_bits_lzcount_range() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0x01, NodeOutputType::U8);
+        let x = b.build_int_const(0x01, NodeOutputType::U8).unwrap();
         let lz = b.build_lzcount(x, NodeOutputType::U8)?;
-        let mask = b.build_int_const(0xF0, NodeOutputType::U8);
+        let mask = b.build_int_const(0xF0, NodeOutputType::U8).unwrap();
         Ok(b.build_int_binary_operation(lz, mask, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
     let mut changed = true;
@@ -177,8 +177,8 @@ fn known_bits_lzcount_range() -> Result<()> {
 #[test]
 fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0x55, NodeOutputType::U8);
-        let ff = b.build_int_const(0xFF, NodeOutputType::U8);
+        let x = b.build_int_const(0x55, NodeOutputType::U8).unwrap();
+        let ff = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         // (x|0xFF) is statically all-ones; xoring with itself folds to 0.
         // (Note: this also exercises ConstantFold's `x ^ x → 0` identity, but
@@ -198,8 +198,8 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
 #[test]
 fn known_bits_not_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0xAA, NodeOutputType::U8);
-        let ff = b.build_int_const(0xFF, NodeOutputType::U8);
+        let x = b.build_int_const(0xAA, NodeOutputType::U8).unwrap();
+        let ff = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         // !!(x|0xFF) — NOT NOT = identity at the bit level.
         let n1 = b.build_int_unary_operation(or_, ir::IntUnaryOp::Not, NodeOutputType::U8)?;
@@ -219,7 +219,7 @@ fn known_bits_not_round_trip() -> Result<()> {
 #[test]
 fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0xABCD, NodeOutputType::U16);
+        let v = b.build_int_const(0xABCD, NodeOutputType::U16).unwrap();
         Ok(b.truncate_if_needed(v, NodeOutputType::U8)?)
     })?;
     // The builder likely already folded this at construction; just verify

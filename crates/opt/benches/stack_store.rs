@@ -26,13 +26,13 @@ fn build_pushes(n: usize) -> ir::BuiltFunctionGraph {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     let mut sp_v = b.read_variable(&sp).unwrap();
-    let four = b.build_int_const(4, NodeOutputType::U32);
+    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
     for i in 0..n as u64 {
         sp_v = b
             .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
             .unwrap();
         b.write_variable(&sp, sp_v).unwrap();
-        let data = b.build_int_const(i, NodeOutputType::U32);
+        let data = b.build_int_const(i, NodeOutputType::U32).unwrap();
         b.build_store(sp_v, data, rsleigh::VnSpace::RAM).unwrap();
     }
     b.build_return(None, &[]).unwrap();

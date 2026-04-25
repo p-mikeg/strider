@@ -69,19 +69,31 @@ impl FunctionBuilder {
 
     /// Emits an integer constant node with the given value and type.
     ///
-    /// # Panics
-    /// Panics if `output_type` is `U128` or `U256` — constants are stored as
-    /// `u64` and cannot correctly represent values of those widths.
-    pub fn build_int_const(&mut self, val: u64, output_type: NodeOutputType) -> NodeOutputId {
-        assert!(
-            !matches!(output_type, NodeOutputType::U128 | NodeOutputType::U256),
-            "cannot build an IntConst of type {output_type}: constants are stored as u64"
-        );
-        self.build_single_output_pure(NodeKind::IntConst(val), [], output_type)
+    /// `IntConst` stores its value as a `u64`, so widths above 64 bits
+    /// cannot be faithfully represented and are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::IntConstWidthExceedsU64`] when `output_type` is
+    /// [`NodeOutputType::U128`] or [`NodeOutputType::U256`].
+    pub fn build_int_const(
+        &mut self,
+        val: u64,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        if matches!(output_type, NodeOutputType::U128 | NodeOutputType::U256) {
+            return Err(ErrorKind::IntConstWidthExceedsU64(output_type).into());
+        }
+        Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
     }
 
     /// Emits a 64-bit unsigned integer constant node.
-    pub fn build_uint64_const(&mut self, val: u64) -> NodeOutputId {
+    ///
+    /// # Errors
+    ///
+    /// Cannot fail — `U64` is always a valid `IntConst` width — but returns
+    /// `Result` for symmetry with [`Self::build_int_const`].
+    pub fn build_uint64_const(&mut self, val: u64) -> Result<NodeOutputId> {
         self.build_int_const(val, NodeOutputType::U64)
     }
 
@@ -379,7 +391,7 @@ impl FunctionBuilder {
         // Immediate fold: FloatConst → IntConst (same bits).
         let node_id = self.graph().get_node_from_output(input);
         if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id) {
-            return Ok(self.build_int_const(bits, int_type));
+            return self.build_int_const(bits, int_type);
         }
         Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))
     }
