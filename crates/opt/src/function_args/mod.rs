@@ -183,6 +183,7 @@ fn detect_stack_args(
     // alias that slot (DFS shadow check).  If *any* load at offset K is
     // shadowed, the whole K-group is disqualified (conservative).
     let mut memo: SpExprMemo = Default::default();
+    let mut shadow_memo: ShadowMemo = Default::default();
     let mut groups: std::collections::HashMap<usize, Vec<NodeId>> =
         std::collections::HashMap::new();
     let mut disqualified: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -209,8 +210,8 @@ fn detect_stack_args(
         if disqualified.contains(&j) {
             continue;
         }
-        let mut seen = std::collections::HashSet::new();
-        if mem_chain_is_dirty(fg, memory, offset, load_size, &mut seen) {
+        let mut seen: rustc_hash::FxHashSet<NodeOutputId> = Default::default();
+        if mem_chain_is_dirty(fg, memory, offset, load_size, &mut seen, &mut shadow_memo) {
             disqualified.insert(j);
             groups.remove(&j);
             continue;
@@ -300,53 +301,72 @@ fn detect_stack_args(
 /// `StackStorePhi` offsets are per-predecessor and stored in
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
 /// construction (the only place that populates them is `StackStoreDetect`).
+/// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,
+/// offset, load_size)`. Threaded through `detect_stack_args` so that two
+/// stack-arg-load candidates sharing the same memory predecessor reuse the
+/// walk's verdict.
+type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
+
 fn mem_chain_is_dirty(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
-    seen: &mut std::collections::HashSet<NodeOutputId>,
+    seen: &mut rustc_hash::FxHashSet<NodeOutputId>,
+    memo: &mut ShadowMemo,
 ) -> bool {
+    let key = (mem, offset, load_size);
+    if let Some(&cached) = memo.get(&key) {
+        return cached;
+    }
+    // Cache only top-level results: when `seen` is empty here we know any
+    // sub-call's cycle truncation didn't taint THIS node's answer with a
+    // pre-populated set. Sub-calls (where `seen` is non-empty on entry)
+    // compute correctly but don't write back, since their value reflects
+    // cycle handling relative to the parent's already-explored set.
+    let is_outermost = seen.is_empty();
     if !seen.insert(mem) {
         // Already visited this edge — loop back-edge, treat as clean here
         // (other edges in the traversal will surface any real shadow).
         return false;
     }
     let node = fg.graph.get_node_from_output(mem);
-    match *fg.graph.node_kind(node) {
+    let result = match *fg.graph.node_kind(node) {
         NodeKind::InitialMemory => false,
         NodeKind::StackStore { offset: k, .. } => {
             let inputs = fg.graph.node_inputs(node);
             // StackStore inputs: [MEM, SP, DATA].
             if inputs.len() < 3 {
-                return false;
+                false
+            } else if let Some(store_size) = value_byte_size(fg, inputs[2]) {
+                if !ranges_disjoint(k, store_size, offset, load_size) {
+                    true
+                } else {
+                    mem_chain_is_dirty(fg, inputs[0], offset, load_size, seen, memo)
+                }
+            } else {
+                true
             }
-            let Some(store_size) = value_byte_size(fg, inputs[2]) else {
-                return true;
-            };
-            if !ranges_disjoint(k, store_size, offset, load_size) {
-                return true;
-            }
-            mem_chain_is_dirty(fg, inputs[0], offset, load_size, seen)
         }
         NodeKind::StackStorePhi { .. } => {
             let inputs = fg.graph.node_inputs(node);
             // StackStorePhi inputs: [PHI, MEM, DATA].
             if inputs.len() < 3 {
-                return false;
+                false
+            } else if let Some(store_size) = value_byte_size(fg, inputs[2]) {
+                let any_overlap = fg
+                    .graph
+                    .stack_phi_offsets(node)
+                    .iter()
+                    .any(|&k| !ranges_disjoint(k, store_size, offset, load_size));
+                if any_overlap {
+                    true
+                } else {
+                    mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen, memo)
+                }
+            } else {
+                true
             }
-            let Some(store_size) = value_byte_size(fg, inputs[2]) else {
-                return true;
-            };
-            let any_overlap = fg
-                .graph
-                .stack_phi_offsets(node)
-                .iter()
-                .any(|&k| !ranges_disjoint(k, store_size, offset, load_size));
-            if any_overlap {
-                return true;
-            }
-            mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen)
         }
         NodeKind::MemPhi => {
             // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
@@ -355,7 +375,7 @@ fn mem_chain_is_dirty(
             inputs
                 .into_iter()
                 .skip(1)
-                .any(|pred| mem_chain_is_dirty(fg, pred, offset, load_size, seen))
+                .any(|pred| mem_chain_is_dirty(fg, pred, offset, load_size, seen, memo))
         }
         NodeKind::Call | NodeKind::CallOther { .. } => {
             // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
@@ -363,7 +383,7 @@ fn mem_chain_is_dirty(
             if inputs.len() < 2 {
                 false
             } else {
-                mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen)
+                mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen, memo)
             }
         }
         NodeKind::PostCallMemState => {
@@ -371,26 +391,38 @@ fn mem_chain_is_dirty(
             // Walk through it to the Call, then recurse on its MEM input.
             let inputs = fg.graph.node_inputs(node);
             if inputs.is_empty() {
-                return false;
-            }
-            let call_node = fg.graph.get_node_from_output(inputs[0]);
-            match *fg.graph.node_kind(call_node) {
-                NodeKind::Call | NodeKind::CallOther { .. } => {
-                    let call_inputs = fg.graph.node_inputs(call_node);
-                    if call_inputs.len() < 2 {
-                        false
-                    } else {
-                        mem_chain_is_dirty(fg, call_inputs[1], offset, load_size, seen)
+                false
+            } else {
+                let call_node = fg.graph.get_node_from_output(inputs[0]);
+                match *fg.graph.node_kind(call_node) {
+                    NodeKind::Call | NodeKind::CallOther { .. } => {
+                        let call_inputs = fg.graph.node_inputs(call_node);
+                        if call_inputs.len() < 2 {
+                            false
+                        } else {
+                            mem_chain_is_dirty(
+                                fg,
+                                call_inputs[1],
+                                offset,
+                                load_size,
+                                seen,
+                                memo,
+                            )
+                        }
                     }
+                    // Unexpected producer for PostCallMemState's CTRL — be
+                    // conservative.
+                    _ => true,
                 }
-                // Unexpected producer for PostCallMemState's CTRL — be
-                // conservative.
-                _ => true,
             }
         }
         // Any other memory-producing node we don't recognise: be conservative.
         _ => true,
+    };
+    if is_outermost {
+        memo.insert(key, result);
     }
+    result
 }
 
 /// Byte size of a value output, or `None` if it is not a value-typed output
