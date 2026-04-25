@@ -136,10 +136,10 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
 
 // ── Stack-aware pipeline cooperation ──────────────────────────────────────────
 
-/// `*sp = K; load *sp; return loaded` — needs:
-/// 1. ConstantFold (folds the SP arithmetic), 2. RedundantPhis (collapses the
-/// SP-phi at the entry), 3. StackStoreDetect (rewrites Store → StackStore),
-/// 4. StackLoadForward (forwards K through the stack slot).
+/// `*sp = K; load *sp; return loaded` — needs all four cooperating:
+/// ConstantFold (folds the SP arithmetic), RedundantPhis (collapses the
+/// SP-phi at the entry), StackStoreDetect (rewrites Store → StackStore),
+/// StackLoadForward (forwards K through the stack slot).
 #[test]
 fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     let sp = sp_vn();
@@ -181,7 +181,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
 #[test]
 fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 8);
-    let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let mut acc = x;
         for _ in 0..20 {
             let one = b.build_int_const(1, NodeOutputType::U64);

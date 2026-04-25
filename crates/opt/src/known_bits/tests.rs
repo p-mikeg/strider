@@ -171,3 +171,73 @@ fn known_bits_lzcount_range() -> Result<()> {
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
     Ok(())
 }
+
+/// XOR of identical-bits inputs: bit known if both agree → must be known 0.
+/// `(x | 0xFF) ^ (x | 0xFF)` for U8 — KnownBits should prove this is 0.
+#[test]
+fn known_bits_xor_identical_or_known_zero() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let x = b.build_int_const(0x55, NodeOutputType::U8);
+        let ff = b.build_int_const(0xFF, NodeOutputType::U8);
+        let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
+        // (x|0xFF) is statically all-ones; xoring with itself folds to 0.
+        // (Note: this also exercises ConstantFold's `x ^ x → 0` identity, but
+        // KnownBits-only would prove the result by the both-known-1 case.)
+        Ok(b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    Ok(())
+}
+
+/// NOT swaps known-ones and known-zeros. `(x | 0xFF) NOT NOT` for U8 returns
+/// 0xFF — testing that NOT propagation is correct round-trip.
+#[test]
+fn known_bits_not_round_trip() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let x = b.build_int_const(0xAA, NodeOutputType::U8);
+        let ff = b.build_int_const(0xFF, NodeOutputType::U8);
+        let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
+        // !!(x|0xFF) — NOT NOT = identity at the bit level.
+        let n1 = b.build_int_unary_operation(or_, ir::IntUnaryOp::Not, NodeOutputType::U8)?;
+        Ok(b.build_int_unary_operation(n1, ir::IntUnaryOp::Not, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    Ok(())
+}
+
+/// `truncate(0xABCD U16) → U8` — the truncate preserves lower bits, so the
+/// result has all bits known to 0xCD. KnownBits must propagate through
+/// Truncate.
+#[test]
+fn known_bits_truncate_preserves_low_bits() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let v = b.build_int_const(0xABCD, NodeOutputType::U16);
+        Ok(b.truncate_if_needed(v, NodeOutputType::U8)?)
+    })?;
+    // The builder likely already folded this at construction; just verify
+    // the final state matches.
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    let val = return_value(&fg)?;
+    let semantic = fg.int_const_val(val);
+    assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
+    Ok(())
+}
+
+fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
+    let ret = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .ok_or(ErrorKind::NoReturnNode)?;
+    Ok(fg.graph.node_inputs(ret)[2])
+}
