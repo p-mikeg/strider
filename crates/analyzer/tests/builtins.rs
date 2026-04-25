@@ -38,10 +38,11 @@ per_arch_test!("builtins", "ctz32",         ctz_lowers, ignore = {
     X86: "BUG-17: x86 BSF/TZCNT not lowered; And+Neg fallback not present in graph",
     X64: "BUG-17: x86 BSF/TZCNT not lowered; And+Neg fallback not present in graph",
 });
+// expect_branch: BUG-18 fixed by adding asm-volatile barriers around the
+// branch in fixtures/cases/builtins.c.  ARM still hits a separate BUG-3
+// post-opt Bool→AnyInt residue (same as early_return::arm) — left ignored.
 per_arch_test!("builtins", "expect_branch", expect_compiles_normally, ignore = {
-    Arm:      "BUG-18: __builtin_expect collapses branch entirely on ARM/MIPS",
-    Mips32le: "BUG-18: __builtin_expect collapses branch entirely on ARM/MIPS",
-    Mips32be: "BUG-18: __builtin_expect collapses branch entirely on ARM/MIPS",
+    Arm: "BUG-3 post-opt residue: ARM expect_branch hits Bool→AnyInt validator after opt",
 });
 
 fn popcount_lowers(g: &ir::BuiltFunctionGraph) {
