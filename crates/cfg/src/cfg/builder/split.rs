@@ -33,7 +33,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // 1. The parents of the current region_id should be those of the first region - we will fix it by hand
         // 2. The children of the current region_id should be those of the second region - solved due to replacement
         // 3. The items in the queue that use region_id as parent should point to the second region - solved due to replacement
-        // 4. The parent of the popped value from that called the split should also point to the second region
+        // 4. The parent of the popped work-queue item that triggered the split should also point to the second region
 
         let second_region = self
             .graph
@@ -73,12 +73,10 @@ impl<R: rsleigh::MemReader> Builder<R> {
             .map(|e| (e.id(), e.source(), *e.weight()))
             .collect();
 
-        // Move the parent edges to be in the first region instead of the first one
+        // Re-target each incoming edge from the original (now second) region onto
+        // the freshly-created first region, then drop the original edge.
         for (edge_id, parent_id, edge_data) in parent_edges {
-            // re-add edge from second_region to the child
             self.graph.add_edge(parent_id, first_region, edge_data);
-
-            // remove the original edge
             self.graph.remove_edge(edge_id);
         }
         // link the first and the second regions with fallthrough
