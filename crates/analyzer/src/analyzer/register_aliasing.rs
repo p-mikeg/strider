@@ -8,46 +8,42 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// Finds the largest architectural register that fully contains `reg`.
     ///
     /// For example, given `al` (offset 0, size 1) this returns `rax`
-    /// (offset 0, size 8) because x86 reads/writes to `al` always go through
+    /// (offset 0, size 8) on x86-64 because writes to `al` always go through
     /// `rax`.  The returned register is the widest one in the variable set
-    /// that completely covers `reg`'s byte range.
+    /// whose byte range fully covers `reg`'s byte range.
     ///
-    /// Returns `None` only if no variable in the builder covers the range,
-    /// which should never happen because a register must cover itself.
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::UnsupportedVnSpace`] if `reg` is not in
+    /// [`rsleigh::VnSpace::REGISTER`].  Returns
+    /// [`ErrorKind::NoRegisterContainer`] if no variable in the builder
+    /// covers `reg`'s byte range — this should never happen because every
+    /// register at least contains itself.
     pub(super) fn find_largest_fitting_register(
         &self,
         reg: &rsleigh::Vn,
-    ) -> Result<Option<rsleigh::Vn>> {
+    ) -> Result<rsleigh::Vn> {
         if reg.addr.space != rsleigh::VnSpace::REGISTER {
             return Err(ErrorKind::UnsupportedVnSpace(reg.addr.space).into());
         }
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
-        let mut largest_reg_container: Option<rsleigh::Vn> = None;
+        let mut best: Option<rsleigh::Vn> = None;
         for sleigh_reg in self.builder.variables() {
-            if !matches!(sleigh_reg.addr.space, rsleigh::VnSpace::REGISTER) {
+            if sleigh_reg.addr.space != rsleigh::VnSpace::REGISTER {
                 continue;
             }
-            let sleigh_reg_start = sleigh_reg.addr.off;
-            let sleigh_reg_end = sleigh_reg_start + sleigh_reg.size as u64;
-
-            if sleigh_reg_start > reg_start {
+            let s = sleigh_reg.addr.off;
+            let e = s + sleigh_reg.size as u64;
+            if s > reg_start || e < reg_end {
                 continue;
             }
-            if sleigh_reg_end < reg_end {
-                continue;
-            }
-            // We know now that the reg is contained by sleigh reg
-            if let Some(reg_container) = largest_reg_container {
-                // If the current container is larger - choose it
-                if reg_container.size < sleigh_reg.size {
-                    largest_reg_container = Some(*sleigh_reg);
-                }
-            } else {
-                largest_reg_container = Some(*sleigh_reg);
+            // Contained.  Take it if it's strictly wider than the current best.
+            if best.is_none_or(|b| b.size < sleigh_reg.size) {
+                best = Some(*sleigh_reg);
             }
         }
-        Ok(largest_reg_container)
+        best.ok_or_else(|| ErrorKind::NoRegisterContainer(*reg).into())
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their
@@ -82,9 +78,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// relevant bits.  If `reg` is already the container (or is its own
     /// largest container) the value is returned directly.
     pub(super) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ir::Value> {
-        let container_reg = self
-            .find_largest_fitting_register(reg)?
-            .ok_or(ErrorKind::NoRegisterContainer(*reg))?;
+        let container_reg = self.find_largest_fitting_register(reg)?;
         let curr_reg_val = self.builder.read_variable(&container_reg)?;
         let mut read_reg_val = curr_reg_val;
         if container_reg != *reg {
@@ -116,9 +110,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ///
     /// If `reg` is equal to its own container the write is direct.
     pub(super) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
-        let container_reg = self
-            .find_largest_fitting_register(reg)?
-            .ok_or(ErrorKind::NoRegisterContainer(*reg))?;
+        let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             return Ok(self.builder.write_variable(reg, val)?);
         }
