@@ -76,7 +76,7 @@ impl<E: Debug + std::fmt::Display> std::fmt::Debug for Error<E> {
 
 impl<E: Debug + std::error::Error + 'static> std::error::Error for Error<E> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        std::error::Error::source(&*self.kind)
+        self.kind.source()
     }
 }
 
@@ -102,7 +102,7 @@ impl<E: Debug> From<ErrorKind<E>> for Error<E> {
 impl<E: Debug> From<std::io::Error> for Error<E> {
     #[track_caller]
     fn from(e: std::io::Error) -> Self {
-        <Error<E> as From<ErrorKind<E>>>::from(<ErrorKind<E> as From<std::io::Error>>::from(e))
+        Self::from(ErrorKind::from(e))
     }
 }
 
