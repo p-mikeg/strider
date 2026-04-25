@@ -124,7 +124,22 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
                 )?;
                 let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
-                if target >= pcode_count {
+                // Sleigh idiom: a branch to `target == pcode_count` (one past the
+                // last pcode insn) means "exit the current pcode block, fall
+                // through to the next machine instruction". MIPS DIV / SLT
+                // emit this for their conditional traps. Compute the next
+                // machine-insn address for that case; reject anything strictly
+                // beyond.
+                if target == pcode_count {
+                    return next_pcode_addr(
+                        PcodeInsnAddr {
+                            machine_addr: branch_insn_addr.machine_addr,
+                            insn_index: pcode_count.saturating_sub(1),
+                        },
+                        lift_res,
+                    );
+                }
+                if target > pcode_count {
                     return Err(ErrorKind::InvalidBranchTargetVaErr(
                         branch_target_var,
                         branch_insn_addr,
