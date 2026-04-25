@@ -581,3 +581,84 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     );
     Ok(())
 }
+
+// ── Comprehensive tests added in Task 5 ──────────────────────────────────────
+
+/// SP arithmetic mixing Add and Sub of constants in both directions:
+/// `((sp + 16) - 4) - 4 = sp + 8`. Must reduce via decompose_sp's recursive
+/// shifted handling.
+#[test]
+fn detect_mixed_add_sub_reduces() -> Result<()> {
+    let sp = sp_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let sp_v = b.read_variable(&sp)?;
+    let s16 = b.build_int_const(16, NodeOutputType::U32);
+    let s4 = b.build_int_const(4, NodeOutputType::U32);
+    let plus16 =
+        b.build_int_binary_operation(sp_v, s16, IntBinaryOp::Add, NodeOutputType::U32)?;
+    let minus4a =
+        b.build_int_binary_operation(plus16, s4, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let minus4b =
+        b.build_int_binary_operation(minus4a, s4, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let data = b.build_int_const(0x42, NodeOutputType::U32);
+    b.build_store(minus4b, data, rsleigh::VnSpace::RAM)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg)?;
+
+    let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 8, .. }));
+    assert_eq!(
+        stack_stores, 1,
+        "((sp+16)-4)-4 must reduce to a single StackStore at offset 8"
+    );
+    Ok(())
+}
+
+/// A non-SP base (an `Add` of a non-SP register and a constant) must NOT be
+/// rewritten — `decompose_sp` returns `None` and the original Store stays.
+#[test]
+fn detect_non_sp_base_skipped() -> Result<()> {
+    let sp = sp_vn();
+    // A second register at a different offset that's not SP.
+    let other = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp, other], &[other], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let other_v = b.read_variable(&other)?;
+    let four = b.build_int_const(4, NodeOutputType::U32);
+    let addr =
+        b.build_int_binary_operation(other_v, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+    let data = b.build_int_const(0x42, NodeOutputType::U32);
+    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    StackStoreDetect::new(sp).optimize(&mut fg)?;
+
+    assert_eq!(
+        count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
+        0,
+        "non-SP base must not become a StackStore"
+    );
+    assert_eq!(
+        count(&fg, |k| matches!(k, NodeKind::Store(_))),
+        1,
+        "the original Store must remain"
+    );
+    Ok(())
+}
