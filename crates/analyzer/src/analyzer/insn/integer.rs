@@ -77,23 +77,28 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     }
 
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // We treat not equal as neg(equal) for deterministic results
+        // P-code IntNotEqual is lowered to BoolNeg(IntEqual) for deterministic
+        // canonical form (one IntCmpOp, one BoolUnaryOp instead of an
+        // IntCmpOp::NotEqual variant — keeps the cmp-op enum smaller).
+        //
+        // The cmp's operand width is the *input* width, NOT the output width:
+        // the output is a 1-byte bool, the inputs may be any integer width.
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = insn
             .output
             .as_ref()
             .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
-        let and_out = self.builder.build_int_cmp_operation(
+        let eq = self.builder.build_int_cmp_operation(
             lhs,
             rhs,
             IntCmpOp::Equal,
-            out_vn.size.try_into()?,
+            insn.inputs[0].size.try_into()?,
         )?;
-        let out = self
+        let neq = self
             .builder
-            .build_boolean_unary_operation(and_out, BoolUnaryOp::Neg)?;
-        self.write_vn(out_vn, out)
+            .build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+        self.write_vn(out_vn, neq)
     }
 
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
