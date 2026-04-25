@@ -83,10 +83,14 @@ impl FunctionBuilder {
         }
     }
 
-    /// If `output_id` is an integer constant, returns its value
+    /// If `output_id` is an integer or bool constant, returns its value
     /// sign-extended to `i64` according to the declared [`NodeOutputType`].
     ///
-    /// Returns `Ok(None)` for non-constant nodes and for `Bool` constants.
+    /// `BoolConst(true)` returns `Some(1)`; `BoolConst(false)` returns
+    /// `Some(0)` — consistent with [`Self::get_as_unsigned_int`], so that
+    /// [`Self::get_as_int`] can fold Bool constants in `extend_if_needed`.
+    ///
+    /// Returns `Ok(None)` for non-constant nodes.
     ///
     /// # Errors
     ///
@@ -99,6 +103,7 @@ impl FunctionBuilder {
             NodeKind::IntConst(val) if output_type.is_integer() => {
                 Ok(output_type.get_signed_int(*val))
             }
+            NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(i64::from(*val))),
             _ => Ok(None),
         }
     }

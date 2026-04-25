@@ -24,6 +24,16 @@ fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn get_as_int_accepts_bool_const() -> Result<()> {
+    let mut b = empty_builder()?;
+    let bt = b.build_boolean_const(true);
+    let bf = b.build_boolean_const(false);
+    assert_eq!(b.get_as_int(bt)?, Some((1u64, 1i64)));
+    assert_eq!(b.get_as_int(bf)?, Some((0u64, 0i64)));
+    Ok(())
+}
+
 /// `get_as_unsigned_int` on a non-const node must return `None`.
 #[test]
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
