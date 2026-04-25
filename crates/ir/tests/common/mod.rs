@@ -7,6 +7,7 @@
 //! downstream consumer of the crate would write.
 
 #![allow(dead_code)] // Different test files use different subsets.
+#![allow(clippy::unwrap_used)]
 
 use ir::node::NodeOutputType;
 use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};

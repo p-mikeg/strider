@@ -4,6 +4,8 @@
 //! These tests reach the `Graph` arena through the `BuiltFunctionGraph::graph`
 //! field, since the `Graph` type itself isn't named at the crate root.
 
+#![allow(clippy::unwrap_used)]
+
 mod common;
 
 use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};

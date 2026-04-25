@@ -3,6 +3,8 @@
 //! on the assembled graph and returns its error if it fails, so reaching
 //! `Ok(_)` from `build()` is itself a green for these tests.
 
+#![allow(clippy::unwrap_used)]
+
 mod common;
 
 use ir::node::NodeOutputType;

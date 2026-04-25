@@ -2,6 +2,8 @@
 //! under the documented backward-data + forward-control rule, exactly once,
 //! and never visit detached or never-attached nodes.
 
+#![allow(clippy::unwrap_used)]
+
 mod common;
 
 use std::collections::HashSet;
