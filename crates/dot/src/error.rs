@@ -63,7 +63,7 @@ impl<E: Debug> Error<E> {
 
 impl<E: Debug + std::fmt::Display> std::fmt::Display for Error<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&*self.kind, f)
+        write!(f, "{}", self.kind)
     }
 }
 
