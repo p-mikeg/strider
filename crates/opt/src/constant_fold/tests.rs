@@ -880,6 +880,62 @@ fn fold_float_div_by_one_identity() -> Result<()> {
 }
 
 #[test]
+fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
+    // FloatUnaryOp::Round is documented (op_kinds.rs) as "Round to nearest
+    // integer (ties to even)" — the IEEE 754 default rounding mode and what
+    // x86/ARM hardware emits. Half-ties must round to the nearest even
+    // integer, NOT away from zero.
+    let cases: &[(f64, f64)] = &[
+        (0.5, 0.0),
+        (1.5, 2.0),
+        (2.5, 2.0),
+        (3.5, 4.0),
+        (-0.5, -0.0),
+        (-1.5, -2.0),
+        (-2.5, -2.0),
+    ];
+    for &(input, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(input.to_bits(), NodeOutputType::F64);
+            Ok(b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F64)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed(),
+            "Round({input}) did not fold");
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst(expected.to_bits()),
+            "Round({input}) folded to wrong value (expected {expected})",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
+    let cases: &[(f32, f32)] = &[
+        (0.5, 0.0),
+        (1.5, 2.0),
+        (2.5, 2.0),
+        (-0.5, -0.0),
+        (-2.5, -2.0),
+    ];
+    for &(input, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(input.to_bits() as u64, NodeOutputType::F32);
+            Ok(b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F32)?)
+        })?;
+        assert!(ConstantFold.optimize(&mut fg)?.changed(),
+            "Round({input}) did not fold");
+        assert_eq!(
+            return_kind(&fg)?,
+            NodeKind::FloatConst(expected.to_bits() as u64),
+            "Round({input}) folded to wrong value (expected {expected})",
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> {
     // IntBitsToFloat(FloatBitsToInt(FloatAdd(1.0, 2.0)))
     // → first, FloatAdd(1.0, 2.0) folds to FloatConst(3.0)
