@@ -307,6 +307,22 @@ mod tests {
         }
     }
 
+    #[track_caller]
+    fn assert_disjoint(
+        a: &[rsleigh::Vn],
+        b: &[rsleigh::Vn],
+        a_label: &str,
+        b_label: &str,
+        case_name: &str,
+    ) {
+        for vn in a {
+            assert!(
+                !b.contains(vn),
+                "{case_name}: {a_label} reg {vn:?} also appears in {b_label}",
+            );
+        }
+    }
+
     /// Every preset must resolve to the documented number of registers in
     /// each category, with pairwise distinct varnodes and disjoint arg/
     /// callee-saved sets.
@@ -330,13 +346,20 @@ mod tests {
             assert_all_distinct(&built.arg_passing_regs, c.name);
             assert_all_distinct(&built.callee_saved_regs, c.name);
             assert_all_distinct(&built.ret_val_regs, c.name);
-            for vn in &built.arg_passing_regs {
-                assert!(
-                    !built.callee_saved_regs.contains(vn),
-                    "{}: arg reg {vn:?} is also callee-saved",
-                    c.name,
-                );
-            }
+            assert_disjoint(
+                &built.arg_passing_regs,
+                &built.callee_saved_regs,
+                "arg_passing_regs",
+                "callee_saved_regs",
+                c.name,
+            );
+            assert_disjoint(
+                &built.ret_val_regs,
+                &built.callee_saved_regs,
+                "ret_val_regs",
+                "callee_saved_regs",
+                c.name,
+            );
         }
     }
 
