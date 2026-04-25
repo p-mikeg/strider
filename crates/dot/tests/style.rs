@@ -2,8 +2,7 @@
 
 //! Pins the contract of `DotStyle::{dark, dark_cfg, empty}`: empty has no
 //! attributes; dark has the documented dark-theme attributes; dark_cfg is
-//! identical to dark except for the fontname swap (Task 6 will remove the
-//! dead margin block — these tests stay green either way).
+//! identical to dark except for the fontname swap.
 
 use dot::DotStyle;
 
