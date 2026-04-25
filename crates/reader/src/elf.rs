@@ -294,8 +294,9 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
         // Place the read bytes at the endianness-appropriate end of an 8-byte
         // buffer so the final from_{le,be}_bytes produces the same numeric
         // value for an N-byte load as the target machine would.
+        let is_little = self.is_little_endian;
         let mut buf = [0u8; 8];
-        let slot = if self.is_little_endian {
+        let slot = if is_little {
             &mut buf[..size]
         } else {
             &mut buf[8 - size..]
@@ -303,7 +304,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
         if self.lookup.read(addr, slot)? != size {
             return None;
         }
-        Some(if self.is_little_endian {
+        Some(if is_little {
             u64::from_le_bytes(buf)
         } else {
             u64::from_be_bytes(buf)
