@@ -19,6 +19,13 @@ impl Analyzer {
     ///
     /// Resolves all register names in `calling_convention` against
     /// `sleigh_regs`.  Returns an error if any name is unknown.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::TargetError`] (wrapping
+    /// [`target::ErrorKind::UnknownRegName`]) if any register name in
+    /// `calling_convention` (including the stack pointer) does not resolve
+    /// against `sleigh_regs`.
     pub fn new(
         arch: crate::SleighArch,
         sleigh_regs: rsleigh::SleighRegs,
@@ -32,6 +39,7 @@ impl Analyzer {
     }
 
     /// Returns the resolved calling convention this analyzer was built with.
+    #[must_use]
     pub fn calling_convention(&self) -> &crate::BuiltCallingConvention {
         &self.calling_convention
     }
@@ -47,6 +55,7 @@ impl Analyzer {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 4. [`opt::FunctionArgDetect`] as a post-pass, canonicalising
     ///    register- and stack-passed argument reads into `FunctionArg` nodes.
+    #[must_use]
     pub fn build_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::default_pipeline();
         p.add(opt::StackStoreDetect::from_convention(
@@ -66,15 +75,17 @@ impl Analyzer {
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
-    /// across all regions of `cfg`.
+    /// across all regions of `cfg`, sorted in a deterministic order.
     ///
     /// The result is used to pre-declare every variable the IR builder must
-    /// track.
+    /// track.  Determinism is required so that downstream `VarId` numbering
+    /// (and any node IDs the IR cache derives from it) is stable across runs.
     pub(super) fn find_all_unique_vns<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Vec<rsleigh::Vn> {
-        let mut all_vns: std::collections::HashSet<rsleigh::Vn> = std::collections::HashSet::new();
+        let mut all_vns: std::collections::HashSet<rsleigh::Vn> =
+            std::collections::HashSet::new();
         for region in cfg.regions() {
             for wrapped in region.insns.iter() {
                 for vn in wrapped.insn.all_vns() {
@@ -82,7 +93,11 @@ impl Analyzer {
                 }
             }
         }
-        all_vns.iter().copied().collect()
+        let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
+        // Deterministic order: (space-shortcut, offset, size).  HashSet
+        // iteration would otherwise depend on the random hasher seed.
+        vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
+        vns
     }
 
     /// Translates a complete control-flow graph into an [`ir::BuiltFunctionGraph`].
@@ -95,6 +110,17 @@ impl Analyzer {
     /// 4. Translate instructions in each region, resolving branch targets via
     ///    the mapped graph.
     /// 5. Link fallthrough edges by iterating `cfg_ir_graph`'s edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] wrapping the underlying failure when:
+    /// - the IR builder fails to create or look up a region
+    ///   ([`ErrorKind::CfgNoRegion`], [`ErrorKind::IrError`]);
+    /// - an instruction translation fails (any of the per-opcode error variants
+    ///   in [`ErrorKind`]: [`ErrorKind::UnimplementedOpcode`],
+    ///   [`ErrorKind::MissingOutputVn`], [`ErrorKind::UnsupportedVnSpace`],
+    ///   [`ErrorKind::UnsupportedRegSize`], etc.);
+    /// - the CFG itself is malformed ([`ErrorKind::CfgError`]).
     pub fn analyze_cfg<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,

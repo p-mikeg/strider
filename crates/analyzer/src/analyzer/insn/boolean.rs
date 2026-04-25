@@ -1,6 +1,6 @@
 use ir::{BoolBinaryOp, BoolUnaryOp};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 
 use super::super::IrAnalyzer;
 
@@ -14,10 +14,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self.builder.build_boolean_operation(lhs, rhs, op)?;
         self.write_vn(out_vn, out)
     }
@@ -30,10 +27,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         op: BoolUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self.builder.build_boolean_unary_operation(input, op)?;
         self.write_vn(out_vn, out)
     }

@@ -76,7 +76,7 @@ impl FunctionBuilder {
         let node_id = self.graph().get_node_from_output(output_id);
         match self.graph().node_kind(node_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_unsigned_int(*val))
+                Ok(output_type.get_unsigned_int_u128(*val).and_then(|v| u64::try_from(v).ok()))
             }
             NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(*val as u64)),
             _ => Ok(None),
@@ -101,7 +101,7 @@ impl FunctionBuilder {
         let node_id = self.graph().get_node_from_output(output_id);
         match self.graph().node_kind(node_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_signed_int(*val))
+                Ok(output_type.get_signed_int_i128(*val).and_then(|v| i64::try_from(v).ok()))
             }
             NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(i64::from(*val))),
             _ => Ok(None),
@@ -157,7 +157,7 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(output_id)? {
-            return self.build_int_const(val, output_type);
+            return Ok(self.build_int_const(val, output_type));
         }
 
         if curr_output_type.byte_size() <= output_type.byte_size() {
@@ -183,14 +183,24 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
-            return match op {
-                ExtendOp::SignExtend => self.build_int_const(signed_val as u64, output_type),
+            return Ok(match op {
+                // signed_val is i64; reinterpret bits as u128 (sign-extended to i128 then cast)
+                ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
-            };
+            });
         }
 
         if !output_type.is_integer() {
             return Err(ErrorKind::ExpectedInteger(output_id).into());
+        }
+
+        // Non-integer input (Bool / Float) into an integer extend: insert a
+        // CastToInt first so the Extend node receives an AnyInt input as its
+        // signature requires.  Without this, comparison results (Bool) flowing
+        // through register writes via write_reg_vn would fail IR validation
+        // with "OutputType(Bool), expected AnyInt".
+        if !curr_output_type.is_integer() {
+            return self.convert_to_int_if_needed(output_id, output_type);
         }
 
         if curr_output_type.byte_size() >= output_type.byte_size() {

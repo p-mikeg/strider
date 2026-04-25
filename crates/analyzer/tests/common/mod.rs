@@ -1,0 +1,413 @@
+//! Shared infrastructure for the system-test suite.
+//!
+//! Every `tests/<category>.rs` declares `mod common;` and uses these helpers.
+//! Adding a new test case is mechanical:
+//!
+//! ```ignore
+//! per_arch_test!("arithmetic", "add", graph_must_contain_int_add);
+//! fn graph_must_contain_int_add(g: &ir::BuiltFunctionGraph) {
+//!     assert!(common::count_int_binop(g, ir::IntBinaryOp::Add) >= 1);
+//! }
+//! ```
+//!
+//! The macro expands to six `#[test]` functions, one per supported arch
+//! (`x86`, `x64`, `aarch64`, `arm`, `mips32le`, `mips32be`).  Each arch test
+//! loads its binary at `fixtures/out/<arch>/<case>.elf`, analyses the named
+//! symbol, runs the optimiser pipeline (with `LoadReadOnly` wired to the
+//! binary's `.rodata`), and invokes the user-provided assertion closure.
+
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable,
+    dead_code  // category test files won't use every helper
+)]
+
+use object::{Object, ObjectSymbol};
+use std::path::PathBuf;
+
+// ── Architecture enum ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arch { X86, X64, Aarch64, Arm, Mips32le, Mips32be }
+
+impl Arch {
+    pub fn name(self) -> &'static str {
+        match self {
+            Arch::X86 => "x86",
+            Arch::X64 => "x64",
+            Arch::Aarch64 => "aarch64",
+            Arch::Arm => "arm",
+            Arch::Mips32le => "mips32le",
+            Arch::Mips32be => "mips32be",
+        }
+    }
+    pub fn sleigh(self) -> analyzer::SleighArch {
+        match self {
+            Arch::X86 => analyzer::SleighArch::x86(),
+            Arch::X64 => analyzer::SleighArch::x86_64(),
+            Arch::Aarch64 => analyzer::SleighArch::aarch64(),
+            Arch::Arm => analyzer::SleighArch::arm(),
+            Arch::Mips32le => analyzer::SleighArch::mipsle32(),
+            Arch::Mips32be => analyzer::SleighArch::mipsbe32(),
+        }
+    }
+    pub fn cc(self) -> analyzer::CallingConvention {
+        match self {
+            Arch::X86 => analyzer::CallingConvention::x86_cdecl(),
+            Arch::X64 => analyzer::CallingConvention::x86_64_systemv_abi(),
+            Arch::Aarch64 => analyzer::CallingConvention::aarch64_aapcs64(),
+            Arch::Arm => analyzer::CallingConvention::arm_aapcs(),
+            // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
+            Arch::Mips32le | Arch::Mips32be => analyzer::CallingConvention::mips_o32(),
+        }
+    }
+}
+
+// ── Binary path resolution ───────────────────────────────────────────────────
+
+pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/out")
+        .join(arch.name())
+        .join(format!("{case}.elf"))
+}
+
+// ── Pipeline runner ──────────────────────────────────────────────────────────
+
+/// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
+/// full analyzer + optimiser pipeline (with `LoadReadOnly` against the same
+/// ELF) and returns the resulting graph.
+///
+/// Panics on any failure — system tests are pass/fail end-to-end checks.  If
+/// the binary is missing, the panic carries an actionable message including
+/// the `make -C fixtures` instruction.
+pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph {
+    let path = binary_path(arch, case);
+    if !path.exists() {
+        panic!(
+            "missing test binary {path:?}; run `make -C fixtures` (or \
+             `make -C fixtures ARCH={} CASE={case}` for just this case)",
+            arch.name()
+        );
+    }
+    let obj = reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
+    let sleigh_arch = arch.sleigh();
+    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+        .expect("probe sleigh new")
+        .regs()
+        .expect("probe sleigh regs");
+    let ana = analyzer::Analyzer::new(sleigh_arch, regs, arch.cc())
+        .expect("Analyzer::new");
+    let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+        .expect("real sleigh new");
+    let addr = obj
+        .symbol_by_name(fn_name)
+        .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
+        .address();
+    let cfg = cfg::Builder::new(
+        sleigh, addr,
+        cfg::OptionsBuilder::new().allow_code_before_start_addr().build()
+    )
+    .build()
+    .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
+    let mut graph = ana.analyze_cfg(&cfg)
+        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
+    let rom = reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
+    let mut p = ana.build_optimizer_pipeline();
+    p.add(opt::LoadReadOnly(rom));
+    p.run(&mut graph)
+        .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
+    graph
+}
+
+// ── Assertion vocabulary ─────────────────────────────────────────────────────
+//
+// All counters walk the graph in pre-order and filter on the node kind.
+// Naming convention: `count_<thing>` returns a `usize`; `has_<thing>` returns a `bool`.
+
+use ir::node::NodeKind;
+
+pub fn count_kind<F: Fn(&NodeKind) -> bool>(g: &ir::BuiltFunctionGraph, pred: F) -> usize {
+    g.preorder().filter(|nid| pred(g.graph.node_kind(*nid))).count()
+}
+
+pub fn count_int_binop(g: &ir::BuiltFunctionGraph, op: ir::IntBinaryOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::IntBinaryOp(o) if *o == op))
+}
+pub fn count_int_unop(g: &ir::BuiltFunctionGraph, op: ir::IntUnaryOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::IntUnaryOp(o) if *o == op))
+}
+pub fn count_int_cmp(g: &ir::BuiltFunctionGraph, op: ir::IntCmpOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::IntCmpOp(o) if *o == op))
+}
+pub fn count_float_binop(g: &ir::BuiltFunctionGraph, op: ir::FloatBinaryOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::FloatBinaryOp(o) if *o == op))
+}
+pub fn count_float_unop(g: &ir::BuiltFunctionGraph, op: ir::FloatUnaryOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::FloatUnaryOp(o) if *o == op))
+}
+pub fn count_float_cmp(g: &ir::BuiltFunctionGraph, op: ir::FloatCmpOp) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::FloatCmpOp(o) if *o == op))
+}
+
+pub fn count_calls (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Call)) }
+pub fn count_ifs   (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::If)) }
+pub fn count_returns(g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Return)) }
+pub fn count_loops (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::ControlPhi(_))) }
+pub fn count_loads (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
+pub fn count_stores(g: &ir::BuiltFunctionGraph) -> usize {
+    // Both raw Store and StackStore count as "writes to memory" from the user's POV.
+    count_kind(g, |k| matches!(k, NodeKind::Store(_) | NodeKind::StackStore { .. }))
+}
+pub fn count_stack_stores(g: &ir::BuiltFunctionGraph) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::StackStore { .. }))
+}
+pub fn count_popcount(g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Popcount)) }
+pub fn count_lzcount (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Lzcount)) }
+pub fn count_int_consts(g: &ir::BuiltFunctionGraph) -> usize {
+    count_kind(g, |k| matches!(k, NodeKind::IntConst(_)))
+}
+
+pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &ir::BuiltFunctionGraph, pred: F) -> bool {
+    count_kind(g, pred) > 0
+}
+
+pub fn has_constant(g: &ir::BuiltFunctionGraph, value: u64) -> bool {
+    // IntConst stores u128; compare against the u64 value widened to u128.
+    has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
+}
+
+// ── per_arch_test! macro ─────────────────────────────────────────────────────
+
+/// Generates one `#[test]` per (architecture, function) pair.
+///
+/// Basic form (all six archs run):
+///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>);
+///
+/// With per-arch ignores (specific archs are `#[ignore = "reason"]`-marked):
+///   per_arch_test!("<case>", "<fn_name>", <assertion_fn>, ignore = {
+///       Mips32le: "BUG-N: <one-line reason>",
+///       Mips32be: "BUG-N: <one-line reason>",
+///   });
+///
+/// Ignore reasons should reference an entry in
+/// docs/superpowers/plans/2026-04-25-analyzer-known-issues.md so a future
+/// reader can find the diagnosis and the fix path.
+///
+/// Implementation note: because Rust `macro_rules!` does not support ident
+/// equality matching, the ignore block is parsed with individual per-arch
+/// arms.  The outer macro converts each arch's entry into either a
+/// `[ignored "reason"]` or `[run]` group, then the inner `__one_arch_test!`
+/// helper uses that group as its last argument.
+#[macro_export]
+macro_rules! per_arch_test {
+    // No-ignore shorthand.
+    ($case:literal, $fn_name:literal, $assert:ident) => {
+        per_arch_test!($case, $fn_name, $assert, ignore = {});
+    };
+    // Full form: parse the per-arch ignore list into a canonical group per arch.
+    ($case:literal, $fn_name:literal, $assert:ident, ignore = { $($skip_arch:ident: $reason:literal),* $(,)? }) => {
+        paste::paste! {
+            mod [<test_ $fn_name>] {
+                use super::*;
+                // Resolve each arch's ignore entry (or lack thereof) and emit
+                // the test function.  The inner `__one_arch_test!` macro
+                // receives the ignore list verbatim and scans it for a
+                // matching entry using dedicated per-arch arms.
+                $crate::__one_arch_test!(X86,      x86,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X64,      x64,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Aarch64,  aarch64,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Arm,      arm,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips32le, mips32le, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips32be, mips32be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+            }
+        }
+    };
+}
+
+// `__one_arch_test!` has one arm per named arch plus one "not found" base.
+// The trick: the `ignore` block is an opaque `{ ... }` group.  We pass it
+// to a per-arch scanner (`__scan_ignore_X86!` etc.) which digs into the
+// braces and either emits `#[ignore = $r] #[test] fn $fn() { ... }` or a
+// plain `#[test] fn $fn() { ... }`.
+//
+// This avoids expanding `$(arch: reason),*` as variable-length token trees
+// in recursive macro calls (which is where the `:` collision occurs).
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __one_arch_test {
+    (X86, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_x86!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (X64, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_x64!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Aarch64, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_aarch64!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Arm, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_arm!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Mips32le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_mips32le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Mips32be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_mips32be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+}
+
+// Per-arch scanners.  Each macro scans its `{ ... }` group for its own
+// arch key.  Arms: found (emit ignored test) | skip one entry | empty (emit
+// plain test).  Using `{ ... }` groups means the outer `,` in the list is
+// inside braces and is NOT part of the macro argument separator — so there is
+// no ambiguity for the `:` token inside each entry.
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_x86 {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { X86: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X86, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_x86!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X86, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_x64 {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { X64: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X64, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_x64!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X64, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_aarch64 {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Aarch64: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Aarch64, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_aarch64!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Aarch64, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_arm {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Arm: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Arm, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_arm!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Arm, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_mips32le {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Mips32le: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips32le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_mips32le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips32le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_mips32be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Mips32be: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips32be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_mips32be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips32be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}

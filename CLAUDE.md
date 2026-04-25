@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build all crates
 cargo build --workspace
 
-# Run the main example (reads binary_tests/binary_test, outputs cfg.html, graph.html)
+# Run the main example (reads fixtures/binary_test, outputs cfg.html, graph.html)
 cargo run --example analyzer
 
 # Run all tests

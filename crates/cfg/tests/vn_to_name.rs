@@ -10,7 +10,7 @@ use cfg::{test_api::vn_to_name, ErrorKind};
 use rsleigh::{Vn, VnAddr, VnSpace};
 
 fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
-    let p = binary("x64");
+    let p = binary("x64", "add");
     build_cfg(
         p.to_str().unwrap(),
         "add",

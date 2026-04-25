@@ -40,7 +40,7 @@ pub struct Bindings {
 enum BindingEntry {
     Var(Var, NodeOutputId),
     NodeVar(NodeVar, NodeId),
-    Int(IntVar, u64),
+    Int(IntVar, u128),
     Bool(BoolVar, bool),
     Float(FloatVar, u64),
     IntBinaryOp(IntBinaryOpVar, IntBinaryOp),
@@ -109,7 +109,7 @@ macro_rules! decl_bind_get {
 
 decl_bind_get!(Var,             bind_var,             get,                 Var,             NodeOutputId, "the matched `NodeOutputId` (data output edge)");
 decl_bind_get!(NodeVar,         bind_node_var,        get_node,            NodeVar,         NodeId,       "the matched `NodeId` (control-level node)");
-decl_bind_get!(Int,             bind_int,             get_int,             IntVar,          u64,          "the integer constant value");
+decl_bind_get!(Int,             bind_int,             get_int,             IntVar,          u128,         "the integer constant value");
 decl_bind_get!(Bool,            bind_bool,            get_bool,            BoolVar,         bool,         "the boolean constant value");
 decl_bind_get!(Float,           bind_float,           get_float_bits,      FloatVar,        u64,          "the float constant IEEE 754 bit pattern");
 decl_bind_get!(IntBinaryOp,     bind_int_binary_op,   get_int_binary_op,   IntBinaryOpVar,  IntBinaryOp,  "the [`IntBinaryOp`] variant");

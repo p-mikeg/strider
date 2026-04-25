@@ -23,9 +23,12 @@ version = "0.1.0"
 dependencies = [
  "cfg",
  "dot",
+ "expect-test",
  "ir",
  "object",
  "opt",
+ "paste",
+ "pattern",
  "reader",
  "rsleigh",
  "strider-error",
@@ -331,6 +334,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethnum"
+version = "1.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40404c3f5f511ec4da6fe866ddf6a717c309fdbb69fbbad7b0f3edab8f2e835f"
+
+[[package]]
 name = "expect-test"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -491,6 +500,7 @@ dependencies = [
  "cranelift-entity",
  "dot",
  "entity-utils",
+ "ethnum",
  "graphwalk",
  "itertools 0.13.0",
  "proptest",
@@ -627,6 +637,7 @@ name = "opt"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "ethnum",
  "ir",
  "pattern",
  "reader",
@@ -648,9 +659,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "pattern"
 version = "0.1.0"
 dependencies = [
+ "ethnum",
  "ir",
  "opt",
  "rsleigh",

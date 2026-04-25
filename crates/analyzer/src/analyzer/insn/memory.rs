@@ -26,20 +26,14 @@ fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
 impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         self.write_vn(out_vn, input)
     }
 
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let space = decode_space_id(insn)?;
         let addr = self.read_vn(&insn.inputs[1])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self
             .builder
             .build_load(addr, space, out_vn.size.try_into()?)?;
@@ -56,10 +50,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
 
     pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         self.write_vn(out_vn, input)
     }
 }

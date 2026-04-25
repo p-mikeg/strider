@@ -67,34 +67,32 @@ impl FunctionBuilder {
         ))
     }
 
-    /// Emits an integer constant node with the given value and type.
+    /// Emits an integer constant node.
     ///
-    /// `IntConst` stores its value as a `u64`, so widths above 64 bits
-    /// cannot be faithfully represented and are rejected.
+    /// `val` is masked to `output_type`'s bit width before storage.  Accepts
+    /// any value convertible to `u128` — most callers pass a `u64` literal.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// Returns [`ErrorKind::IntConstWidthExceedsU64`] when `output_type` is
-    /// [`NodeOutputType::U128`] or [`NodeOutputType::U256`].
+    /// Panics if `output_type` is not an integer type, or is `U256` (which
+    /// is not yet representable in the u128 storage; no current consumer
+    /// produces a U256 IntConst, see plan
+    /// `2026-04-25-int-const-u256-and-pattern-width-aware.md`).
     pub fn build_int_const(
         &mut self,
-        val: u64,
+        val: impl Into<u128>,
         output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        if matches!(output_type, NodeOutputType::U128 | NodeOutputType::U256) {
-            return Err(ErrorKind::IntConstWidthExceedsU64(output_type).into());
-        }
-        Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
-    }
-
-    /// Emits a 64-bit unsigned integer constant node.
-    ///
-    /// # Errors
-    ///
-    /// Cannot fail — `U64` is always a valid `IntConst` width — but returns
-    /// `Result` for symmetry with [`Self::build_int_const`].
-    pub fn build_uint64_const(&mut self, val: u64) -> Result<NodeOutputId> {
-        self.build_int_const(val, NodeOutputType::U64)
+    ) -> NodeOutputId {
+        assert!(
+            output_type.is_integer(),
+            "build_int_const called with non-integer type {output_type:?}"
+        );
+        assert!(
+            !matches!(output_type, NodeOutputType::U256),
+            "build_int_const(U256) not yet supported — IntConst storage is u128"
+        );
+        let val = val.into() & output_type.bit_mask_u128();
+        self.build_single_output_pure(NodeKind::IntConst(val), [], output_type)
     }
 
     /// Emits an integer binary operation node with automatic type coercion.
@@ -363,7 +361,10 @@ impl FunctionBuilder {
         // Immediate fold: IntConst → FloatConst (same bits).
         let node_id = self.graph().get_node_from_output(input);
         if let NodeKind::IntConst(bits) = *self.graph().node_kind(node_id) {
-            return Ok(self.build_float_const(bits, float_type));
+            // FloatConst stores bits as u64; float types are at most 64 bits wide,
+            // so the value fits — u128 payload is masked to the type's width already.
+            #[allow(clippy::cast_possible_truncation)]
+            return Ok(self.build_float_const(bits as u64, float_type));
         }
         Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [input], float_type))
     }
@@ -391,7 +392,7 @@ impl FunctionBuilder {
         // Immediate fold: FloatConst → IntConst (same bits).
         let node_id = self.graph().get_node_from_output(input);
         if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id) {
-            return self.build_int_const(bits, int_type);
+            return Ok(self.build_int_const(bits, int_type));
         }
         Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))
     }

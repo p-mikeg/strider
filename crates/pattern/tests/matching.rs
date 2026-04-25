@@ -52,3 +52,6 @@ mod bindings;
 
 #[path = "matching/rewrite.rs"]
 mod rewrite;
+
+#[path = "matching/int_const_width_aware.rs"]
+mod int_const_width_aware;

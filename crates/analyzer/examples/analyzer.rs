@@ -8,7 +8,7 @@
 use object::{Object, ObjectSymbol};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let binary_path = "binary_tests/out/x86/test.elf";
+    let binary_path = "fixtures/out/x86/test.elf";
 
     let obj = reader::load_elf(binary_path)?;
     let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;

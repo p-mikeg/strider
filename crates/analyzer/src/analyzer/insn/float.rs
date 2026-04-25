@@ -41,10 +41,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let result = self.builder.build_float_binary_op(lhs, rhs, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
@@ -57,10 +54,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         op: FloatUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let result = self.builder.build_float_unary_op(input, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
@@ -74,20 +68,14 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let result = self.builder.build_float_cmp_op(lhs, rhs, op)?;
         self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let result = self
             .builder
             .build_float_cmp_op(input, input, FloatCmpOp::NotEqual)?;
@@ -96,10 +84,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
 
     pub(super) fn handle_float_int_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let int_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let float_result = self.builder.build_int_to_float(int_input, float_ty)?;
         self.write_float_to_vn(out_vn, float_result)
@@ -107,10 +92,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
 
     pub(super) fn handle_float_float_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let float_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out_float_ty = Self::float_type_from_vn(out_vn)?;
         let float_result = self
             .builder
@@ -120,10 +102,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
 
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let float_input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let int_ty: NodeOutputType = out_vn.size.try_into()?;
         let int_result = self.builder.build_float_to_int(float_input, int_ty)?;
         self.write_vn(out_vn, int_result)

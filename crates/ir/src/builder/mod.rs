@@ -98,14 +98,34 @@ impl FunctionBuilder {
     /// [`ErrorKind::UnsupportedOutputSize`] from the entry-block setup when
     /// a tracked variable's byte size has no matching `NodeOutputType`.
     pub fn new(
-        all_used_variables: Vec<rsleigh::Vn>,
+        mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &target::BuiltCallingConvention,
     ) -> Result<Self> {
+        // Ensure all return registers (int + float) are tracked variables.
+        // This keeps the data-flow chain from a float operation's output
+        // (e.g. an aarch64 FloatAdd writes to s0, the 4-byte sub-register of q0)
+        // connected to the Return node — without this step `q0` would not be
+        // in the variable set, and the analyzer's register-aliasing logic
+        // would never widen the s0 write into a q0 store visible to Return.
+        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+            if !all_used_variables.contains(v) {
+                all_used_variables.push(*v);
+            }
+        }
+        // Union of int + float return registers, in that order.  Pattern
+        // queries that index `ret_val(0)` continue to find the first integer
+        // ret slot; new queries can use `ret_val(N)` where N >= int-count to
+        // reach float ret slots.
+        let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
+            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
+        );
+        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
         Self::new_raw(
             all_used_variables,
             &cc.arg_passing_regs,
             &cc.callee_saved_regs,
-            &cc.ret_val_regs,
+            &combined_ret_vars,
             Some(cc.stack_ptr_vn),
             cc.ret_stack_pop,
         )

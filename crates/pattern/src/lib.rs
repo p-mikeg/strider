@@ -29,8 +29,8 @@
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
-//! let base = fb.build_int_const(0x1000, NodeOutputType::U64).unwrap();
-//! let offset = fb.build_int_const(8, NodeOutputType::U64).unwrap();
+//! let base = fb.build_int_const(0x1000u64, NodeOutputType::U64);
+//! let offset = fb.build_int_const(8u64, NodeOutputType::U64);
 //! let addr = fb
 //!     .build_int_binary_operation(base, offset, IntBinaryOp::Add, NodeOutputType::U64)
 //!     .unwrap();
@@ -50,8 +50,8 @@
 //! // The captured operands are `NodeOutputId`s; `get_int_const` resolves
 //! // them to the concrete constant values their producers yielded.
 //! let m = &hits[0];
-//! assert_eq!(m.get_int_const(ptr_v, &graph), Some(0x1000));
-//! assert_eq!(m.get_int_const(off_v, &graph), Some(8));
+//! assert_eq!(m.get_int_const(ptr_v, &graph), Some(0x1000u128));
+//! assert_eq!(m.get_int_const(off_v, &graph), Some(8u128));
 //! ```
 //!
 //! # Key types

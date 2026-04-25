@@ -8,55 +8,54 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// Finds the largest architectural register that fully contains `reg`.
     ///
     /// For example, given `al` (offset 0, size 1) this returns `rax`
-    /// (offset 0, size 8) because x86 reads/writes to `al` always go through
+    /// (offset 0, size 8) on x86-64 because writes to `al` always go through
     /// `rax`.  The returned register is the widest one in the variable set
-    /// that completely covers `reg`'s byte range.
+    /// whose byte range fully covers `reg`'s byte range.
     ///
-    /// Returns `None` only if no variable in the builder covers the range,
-    /// which should never happen because a register must cover itself.
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::UnsupportedVnSpace`] if `reg` is not in
+    /// [`rsleigh::VnSpace::REGISTER`].  Returns
+    /// [`ErrorKind::NoRegisterContainer`] if no variable in the builder
+    /// covers `reg`'s byte range — this should never happen because every
+    /// register at least contains itself.
     pub(super) fn find_largest_fitting_register(
         &self,
         reg: &rsleigh::Vn,
-    ) -> Result<Option<rsleigh::Vn>> {
+    ) -> Result<rsleigh::Vn> {
         if reg.addr.space != rsleigh::VnSpace::REGISTER {
             return Err(ErrorKind::UnsupportedVnSpace(reg.addr.space).into());
         }
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
-        let mut largest_reg_container: Option<rsleigh::Vn> = None;
+        let mut best: Option<rsleigh::Vn> = None;
         for sleigh_reg in self.builder.variables() {
-            if !matches!(sleigh_reg.addr.space, rsleigh::VnSpace::REGISTER) {
+            if sleigh_reg.addr.space != rsleigh::VnSpace::REGISTER {
                 continue;
             }
-            let sleigh_reg_start = sleigh_reg.addr.off;
-            let sleigh_reg_end = sleigh_reg_start + sleigh_reg.size as u64;
-
-            if sleigh_reg_start > reg_start {
+            let s = sleigh_reg.addr.off;
+            let e = s + sleigh_reg.size as u64;
+            if s > reg_start || e < reg_end {
                 continue;
             }
-            if sleigh_reg_end < reg_end {
-                continue;
-            }
-            // We know now that the reg is contained by sleigh reg
-            if let Some(reg_container) = largest_reg_container {
-                // If the current container is larger - choose it
-                if reg_container.size < sleigh_reg.size {
-                    largest_reg_container = Some(*sleigh_reg);
-                }
-            } else {
-                largest_reg_container = Some(*sleigh_reg);
+            // Contained.  Take it if it's strictly wider than the current best.
+            if best.is_none_or(|b| b.size < sleigh_reg.size) {
+                best = Some(*sleigh_reg);
             }
         }
-        Ok(largest_reg_container)
+        best.ok_or_else(|| ErrorKind::NoRegisterContainer(*reg).into())
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their
     /// position inside `container_reg`.
     ///
-    /// For little-endian architectures the shift is simply
-    /// `8 * (reg.off − container.off)`.  For big-endian the shift accounts
-    /// for the container's total size so that the most-significant byte comes
-    /// first.
+    /// Little-endian: bit position = `8 * (reg.off − container.off)` —
+    /// the LSB byte is at offset 0, so shifting right by the byte distance
+    /// from the container's start places `reg`'s bits at the bottom.
+    ///
+    /// Big-endian: the MSB byte is at offset 0, so a sub-register sits
+    /// `(container.size − reg.size − (reg.off − container.off))` bytes above
+    /// the LSB.  Multiplied by 8 this is the right-shift count.
     pub(super) fn calculate_reg_shift_from_container(
         &self,
         reg: &rsleigh::Vn,
@@ -65,7 +64,9 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         match self.analyzer.arch.endianness {
             crate::Endianness::Little => 8 * (reg.addr.off - container_reg.addr.off),
             crate::Endianness::Big => {
-                8 * (container_reg.size as u64 - (reg.addr.off - container_reg.addr.off))
+                8 * (container_reg.size as u64
+                    - reg.size as u64
+                    - (reg.addr.off - container_reg.addr.off))
             }
         }
     }
@@ -77,28 +78,34 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// relevant bits.  If `reg` is already the container (or is its own
     /// largest container) the value is returned directly.
     pub(super) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ir::Value> {
-        let container_reg = self
-            .find_largest_fitting_register(reg)?
-            .ok_or(ErrorKind::NoRegisterContainer(*reg))?;
+        let container_reg = self.find_largest_fitting_register(reg)?;
         let curr_reg_val = self.builder.read_variable(&container_reg)?;
-        let mut read_reg_val = curr_reg_val;
-        if container_reg != *reg {
-            // We need to shift the value if it is in the middle of a register
-            let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
-            if shift_value != 0 {
-                let shift_const = self
-                    .builder
-                    .build_int_const(shift_value, container_reg.size.try_into()?)?;
-                read_reg_val = self.builder.build_int_binary_operation(
-                    curr_reg_val,
-                    shift_const,
-                    IntBinaryOp::ShiftRight,
-                    reg.size.try_into()?,
-                )?;
-            }
+        if container_reg == *reg {
+            return Ok(curr_reg_val);
         }
-
-        Ok(read_reg_val)
+        // Sub-register read: shift the container's bits down to the LSB
+        // position, then truncate to the sub-register's width.  Even when
+        // the shift is zero (sub at offset 0 of the container), the
+        // truncate is required — without it the caller receives the full
+        // container width, which breaks downstream type-aware operations
+        // (e.g. CastToFloat(F32) on a U64 input cannot lower to a clean
+        // IntBitsToFloat and the optimizer ends up dropping the chain).
+        let reg_ty: ir::ValueType = reg.size.try_into()?;
+        let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
+        let shifted = if shift_value == 0 {
+            curr_reg_val
+        } else {
+            let shift_const = self
+                .builder
+                .build_int_const(shift_value, container_reg.size.try_into()?);
+            self.builder.build_int_binary_operation(
+                curr_reg_val,
+                shift_const,
+                IntBinaryOp::ShiftRight,
+                container_reg.size.try_into()?,
+            )?
+        };
+        Ok(self.builder.truncate_if_needed(shifted, reg_ty)?)
     }
 
     /// Emits IR nodes to write `val` into a register varnode.
@@ -111,68 +118,119 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ///
     /// If `reg` is equal to its own container the write is direct.
     pub(super) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
-        let container_reg = self
-            .find_largest_fitting_register(reg)?
-            .ok_or(ErrorKind::NoRegisterContainer(*reg))?;
+        let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             return Ok(self.builder.write_variable(reg, val)?);
         }
+        let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;
-
-        // The register is in the part of a bigger container
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
 
-        // Calculate the shifted value that should be in the reg inside the container
+        // Position `val`'s bits inside the container's bit window.
         let shifted_value = if shift_bits == 0 {
-            self.builder.extend_if_needed(
-                val,
-                container_reg.size.try_into()?,
-                ExtendOp::ZeroExtend,
-            )?
+            self.builder
+                .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?
         } else {
-            let shift_const = self
-                .builder
-                .build_int_const(shift_bits, container_reg.size.try_into()?)?;
+            let shift_const = self.builder.build_int_const(shift_bits, container_ty);
             self.builder.build_int_binary_operation(
                 val,
                 shift_const,
                 IntBinaryOp::ShiftLeft,
-                reg.size.try_into()?,
+                reg.size.try_into()?,  // intentionally reg's size: shifting in reg's domain before merging
             )?
         };
 
-        // Calculate the masked value of the reg in the container
+        // Mask `val` to its declared width inside the container.
         let reg_mask = crate::utils::vn_mask(reg)?;
-        let reg_mask_val = self
-            .builder
-            .build_int_const(reg_mask, container_reg.size.try_into()?)?;
+        let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty);
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
             shifted_value,
             IntBinaryOp::And,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
 
-        // Calculate the rest of the container
-        let container_mask = crate::utils::vn_mask(&container_reg)? & (!reg_mask);
-        let container_mask_val = self
-            .builder
-            .build_int_const(container_mask, container_reg.size.try_into()?)?;
+        // Mask out the old bits of `reg` from the container.
+        let container_mask = crate::utils::vn_mask(&container_reg)? & !reg_mask;
+        let container_mask_val = self.builder.build_int_const(container_mask, container_ty);
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val,
             container_reg_val,
             IntBinaryOp::And,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
 
-        // Merge the containers
+        // Merge.
         let final_container_value = self.builder.build_int_binary_operation(
             container_val,
             reg_val,
             IntBinaryOp::Or,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
         self.write_reg_vn(&container_reg, final_container_value)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod shift_formula_tests {
+    use rsleigh::{Vn, VnAddr, VnSpace};
+
+    fn reg(off: u64, size: u32) -> Vn {
+        Vn { addr: VnAddr { off, space: VnSpace::REGISTER }, size }
+    }
+
+    /// Shift placement for little-endian: byte offset within container × 8.
+    /// 4-byte container at off=0 with sub-registers at every (off, size) the
+    /// formula must support.
+    #[test]
+    fn le_shift_for_subregs_in_4byte_container() {
+        let cases = [
+            (0, 1, 0),  (1, 1, 8),  (2, 1, 16), (3, 1, 24),
+            (0, 2, 0),  (2, 2, 16), (0, 4, 0),
+        ];
+        for (sub_off, sub_size, expected) in cases {
+            let container = reg(0, 4);
+            let sub = reg(sub_off, sub_size);
+            let shift = compute_shift_le(&sub, &container);
+            assert_eq!(shift, expected,
+                "LE sub({sub_off},{sub_size}): expected {expected}, got {shift}");
+        }
+    }
+
+    /// Shift placement for big-endian: most-significant byte at offset 0,
+    /// least-significant at offset (container.size − sub.size).
+    #[test]
+    fn be_shift_for_subregs_in_4byte_container() {
+        let cases = [
+            (0, 1, 24), (1, 1, 16), (2, 1, 8), (3, 1, 0),
+            (0, 2, 16), (2, 2, 0),  (0, 4, 0),
+        ];
+        for (sub_off, sub_size, expected) in cases {
+            let container = reg(0, 4);
+            let sub = reg(sub_off, sub_size);
+            let shift = compute_shift_be(&sub, &container);
+            assert_eq!(shift, expected,
+                "BE sub({sub_off},{sub_size}): expected {expected}, got {shift}");
+        }
+    }
+
+    /// 8-byte container exercises the wider arithmetic path.
+    #[test]
+    fn be_shift_for_subregs_in_8byte_container() {
+        let container = reg(0, 8);
+        assert_eq!(compute_shift_be(&reg(0, 4), &container), 32);
+        assert_eq!(compute_shift_be(&reg(4, 4), &container), 0);
+        assert_eq!(compute_shift_be(&reg(0, 1), &container), 56);
+        assert_eq!(compute_shift_be(&reg(7, 1), &container), 0);
+    }
+
+    // Free helpers mirroring calculate_reg_shift_from_container's two arms,
+    // unit-testable without spinning up a full IrAnalyzer.
+    fn compute_shift_le(reg: &Vn, container: &Vn) -> u64 {
+        8 * (reg.addr.off - container.addr.off)
+    }
+    fn compute_shift_be(reg: &Vn, container: &Vn) -> u64 {
+        8 * (container.size as u64 - reg.size as u64 - (reg.addr.off - container.addr.off))
     }
 }

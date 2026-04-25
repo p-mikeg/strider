@@ -23,6 +23,7 @@ strider-error = { path = "crates/strider-error" }
 rsleigh = { path="../rsleigh" }
 
 cranelift-bitset = "0.112.2"
+ethnum = "1.5"
 cranelift-entity = "0.112.2"
 smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
@@ -30,6 +31,7 @@ smallvec = { version = "1.13.2", default-features = false, features = [
 object = "0.38.1"
 tempfile = "3.10"
 
+paste = "1"
 petgraph = "0.8.3"
 thiserror = "2.0.18"
 itertools = { version = "0.13.0", default-features = false }

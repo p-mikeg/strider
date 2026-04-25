@@ -158,7 +158,7 @@ fn each_match_has_its_own_bindings() {
 
     // Gather the (lhs, rhs) captures across all matches as an order-
     // independent set.  Exactly the three operand pairs must appear.
-    let mut got: Vec<(u64, u64)> = hits
+    let mut got: Vec<(u128, u128)> = hits
         .iter()
         .map(|m| (m.get_int(lhs).unwrap(), m.get_int(rhs).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) }) // commutative retry can swap

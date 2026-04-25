@@ -103,7 +103,7 @@ macro_rules! decl_any_const {
 
 decl_any_const!(
     trait IntoAnyIntConst, sealed SealedAnyIntConst, method into_any_int_const_pat,
-    variant IntConst, 0u64, crate::pat::node_pat::BuildTy::InheritRoot,
+    variant IntConst, 0u128, crate::pat::node_pat::BuildTy::InheritRoot,
     typed IntVar, bind_int, get_int, "IntVar"
 );
 decl_any_const!(

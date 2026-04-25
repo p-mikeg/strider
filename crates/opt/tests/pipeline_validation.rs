@@ -17,7 +17,7 @@ use common::{make_fn, sp_vn};
 
 #[test]
 fn run_validates_after_default_pipeline() -> opt::Result<()> {
-    let mut fg = make_fn(|b| Ok(b.build_int_const(0, NodeOutputType::U64).unwrap()))?;
+    let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64)))?;
     default_pipeline().run(&mut fg)?;
     Ok(())
 }

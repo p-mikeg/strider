@@ -19,3 +19,6 @@ object.workspace = true
 workspace = true
 
 [dev-dependencies]
+pattern.workspace = true
+expect-test.workspace = true
+paste.workspace = true

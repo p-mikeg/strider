@@ -241,11 +241,51 @@ fn next_pcode_addr_within_machine_insn_advances_pcode_index() {
     assert_eq!(next, addr(0x1000, 2));
 }
 
-/// Pinned contract: a CONST-space relative branch target whose computed pcode
-/// index equals `lift_res.insns.len()` (the first index past the last valid
-/// slot) must also be rejected — the bound is exclusive.
+/// Regression for BUG-2: a CONST-space relative branch whose computed pcode
+/// index equals `lift_res.insns.len()` (one-past-end) is the Sleigh
+/// "fall-through to next machine instruction" idiom used by MIPS DIV / SLT.
+/// It must decode to the first pcode op of the *next* machine instruction,
+/// not produce an `InvalidBranchTargetVaErr`.
+///
+/// Previously the check was `target >= pcode_count`, which rejected this case.
+/// The fix narrowed it to `target > pcode_count` and handles `==` specially.
 #[test]
-fn decode_branch_target_const_space_index_at_end_errors() {
+fn const_space_branch_to_pcode_count_falls_through_to_next_insn() {
+    let mut b = make_builder(0x1000);
+    let rb = make_region_builder(&mut b, addr(0x1000, 0));
+
+    // 4 pcode ops, machine_insn_len = 4 bytes.  Branch from index 0 with
+    // offset +4 (== pcode_count) means "fall through to next machine insn".
+    let pcode_count = 4usize;
+    let lift = fake_lift_res_with_len(pcode_count, 4);
+
+    let vn = Vn {
+        addr: VnAddr {
+            space: VnSpace::CONST,
+            off: pcode_count as u64, // == insns.len() — the fall-through idiom
+        },
+        size: 8,
+    };
+
+    let target = rb
+        .decode_branch_target(vn, addr(0x1000, 0), &lift)
+        .unwrap();
+
+    // Must advance to the next machine instruction (0x1000 + 4 = 0x1004),
+    // pcode index 0 (first op of that machine insn).
+    assert_eq!(
+        target,
+        addr(0x1004, 0),
+        "fall-through branch must resolve to first pcode op of next machine insn"
+    );
+}
+
+/// Pinned contract: a CONST-space relative branch target whose computed pcode
+/// index is *strictly greater than* `lift_res.insns.len()` (more than one past
+/// the last valid slot) must still be rejected as an invalid branch.
+/// Only the exact `== pcode_count` case is the Sleigh fall-through idiom.
+#[test]
+fn decode_branch_target_const_space_index_past_pcode_count_errors() {
     let mut b = make_builder(0x1000);
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
 
@@ -255,7 +295,7 @@ fn decode_branch_target_const_space_index_at_end_errors() {
     let vn = Vn {
         addr: VnAddr {
             space: VnSpace::CONST,
-            off: pcode_count, // exactly one past the last valid index
+            off: pcode_count + 1, // strictly more than one past end — invalid
         },
         size: 8,
     };

@@ -42,10 +42,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let op_id = id_vn.addr.off;
         let segment = self.read_vn(&insn.inputs[1])?;
         let offset = self.read_vn(&insn.inputs[2])?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self.builder.build_segment_op(
             op_id,
             segment,
@@ -61,10 +58,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             .iter()
             .map(|vn| self.read_vn(vn))
             .collect::<Result<_>>()?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self
             .builder
             .build_cpool_ref(&refs, out_vn.size.try_into()?)?;
@@ -77,10 +71,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             .iter()
             .map(|vn| self.read_vn(vn))
             .collect::<Result<_>>()?;
-        let out_vn = insn
-            .output
-            .as_ref()
-            .ok_or(ErrorKind::MissingOutputVn(insn.opcode))?;
+        let out_vn = super::require_output_vn(insn)?;
         let out = self.builder.build_new(&args, out_vn.size.try_into()?)?;
         self.write_vn(out_vn, out)
     }

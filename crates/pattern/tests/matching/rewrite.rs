@@ -261,7 +261,7 @@ fn rhs_skip_sentinel_returns_false_without_mutation() {
         // out via `?` when None.
         int_const_with!([a_v, b_v, ty] => {
             let _ = (a_v, b_v, ty);
-            None::<u64>.ok_or_else(pattern::Error::skip)?
+            None::<u128>.ok_or_else(pattern::Error::skip)?
         }),
     );
 
@@ -293,7 +293,7 @@ fn rhs_closure_error_wraps_as_rewrite_closure() {
         // form bails before the type check matters.
         int_const_with!([a_v, b_v] => {
             let _ = (a_v, b_v);
-            let res: pattern::Result<u64> = Err(pattern::Error::rewrite_closure(CustomErr));
+            let res: pattern::Result<u128> = Err(pattern::Error::rewrite_closure(CustomErr));
             res?
         }),
     );

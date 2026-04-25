@@ -8,7 +8,7 @@ use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 impl BuiltFunctionGraph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type), or `None` if the output is not an integer constant.
-    #[must_use] 
+    #[must_use]
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.graph.output_kind(out).as_value()?;
         if !ty.is_integer() {
@@ -16,7 +16,8 @@ impl BuiltFunctionGraph {
         }
         let node = self.graph.get_node_from_output(out);
         match *self.graph.node_kind(node) {
-            NodeKind::IntConst(v) => ty.get_unsigned_int(v),
+            // IntConst stores u128; narrow to u64 for callers that only need ≤64-bit values.
+            NodeKind::IntConst(v) => ty.get_unsigned_int_u128(v).and_then(|w| u64::try_from(w).ok()),
             _ => None,
         }
     }
@@ -59,7 +60,7 @@ impl BuiltFunctionGraph {
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         let node = self.graph.create_node(
-            NodeKind::IntConst(val),
+            NodeKind::IntConst(u128::from(val)),
             [],
             [NodeOutputKind::OutputType(ty)],
         );

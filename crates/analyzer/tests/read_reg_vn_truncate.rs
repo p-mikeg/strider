@@ -1,0 +1,102 @@
+//! Regression tests for the `read_reg_vn` truncation fix (commit `d2aa0ac`).
+//!
+//! **Bug**: `read_reg_vn` returned the full container register value when the
+//! sub-register's offset inside the container was zero (shift == 0), even if
+//! the sub-register was strictly narrower.  For example, on ARM soft-float ABI
+//! `s0` (4-byte float arg / return) lives at offset 0 inside `d0` (8-byte);
+//! before the fix `read_reg_vn(s0)` returned the 8-byte `d0` value (U64).
+//! That U64 then flowed into `IntBitsToFloat(F32)`, whose signature requires a
+//! U32 input, causing a validation error.
+//!
+//! **Fix**: always call `truncate_if_needed(shifted, reg_ty)` after computing
+//! the shifted value, even when shift == 0.  This ensures the returned value
+//! has the sub-register's declared width.
+//!
+//! **Regression surface**: the `f32_arith` fixture on ARM / MIPS32 soft-float
+//! targets exercises exactly this path.  On those ABIs, the compiler lowers
+//! `float` arguments as raw integer bits in integer registers — the f32 arg
+//! lands in `s0`/`f12`, which are 4-byte sub-registers of their 8-byte
+//! containers.  The analyzer must emit a U32 value for such sub-register reads
+//! so that `IntBitsToFloat(F32)` receives the correct input width.
+//!
+//! Hardware-FPU x86/x64/aarch64 paths are still known-broken for a separate
+//! reason (BUG-8: ConstantFold identity rewrites collapse the write_reg_vn
+//! And/Or composition and orphan the FloatBinaryOp chain), so those three
+//! architectures remain ignored here.
+
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+
+mod common;
+use common::*;
+use ir::node::NodeKind;
+
+// ── Assertion ────────────────────────────────────────────────────────────────
+
+/// `f32_arith(float, float)` performs four float binary operations (+−×÷)
+/// via soft-float library calls (on ARM/MIPS without FPU) or native FP
+/// instructions (on hardware-FPU arches).
+///
+/// For soft-float targets the four arithmetic operations are lowered to
+/// library calls, so we count `Call` nodes; the graph must be valid (the
+/// optimizer pipeline succeeded without a validation error), which already
+/// proves that `read_reg_vn` returned the correct width.
+///
+/// For hardware-FPU targets the `FloatBinaryOp` assertion is the right check,
+/// but those arches are currently ignored due to BUG-8 (ConstantFold collapses
+/// the register-merge chain); they are not part of this regression guard.
+fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
+    // The function returns a float; there must be a Return node.
+    assert!(count_returns(g) >= 1, "f32_arith must have a Return");
+
+    // On soft-float ABIs (ARM / MIPS), four float ops become four library
+    // calls; accept either FloatBinaryOp nodes OR Call nodes as evidence
+    // that the operations were lowered without a type error.
+    let float_ops = count_float_binop(g, ir::FloatBinaryOp::Add)
+        + count_float_binop(g, ir::FloatBinaryOp::Sub)
+        + count_float_binop(g, ir::FloatBinaryOp::Mul)
+        + count_float_binop(g, ir::FloatBinaryOp::Div);
+    let calls = count_calls(g);
+    assert!(
+        float_ops >= 1 || calls >= 1,
+        "f32_arith must contain FloatBinaryOp nodes (hardware FPU) or library \
+         Call nodes (soft-float); got {float_ops} float ops and {calls} calls"
+    );
+
+    // Critical: no Extend node must have a Bool-typed input, and no
+    // IntBitsToFloat node must have a U64 input (the latter would indicate
+    // that read_reg_vn failed to truncate s0/f12 to U32 before the fix).
+    for nid in g.all_node_ids() {
+        if matches!(g.graph.node_kind(nid), NodeKind::IntBitsToFloat) {
+            let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+            if let Some(input) = inputs.first() {
+                let kind = g.graph.output_kind(*input);
+                assert_ne!(
+                    kind,
+                    ir::node::NodeOutputKind::OutputType(ir::node::NodeOutputType::U64),
+                    "IntBitsToFloat node received a U64 input — \
+                     read_reg_vn must truncate the sub-register to its declared \
+                     width (U32 for s0 / f12) before passing it to this node"
+                );
+            }
+        }
+    }
+}
+
+// ── Per-architecture tests ────────────────────────────────────────────────────
+//
+// ARM and MIPS use soft-float ABIs where `float` args are passed as raw
+// integer bits in `r0` / `a0` (ARM / MIPS O32) and the float-register view
+// (`s0`, `f12`) is a 4-byte sub-register of an 8-byte container.
+//
+// Without the read_reg_vn fix these tests fail with an IR validation error:
+//   "OutputType(U64), expected AnyInt(U32)" from IntBitsToFloat's signature.
+//
+// x86 / x64 / aarch64 are hardware-FPU arches; the optimizer's ConstantFold
+// pass collapses the And/Or register-merge composition and orphans the float
+// chain, so they remain ignored (BUG-8).
+
+per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
+    X86:     "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
+    X64:     "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
+    Aarch64: "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
+});

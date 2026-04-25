@@ -109,16 +109,16 @@ impl Tb {
     // ── Constant builders ─────────────────────────────────────────────────────
 
     pub fn u64(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U64).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::U64)
     }
     pub fn u32(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U32).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::U32)
     }
     pub fn u8(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::U8).unwrap()
+        self.fb.build_int_const(v, NodeOutputType::U8)
     }
     pub fn int_of(&mut self, v: u64, ty: NodeOutputType) -> NodeOutputId {
-        self.fb.build_int_const(v, ty).unwrap()
+        self.fb.build_int_const(v, ty)
     }
     pub fn boolean(&mut self, v: bool) -> NodeOutputId {
         self.fb.build_boolean_const(v)

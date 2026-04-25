@@ -38,10 +38,10 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
     let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let addr =
         b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x11, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0x11u64, NodeOutputType::U32);
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -82,14 +82,14 @@ fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
     b.set_region(region);
     let sp_val = b.read_variable(&sp)?;
     // 0xFFFFFFFC_U32 == -4 when sign-extended.
-    let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32).unwrap();
+    let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32);
     let addr = b.build_int_binary_operation(
         sp_val,
         neg_four,
         IntBinaryOp::Add,
         NodeOutputType::U32,
     )?;
-    let data = b.build_int_const(0x11, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0x11u64, NodeOutputType::U32);
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -128,7 +128,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
     b.build_branch(body)?;
     b.set_region(body);
     let sp_val = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xAB, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0xABu64, NodeOutputType::U32);
     b.build_store(sp_val, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -170,7 +170,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     // a: sp = sp - 4; goto c
     b.set_region(a);
     let sp_a = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let sp_a2 =
         b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_a2)?;
@@ -179,7 +179,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     // b: sp = sp - 8; goto c
     b.set_region(bb);
     let sp_b = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8, NodeOutputType::U32).unwrap();
+    let eight = b.build_int_const(8u64, NodeOutputType::U32);
     let sp_b2 =
         b.build_int_binary_operation(sp_b, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_b2)?;
@@ -188,7 +188,7 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
     // c: *(sp) = 0xCC; load(sp); return loaded
     b.set_region(c);
     let sp_c = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xCC, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0xCCu64, NodeOutputType::U32);
     b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -238,7 +238,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     // a: sp = sp - 4; goto c
     b.set_region(a);
     let sp_a = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let sp_a2 =
         b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_a2)?;
@@ -247,7 +247,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     // b: sp = sp - 4; goto c  (same offset as a)
     b.set_region(bb);
     let sp_b = b.read_variable(&sp)?;
-    let four2 = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four2 = b.build_int_const(4u64, NodeOutputType::U32);
     let sp_b2 =
         b.build_int_binary_operation(sp_b, four2, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_b2)?;
@@ -256,7 +256,7 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     // c: *(sp) = 0xCC; load(sp); return loaded
     b.set_region(c);
     let sp_c = b.read_variable(&sp)?;
-    let data = b.build_int_const(0xCC, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0xCCu64, NodeOutputType::U32);
     b.build_store(sp_c, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -303,14 +303,14 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     // Simulate: `push ebx` + `sub esp, 16` + 4× zero-init + push arg1 +
     // push arg0 + implicit-call ret-push.
     let sp0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
-    let sixteen = b.build_int_const(16, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let sixteen = b.build_int_const(16u64, NodeOutputType::U32);
 
     // push ebx → [sp - 4] = init_ebx.
     let sp_after_push_ebx =
         b.build_int_binary_operation(sp0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_after_push_ebx)?;
-    let init_ebx = b.build_int_const(0xEB, NodeOutputType::U32).unwrap();
+    let init_ebx = b.build_int_const(0xEBu64, NodeOutputType::U32);
     b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
 
     // sub esp, 16 → reserve buf.
@@ -323,9 +323,9 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     b.write_variable(&sp, sp_after_sub)?;
 
     // 4× zero-init at buf[0..16] (esp+0, +4, +8, +12) = [-20, -16, -12, -8].
-    let zero = b.build_int_const(0, NodeOutputType::U32).unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::U32);
     for k in 0..4 {
-        let off = b.build_int_const(u64::from((k * 4) as u32), NodeOutputType::U32).unwrap();
+        let off = b.build_int_const((k * 4) as u64, NodeOutputType::U32);
         let addr = b.build_int_binary_operation(
             sp_after_sub,
             off,
@@ -343,7 +343,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         NodeOutputType::U32,
     )?;
     b.write_variable(&sp, sp_push_arg1)?;
-    let arg1 = b.build_int_const(1, NodeOutputType::U32).unwrap();
+    let arg1 = b.build_int_const(1u64, NodeOutputType::U32);
     b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
 
     // push arg0 = 42 → [sp - 28].
@@ -354,7 +354,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         NodeOutputType::U32,
     )?;
     b.write_variable(&sp, sp_push_arg0)?;
-    let arg0 = b.build_int_const(42, NodeOutputType::U32).unwrap();
+    let arg0 = b.build_int_const(42u64, NodeOutputType::U32);
     b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
 
     // implicit call ret-addr push at [sp - 32] — mimics x86 `call`.
@@ -365,11 +365,11 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         NodeOutputType::U32,
     )?;
     b.write_variable(&sp, sp_call)?;
-    let retaddr = b.build_int_const(0x1234, NodeOutputType::U32).unwrap();
+    let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32);
     b.build_store(sp_call, retaddr, rsleigh::VnSpace::RAM)?;
 
     // call target.
-    let target = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
     b.build_call(target)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -412,8 +412,8 @@ fn non_stack_store_is_untouched() -> Result<()> {
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
-    let addr = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
-    let data = b.build_int_const(0x42, NodeOutputType::U32).unwrap();
+    let addr = b.build_int_const(0x1000u64, NodeOutputType::U32);
+    let data = b.build_int_const(0x42u64, NodeOutputType::U32);
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -455,22 +455,22 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     // push arg1 (= 22) at sp - 4
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let sp_v1 =
         b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22, NodeOutputType::U32).unwrap();
+    let arg1 = b.build_int_const(22u64, NodeOutputType::U32);
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
     // push arg0 (= 11) at sp - 8
     let sp_v2 =
         b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11, NodeOutputType::U32).unwrap();
+    let arg0 = b.build_int_const(11u64, NodeOutputType::U32);
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
     // call 0x1000
-    let target = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
     b.build_call(target)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -524,14 +524,14 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     // offset table that expects slot_0 = -4 and slot_1 = 0.  Since
     // there is no store at offset 0, collection must stop after slot_0.
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let sp_v1 =
         b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_v1)?;
-    let only_arg = b.build_int_const(99, NodeOutputType::U32).unwrap();
+    let only_arg = b.build_int_const(99u64, NodeOutputType::U32);
     b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
     b.build_call(target)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -560,7 +560,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
 
-    let target = b.build_int_const(0x1000, NodeOutputType::U32).unwrap();
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
     b.build_call(target)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -595,15 +595,15 @@ fn detect_mixed_add_sub_reduces() -> Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
     let sp_v = b.read_variable(&sp)?;
-    let s16 = b.build_int_const(16, NodeOutputType::U32).unwrap();
-    let s4 = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let s16 = b.build_int_const(16u64, NodeOutputType::U32);
+    let s4 = b.build_int_const(4u64, NodeOutputType::U32);
     let plus16 =
         b.build_int_binary_operation(sp_v, s16, IntBinaryOp::Add, NodeOutputType::U32)?;
     let minus4a =
         b.build_int_binary_operation(plus16, s4, IntBinaryOp::Sub, NodeOutputType::U32)?;
     let minus4b =
         b.build_int_binary_operation(minus4a, s4, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x42, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0x42u64, NodeOutputType::U32);
     b.build_store(minus4b, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
@@ -640,10 +640,10 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
     let other_v = b.read_variable(&other)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let addr =
         b.build_int_binary_operation(other_v, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x42, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0x42u64, NodeOutputType::U32);
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
