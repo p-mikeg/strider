@@ -599,6 +599,44 @@ fn fold_lzcount_one() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn fold_lzcount_zero_u32() -> Result<()> {
+    // lzcount(0_U32) must fold to 32 (the type's bit width). The previous
+    // formula `(masked << (64 - bits)).leading_zeros()` returned 64 when
+    // masked was 0, ignoring the type's narrower width.
+    let mut fg = make_fn(|b| {
+        let v = b.build_int_const(0, NodeOutputType::U32);
+        Ok(b.build_lzcount(v, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(32));
+    Ok(())
+}
+
+#[test]
+fn fold_lzcount_zero_u8() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let v = b.build_int_const(0, NodeOutputType::U8);
+        Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(8));
+    Ok(())
+}
+
+#[test]
+fn fold_lzcount_zero_u64() -> Result<()> {
+    // U64 happened to work on the unfixed code (64 - 64 = 0 shift), but pin
+    // it with a regression test so the fix doesn't break it.
+    let mut fg = make_fn(|b| {
+        let v = b.build_int_const(0, NodeOutputType::U64);
+        Ok(b.build_lzcount(v, NodeOutputType::U64)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(64));
+    Ok(())
+}
+
 /// Builds a function whose Return value is `kind(wide_const)`, where the
 /// wide constant has declared type `wide_ty` (U128 or U256) and `kind` is
 /// either `NodeKind::Lzcount` or `NodeKind::Popcount`.

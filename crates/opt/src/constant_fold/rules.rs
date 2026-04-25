@@ -337,12 +337,14 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             ))
         },
         // 8. Lzcount(IntConst(v)) =>
-        //        int_const((masked(v, in_ty) << (64 - in_ty.bit_width())).leading_zeros(), ty)
-        //    Same width guard as Popcount above. The shift formula
-        //    `64 - in_ty.bit_width()` underflows in u32 for wider types, so
-        //    the masking-step skip is also a load-bearing guard against a
-        //    downstream UB-shaped fault if the get_unsigned_int contract
-        //    ever changed to admit U128/U256.
+        //        int_const(N if masked == 0 else (masked << (64 - N)).leading_zeros(), ty)
+        //    The `masked == 0` case must return the input type's bit width;
+        //    `(0u64 << k).leading_zeros()` is always 64, which is wrong for
+        //    any narrower type (e.g. lzcount(0_U32) must be 32, not 64).
+        //    Same U128/U256 width guard as Popcount above — the masking-step
+        //    skip is also a load-bearing guard against a downstream
+        //    UB-shaped fault if the get_unsigned_int contract ever changed
+        //    to admit those types.
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
@@ -353,7 +355,11 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                         .get_unsigned_int(v)
                         .ok_or_else(pattern::Error::skip)?;
                     let bits = input_ty.bit_width() as u32;
-                    (masked << (64 - bits)).leading_zeros() as u64
+                    if masked == 0 {
+                        bits as u64
+                    } else {
+                        (masked << (64 - bits)).leading_zeros() as u64
+                    }
                 }),
             ))
         },
