@@ -82,9 +82,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             parent_edge,
         }
     }
-}
 
-impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     /// Decodes a pcode branch-target varnode into a [`PcodeInsnAddr`].
     ///
     /// Pcode encodes branch targets in two ways:
