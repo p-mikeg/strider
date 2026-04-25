@@ -145,7 +145,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     }
 
     /// Checks whether `branch_target_addr` should be treated as a tail call
-    /// using only address-bounds reasoning (no insn_index validation).
+    /// using only address-bounds reasoning (no `insn_index` validation).
     ///
     /// A branch is a tail call if:
     /// - Its target lies *before* the function start AND
@@ -324,7 +324,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 .builder
                 .sleigh
                 .lift_one(cur_addr.machine_addr.addr)
-                .map_err(|e| ErrorKind::GenericSleighError(format!("{:?}", e)))?;
+                .map_err(|e| ErrorKind::GenericSleighError(format!("{e:?}")))?;
             // `enumerate` before `skip` so `i` is the absolute pcode index.
             // On the very first machine instruction this may start at a non-zero
             // index (the work queue delivered a mid-instruction entry point);
