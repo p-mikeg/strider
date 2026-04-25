@@ -1,6 +1,5 @@
 //! Human-readable and FFI-friendly formatting of error chains.
 
-use std::error::Error;
 use std::fmt::Write;
 
 use crate::Traceback;
@@ -33,7 +32,7 @@ pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "error: {err}");
 
-    for e in std::iter::successors(Error::source(err), |e| Error::source(*e)) {
+    for e in std::iter::successors(err.source(), |e| e.source()) {
         let _ = writeln!(out, "  caused by: {e}");
     }
 

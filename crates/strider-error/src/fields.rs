@@ -83,14 +83,7 @@ pub(crate) fn write_chain_and_backtrace<W: std::fmt::Write>(
     w: &mut W,
 ) -> std::fmt::Result {
     for (i, loc) in chain.iter().enumerate() {
-        writeln!(
-            w,
-            "  at [{}] {}:{}:{}",
-            i,
-            loc.file(),
-            loc.line(),
-            loc.column(),
-        )?;
+        writeln!(w, "  at [{i}] {loc}")?;
     }
     write!(w, "{backtrace}")
 }
