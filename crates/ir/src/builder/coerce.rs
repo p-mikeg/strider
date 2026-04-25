@@ -231,7 +231,7 @@ impl FunctionBuilder {
     }
 
     /// If `input` is not already `float_ty`, wraps it in a `CastToFloat` node.
-    pub(super) fn cast_to_float_if_needed(
+    pub fn cast_to_float_if_needed(
         &mut self,
         input: NodeOutputId,
         float_ty: NodeOutputType,
@@ -245,7 +245,7 @@ impl FunctionBuilder {
     /// Infers the float type to use for a value that may be int or float.
     /// If the value is already a float type, that type is used.
     /// For integers, maps byte size: ≤4 → F32, otherwise → F64.
-    pub(super) fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
+    pub fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
         let ty = self.get_output_type(input)?;
         if ty.is_float() {
             return Ok(ty);
