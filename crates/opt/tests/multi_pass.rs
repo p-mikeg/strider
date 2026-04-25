@@ -162,7 +162,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
     p.add(StackStoreDetect::new(sp));
-    p.add(StackLoadForward::new(sp));
+    p.add(StackLoadForward::new(sp, target::Endianness::Little));
     p.run(&mut fg)?;
 
     assert_eq!(

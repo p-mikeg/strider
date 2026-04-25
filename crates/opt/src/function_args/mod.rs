@@ -99,27 +99,8 @@ impl Optimizer for FunctionArgDetect {
         // the use-list of surviving producers like `InitialVar(sp)`, which
         // confuses downstream consumers that walk use-lists — e.g. the dot
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
-        changed |= detach_unreachable_nodes(function);
+        changed |= crate::worklist::detach_unreachable_nodes(function);
         Ok(changed)
-    }
-}
-
-/// Clears the inputs of every node not reachable from the function entry.
-/// Mirrors [`crate::RedundantPhis`]' dead-block cleanup for the zombie nodes
-/// this pass leaves behind.
-fn detach_unreachable_nodes(fg: &mut BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: std::collections::HashSet<NodeId> = fg.preorder().collect();
-    let mut changed = false;
-    for node_id in fg.all_node_ids().collect::<Vec<_>>() {
-        if !reachable.contains(&node_id) && !fg.graph.node_inputs(node_id).is_empty() {
-            fg.graph.detach_node_inputs(node_id);
-            changed = true;
-        }
-    }
-    if changed {
-        OptimizationResult::Changed
-    } else {
-        OptimizationResult::NoChange
     }
 }
 
@@ -242,6 +223,16 @@ fn detect_stack_args(
             NodeKind::Load(s) => s,
             _ => continue,
         };
+        // Guard: every load in this K-group must share `space`. The grouping
+        // logic above keys only on `j` (the offset slot), not on space, so a
+        // multi-space lifter could in principle place two loads at the same
+        // offset in different spaces. Skip the whole group on mismatch rather
+        // than silently merging.
+        if loads.iter().any(|&l| {
+            !matches!(*fg.graph.node_kind(l), NodeKind::Load(s) if s == space)
+        }) {
+            continue;
+        }
         // Collect (load, out_type) pairs and find the max byte size.
         let mut load_types: Vec<(NodeId, NodeOutputType)> = Vec::with_capacity(loads.len());
         for load in &loads {

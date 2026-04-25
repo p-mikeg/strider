@@ -35,6 +35,10 @@ pub enum ErrorKind {
     /// instead of using `panic!`.
     #[error("assertion failed: {0}")]
     AssertionFailed(String),
+    /// The fixed-point loop in `OptimizerPipeline::run` did not converge
+    /// within the iteration limit. Indicates a non-monotone pass.
+    #[error("optimizer pipeline did not converge after {0} iterations")]
+    FixedPointLimitExceeded(u32),
 }
 
 strider_error::define_error! {

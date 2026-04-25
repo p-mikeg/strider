@@ -2,6 +2,7 @@ use super::*;
 use crate::error::Result;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
+use target::Endianness;
 
 /// Fake 4-byte SP varnode (x86-cdecl-like).
 fn sp32_vn() -> rsleigh::Vn {
@@ -59,7 +60,7 @@ fn forward_basic() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -101,7 +102,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -140,7 +141,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -175,7 +176,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -214,7 +215,7 @@ fn bail_on_opaque_store_between() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -259,7 +260,7 @@ fn bail_on_call_between() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -329,7 +330,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -410,7 +411,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -490,7 +491,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -536,7 +537,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -591,7 +592,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -645,7 +646,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add(StackLoadForward::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
@@ -661,6 +662,93 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         fg.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
+    );
+    Ok(())
+}
+
+/// Big-endian narrow-load-from-wider-store: the load takes the *high*
+/// `load_size` bytes of the stored value, so forwarding must synthesise
+/// `Truncate(ShiftRight(data, (store_size - load_size) * 8))` rather than
+/// the LE plain `Truncate(data)`.
+///
+/// We use the same fixture as
+/// `narrow_load_from_wider_store_forwards_via_truncate` but configure the
+/// pass with `Endianness::Big`.  We deliberately omit `ConstantFold` so the
+/// `Truncate(ShiftRight(...))` chain survives intact for inspection — under
+/// folding it would collapse to a single `IntConst(0xDE)` and we'd lose the
+/// structural assertion.
+#[test]
+fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
+    use crate::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp32_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    let eight = b.build_int_const(8, NodeOutputType::U32);
+    let addr =
+        b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    // Store the full 4-byte value, then load only the high byte (BE).
+    let wide = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32);
+    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Big));
+    pipeline.run(&mut fg)?;
+
+    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 0,
+        "Load u8 at matching offset must be forwarded as the high byte of the u32 store on BE",
+    );
+
+    let ret = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .expect("return node exists");
+    let ret_inputs = fg.graph.node_inputs(ret);
+    // Return inputs: [ctrl, mem, val_0, ...].
+    let val_out = ret_inputs[2];
+    let val_ty = fg.graph.output_kind(val_out).as_value();
+    assert_eq!(val_ty, Some(NodeOutputType::U8));
+
+    // Outer node: Truncate.
+    let outer = fg.graph.get_node_from_output(val_out);
+    assert!(
+        matches!(fg.graph.node_kind(outer), NodeKind::Truncate),
+        "BE narrow forward must wrap data in a Truncate — got {:?}",
+        fg.graph.node_kind(outer),
+    );
+
+    // Inner node: ShiftRight.
+    let outer_inputs = fg.graph.node_inputs(outer);
+    assert_eq!(outer_inputs.len(), 1, "Truncate has a single input");
+    let inner = fg.graph.get_node_from_output(outer_inputs[0]);
+    assert!(
+        matches!(
+            fg.graph.node_kind(inner),
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
+        ),
+        "BE narrow forward must shift before truncation — got {:?}",
+        fg.graph.node_kind(inner),
+    );
+
+    // ShiftRight inputs: [data, shift_const]; shift_const = (4 - 1) * 8 = 24.
+    let shr_inputs = fg.graph.node_inputs(inner);
+    assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
+    let shift_node = fg.graph.get_node_from_output(shr_inputs[1]);
+    assert!(
+        matches!(fg.graph.node_kind(shift_node), NodeKind::IntConst(24)),
+        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {:?}",
+        fg.graph.node_kind(shift_node),
     );
     Ok(())
 }

@@ -120,10 +120,11 @@ pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        // DBE only fires on `If` nodes whose outputs are control edges; the
-        // node it eliminates is never re-checked by this pass (only one If per
-        // node id). A worklist with consumer re-enqueue gives no payoff here,
-        // so we just drain the seeded preorder once.
+        // DBE only fires on `If` nodes whose outputs are control edges. We
+        // drain the seeded preorder once: chained constant-branch patterns
+        // (where one elimination exposes another) are caught by the outer
+        // OptimizerPipeline fixed-point loop, which re-runs this pass until
+        // it reports NoChange.
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.pop() {

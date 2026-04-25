@@ -16,7 +16,7 @@ fn pipeline_with_sp(sp: rsleigh::Vn, stack_offsets: Vec<i64>) -> OptimizerPipeli
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
     p.add(StackStoreDetect::new(sp));
-    p.add(StackLoadForward::new(sp));
+    p.add(StackLoadForward::new(sp, target::Endianness::Little));
     p.add_post_pass(CallStackArgCollect::new(stack_offsets));
     p
 }

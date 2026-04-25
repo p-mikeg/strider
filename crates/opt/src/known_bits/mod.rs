@@ -36,9 +36,13 @@ impl Kb {
     }
 
     /// Returns `true` if merging `other` into `self` changed anything.
+    ///
+    /// On conflict (a bit known 1 in one source and 0 in the other), the
+    /// `ones` set wins and the conflicting bit is cleared from `zeros`,
+    /// preserving the `ones & zeros == 0` invariant.
     fn merge(&mut self, other: Kb) -> bool {
         let new_ones = self.ones | other.ones;
-        let new_zeros = self.zeros | other.zeros;
+        let new_zeros = (self.zeros | other.zeros) & !new_ones;
         if new_ones != self.ones || new_zeros != self.zeros {
             self.ones = new_ones;
             self.zeros = new_zeros;

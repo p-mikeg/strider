@@ -426,12 +426,11 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 bool_const_with!([l, r] => l ^ r),
             ))
         },
-        // BAnd(BoolConst(false), x) => bool_const(false)  (absorbing element)
+        // BAnd(BoolConst(false), _) => bool_const(false)  (absorbing element)
         {
             let l = BoolVar::new();
-            let x = pattern::Var::new();
             boxed_rule(rewrite_rule(
-                bool_and(any_bool_const(l), pattern::var(x)),
+                bool_and(any_bool_const(l), pattern::any()),
                 bool_const_with!([l] => {
                     if !l { false } else {
                         return Err(pattern::Error::skip());
@@ -439,12 +438,11 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 }),
             ))
         },
-        // BOr(BoolConst(true), x) => bool_const(true)  (absorbing element)
+        // BOr(BoolConst(true), _) => bool_const(true)  (absorbing element)
         {
             let l = BoolVar::new();
-            let x = pattern::Var::new();
             boxed_rule(rewrite_rule(
-                bool_or(any_bool_const(l), pattern::var(x)),
+                bool_or(any_bool_const(l), pattern::any()),
                 bool_const_with!([l] => {
                     if l { true } else {
                         return Err(pattern::Error::skip());

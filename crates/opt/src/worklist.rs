@@ -10,7 +10,10 @@ use std::collections::VecDeque;
 
 use rustc_hash::FxHashSet;
 
+use ir::BuiltFunctionGraph;
 use ir::node::NodeId;
+
+use crate::pipeline::OptimizationResult;
 
 /// FIFO worklist that prevents double-enqueue.
 #[derive(Default)]
@@ -41,5 +44,27 @@ impl WorkSet {
         let n = self.queue.pop_front()?;
         self.queued.remove(&n);
         Some(n)
+    }
+}
+
+/// Detaches the inputs of every node not reachable from the function entry.
+///
+/// Unreachable nodes can only be consumed by other unreachable nodes, so
+/// severing their inputs is always safe. Cleans up dead-block residue and
+/// orphaned address-arithmetic chains left behind by passes that rewrite
+/// reachable consumers (e.g. `DeadBranchElimination`, `FunctionArgDetect`).
+pub(crate) fn detach_unreachable_nodes(fg: &mut BuiltFunctionGraph) -> OptimizationResult {
+    let reachable: FxHashSet<NodeId> = fg.preorder().collect();
+    let mut changed = false;
+    for node_id in fg.all_node_ids().collect::<Vec<_>>() {
+        if !reachable.contains(&node_id) && !fg.graph.node_inputs(node_id).is_empty() {
+            fg.graph.detach_node_inputs(node_id);
+            changed = true;
+        }
+    }
+    if changed {
+        OptimizationResult::Changed
+    } else {
+        OptimizationResult::NoChange
     }
 }

@@ -45,14 +45,15 @@ fn collect_stack_args_in_chain_order(
     }
     let mut cur = mem;
     let mut anchor_base: Option<NodeOutputId> = None;
+    let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut call_sp_adjust: Option<i64> = None;
     let mut args: Vec<NodeOutputId> = Vec::new();
     loop {
         let node = fg.graph.get_node_from_output(cur);
-        let (offset, base, data, prev_mem) = match *fg.graph.node_kind(node) {
-            NodeKind::StackStore { offset, .. } => {
+        let (offset, space, base, data, prev_mem) = match *fg.graph.node_kind(node) {
+            NodeKind::StackStore { offset, space } => {
                 let inputs = fg.graph.node_inputs(node);
-                (offset, inputs[1], inputs[2], inputs[0])
+                (offset, space, inputs[1], inputs[2], inputs[0])
             }
             // Un-decomposed `Store` (may alias), `StackStorePhi` (ambiguous),
             // `MemPhi` (control-flow join), or anything else (entry memory,
@@ -64,6 +65,13 @@ fn collect_stack_args_in_chain_order(
             Some(b) if b == base => {}
             // Base changed mid-chain: stop rather than merge offsets
             // relative to different SP versions.
+            _ => return args,
+        }
+        match anchor_space {
+            None => anchor_space = Some(space),
+            Some(s) if s == space => {}
+            // Space changed mid-chain: stop rather than mix args from
+            // different SP-relative spaces.
             _ => return args,
         }
         match call_sp_adjust {
