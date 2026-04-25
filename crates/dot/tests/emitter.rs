@@ -106,3 +106,29 @@ fn digraph_name_with_backslash_is_doubled() {
         "expected doubled backslash, got: {out}",
     );
 }
+
+#[test]
+fn node_id_with_special_chars_is_escaped() {
+    let style = DotStyle::empty();
+    let mut e = DotEmitter::new("G", &style);
+    // An id containing internal double-quote and backslash must escape both
+    // so the surrounding "..." in the DOT output stays well-formed.
+    e.node("a\"b\\c", "lbl", "box", &[]);
+    let out = e.finish();
+    assert!(
+        out.contains("\"a\\\"b\\\\c\" [label=\"lbl\", shape=box];\n"),
+        "unexpected DOT: {out}"
+    );
+}
+
+#[test]
+fn edge_endpoints_with_special_chars_are_escaped() {
+    let style = DotStyle::empty();
+    let mut e = DotEmitter::new("G", &style);
+    e.edge("a\"x", "b\\y", &[]);
+    let out = e.finish();
+    assert!(
+        out.contains("\"a\\\"x\" -> \"b\\\\y\";\n"),
+        "unexpected DOT: {out}"
+    );
+}
