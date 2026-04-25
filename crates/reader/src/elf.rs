@@ -316,10 +316,15 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 
 /// Loads and parses an ELF file from `path`, returning a `'static` reference.
 ///
-/// The file bytes are read into a `Box<[u8]>` that is then intentionally
-/// **leaked** so the returned `object::File<'static>` remains valid for the
-/// lifetime of the process.  This is suitable for tests and short-lived CLI
-/// tools where the cost of a one-time leak is acceptable.
+/// On success, the file bytes are read into a `Box<[u8]>` that is then
+/// intentionally **leaked** so the returned `object::File<'static>` remains
+/// valid for the lifetime of the process. This is suitable for tests and
+/// short-lived CLI tools where the cost of a one-time leak is acceptable.
+///
+/// On error, no bytes are leaked: the file is read, validated by an
+/// in-place parse, and only on parse success are the bytes promoted to
+/// `'static` (a second parse — guaranteed to succeed since the bytes are
+/// identical — produces the returned `object::File`).
 ///
 /// Callers that only need an [`ElfFileMemReader`] should prefer
 /// [`ElfFileMemReader::from_path`], which does not leak.
@@ -330,7 +335,15 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 /// `ErrorKind::Object` if the bytes fail to parse as a valid ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
     let data = std::fs::read(path)?;
+    // Validate the parse on a borrowed view BEFORE leaking. If the bytes
+    // don't parse as ELF, we drop `data` normally instead of leaking it
+    // onto the heap forever for nothing — the leak only pays for itself
+    // when we actually return an `object::File<'static>`.
+    object::File::parse(&data[..])?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
+    // Re-parse the (now `'static`) bytes. Identical bytes parse identically,
+    // so this `?` cannot fail in practice; we still propagate via `?` to
+    // avoid `expect`/`unwrap` (forbidden in this crate).
     Ok(object::File::parse(leaked)?)
 }
 

@@ -29,7 +29,18 @@ fn load_elf_parses_valid_tempfile() {
     assert_eq!(sec.address(), 0x1000);
 }
 
-/// A non-ELF file produces `ErrorKind::Object(_)`.
+/// Pinned contract: when `load_elf` is given a file that exists on disk
+/// but whose contents do NOT parse as a valid ELF, the function returns
+/// `Err(ErrorKind::Object(_))` rather than panicking, succeeding, or
+/// silently swallowing the error.
+///
+/// This test cannot directly assert that the file bytes are not leaked
+/// when parse fails — `load_elf`'s entire success path leaks
+/// intentionally. The bytes-aren't-leaked-on-error behavior introduced
+/// in `fix(reader): validate ELF before leaking bytes in load_elf` is
+/// pinned by the function's parse-before-leak structure; catching a
+/// regression there would require a Miri or allocator-instrumentation
+/// harness — outside the scope of this in-tree test.
 #[test]
 fn load_elf_rejects_garbage_bytes() {
     let mut f = NamedTempFile::new().unwrap();
