@@ -75,7 +75,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
 
     /// Finds the region that contains `addr`, if any.
     ///
-    /// Uses a BTreeMap range query to find the last region whose
+    /// Uses a [`BTreeMap`] range query to find the last region whose
     /// `start_addr <= addr`, then confirms that `addr` also falls within the
     /// region's instruction range via [`Region::contains_addr`].
     pub(super) fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
@@ -113,18 +113,18 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ) -> Result<()> {
         let existing_region = self.find_region_containing_addr(addr);
         if let Some((region_id, region)) = existing_region {
-            // This is the case that someone just referenced our region - add an edge between them
+            // This is the case that someone just referenced our region - add an edge between them.
             let (parent_region_id, edge_kind) =
                 parent_region.ok_or(ErrorKind::MissingParentEdge)?;
-            // We checked and the address is within the current region and needs to start a new region
-            // This means we reached here by jumping to the middle of a region and the current region needs to be split in 2
-            if region.start_addr != addr {
-                // found a jump to the middle of the region. we need to split it.
+            if region.start_addr == addr {
+                // The address lands on the start of an existing region — wire an edge.
+                self.graph.add_edge(parent_region_id, region_id, edge_kind);
+            } else {
+                // The address lands inside an existing region — split it and
+                // wire the edge to the new "second half".
                 let second_region = self.split_region(region_id, addr)?;
                 self.graph
                     .add_edge(parent_region_id, second_region, edge_kind);
-            } else {
-                self.graph.add_edge(parent_region_id, region_id, edge_kind);
             }
         } else {
             RegionBuilder::new(self, addr, parent_region).build()?;
