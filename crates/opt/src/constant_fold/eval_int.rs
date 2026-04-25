@@ -92,6 +92,12 @@ pub(super) fn eval_int_binary(
 }
 
 /// Evaluates a comparison on two constant integer values.
+//
+// `IntCmpOp::Less` and `IntCmpOp::Borrow` both evaluate to `l < r` because an
+// unsigned subtract borrows iff the minuend is less than the subtrahend. The
+// two operations are conceptually distinct — keep them as separate arms with
+// their own names rather than merging them into `Less | Borrow => l < r`.
+#[allow(clippy::match_same_arms)]
 pub(super) fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> Result<bool> {
     // See `eval_int_binary` — mask both inputs to `ty` at entry. The
     // unsigned comparisons (Equal, Less, LessEqual, Carry, Borrow) operate
@@ -106,61 +112,41 @@ pub(super) fn eval_int_cmp(op: IntCmpOp, l: u64, r: u64, ty: NodeOutputType) -> 
         .get_unsigned_int(r)
         .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty))?;
 
+    let signed = |v: u64| -> Result<i64> {
+        ty.get_signed_int(v)
+            .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
+    };
+    let unsigned_max = || -> Result<u64> {
+        ty.get_unsigned_int(u64::MAX)
+            .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
+    };
+    let bits = ty.bit_width() as u32;
+    let signed_min_max = || -> (i128, i128) {
+        let min = -(1i128 << (bits - 1));
+        let max = (1i128 << (bits - 1)) - 1;
+        (min, max)
+    };
+
     Ok(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
         IntCmpOp::LessEqual => l <= r,
-        IntCmpOp::Sless => {
-            ty.get_signed_int(l)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))?
-                < ty.get_signed_int(r)
-                    .ok_or(ErrorKind::ExpectedIntegerType(ty))?
-        }
-        IntCmpOp::SlessEqual => {
-            ty.get_signed_int(l)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))?
-                <= ty
-                    .get_signed_int(r)
-                    .ok_or(ErrorKind::ExpectedIntegerType(ty))?
-        }
+        IntCmpOp::Sless => signed(l)? < signed(r)?,
+        IntCmpOp::SlessEqual => signed(l)? <= signed(r)?,
         IntCmpOp::Carry => {
-            // Carry = unsigned addition overflows the type.
-            let max = ty
-                .get_unsigned_int(u64::MAX)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as u128;
-            (l as u128 + r as u128) > max
+            // Unsigned add overflow: l + r > type's max unsigned value.
+            (l as u128 + r as u128) > unsigned_max()? as u128
         }
-        IntCmpOp::Borrow => {
-            // Borrow = l < r (unsigned subtraction borrows).
-            l < r
-        }
+        IntCmpOp::Borrow => l < r,
         IntCmpOp::Scarry => {
-            // Signed overflow of l + r.
-            let sl = ty
-                .get_signed_int(l)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
-            let sr = ty
-                .get_signed_int(r)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
-            let result = sl + sr;
-            let bits = ty.bit_width() as u32;
-            let min_val = -(1i128 << (bits - 1));
-            let max_val = (1i128 << (bits - 1)) - 1;
-            result < min_val || result > max_val
+            let (min, max) = signed_min_max();
+            let result = signed(l)? as i128 + signed(r)? as i128;
+            result < min || result > max
         }
         IntCmpOp::Sborrow => {
-            // Signed overflow of l - r.
-            let sl = ty
-                .get_signed_int(l)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
-            let sr = ty
-                .get_signed_int(r)
-                .ok_or(ErrorKind::ExpectedIntegerType(ty))? as i128;
-            let result = sl - sr;
-            let bits = ty.bit_width() as u32;
-            let min_val = -(1i128 << (bits - 1));
-            let max_val = (1i128 << (bits - 1)) - 1;
-            result < min_val || result > max_val
+            let (min, max) = signed_min_max();
+            let result = signed(l)? as i128 - signed(r)? as i128;
+            result < min || result > max
         }
     })
 }
