@@ -60,12 +60,6 @@ impl Graph {
         &self.nodes[node_id].kind
     }
 
-    /// Returns a mutable reference to the kind of `node_id`.
-    #[inline]
-    pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut NodeKind {
-        &mut self.nodes[node_id].kind
-    }
-
     /// Returns the per-predecessor SP-relative offsets associated with a
     /// [`NodeKind::StackStorePhi`] node, or an empty slice if none are set.
     #[inline]
