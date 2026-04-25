@@ -202,7 +202,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
     ) -> Result<ProcessInsnRes> {
         self.insns.push(RegionInstruction {
             addr,
-            insn: insn.to_owned(),
+            insn: insn.clone(),
         });
 
         match insn.opcode {
