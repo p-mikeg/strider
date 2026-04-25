@@ -55,4 +55,22 @@ mod tests {
         assert_eq!(m4 & m8, m4);
         Ok(())
     }
+
+    /// Every unsupported size (0, 3, 5, 6, 7, 9, 16, 32, 64, MAX) must
+    /// produce `UnsupportedRegSize`, never a panic or a silently-wrong mask.
+    /// Pins that this function is the single source of truth for the
+    /// 1/2/4/8 contract.
+    #[test]
+    fn unsupported_sizes_return_unsupported_reg_size_error() {
+        for &bad in &[0u32, 3, 5, 6, 7, 9, 16, 32, 64, u32::MAX] {
+            let r = vn_mask(&reg(bad));
+            match r {
+                Err(e) => match e.kind() {
+                    ErrorKind::UnsupportedRegSize(s) => assert_eq!(*s, bad),
+                    other => panic!("size {bad}: expected UnsupportedRegSize, got {other:?}"),
+                },
+                Ok(_) => panic!("size {bad}: expected error, got Ok"),
+            }
+        }
+    }
 }
