@@ -159,3 +159,149 @@ fn decompose_sp_phi(
         Some(SpExpr::Phi { phi_node: node, offsets })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+
+    fn sp() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr: rsleigh::VnAddr { space: rsleigh::VnSpace::REGISTER, off: 0x20 },
+            size: 4,
+        }
+    }
+
+    #[test]
+    fn ranges_disjoint_basic() {
+        // Adjacent ranges are disjoint (touching is fine).
+        assert!(ranges_disjoint(0, 4, 4, 4));
+        // Overlapping ranges are not disjoint.
+        assert!(!ranges_disjoint(0, 4, 2, 4));
+        // Identical ranges are not disjoint.
+        assert!(!ranges_disjoint(0, 4, 0, 4));
+        // Reverse order — equally disjoint.
+        assert!(ranges_disjoint(4, 4, 0, 4));
+    }
+
+    #[test]
+    fn int_const_signed_u32_negative() -> crate::Result<()> {
+        // 0xFFFF_FFFC at U32 must read as -4 signed.
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let v = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        b.build_return(Some(v), &[])?;
+        let fg = b.build()?;
+        assert_eq!(int_const_signed(&fg, v), Some(-4));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_initial_var() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        b.build_return(Some(sp_val), &[])?;
+        let fg = b.build()?;
+        // sp_val is a ControlPhi-of-InitialVar; the phi has 1 predecessor →
+        // collapses to Terminal{base: InitialVar(sp), offset: 0}.
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        let r = decompose_sp(&fg, sp_val, sp, &mut memo, &mut visiting);
+        assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_sub_constant() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_return(Some(addr), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
+        assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_add_negative_unsigned() -> crate::Result<()> {
+        // Add(sp, 0xFFFF_FFFC_U32) must decompose to -4 (sign-extended).
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        let neg_four = b.build_int_const(0xFFFF_FFFC, NodeOutputType::U32);
+        let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        b.build_return(Some(addr), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
+        assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_memo_hit_returns_same_result() -> crate::Result<()> {
+        // Calling decompose_sp twice on the same out should populate the memo
+        // and return the same answer.
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_return(Some(addr), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let r1 = {
+            let mut v = std::collections::HashSet::new();
+            decompose_sp(&fg, addr, sp, &mut memo, &mut v)
+        };
+        // Memo should now be populated.
+        assert!(memo.contains_key(&addr));
+        let r2 = {
+            let mut v = std::collections::HashSet::new();
+            decompose_sp(&fg, addr, sp, &mut memo, &mut v)
+        };
+        assert!(matches!((&r1, &r2),
+            (Some(SpExpr::Terminal { offset: -4, .. }),
+             Some(SpExpr::Terminal { offset: -4, .. }))));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_non_sp_returns_none() -> crate::Result<()> {
+        // An IntConst is not SP-rooted.
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let c = b.build_int_const(0x1000, NodeOutputType::U32);
+        b.build_return(Some(c), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        assert!(decompose_sp(&fg, c, sp, &mut memo, &mut visiting).is_none());
+        Ok(())
+    }
+}
