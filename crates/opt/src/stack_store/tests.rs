@@ -325,7 +325,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     // 4× zero-init at buf[0..16] (esp+0, +4, +8, +12) = [-20, -16, -12, -8].
     let zero = b.build_int_const(0, NodeOutputType::U32).unwrap();
     for k in 0..4 {
-        let off = b.build_int_const((k * 4) as u64, NodeOutputType::U32).unwrap();
+        let off = b.build_int_const(u64::from((k * 4) as u32), NodeOutputType::U32).unwrap();
         let addr = b.build_int_binary_operation(
             sp_after_sub,
             off,
