@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 

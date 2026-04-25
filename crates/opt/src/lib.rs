@@ -69,6 +69,7 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`RedundantPhis`] — `ControlPhi` / `MemPhi` / `ControlState` elimination
 /// 4. [`DeadBranchElimination`] — `If(const)` branch pruning
+#[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);

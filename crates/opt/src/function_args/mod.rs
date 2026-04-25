@@ -59,6 +59,7 @@ pub struct FunctionArgDetect {
 impl FunctionArgDetect {
     /// Creates a new pass with an explicit register list, stack-pointer
     /// varnode, and stack-arg offset table.
+    #[must_use]
     pub fn new(
         arg_passing_regs: Vec<rsleigh::Vn>,
         stack_ptr_vn: rsleigh::Vn,
@@ -73,6 +74,7 @@ impl FunctionArgDetect {
 
     /// Creates a new pass whose parameters are taken from the supplied
     /// calling convention.
+    #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
         Self::new(
             cc.arg_passing_regs.clone(),
@@ -346,7 +348,6 @@ fn mem_chain_is_dirty(
             }
             mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen)
         }
-        NodeKind::Store(_) => true,
         NodeKind::MemPhi => {
             // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
             // clean for the phi to be clean.

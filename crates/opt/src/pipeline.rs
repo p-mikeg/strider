@@ -13,12 +13,14 @@ pub enum OptimizationResult {
 impl OptimizationResult {
     /// Returns `true` when the result is [`Changed`](OptimizationResult::Changed).
     #[inline]
+    #[must_use]
     pub fn changed(self) -> bool {
         matches!(self, OptimizationResult::Changed)
     }
 
     /// Maps the boolean return of [`BuiltFunctionGraph::replace_all_uses`] to
     /// an `OptimizationResult`: `true` → `Changed`, `false` → `NoChange`.
+    #[must_use]
     pub fn from_changed(changed: bool) -> Self {
         if changed {
             OptimizationResult::Changed
@@ -56,6 +58,12 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// this pass.
 pub trait Optimizer {
     /// Run one sweep of this pass over `function`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error encountered by the pass — typically an IR
+    /// validation failure or a pattern-rewrite error propagated up through
+    /// [`crate::Error`].
     fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult>;
 }
 
@@ -78,6 +86,7 @@ impl Default for OptimizerPipeline {
 
 impl OptimizerPipeline {
     /// Creates an empty pipeline with no passes registered.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             optimizers: Vec::new(),
@@ -103,6 +112,12 @@ impl OptimizerPipeline {
     /// Returns `Ok(())` when no pass changed the graph in a full iteration
     /// and all post-passes completed without error.  Propagates the first
     /// error returned by any pass.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`crate::Error`] reported by any pass, or the
+    /// final-validate error from `ir::validate::validate` if the post-pass
+    /// run leaves an invalid graph.
     pub fn run(&self, graph: &mut ir::BuiltFunctionGraph) -> crate::Result<()> {
         loop {
             let mut changed = false;

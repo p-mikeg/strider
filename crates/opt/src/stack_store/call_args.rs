@@ -139,12 +139,14 @@ pub struct CallStackArgCollect {
 
 impl CallStackArgCollect {
     /// Creates a new pass for the given positional stack-arg offset table.
+    #[must_use]
     pub fn new(stack_arg_offsets: Vec<i64>) -> Self {
         Self { stack_arg_offsets }
     }
 
     /// Creates a new pass whose positional stack-arg offset table is taken
     /// from the supplied calling convention.
+    #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
         Self::new(cc.stack_arg_offsets.clone())
     }

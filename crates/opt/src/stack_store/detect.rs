@@ -80,12 +80,14 @@ pub struct StackStoreDetect {
 
 impl StackStoreDetect {
     /// Creates a new pass for the given stack-pointer varnode.
+    #[must_use]
     pub fn new(stack_ptr_vn: rsleigh::Vn) -> Self {
         Self { stack_ptr_vn }
     }
 
     /// Creates a new pass whose stack-pointer varnode is taken from the
     /// supplied calling convention.
+    #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
         Self::new(cc.stack_ptr_vn)
     }
