@@ -78,6 +78,10 @@ pub enum ErrorKind {
     #[error("attempted to add input to cacheable node {0:?}")]
     AddInputToCacheableNode(NodeId),
 
+    /// `remove_node_input` was called on a cacheable (deduplicated) node.
+    #[error("attempted to remove input from cacheable node {0:?}")]
+    RemoveInputFromCacheableNode(NodeId),
+
     /// A varnode was referenced that is not tracked by the builder.
     #[error("variable {0:?} not found in builder")]
     VariableNotFound(rsleigh::Vn),

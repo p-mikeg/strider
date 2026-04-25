@@ -849,6 +849,44 @@ fn node_inputs_exact_errors_on_wrong_count() {
 }
 
 #[test]
+fn remove_node_input_returns_error_on_out_of_bounds() {
+    let mut graph = Graph::new();
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let err = graph.remove_node_input(cs, 7).expect_err("oob expected");
+    assert!(
+        matches!(
+            err.kind(),
+            crate::error::ErrorKind::InputIndexOutOfBounds { node, index: 7, len: 0 } if *node == cs
+        ),
+        "wrong error: {err:?}"
+    );
+}
+
+#[test]
+fn remove_node_input_on_cacheable_uses_dedicated_error() {
+    let mut graph = Graph::new();
+    let c = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let err = graph
+        .remove_node_input(c, 0)
+        .expect_err("cacheable expected");
+    assert!(
+        matches!(
+            err.kind(),
+            crate::error::ErrorKind::RemoveInputFromCacheableNode(n) if *n == c
+        ),
+        "wrong error: {err:?}"
+    );
+}
+
+#[test]
 fn node_input_id_at_returns_error_on_out_of_bounds() {
     let mut graph = Graph::new();
     let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
