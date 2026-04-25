@@ -119,17 +119,21 @@ impl OptimizerPipeline {
     /// final-validate error from `ir::validate::validate` if the post-pass
     /// run leaves an invalid graph.
     pub fn run(&self, graph: &mut ir::BuiltFunctionGraph) -> crate::Result<()> {
+        const MAX_ITERS: u32 = 1024;
+        let mut iters: u32 = 0;
         loop {
             let mut changed = false;
-
             for opt in &self.optimizers {
                 if opt.optimize(graph)?.changed() {
                     changed = true;
                 }
             }
-
             if !changed {
                 break;
+            }
+            iters += 1;
+            if iters >= MAX_ITERS {
+                return Err(crate::error::ErrorKind::FixedPointLimitExceeded(MAX_ITERS).into());
             }
         }
         for opt in &self.post_passes {
