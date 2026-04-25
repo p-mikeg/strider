@@ -105,17 +105,10 @@ impl SlotList {
     }
 
     /// Slot at index `idx`.  For fixed-arity lists returns `None` past the
-    /// head; for variadic lists returns the tail for any past-head index.
+    /// head; for variadic lists returns the tail slot for any past-head index.
     pub fn at(&self, idx: usize) -> Option<Slot> {
-        if let Some(s) = self.head.get(idx) {
-            Some(*s)
-        } else if idx >= self.head.len() {
-            self.tail
-        } else {
-            None
-        }
+        self.head.get(idx).copied().or(self.tail)
     }
-
 }
 
 /// Full input/output signature of a [`NodeKind`].
