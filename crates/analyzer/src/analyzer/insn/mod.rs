@@ -15,6 +15,15 @@ mod integer;
 mod memory;
 mod misc;
 
+/// Common boilerplate: require the instruction to have an output varnode and
+/// return a borrowed reference to it.  Collapses ~20 inline copies of
+/// `insn.output.as_ref().ok_or(ErrorKind::MissingOutputVn(insn.opcode))?`.
+pub(super) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
+    insn.output
+        .as_ref()
+        .ok_or_else(|| ErrorKind::MissingOutputVn(insn.opcode).into())
+}
+
 impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
