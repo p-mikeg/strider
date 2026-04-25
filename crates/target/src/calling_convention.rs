@@ -164,6 +164,37 @@ impl CallingConvention {
         }
     }
 
+    /// Returns the MIPS O32 calling convention.
+    ///
+    /// Used by 32-bit MIPS Linux binaries on both LE and BE targets — the ABI
+    /// is identical regardless of byte order.  Pairs equally with
+    /// [`crate::SleighArch::mipsle32`] and [`crate::SleighArch::mipsbe32`].
+    ///
+    /// Argument registers: a0, a1, a2, a3 (= r4–r7)
+    /// Callee-saved:       s0–s7, s8 (= fp), gp, ra (= r16–r23, r30, r28, r31)
+    /// Return value:       v0, v1 (= r2, r3)
+    ///
+    /// `sp` (= r29) is the stack pointer.  `ret_stack_pop` is `0` because
+    /// MIPS `jal`/`jalr` writes the return address to `$ra` rather than
+    /// pushing it on the stack.  The first 16 bytes of stack-arg space
+    /// (offsets 0..16) are MIPS's reserved "shadow space" for the four
+    /// register args; positional stack args start at offset 16.
+    ///
+    /// Note: Sleigh's MIPS spec uses lowercase names (`a0`, `s0`, `sp`, `ra`,
+    /// `gp`) and `s8` for the frame pointer register (not `fp`, which does not
+    /// resolve in the Sleigh register table).
+    #[must_use]
+    pub fn mips_o32() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0", "v1"],
+            stack_arg_offsets: &[16, 20, 24, 28],
+            ret_stack_pop: 0,
+        }
+    }
+
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
@@ -291,6 +322,30 @@ mod tests {
                 reg_size_bytes: 8,
                 stack_ptr_name: "sp",
                 stack_arg_offsets: &[0, 8, 16, 24],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "MIPS O32 (LE)",
+                cc: CallingConvention::mips_o32,
+                arch: crate::arch::SleighArch::mipsle32,
+                arg_count: 4,
+                callee_saved_count: 11,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[16, 20, 24, 28],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "MIPS O32 (BE)",
+                cc: CallingConvention::mips_o32,
+                arch: crate::arch::SleighArch::mipsbe32,
+                arg_count: 4,
+                callee_saved_count: 11,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[16, 20, 24, 28],
                 ret_stack_pop: 0,
             },
         ]
@@ -477,6 +532,24 @@ mod tests {
             ret_stack_pop: 0,
         };
         assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
+    }
+
+    #[test]
+    #[ignore = "diagnostic — uncomment locally to print MIPS register names"]
+    fn dump_mips_register_names() {
+        let arch = crate::arch::SleighArch::mipsle32();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .unwrap().regs().unwrap();
+        let candidates = ["a0", "a1", "a2", "a3", "v0", "v1", "sp", "ra",
+                          "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
+                          "s8", "fp", "gp",
+                          "A0", "V0", "SP", "RA", "S0", "FP", "GP",
+                          "r4", "r16", "r28", "r29", "r30", "r31"];
+        for n in candidates {
+            let v = regs.name_to_vn(n);
+            println!("name {n:?} -> {v:?}");
+        }
     }
 
     /// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
