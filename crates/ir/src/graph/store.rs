@@ -58,16 +58,21 @@ impl Graph {
         let output_kinds: SmallVec<[NodeOutputKind; 4]> = output_kinds.into_iter().collect();
         let node = Node::new(kind);
 
-        // Check if node is already in cache
-        let node_entry = (node, inputs.to_vec(), output_kinds.to_vec());
-        if let Some(node_id) = self.node_to_id.get(&node_entry) {
-            return *node_id;
-        }
-        // Create a new node id
+        // Build the cache key only for cacheable kinds; otherwise the two
+        // `Vec`s would be allocated and discarded on every call.
+        let cache_key = if kind.is_cacheable() {
+            let key = (node, inputs.to_vec(), output_kinds.to_vec());
+            if let Some(node_id) = self.node_to_id.get(&key) {
+                return *node_id;
+            }
+            Some(key)
+        } else {
+            None
+        };
+
         let node_id = self.nodes.push(node);
-        // Store the new node id if the node is allowed to be cached
-        if kind.is_cacheable() {
-            self.node_to_id.insert(node_entry, node_id);
+        if let Some(key) = cache_key {
+            self.node_to_id.insert(key, node_id);
         }
 
         // Add all inputs to the graph
