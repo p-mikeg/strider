@@ -7,8 +7,7 @@
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
 
-use rustc_hash::FxHashMap;
-use std::collections::HashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, IntBinaryOp};
@@ -64,7 +63,7 @@ pub(crate) fn decompose_sp(
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut HashSet<NodeId>,
+    visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
     if let Some(cached) = memo.get(&out) {
         return cached.clone();
@@ -95,7 +94,7 @@ fn decompose_sp_inner(
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut HashSet<NodeId>,
+    visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
     match *fg.graph.node_kind(node) {
         NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
@@ -141,7 +140,7 @@ fn decompose_sp_phi(
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut HashSet<NodeId>,
+    visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
     let inputs = fg.graph.node_inputs(node);
     if inputs.len() < 2 {
@@ -217,7 +216,7 @@ mod tests {
         // sp_val is a ControlPhi-of-InitialVar; the phi has 1 predecessor →
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         let r = decompose_sp(&fg, sp_val, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
@@ -236,7 +235,7 @@ mod tests {
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
@@ -256,7 +255,7 @@ mod tests {
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
@@ -278,13 +277,13 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let r1 = {
-            let mut v = std::collections::HashSet::new();
+            let mut v = FxHashSet::default();
             decompose_sp(&fg, addr, sp, &mut memo, &mut v)
         };
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
         let r2 = {
-            let mut v = std::collections::HashSet::new();
+            let mut v = FxHashSet::default();
             decompose_sp(&fg, addr, sp, &mut memo, &mut v)
         };
         assert!(matches!((&r1, &r2),
@@ -305,7 +304,7 @@ mod tests {
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         assert!(decompose_sp(&fg, c, sp, &mut memo, &mut visiting).is_none());
         Ok(())
     }
@@ -335,7 +334,7 @@ mod tests {
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         let r = decompose_sp(&fg, s3, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
@@ -364,7 +363,7 @@ mod tests {
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = std::collections::HashSet::new();
+        let mut visiting = FxHashSet::default();
         let r = decompose_sp(&fg, c, sp, &mut memo, &mut visiting);
         assert!(r.is_none());
         assert!(

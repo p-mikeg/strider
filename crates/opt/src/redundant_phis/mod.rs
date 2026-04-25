@@ -82,34 +82,36 @@ fn remove_phis(
                 .map(|(j, _ctrl_in)| inputs[j + 1])
                 .collect();
 
-            let simplified = if reachable_ctrl.len() == 1 {
-                let unique_ctrl = *reachable_ctrl
-                    .iter()
-                    .next()
-                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
-                // Find position j such that ctrl_inputs[j] == unique_ctrl, then
-                // take inputs[j + 1] (skipping the phi_token at inputs[0]).
-                let ctrl_inputs2 = function.graph.node_inputs(control_state_id);
-                let j = ctrl_inputs2
-                    .into_iter()
-                    .position(|c| c == unique_ctrl)
-                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
-                let value = function.graph.node_inputs(node_id)[j + 1];
-                let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
-                replace_output_uses(function, output, value)?
-            } else if live_values.len() == 1 {
-                // Distinct live ctrl predecessors all feed the same data
-                // value: the phi is a no-op.  Replace uses with that single
-                // value.  (The ControlState still has multiple real
-                // predecessors, so we don't touch it here.)
-                let value = *live_values
-                    .iter()
-                    .next()
-                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
-                let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
-                replace_output_uses(function, output, value)?
-            } else {
-                false
+            // Drive on iterator-singularity rather than `len()==1`: the
+            // `(Some(_), None)` match makes "exactly one element" a
+            // structural property the compiler enforces, so we don't need
+            // a defensive `ok_or` after the count check.
+            let mut ctrl_iter = reachable_ctrl.iter();
+            let mut value_iter = live_values.iter();
+            let simplified = match (ctrl_iter.next(), ctrl_iter.next()) {
+                (Some(&unique_ctrl), None) => {
+                    // Find position j such that ctrl_inputs[j] == unique_ctrl, then
+                    // take inputs[j + 1] (skipping the phi_token at inputs[0]).
+                    let ctrl_inputs2 = function.graph.node_inputs(control_state_id);
+                    let Some(j) = ctrl_inputs2.into_iter().position(|c| c == unique_ctrl)
+                    else {
+                        return Err(ErrorKind::UniqueCtrlNotFound.into());
+                    };
+                    let value = function.graph.node_inputs(node_id)[j + 1];
+                    let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
+                    replace_output_uses(function, output, value)?
+                }
+                _ => match (value_iter.next(), value_iter.next()) {
+                    // Distinct live ctrl predecessors all feed the same data
+                    // value: the phi is a no-op.  Replace uses with that single
+                    // value.  (The ControlState still has multiple real
+                    // predecessors, so we don't touch it here.)
+                    (Some(&value), None) => {
+                        let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
+                        replace_output_uses(function, output, value)?
+                    }
+                    _ => false,
+                },
             };
 
             if simplified {
@@ -126,15 +128,14 @@ fn remove_phis(
                 .filter(|inp| reachable.contains(&function.graph.output_definition(*inp).0))
                 .collect();
 
-            let simplified = if reachable_inputs.len() == 1 {
-                let input = *reachable_inputs
-                    .iter()
-                    .next()
-                    .ok_or(ErrorKind::UniqueCtrlNotFound)?;
-                let [output, _phi_token] = function.graph.node_outputs_exact::<2>(node_id)?;
-                replace_output_uses(function, output, input)?
-            } else {
-                false
+            let mut iter = reachable_inputs.iter();
+            let simplified = match (iter.next(), iter.next()) {
+                (Some(&input), None) => {
+                    let [output, _phi_token] =
+                        function.graph.node_outputs_exact::<2>(node_id)?;
+                    replace_output_uses(function, output, input)?
+                }
+                _ => false,
             };
 
             // For ControlState we can only detach when BOTH outputs are unused.

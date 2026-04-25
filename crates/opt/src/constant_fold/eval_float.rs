@@ -82,7 +82,9 @@ pub(super) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) 
                 FloatUnaryOp::Sqrt => v.sqrt(),
                 FloatUnaryOp::Ceil => v.ceil(),
                 FloatUnaryOp::Floor => v.floor(),
-                FloatUnaryOp::Round => v.round(),
+                // IEEE 754 / hardware default: ties-to-even, not Rust's
+                // ties-away-from-zero `round`.
+                FloatUnaryOp::Round => v.round_ties_even(),
             };
             Some(result.to_bits() as u64)
         }
@@ -94,7 +96,7 @@ pub(super) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) 
                 FloatUnaryOp::Sqrt => v.sqrt(),
                 FloatUnaryOp::Ceil => v.ceil(),
                 FloatUnaryOp::Floor => v.floor(),
-                FloatUnaryOp::Round => v.round(),
+                FloatUnaryOp::Round => v.round_ties_even(),
             };
             Some(result.to_bits())
         }

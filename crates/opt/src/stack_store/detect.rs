@@ -19,16 +19,15 @@ fn try_detect_stack_store(
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
-    let space = match *fg.graph.node_kind(node_id) {
-        NodeKind::Store(space) => space,
-        _ => return Ok(OptimizationResult::NoChange),
+    let NodeKind::Store(space) = *fg.graph.node_kind(node_id) else {
+        return Ok(OptimizationResult::NoChange);
     };
 
     // Store inputs: [memory, addr, data].
     let [memory, addr, data] = fg.graph.node_inputs_exact::<3>(node_id)?;
     let [old_mem_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
 
-    let mut visiting = std::collections::HashSet::new();
+    let mut visiting = rustc_hash::FxHashSet::default();
     let Some(expr) = decompose_sp(fg, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };

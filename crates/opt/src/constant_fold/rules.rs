@@ -395,8 +395,8 @@ pub(super) fn apply_const_eval_rules(
 fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
         BoolUnaryOpVar, BoolVar, BoxedRule, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-        FloatVar, any_bool_const, any_float_const, bool_and, bool_or, bool_unary_any, bool_xor,
-        boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule,
+        FloatVar, Pat, any_bool_const, any_float_const, bool_and, bool_or, bool_unary_any,
+        bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule,
     };
     use pattern::{bool_const_with, float_const_with};
 
@@ -428,29 +428,21 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 bool_const_with!([l, r] => l ^ r),
             ))
         },
-        // BAnd(BoolConst(false), _) => bool_const(false)  (absorbing element)
+        // BAnd(BoolConst(false), _) => bool_const(false)  (absorbing element).
+        // The constraint that the const is the absorbing value lives in the
+        // pattern via `.when_match()`, so the rewrite closure is a literal.
         {
             let l = BoolVar::new();
-            boxed_rule(rewrite_rule(
-                bool_and(any_bool_const(l), pattern::any()),
-                bool_const_with!([l] => {
-                    if !l { false } else {
-                        return Err(pattern::Error::skip());
-                    }
-                }),
-            ))
+            let pat: Pat = bool_and(any_bool_const(l), pattern::any()).into();
+            let pat = pat.when_match(move |_fg, _ty, b| b.get_bool(l) == Some(false));
+            boxed_rule(rewrite_rule(pat, bool_const_with!([] => false)))
         },
         // BOr(BoolConst(true), _) => bool_const(true)  (absorbing element)
         {
             let l = BoolVar::new();
-            boxed_rule(rewrite_rule(
-                bool_or(any_bool_const(l), pattern::any()),
-                bool_const_with!([l] => {
-                    if l { true } else {
-                        return Err(pattern::Error::skip());
-                    }
-                }),
-            ))
+            let pat: Pat = bool_or(any_bool_const(l), pattern::any()).into();
+            let pat = pat.when_match(move |_fg, _ty, b| b.get_bool(l) == Some(true));
+            boxed_rule(rewrite_rule(pat, bool_const_with!([] => true)))
         },
         // BoolUnaryOp(op)(BoolConst(v)) => bool_const(!v)
         {
