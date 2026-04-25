@@ -1,12 +1,9 @@
-use std::collections::VecDeque;
-
-use rustc_hash::FxHashSet;
-
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::worklist::WorkSet;
 
 mod eval_float;
 mod eval_int;
@@ -15,32 +12,6 @@ mod rules;
 mod tests;
 
 use rules::*;
-
-// Local worklist (hoisted to crate::worklist in Task 2.I).
-#[derive(Default)]
-struct WorkSet {
-    queued: FxHashSet<NodeId>,
-    queue: VecDeque<NodeId>,
-}
-impl WorkSet {
-    fn seeded(it: impl IntoIterator<Item = NodeId>) -> Self {
-        let mut q = Self::default();
-        for n in it {
-            q.push(n);
-        }
-        q
-    }
-    fn push(&mut self, n: NodeId) {
-        if self.queued.insert(n) {
-            self.queue.push_back(n);
-        }
-    }
-    fn pop(&mut self) -> Option<NodeId> {
-        let n = self.queue.pop_front()?;
-        self.queued.remove(&n);
-        Some(n)
-    }
-}
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
