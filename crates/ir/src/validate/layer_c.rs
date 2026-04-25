@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
@@ -44,19 +46,26 @@ pub(super) fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationE
 
 /// Layer C: every input of a `ControlState` node must be a `Control`-kinded
 /// output. Emits `ControlStateNonControlPredecessor` per offending input.
-pub(super) fn check_layer_c_control_state(graph: &Graph, errs: &mut Vec<ValidationError>) {
+pub(super) fn check_layer_c_control_state(
+    graph: &Graph,
+    reachable: &HashSet<NodeId>,
+    errs: &mut Vec<ValidationError>,
+) {
     for node in graph.nodes.keys() {
         if !matches!(graph.node_kind(node), NodeKind::ControlState) {
             continue;
         }
         let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
-            // ControlState's signature is variadic with head_len 0, so Layer A's
-            // count threshold is satisfied by zero inputs; without this check a
-            // zero-predecessor ControlState would pass the validator silently.
-            errs.push(ValidationError::EmptyControlStatePredecessors {
-                control_state: node,
-            });
+            // Zero-predecessor ControlStates are *expected* for zombies left
+            // behind by `RedundantPhis::detach_unreachable_nodes`; they live
+            // in the arena but are not reachable from the entry. The
+            // invariant only applies to reachable ControlState nodes.
+            if reachable.contains(&node) {
+                errs.push(ValidationError::EmptyControlStatePredecessors {
+                    control_state: node,
+                });
+            }
             continue;
         }
         for (idx, target) in inputs.into_iter().enumerate() {

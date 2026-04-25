@@ -251,14 +251,9 @@ fn store_then_load_threads_memory_through_store() {
             _ => {}
         }
     }
-    let load = load.expect("Load node missing");
-    let store = store.expect("Store node missing");
-    let load_mem_input = fg
-        .graph
-        .node_inputs(load)
-        .into_iter()
-        .next()
-        .expect("Load.input[0] (memory)");
+    let load = load.unwrap();
+    let store = store.unwrap();
+    let load_mem_input = fg.graph.node_inputs(load).into_iter().next().unwrap();
     let producer = fg.graph.get_node_from_output(load_mem_input);
     assert_eq!(
         producer, store,

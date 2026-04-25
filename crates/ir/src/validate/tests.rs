@@ -826,19 +826,27 @@ fn layer_a_rejects_wrong_output_count() {
 fn layer_c_rejects_control_state_with_zero_predecessors() {
     // ControlState has a variadic head_len of 0, so Layer A's count check
     // (>= 0) accepts zero inputs and Layer C's per-predecessor loop is a
-    // no-op. Without an explicit check, a zero-pred ControlState slips
-    // through validation entirely.
+    // no-op. Without an explicit check, a *reachable* zero-pred
+    // ControlState slips through validation entirely.
+    //
+    // Walk semantics: graph_walk_succs follows forward-control + backward-data,
+    // so we make the zero-pred ControlState reachable by having a downstream
+    // Return consume *both* Entry's control (so walk reaches Return) and the
+    // ControlState's control (so walking back from Return hits the CS).
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
     let cs = graph.create_node(
         NodeKind::ControlState,
         [],
         [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
     );
     let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
-    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
-    graph.create_node(NodeKind::Return, [cs_ctrl, mem], []);
+    // Return consumes entry's control (reaches Return via cfg_succs of Entry)
+    // and cs_ctrl as a "ret value" (reaches CS via Return's backward-data).
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem, cs_ctrl], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
@@ -848,4 +856,25 @@ fn layer_c_rejects_control_state_with_zero_predecessors() {
         )),
         "expected EmptyControlStatePredecessors, got: {errs:?}"
     );
+}
+
+#[test]
+fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
+    // Zombie ControlState with zero inputs left behind by RedundantPhis is
+    // expected; the validator must not flag it (this happens routinely on
+    // real binaries after dead-branch elimination).
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    // Zombie CS that nothing references — not reachable from entry.
+    let _zombie_cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
+
+    validate(&graph, entry).expect("zombie ControlState must not trigger validation error");
 }
