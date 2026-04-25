@@ -119,7 +119,18 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // machine instruction's pcode sequence and produce a wrong CFG with
             // no diagnostic.
             rsleigh::VnSpace::CONST => {
-                let off = branch_target_var.addr.off.cast_signed();
+                // Sign-extend the encoded offset from the varnode's declared
+                // byte width before treating it as a signed i64.  Without this
+                // a 32-bit-encoded -4 (= 0xFFFFFFFC) reads as the giant
+                // positive number 4_294_967_292 when cast straight from u64,
+                // and the bounds check below incorrectly rejects the target.
+                let raw = branch_target_var.addr.off;
+                let off: i64 = match branch_target_var.size {
+                    1 => (raw as i8) as i64,
+                    2 => (raw as i16) as i64,
+                    4 => (raw as i32) as i64,
+                    _ => raw.cast_signed(),
+                };
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or(
                     ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
                 )?;
