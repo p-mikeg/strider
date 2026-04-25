@@ -1,5 +1,5 @@
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind, NodeOutputId};
+use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -74,13 +74,18 @@ impl Optimizer for ConstantFold {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
-        // Buffer reused across iterations to snapshot outputs before each
-        // rule sweep. Each iteration clears and refills it, avoiding a
-        // fresh `Vec` allocation per node visit.
-        let mut outs_before: Vec<NodeOutputId> = Vec::new();
+        // Reused per iteration to snapshot consumer NodeIds BEFORE running
+        // rules. After a rule rewrites the node, `output_uses(old_out)` is
+        // empty (uses were rewired to the replacement), so we must capture
+        // consumers ahead of time to re-enqueue them.
+        let mut consumers: Vec<NodeId> = Vec::new();
         while let Some(node_id) = work.pop() {
-            outs_before.clear();
-            outs_before.extend(function.graph.node_outputs(node_id).into_iter());
+            consumers.clear();
+            for out in function.graph.node_outputs(node_id).into_iter() {
+                for (consumer, _) in function.graph.output_uses(out) {
+                    consumers.push(consumer);
+                }
+            }
             let r = apply_identity_rules(function, node_id)?
                 | apply_const_eval_rules(function, node_id)?
                 | apply_bool_float_rules(function, node_id)?
@@ -88,10 +93,8 @@ impl Optimizer for ConstantFold {
                 | apply_bitcast_extend_rules(function, node_id)?;
             if r.changed() {
                 result |= r;
-                for o in &outs_before {
-                    for (consumer, _) in function.graph.output_uses(*o) {
-                        work.push(consumer);
-                    }
+                for &consumer in &consumers {
+                    work.push(consumer);
                 }
             }
         }

@@ -962,6 +962,33 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
     Ok(())
 }
 
+/// Single-pass cascade: `((1 + 2) + 3) + 4` must converge to `IntConst(10)`
+/// in a single `optimize()` call (i.e. without relying on the outer
+/// pipeline fixed-point loop). Verifies that consumers are re-enqueued
+/// into the worklist after a rule rewrites a node.
+#[test]
+fn single_pass_propagates_through_chain() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let one = b.build_int_const(1, NodeOutputType::U32);
+        let two = b.build_int_const(2, NodeOutputType::U32);
+        let three = b.build_int_const(3, NodeOutputType::U32);
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let c1 = b.build_int_binary_operation(one, two, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let c2 = b.build_int_binary_operation(c1, three, IntBinaryOp::Add, NodeOutputType::U32)?;
+        Ok(b.build_int_binary_operation(c2, four, IntBinaryOp::Add, NodeOutputType::U32)?)
+    })?;
+
+    // Single optimize() call — must converge without the outer pipeline loop.
+    ConstantFold.optimize(&mut fg)?;
+
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(10),
+        "expected single-pass convergence to IntConst(10)"
+    );
+    Ok(())
+}
+
 /// 10-deep `((((x - 1) - 1) ...) - 1)` chain — must collapse to `x - 10`
 /// via the worklist re-enqueueing reassociation rules along the way.
 #[test]
