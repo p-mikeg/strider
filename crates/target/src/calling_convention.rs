@@ -30,8 +30,18 @@ pub struct CallingConvention {
     /// pointer's `Vn` resolved, and the `SleighArch` that would otherwise
     /// own this fact is already passed separately to `Analyzer::new`.
     stack_ptr_reg_name: &'static str,
+    /// Sleigh register names for the ABI's argument-passing registers, in
+    /// positional order.  Resolved into
+    /// [`BuiltCallingConvention::arg_passing_regs`] by [`Self::build`].
     arg_passing_regs: &'static [&'static str],
+    /// Sleigh register names for registers the callee must preserve across
+    /// the call.  Resolved into [`BuiltCallingConvention::callee_saved_regs`]
+    /// by [`Self::build`].  Excludes the stack pointer; SP's cross-call
+    /// behaviour is expressed through [`Self::ret_stack_pop`].
     callee_saved_regs: &'static [&'static str],
+    /// Sleigh register names for return-value registers, in positional order.
+    /// Resolved into [`BuiltCallingConvention::ret_val_regs`] by
+    /// [`Self::build`].
     ret_val_regs: &'static [&'static str],
     /// Byte offsets from the call-time stack pointer for each positional
     /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
