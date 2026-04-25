@@ -66,21 +66,17 @@ fn remove_phis(
             let control_state_id = function.graph.output_definition(phi_token).0;
             let ctrl_inputs = function.graph.node_inputs(control_state_id);
 
-            let reachable_ctrl: FxHashSet<NodeOutputId> = ctrl_inputs
-                .into_iter()
-                .filter(|ctrl_in| reachable.contains(&function.graph.output_definition(*ctrl_in).0))
-                .collect();
-
-            // Values from live predecessors only: positionally, inputs[j + 1]
-            // is the value on predecessor ctrl_inputs[j].
-            let live_values: FxHashSet<NodeOutputId> = ctrl_inputs
-                .into_iter()
-                .enumerate()
-                .filter(|&(_j, ctrl_in)| {
-                    reachable.contains(&function.graph.output_definition(ctrl_in).0)
-                })
-                .map(|(j, _ctrl_in)| inputs[j + 1])
-                .collect();
+            // Single pass: gather both the deduplicated reachable ctrl edges
+            // and their corresponding values (inputs[j + 1]) for live
+            // predecessors only.
+            let mut reachable_ctrl: FxHashSet<NodeOutputId> = FxHashSet::default();
+            let mut live_values: FxHashSet<NodeOutputId> = FxHashSet::default();
+            for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
+                if reachable.contains(&function.graph.output_definition(ctrl_in).0) {
+                    reachable_ctrl.insert(ctrl_in);
+                    live_values.insert(inputs[j + 1]);
+                }
+            }
 
             // Drive on iterator-singularity rather than `len()==1`: the
             // `(Some(_), None)` match makes "exactly one element" a
