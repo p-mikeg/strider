@@ -175,6 +175,78 @@ fn nested_if_true_eliminated() -> Result<()> {
     Ok(())
 }
 
+/// Edge case: if the dead_ctrl output of an `If` is wired into the SAME
+/// `ControlState` at *multiple* input slots, the previous code processed
+/// `output_uses(dead_ctrl)` in arbitrary order and removed by the index
+/// captured before mutation. After the first removal, indices shifted left,
+/// so the second `remove_node_input` either:
+///  - hit the `dead_idx < cs_len` guard and silently skipped (leaving a stale
+///    dead reference in the ControlState), or
+///  - was still in-bounds but pointed at the wrong (now live) predecessor and
+///    removed it instead.
+///
+/// Sorting `dead_uses` by `(consumer, idx)` descending makes per-consumer
+/// removals safe: removing the higher index first leaves all lower indices
+/// pointing at their original slots. Different consumers don't interact.
+///
+/// Construction: build the standard `if(true)` skeleton, then wire `ctrl_false`
+/// (the dead output) into the false-branch ControlState a second time via
+/// `Graph::add_node_input`. `FunctionBuilder::build()` finishes before this
+/// surgery, so its validator never sees the duplicate; we call
+/// `DeadBranchElimination::optimize` directly (not the pipeline) for the same
+/// reason.
+#[test]
+fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
+    let mut fg = make_if_fn(true)?;
+
+    // Find the If node and its ctrl_false output (dead when cond=true).
+    let if_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .expect("expected an If node");
+    let if_outputs: Vec<_> = fg.graph.node_outputs(if_node).into_iter().collect();
+    assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
+    let ctrl_false = if_outputs[1];
+
+    // Find the false-branch ControlState (the unique consumer of ctrl_false).
+    let consumers: Vec<_> = fg.graph.output_uses(ctrl_false).collect();
+    assert_eq!(
+        consumers.len(),
+        1,
+        "ctrl_false should have exactly one consumer in the standard make_if_fn shape"
+    );
+    let false_cs = consumers[0].0;
+    assert!(matches!(fg.graph.node_kind(false_cs), NodeKind::ControlState));
+
+    // Wire ctrl_false into the same CS a second time, producing the bad shape.
+    fg.graph.add_node_input(false_cs, ctrl_false)?;
+    let pre_inputs: Vec<_> = fg.graph.node_inputs(false_cs).into_iter().collect();
+    assert_eq!(pre_inputs.len(), 2);
+    assert_eq!(
+        pre_inputs[0], ctrl_false,
+        "slot 0 must be ctrl_false (original)"
+    );
+    assert_eq!(
+        pre_inputs[1], ctrl_false,
+        "slot 1 must be ctrl_false (added duplicate)"
+    );
+
+    // Run DBE directly — pipeline.run() would re-validate, and we constructed
+    // a deliberately-unusual (but IR-permitted) shape. DBE itself must handle
+    // it without leaving a stale reference behind.
+    DeadBranchElimination.optimize(&mut fg)?;
+
+    let post_inputs: Vec<_> = fg.graph.node_inputs(false_cs).into_iter().collect();
+    assert_eq!(
+        post_inputs.len(),
+        0,
+        "DBE must remove both dead-ctrl wires; got {} remaining input(s) {:?}",
+        post_inputs.len(),
+        post_inputs,
+    );
+    Ok(())
+}
+
 /// A ControlPhi at a 2-input join — when the dead branch is removed, the
 /// phi must lose exactly one input slot (the dead position).
 #[test]
