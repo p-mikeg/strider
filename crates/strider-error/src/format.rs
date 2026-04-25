@@ -35,10 +35,7 @@ pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
     // Result produced by the fmt::Write trait.
     let _ = writeln!(out, "error: {err}");
 
-    // Source-chain walk via the Error supertrait. `&dyn Traceback` upcasts
-    // to `&dyn Error` implicitly (trait upcasting, stable since 1.86).
-    let err_ref: &(dyn Error + 'static) = err;
-    let mut cur = err_ref.source();
+    let mut cur = Error::source(err);
     while let Some(e) = cur {
         let _ = writeln!(out, "  caused by: {e}");
         cur = e.source();
