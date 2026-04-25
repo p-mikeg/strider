@@ -779,7 +779,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // U32 load below).
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABE, NodeOutputType::U64);
+    let wide = b.build_int_const(0xDEAD_BEEF_CAFE_BABE, NodeOutputType::U64)?;
     b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 

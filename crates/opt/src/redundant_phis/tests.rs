@@ -188,7 +188,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
-    let c = b.build_int_const(0, NodeOutputType::U64);
+    let c = b.build_int_const(0, NodeOutputType::U64)?;
     b.build_return(Some(c), &[])?;
     let mut fg = b.build()?;
 

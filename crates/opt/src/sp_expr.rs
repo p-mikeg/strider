@@ -416,7 +416,7 @@ mod tests {
         // a: sp = sp - 4 (SP-rooted)
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let four = b.build_int_const(4, NodeOutputType::U32);
+        let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
         let sp_minus_4 =
             b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_4)?;
@@ -425,7 +425,7 @@ mod tests {
         // bb: sp = 0xDEAD_BEEF (NOT SP-rooted — a literal value pretending
         // to be a new SP).
         b.set_region(bb);
-        let bogus = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32);
+        let bogus = b.build_int_const(0xDEAD_BEEF, NodeOutputType::U32).unwrap();
         b.write_variable(&sp, bogus)?;
         b.build_branch(c)?;
 

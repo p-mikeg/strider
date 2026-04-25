@@ -605,7 +605,7 @@ fn fold_lzcount_zero_u32() -> Result<()> {
     // formula `(masked << (64 - bits)).leading_zeros()` returned 64 when
     // masked was 0, ignoring the type's narrower width.
     let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0, NodeOutputType::U32);
+        let v = b.build_int_const(0, NodeOutputType::U32)?;
         Ok(b.build_lzcount(v, NodeOutputType::U32)?)
     })?;
     assert!(ConstantFold.optimize(&mut fg)?.changed());
@@ -616,7 +616,7 @@ fn fold_lzcount_zero_u32() -> Result<()> {
 #[test]
 fn fold_lzcount_zero_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0, NodeOutputType::U8);
+        let v = b.build_int_const(0, NodeOutputType::U8)?;
         Ok(b.build_lzcount(v, NodeOutputType::U8)?)
     })?;
     assert!(ConstantFold.optimize(&mut fg)?.changed());
@@ -629,7 +629,7 @@ fn fold_lzcount_zero_u64() -> Result<()> {
     // U64 happened to work on the unfixed code (64 - 64 = 0 shift), but pin
     // it with a regression test so the fix doesn't break it.
     let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0, NodeOutputType::U64);
+        let v = b.build_int_const(0, NodeOutputType::U64)?;
         Ok(b.build_lzcount(v, NodeOutputType::U64)?)
     })?;
     assert!(ConstantFold.optimize(&mut fg)?.changed());
