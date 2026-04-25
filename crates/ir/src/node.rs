@@ -136,14 +136,13 @@ impl NodeOutputType {
     #[inline]
     #[must_use] 
     pub fn to_natural_int_type(self) -> NodeOutputType {
-        match self.byte_size() {
-            1 => NodeOutputType::U8,
-            2 => NodeOutputType::U16,
-            4 => NodeOutputType::U32,
-            8 => NodeOutputType::U64,
-            16 => NodeOutputType::U128,
-            32 => NodeOutputType::U256,
-            _ => NodeOutputType::U64,
+        match self {
+            NodeOutputType::Bool | NodeOutputType::U8 => NodeOutputType::U8,
+            NodeOutputType::U16 => NodeOutputType::U16,
+            NodeOutputType::U32 | NodeOutputType::F32 => NodeOutputType::U32,
+            NodeOutputType::U64 | NodeOutputType::F64 => NodeOutputType::U64,
+            NodeOutputType::U128 => NodeOutputType::U128,
+            NodeOutputType::U256 => NodeOutputType::U256,
         }
     }
 
@@ -156,13 +155,15 @@ impl NodeOutputType {
     #[must_use] 
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
-            NodeOutputType::Bool => None,
+            NodeOutputType::Bool
+            | NodeOutputType::U128
+            | NodeOutputType::U256
+            | NodeOutputType::F32
+            | NodeOutputType::F64 => None,
             NodeOutputType::U8 => Some(val as u8 as u64),
             NodeOutputType::U16 => Some(val as u16 as u64),
             NodeOutputType::U32 => Some(val as u32 as u64),
             NodeOutputType::U64 => Some(val),
-            NodeOutputType::U128 | NodeOutputType::U256 => None,
-            NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
 
@@ -175,13 +176,15 @@ impl NodeOutputType {
     #[must_use] 
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
-            NodeOutputType::Bool => None,
+            NodeOutputType::Bool
+            | NodeOutputType::U128
+            | NodeOutputType::U256
+            | NodeOutputType::F32
+            | NodeOutputType::F64 => None,
             NodeOutputType::U8 => Some(val as i8 as i64),
             NodeOutputType::U16 => Some(val as i16 as i64),
             NodeOutputType::U32 => Some(val as i32 as i64),
             NodeOutputType::U64 => Some(val as i64),
-            NodeOutputType::U128 | NodeOutputType::U256 => None,
-            NodeOutputType::F32 | NodeOutputType::F64 => None,
         }
     }
 

@@ -81,15 +81,20 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 /// `Control`, `Memory`, and `ControlPhi` match their identically-named
 /// [`NodeOutputKind`] variants.
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
-    match (expected, actual) {
-        (ExpectedOutputKind::Control, NodeOutputKind::Control) => true,
-        (ExpectedOutputKind::Memory, NodeOutputKind::Memory) => true,
-        (ExpectedOutputKind::ControlPhi, NodeOutputKind::ControlPhi) => true,
-        (ExpectedOutputKind::Bool, NodeOutputKind::OutputType(NodeOutputType::Bool)) => true,
-        (ExpectedOutputKind::AnyInt, NodeOutputKind::OutputType(t)) if t.is_integer() => true,
-        (ExpectedOutputKind::AnyFloat, NodeOutputKind::OutputType(t)) if t.is_float() => true,
-        (ExpectedOutputKind::AnyValue, NodeOutputKind::OutputType(_)) => true,
-        _ => false,
+    match expected {
+        ExpectedOutputKind::Control => matches!(actual, NodeOutputKind::Control),
+        ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory),
+        ExpectedOutputKind::ControlPhi => matches!(actual, NodeOutputKind::ControlPhi),
+        ExpectedOutputKind::Bool => {
+            matches!(actual, NodeOutputKind::OutputType(NodeOutputType::Bool))
+        }
+        ExpectedOutputKind::AnyInt => {
+            matches!(actual, NodeOutputKind::OutputType(t) if t.is_integer())
+        }
+        ExpectedOutputKind::AnyFloat => {
+            matches!(actual, NodeOutputKind::OutputType(t) if t.is_float())
+        }
+        ExpectedOutputKind::AnyValue => matches!(actual, NodeOutputKind::OutputType(_)),
     }
 }
 

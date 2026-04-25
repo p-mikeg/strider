@@ -14,8 +14,10 @@ mod tests;
 
 pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "Mdiamond",
-        NodeKind::FunctionArg { .. } => "Mdiamond",
+        NodeKind::Entry
+        | NodeKind::InitialMemory
+        | NodeKind::InitialVar(_)
+        | NodeKind::FunctionArg { .. } => "Mdiamond",
 
         NodeKind::ControlState => "invhouse",
         NodeKind::ControlPhi(_) | NodeKind::MemPhi | NodeKind::ValuePhi => "house",
@@ -46,8 +48,10 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 /// Per-kind fill color for the dark theme.
 pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
-        NodeKind::FunctionArg { .. } => "\"#1a3a5c\"",
+        NodeKind::Entry
+        | NodeKind::InitialMemory
+        | NodeKind::InitialVar(_)
+        | NodeKind::FunctionArg { .. } => "\"#1a3a5c\"",
 
         NodeKind::ControlState => "\"#2a1a4a\"",
 
