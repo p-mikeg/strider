@@ -700,7 +700,7 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
 
     // Redirect input[0] from a → c. Node now actually has inputs [c, b],
     // but the cache (if not maintained) still maps [a, b] → add_ab.
-    let in0 = graph.node_input_id_at(add_ab, 0);
+    let in0 = graph.node_input_id_at(add_ab, 0).unwrap();
     graph.update_input(in0, c_out);
 
     // Re-create with the ORIGINAL key. Must NOT return add_ab — its
@@ -846,4 +846,19 @@ fn node_inputs_exact_errors_on_wrong_count() {
         err.kind(),
         crate::error::ErrorKind::WrongInputCount(_, 2, 1)
     ));
+}
+
+#[test]
+fn node_input_id_at_returns_error_on_out_of_bounds() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let err = graph
+        .node_input_id_at(n, 0)
+        .expect_err("Entry has no inputs");
+    let crate::error::ErrorKind::InputIndexOutOfBounds { node, index, len } = err.kind() else {
+        panic!("wrong error kind: {err:?}");
+    };
+    assert_eq!(*node, n);
+    assert_eq!(*index, 0);
+    assert_eq!(*len, 0);
 }

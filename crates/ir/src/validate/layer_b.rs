@@ -21,7 +21,13 @@ pub(super) fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
     for node in graph.nodes.keys() {
         let input_count = graph.node_inputs(node).len();
         for idx in 0..input_count {
-            let input_id = graph.node_input_id_at(node, idx);
+            // The index range is by construction valid (we just measured the
+            // input count); a failure here would be an internal-consistency
+            // bug rather than user input. Skip the offending index in the
+            // unlikely event of one.
+            let Ok(input_id) = graph.node_input_id_at(node, idx) else {
+                continue;
+            };
             let target = graph.input_output_id(input_id);
             let idx_u32 = idx as u32;
             let in_list = graph

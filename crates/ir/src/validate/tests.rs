@@ -122,7 +122,7 @@ fn layer_b_stale_input_in_use_list() {
     // Retarget the op's input at idx 0 to `b_out` without updating any
     // use-list.  `a_out`'s use-list still references this input, but the
     // input itself now points at `b_out` — that's a stale entry.
-    let input_id = graph.node_input_id_at(neg, 0);
+    let input_id = graph.node_input_id_at(neg, 0).unwrap();
     graph.test_only_retarget_input(input_id, b_out);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -436,7 +436,7 @@ fn layer_c_two_postcall_mem_states_on_same_call() {
     // Retarget pcm2's input to call1_ctrl so call1 now has two consumers.
     // (Use test_only_retarget_input so the use-list is not updated — that
     // corruption is intentional; we want to verify the uniqueness check.)
-    let pcm2_input = graph.node_input_id_at(pcm2, 0);
+    let pcm2_input = graph.node_input_id_at(pcm2, 0).unwrap();
     graph.test_only_retarget_input(pcm2_input, call1_ctrl);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -472,7 +472,7 @@ fn layer_c_two_postcall_var_states_same_vn() {
     );
 
     // Retarget v2's input to call1_ctrl — same vn, same call, two nodes.
-    let v2_input = graph.node_input_id_at(v2, 0);
+    let v2_input = graph.node_input_id_at(v2, 0).unwrap();
     graph.test_only_retarget_input(v2_input, call1_ctrl);
 
     let errs = validate(&graph, entry).unwrap_err();
