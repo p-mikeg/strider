@@ -700,7 +700,7 @@ fn update_input_on_cacheable_evicts_stale_cache_entry() {
 
     // Redirect input[0] from a → c. Node now actually has inputs [c, b],
     // but the cache (if not maintained) still maps [a, b] → add_ab.
-    let in0 = graph.node_input_id_at(add_ab, 0);
+    let in0 = graph.node_input_id_at(add_ab, 0).unwrap();
     graph.update_input(in0, c_out);
 
     // Re-create with the ORIGINAL key. Must NOT return add_ab — its
@@ -846,4 +846,91 @@ fn node_inputs_exact_errors_on_wrong_count() {
         err.kind(),
         crate::error::ErrorKind::WrongInputCount(_, 2, 1)
     ));
+}
+
+#[test]
+fn update_input_self_redirect_preserves_use_list_order() {
+    use crate::ops::IntUnaryOp;
+    let mut graph = Graph::new();
+    let c = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let cval = graph.node_outputs(c).into_iter().next().unwrap();
+    // Two consumers of cval to give the use-list real ordering.
+    let _a = graph.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        [cval],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let b = graph.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::Not),
+        [cval],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    let head_before = graph.output_first_use_id(cval);
+
+    let b_in0 = graph.node_input_id_at(b, 0).unwrap();
+    graph.update_input(b_in0, cval); // self-redirect — should be a no-op
+
+    assert_eq!(
+        head_before,
+        graph.output_first_use_id(cval),
+        "self-redirect must not re-order the use-list"
+    );
+}
+
+#[test]
+fn remove_node_input_returns_error_on_out_of_bounds() {
+    let mut graph = Graph::new();
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let err = graph.remove_node_input(cs, 7).expect_err("oob expected");
+    assert!(
+        matches!(
+            err.kind(),
+            crate::error::ErrorKind::InputIndexOutOfBounds { node, index: 7, len: 0 } if *node == cs
+        ),
+        "wrong error: {err:?}"
+    );
+}
+
+#[test]
+fn remove_node_input_on_cacheable_uses_dedicated_error() {
+    let mut graph = Graph::new();
+    let c = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let err = graph
+        .remove_node_input(c, 0)
+        .expect_err("cacheable expected");
+    assert!(
+        matches!(
+            err.kind(),
+            crate::error::ErrorKind::RemoveInputFromCacheableNode(n) if *n == c
+        ),
+        "wrong error: {err:?}"
+    );
+}
+
+#[test]
+fn node_input_id_at_returns_error_on_out_of_bounds() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let err = graph
+        .node_input_id_at(n, 0)
+        .expect_err("Entry has no inputs");
+    let crate::error::ErrorKind::InputIndexOutOfBounds { node, index, len } = err.kind() else {
+        panic!("wrong error kind: {err:?}");
+    };
+    assert_eq!(*node, n);
+    assert_eq!(*index, 0);
+    assert_eq!(*len, 0);
 }

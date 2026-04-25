@@ -62,7 +62,7 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 
     check_layer_c_uniqueness(graph, &mut errs);
 
-    check_layer_c_control_state(graph, &mut errs);
+    check_layer_c_control_state(graph, &reachable, &mut errs);
 
     check_layer_c_phis(graph, &mut errs);
 
@@ -188,6 +188,9 @@ pub enum ValidationError {
         producer: NodeId,
         producer_kind: NodeOutputKind,
     },
+
+    #[error("ControlState {control_state:?} has zero predecessors")]
+    EmptyControlStatePredecessors { control_state: NodeId },
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \

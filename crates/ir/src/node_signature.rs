@@ -105,17 +105,10 @@ impl SlotList {
     }
 
     /// Slot at index `idx`.  For fixed-arity lists returns `None` past the
-    /// head; for variadic lists returns the tail for any past-head index.
+    /// head; for variadic lists returns the tail slot for any past-head index.
     pub fn at(&self, idx: usize) -> Option<Slot> {
-        if let Some(s) = self.head.get(idx) {
-            Some(*s)
-        } else if idx >= self.head.len() {
-            self.tail
-        } else {
-            None
-        }
+        self.head.get(idx).copied().or(self.tail)
     }
-
 }
 
 /// Full input/output signature of a [`NodeKind`].
@@ -257,8 +250,11 @@ const REF: Slot = Slot {
     name: "ref",
     role: R::Ref,
 };
+// Per-predecessor value input for ControlPhi / ValuePhi. AnyValue (not AnyInt)
+// because flag-register phis are routinely Bool-typed — same rationale as
+// ARG / RET / CALL_OUT above.
 const IN_PHI: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "in",
     role: R::In,
 };
@@ -313,8 +309,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // ControlPhi: [phi_token, ...per-predecessor values].
         // ValuePhi: same shape as ControlPhi but not tied to a source varnode.
+        // Output is AnyValue (not AnyInt): the phi's output type matches its
+        // value inputs, which routinely include Bool-typed flag-register phis.
         NodeKind::ControlPhi(_) | NodeKind::ValuePhi => {
-            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL])
+            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL])
         }
 
         // ── Conditional branch ──────────────────────────────────────────────
@@ -328,7 +326,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         NodeKind::PostCallMemState => sig!(inputs: [CTRL], outputs: [MEM]),
-        NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [INT_VAL]),
+        // PostCallVarState output is AnyValue (not AnyInt): caller-clobbered
+        // flag registers are Bool-typed and routinely re-established by
+        // PostCallVarState. Same rationale as the Call output's CALL_OUT slot.
+        NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [ANY_VAL]),
         // Return: [control, memory, ...return values]. Return values are the
         // calling convention's ret_val_regs when built by the analyzer; synthetic
         // test builds may supply a single explicit value via `build_return`.
@@ -647,5 +648,128 @@ mod tests {
         let sig = expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(sig.inputs.at(0).unwrap().role, SlotRole::Lhs);
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
+    }
+
+    fn smoke_vn() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0,
+            },
+            size: 8,
+        }
+    }
+
+    /// Calling `expected_signature` on every NodeKind variant must succeed
+    /// and return a self-consistent Signature. Catches missing match arms.
+    #[test]
+    fn expected_signature_covers_every_node_kind() {
+        use crate::node::FunctionArgSource;
+        use crate::ops::{
+            BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp,
+            IntBinaryOp, IntCmpOp, IntUnaryOp,
+        };
+        let space = rsleigh::VnSpace::RAM;
+        let vn = smoke_vn();
+        let kinds: Vec<NodeKind> = vec![
+            NodeKind::Entry,
+            NodeKind::InitialMemory,
+            NodeKind::InitialVar(vn),
+            NodeKind::FunctionArg {
+                source: FunctionArgSource::Register(vn),
+                index: 0,
+            },
+            NodeKind::ControlState,
+            NodeKind::MemPhi,
+            NodeKind::ControlPhi(vn),
+            NodeKind::ValuePhi,
+            NodeKind::If,
+            NodeKind::Call,
+            NodeKind::PostCallMemState,
+            NodeKind::PostCallVarState(vn),
+            NodeKind::Return,
+            NodeKind::Load(space),
+            NodeKind::Store(space),
+            NodeKind::StackStore { space, offset: 0 },
+            NodeKind::StackStorePhi { space },
+            NodeKind::IntConst(0),
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            NodeKind::IntCmpOp(IntCmpOp::Equal),
+            NodeKind::Truncate,
+            NodeKind::Extend(ExtendOp::ZeroExtend),
+            NodeKind::Popcount,
+            NodeKind::Lzcount,
+            NodeKind::CastToInt,
+            NodeKind::BoolConst(false),
+            NodeKind::BoolUnaryOp(BoolUnaryOp::Neg),
+            NodeKind::BoolBinaryOp(BoolBinaryOp::And),
+            NodeKind::CastToBool,
+            NodeKind::FloatConst(0),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+            NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+            NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+            NodeKind::IntToFloat,
+            NodeKind::IntBitsToFloat,
+            NodeKind::FloatToInt,
+            NodeKind::FloatBitsToInt,
+            NodeKind::FloatToFloat,
+            NodeKind::CastToFloat,
+            NodeKind::CallOther { user_op_id: 0 },
+            NodeKind::SegmentOp { op_id: 0 },
+            NodeKind::CPoolRef,
+            NodeKind::New,
+        ];
+        for k in &kinds {
+            let sig = expected_signature(k);
+            // Self-consistency: head-len must be reachable through `at`.
+            for i in 0..sig.inputs.head_len() {
+                assert!(sig.inputs.at(i).is_some(), "input.at({i}) for {k:?}");
+            }
+            for i in 0..sig.outputs.head_len() {
+                assert!(sig.outputs.at(i).is_some(), "output.at({i}) for {k:?}");
+            }
+            // For variadic lists, past-head index returns the tail slot.
+            if sig.inputs.is_variadic() {
+                let tail = sig.inputs.at(sig.inputs.head_len());
+                assert!(tail.is_some(), "variadic input tail for {k:?}");
+            }
+            if sig.outputs.is_variadic() {
+                let tail = sig.outputs.at(sig.outputs.head_len());
+                assert!(tail.is_some(), "variadic output tail for {k:?}");
+            }
+        }
+    }
+
+    /// Pin the variadic-tail kinds — would have caught the IN_PHI / CALL_OUT
+    /// regressions where an integer-only kind was used for tails that need to
+    /// admit Bool flag-register values.
+    #[test]
+    fn variadic_tail_kinds_match_intent() {
+        use ExpectedOutputKind as K;
+        let cases: &[(NodeKind, K)] = &[
+            (NodeKind::ControlState, K::Control),
+            (NodeKind::MemPhi, K::Memory),
+            (NodeKind::ControlPhi(smoke_vn()), K::AnyValue),
+            (NodeKind::ValuePhi, K::AnyValue),
+            (NodeKind::Call, K::AnyValue),
+            (NodeKind::CallOther { user_op_id: 0 }, K::AnyValue),
+            (NodeKind::Return, K::AnyValue),
+            (NodeKind::CPoolRef, K::AnyInt),
+            (NodeKind::New, K::AnyValue),
+        ];
+        for (k, expected) in cases {
+            let sig = expected_signature(k);
+            let tail = sig.inputs.tail.unwrap_or_else(|| panic!("input tail for {k:?}"));
+            assert_eq!(tail.kind, *expected, "input tail kind for {k:?}");
+        }
+
+        // Call's *output* tail (clobbered registers) is also AnyValue.
+        let sig = expected_signature(&NodeKind::Call);
+        let tail = sig
+            .outputs
+            .tail
+            .expect("Call output tail is variadic (clobbered registers)");
+        assert_eq!(tail.kind, K::AnyValue);
     }
 }

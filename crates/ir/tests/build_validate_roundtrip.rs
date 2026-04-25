@@ -222,3 +222,41 @@ fn loads_and_stores_validate() {
     b.build_return(Some(loaded), &[]).unwrap();
     b.build().unwrap();
 }
+
+/// Verifies the SSA-memory invariant: when a Store precedes a Load, the
+/// Load's memory input must be produced by the Store, not by InitialMemory.
+/// Without this thread of dependency, downstream passes (like StackLoadForward)
+/// would forward stale loads.
+#[test]
+fn store_then_load_threads_memory_through_store() {
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let r = b.create_region().unwrap();
+    b.set_entry_region(r).unwrap();
+    b.set_region(r);
+    let addr = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
+    let data = b.build_int_const(0xABCD, NodeOutputType::U32).unwrap();
+    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    let fg = b.build().unwrap();
+
+    let mut load = None;
+    let mut store = None;
+    for nid in fg.all_node_ids() {
+        match fg.graph.node_kind(nid) {
+            ir::node::NodeKind::Load(_) => load = Some(nid),
+            ir::node::NodeKind::Store(_) => store = Some(nid),
+            _ => {}
+        }
+    }
+    let load = load.unwrap();
+    let store = store.unwrap();
+    let load_mem_input = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let producer = fg.graph.get_node_from_output(load_mem_input);
+    assert_eq!(
+        producer, store,
+        "Load's memory input must be produced by the Store, not InitialMemory"
+    );
+}

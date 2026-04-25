@@ -112,24 +112,32 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::ErrorKind::AddInputToCacheableNode`] if `node_id`
-    /// has a cacheable kind.
+    /// - [`crate::error::ErrorKind::RemoveInputFromCacheableNode`] if `node_id`
+    ///   has a cacheable kind.
+    /// - [`crate::error::ErrorKind::InputIndexOutOfBounds`] if `index` is past
+    ///   the node's current input count.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
-            return Err(crate::error::ErrorKind::AddInputToCacheableNode(node_id).into());
+            return Err(crate::error::ErrorKind::RemoveInputFromCacheableNode(node_id).into());
         }
         let index = index as usize;
         let inputs = &mut self.nodes[node_id].inputs;
-        // Store the input to unlink later
-        let delete_input_id = inputs.as_slice(&self.input_pool)[index];
+        let slice = inputs.as_slice(&self.input_pool);
+        let delete_input_id =
+            *slice
+                .get(index)
+                .ok_or_else(|| crate::error::Error::from(
+                    crate::error::ErrorKind::InputIndexOutOfBounds {
+                        node: node_id,
+                        index,
+                        len: slice.len(),
+                    },
+                ))?;
 
-        // Remove the input from the node
         inputs.remove(index, &mut self.input_pool);
-        // Adjust input indices for any of the remaining inputs
         for &input_id in &inputs.as_slice(&self.input_pool)[index..] {
             self.inputs[input_id].input_index -= 1;
         }
-        // Untrack the output usage in the linked list
         self.unlink_input_from_output_list(delete_input_id);
         Ok(())
     }
@@ -143,6 +151,13 @@ impl Graph {
     /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
     /// now-modified node.
     pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+        // Self-redirect: nothing changes, so do nothing. Avoids a spurious
+        // unlink/relink (which would re-order the use-list) and a redundant
+        // cache eviction.
+        if self.inputs[input_id].output_id == output_id {
+            return;
+        }
+
         // Evict the cacheable owner's stale entry *before* mutating, while the
         // current (kind, inputs, output_kinds) tuple still describes the node.
         let owner = self.inputs[input_id].node_id;

@@ -62,9 +62,13 @@ pub enum ErrorKind {
     #[error("output {0:?} is not a control-phi edge")]
     ExpectedControlPhi(NodeOutputId),
 
-    /// An input index was out of range for the node's input list.
-    #[error("input index {0} out of bounds (len {1})")]
-    InputIndexOutOfBounds(usize, usize),
+    /// An input index was out of range for a node's input list.
+    #[error("input index {index} out of bounds for node {node:?} (len={len})")]
+    InputIndexOutOfBounds {
+        node: NodeId,
+        index: usize,
+        len: usize,
+    },
 
     /// A cursor operation was attempted on a null (empty) use.
     #[error("attempted to replace a null cursor use")]
@@ -73,6 +77,10 @@ pub enum ErrorKind {
     /// `add_node_input` was called on a cacheable (deduplicated) node.
     #[error("attempted to add input to cacheable node {0:?}")]
     AddInputToCacheableNode(NodeId),
+
+    /// `remove_node_input` was called on a cacheable (deduplicated) node.
+    #[error("attempted to remove input from cacheable node {0:?}")]
+    RemoveInputFromCacheableNode(NodeId),
 
     /// A varnode was referenced that is not tracked by the builder.
     #[error("variable {0:?} not found in builder")]

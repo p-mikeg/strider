@@ -97,15 +97,27 @@ impl Graph {
         self.outputs[output_id].source_id
     }
 
-    /// Returns the [`NodeInputId`] of the input slot at position `idx` of
-    /// `node`.
+    /// Returns the [`NodeInputId`] of the input slot at position `idx` of `node`.
     ///
-    /// Panics if `idx` is out of range; intended for consumers (such as the
-    /// validator) that have already established the slot exists.
+    /// # Errors
+    ///
+    /// Returns [`crate::error::ErrorKind::InputIndexOutOfBounds`] if `idx` is
+    /// past the node's current input count.
     #[inline]
-    #[must_use]
-    pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> NodeInputId {
-        self.nodes[node].inputs.as_slice(&self.input_pool)[idx]
+    pub fn node_input_id_at(
+        &self,
+        node: NodeId,
+        idx: usize,
+    ) -> crate::error::Result<NodeInputId> {
+        let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
+        slice.get(idx).copied().ok_or_else(|| {
+            crate::error::ErrorKind::InputIndexOutOfBounds {
+                node,
+                index: idx,
+                len: slice.len(),
+            }
+            .into()
+        })
     }
 
     /// Returns the [`NodeOutputId`] that `input` currently references.

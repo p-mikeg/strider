@@ -122,7 +122,7 @@ fn layer_b_stale_input_in_use_list() {
     // Retarget the op's input at idx 0 to `b_out` without updating any
     // use-list.  `a_out`'s use-list still references this input, but the
     // input itself now points at `b_out` — that's a stale entry.
-    let input_id = graph.node_input_id_at(neg, 0);
+    let input_id = graph.node_input_id_at(neg, 0).unwrap();
     graph.test_only_retarget_input(input_id, b_out);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -436,7 +436,7 @@ fn layer_c_two_postcall_mem_states_on_same_call() {
     // Retarget pcm2's input to call1_ctrl so call1 now has two consumers.
     // (Use test_only_retarget_input so the use-list is not updated — that
     // corruption is intentional; we want to verify the uniqueness check.)
-    let pcm2_input = graph.node_input_id_at(pcm2, 0);
+    let pcm2_input = graph.node_input_id_at(pcm2, 0).unwrap();
     graph.test_only_retarget_input(pcm2_input, call1_ctrl);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -472,7 +472,7 @@ fn layer_c_two_postcall_var_states_same_vn() {
     );
 
     // Retarget v2's input to call1_ctrl — same vn, same call, two nodes.
-    let v2_input = graph.node_input_id_at(v2, 0);
+    let v2_input = graph.node_input_id_at(v2, 0).unwrap();
     graph.test_only_retarget_input(v2_input, call1_ctrl);
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -617,4 +617,264 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
         )),
         "expected NodeInputKindMismatch on MemPhi input[1], got: {errs:?}"
     );
+}
+
+#[test]
+fn layer_a_accepts_bool_value_phi_inputs() {
+    // ControlPhi / ValuePhi value inputs (the IN_PHI variadic tail) must
+    // accept Bool-typed values: real binaries phi-merge x86 flag registers
+    // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
+    let phi_token = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+
+    let bc = graph.create_node(
+        NodeKind::BoolConst(true),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let bc_out = graph.node_outputs(bc).into_iter().next().unwrap();
+
+    // ValuePhi taking [phi_token, bool_value] — the Bool flows through IN_PHI.
+    let vp = graph.create_node(
+        NodeKind::ValuePhi,
+        [phi_token, bc_out],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let vp_out = graph.node_outputs(vp).into_iter().next().unwrap();
+
+    // Use the phi'd value so the validator's reachability walk hits it.
+    graph.create_node(NodeKind::Return, [cs_ctrl, mem, vp_out], []);
+
+    validate(&graph, entry).expect("Bool-typed value phi inputs must validate");
+}
+
+#[test]
+fn layer_a_accepts_bool_post_call_var_state() {
+    // PostCallVarState re-establishes liveness of caller-saved registers after
+    // a call. Flag registers (CF/ZF/SF) are caller-clobbered and Bool-typed in
+    // the IR; their PostCallVarState output must therefore be allowed to be Bool.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let target = graph.create_node(
+        NodeKind::IntConst(0xdead_beef),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let target_out = graph.node_outputs(target).into_iter().next().unwrap();
+    // Call with one Bool clobbered output (a flag register).
+    let call = graph.create_node(
+        NodeKind::Call,
+        [entry_ctrl, mem, target_out],
+        [
+            NodeOutputKind::Control,
+            NodeOutputKind::Memory,
+            NodeOutputKind::OutputType(NodeOutputType::Bool),
+        ],
+    );
+    let call_ctrl = graph.node_outputs(call).into_iter().next().unwrap();
+    let call_mem = graph.node_outputs(call).into_iter().nth(1).unwrap();
+
+    let flag_vn = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x100,
+        },
+        size: 1,
+    };
+    let pcv = graph.create_node(
+        NodeKind::PostCallVarState(flag_vn),
+        [call_ctrl],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let pcv_out = graph.node_outputs(pcv).into_iter().next().unwrap();
+
+    // Use the post-call Bool so Layer A walks to it.
+    graph.create_node(NodeKind::Return, [call_ctrl, call_mem, pcv_out], []);
+
+    validate(&graph, entry).expect("Bool-typed PostCallVarState must validate");
+}
+
+#[test]
+fn layer_c_mem_phi_arity_mismatch() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_out],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+    let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
+
+    // MemPhi with two memory inputs but the owning ControlState has one predecessor.
+    let mem_phi = graph.create_node(
+        NodeKind::MemPhi,
+        [cs_phi_out, init_mem_out, init_mem_out],
+        [NodeOutputKind::Memory],
+    );
+    let mem_phi_out = graph.node_outputs(mem_phi).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [cs_ctrl_out, mem_phi_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiValueArityMismatch {
+                expected_predecessors: 1,
+                actual_values: 2,
+                ..
+            }
+        )),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_c_value_phi_arity_mismatch() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_out = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_out],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
+    let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
+
+    let c1 = graph.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let c1_out = graph.node_outputs(c1).into_iter().next().unwrap();
+
+    // ValuePhi with two value inputs but the owning ControlState has one predecessor.
+    let vp = graph.create_node(
+        NodeKind::ValuePhi,
+        [cs_phi_out, c1_out, c1_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let vp_out = graph.node_outputs(vp).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [cs_ctrl_out, init_mem_out, vp_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::PhiValueArityMismatch {
+                expected_predecessors: 1,
+                actual_values: 2,
+                ..
+            }
+        )),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_a_rejects_wrong_output_count() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    // IntConst expects exactly one output but we give it two.
+    let bad = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [
+            NodeOutputKind::OutputType(NodeOutputType::U64),
+            NodeOutputKind::OutputType(NodeOutputType::U64),
+        ],
+    );
+    let bad_out0 = graph.node_outputs(bad).into_iter().next().unwrap();
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(_mem).into_iter().next().unwrap();
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem, bad_out0], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e|
+            matches!(e, ValidationError::NodeOutputCountMismatch { node, expected: 1, actual: 2 } if *node == bad)
+        ),
+        "got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_c_rejects_control_state_with_zero_predecessors() {
+    // ControlState has a variadic head_len of 0, so Layer A's count check
+    // (>= 0) accepts zero inputs and Layer C's per-predecessor loop is a
+    // no-op. Without an explicit check, a *reachable* zero-pred
+    // ControlState slips through validation entirely.
+    //
+    // Walk semantics: graph_walk_succs follows forward-control + backward-data,
+    // so we make the zero-pred ControlState reachable by having a downstream
+    // Return consume *both* Entry's control (so walk reaches Return) and the
+    // ControlState's control (so walking back from Return hits the CS).
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
+    // Return consumes entry's control (reaches Return via cfg_succs of Entry)
+    // and cs_ctrl as a "ret value" (reaches CS via Return's backward-data).
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem, cs_ctrl], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::EmptyControlStatePredecessors { control_state } if *control_state == cs
+        )),
+        "expected EmptyControlStatePredecessors, got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
+    // Zombie ControlState with zero inputs left behind by RedundantPhis is
+    // expected; the validator must not flag it (this happens routinely on
+    // real binaries after dead-branch elimination).
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    // Zombie CS that nothing references — not reachable from entry.
+    let _zombie_cs = graph.create_node(
+        NodeKind::ControlState,
+        [],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
+
+    validate(&graph, entry).expect("zombie ControlState must not trigger validation error");
 }

@@ -142,7 +142,7 @@ fn update_input_evicts_cacheable_node_from_cache() {
         [ty],
     );
 
-    let in0 = fg.graph.node_input_id_at(add, 0);
+    let in0 = fg.graph.node_input_id_at(add, 0).unwrap();
     fg.graph.update_input(in0, c);
 
     // Original key (a, b) must no longer hit `add`.

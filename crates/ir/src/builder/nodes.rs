@@ -501,7 +501,7 @@ impl FunctionBuilder {
 
         let cond_kind = self.graph().output_kind(cond);
         if !cond_kind.is_bool() {
-            return Err(ErrorKind::ExpectedValue(cond, cond_kind).into());
+            return Err(ErrorKind::ExpectedBool(cond).into());
         }
         let ctrl_kind = self.graph().output_kind(res.control);
         if !ctrl_kind.is_control() {
@@ -675,8 +675,8 @@ impl FunctionBuilder {
         }
         for &v in incoming_values {
             let kind = self.graph().output_kind(v);
-            if !kind.is_control() {
-                return Err(ErrorKind::ExpectedControl(v, kind).into());
+            if !kind.is_value() {
+                return Err(ErrorKind::ExpectedValue(v, kind).into());
             }
         }
         let output_type = var.size.try_into()?;

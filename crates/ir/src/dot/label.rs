@@ -187,7 +187,11 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                 format!("{op:?}\n{from} → {to}")
             }
             NodeKind::CastToBool => format!("Cast → bool\nfrom {}", self.input_type_str(node, 0)),
-            NodeKind::CastToInt => format!("Cast → {}\nfrom bool", self.out_type_str(node)),
+            NodeKind::CastToInt => format!(
+                "Cast → {}\nfrom {}",
+                self.out_type_str(node),
+                self.input_type_str(node, 0),
+            ),
             NodeKind::Popcount => {
                 let from = self.input_type_str(node, 0);
                 let to = self.out_type_str(node);
@@ -226,7 +230,7 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
             NodeKind::IntToFloat => {
                 let from = self.input_type_str(node, 0);
                 let to = self.out_type_str(node);
-                format!("IntToFloat\n{from} \u{2192} {to}")
+                format!("IntToFloat\n{from} → {to}")
             }
             NodeKind::FloatToInt => format!(
                 "FloatToInt\n{} → {}",
@@ -297,11 +301,22 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     /// Returns the register name for a clobbered call output using the
     /// `call_clobbered` map: the i-th clobbered output (output_index - 2)
     /// corresponds to the i-th vn in the map entry for that call node.
+    ///
+    /// Falls back to a synthetic `clobN` / `outN` label when the caller's
+    /// `call_clobbered` slice is shorter than the Call's actual clobbered
+    /// output count, or when called with an output_index < 2 (the
+    /// Control/Memory outputs). Both fallback paths exist so dot rendering
+    /// of synthetic test graphs (which often pass `call_clobbered: &[]`)
+    /// does not panic.
     pub(super) fn call_clobbered_name(&self, output_id: NodeOutputId) -> io::Result<String> {
         let (_call_id, output_index) = self.graph.output_definition(output_id);
-        let i = (output_index - 2) as usize;
-        let vn = &self.call_clobbered[i];
-        self.vn_to_name(vn)
+        let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
+            return Ok(format!("out{output_index}"));
+        };
+        match self.call_clobbered.get(i) {
+            Some(vn) => self.vn_to_name(vn),
+            None => Ok(format!("clob{i}")),
+        }
     }
 
     /// Returns the register name for a `Return` input at the given input
