@@ -7,9 +7,10 @@ use super::Cfg;
 use crate::error::{Error, ErrorKind, Result};
 
 impl<R: rsleigh::MemReader> Cfg<R> {
-    /// Public entry — fetches Sleigh registers per call. Suitable for ad-hoc
-    /// callers; the DOT dumper uses [`vn_to_name_with_regs`] instead so
-    /// it only fetches once per render.
+    /// Renders a varnode to a printable name. Fetches Sleigh registers per
+    /// call. Used by the `test_api` forwarder for ad-hoc callers; the DOT
+    /// dumper bypasses this and calls [`vn_to_name_with_regs`] directly so
+    /// it only fetches the register list once per render.
     pub(super) fn vn_to_name(&self, vn: &rsleigh::Vn) -> Result<String> {
         match vn.addr.space {
             rsleigh::VnSpace::REGISTER => {

@@ -41,7 +41,8 @@ fn next_pcode_addr(
     })
 }
 
-/// Outcome of processing a single pcode instruction in [`RegionBuilder`].
+/// Outcome of processing a single pcode instruction inside the region
+/// builder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProcessInsnRes {
     /// The instruction terminated the current region (branch, return, or

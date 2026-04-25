@@ -54,5 +54,6 @@ strider_error::define_error! {
     sources: [rsleigh::error::BaseError, core::fmt::Error];
 }
 
-/// the result type using our error.
+/// Result type alias for fallible cfg operations, parameterised over the
+/// success type and using [`Error`] for failures.
 pub type Result<T> = std::result::Result<T, Error>;
