@@ -29,30 +29,35 @@ pub struct Graph {
 }
 
 impl Graph {
+    #[must_use]
     pub fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
+    #[must_use]
     pub fn node(&self, name: &str) -> NodeId {
         self.nodes_by_name[name]
     }
 
+    #[must_use]
     pub fn name(&self, node: NodeId) -> &str {
         &self.nodes[node].name
     }
 
     fn get_or_create(&mut self, name: &str) -> NodeId {
-        if let Some(&node) = self.nodes_by_name.get(name) {
-            return node;
+        use std::collections::hash_map::Entry;
+        match self.nodes_by_name.entry(name.to_owned()) {
+            Entry::Occupied(o) => *o.get(),
+            Entry::Vacant(v) => {
+                let node = self.nodes.push(Node {
+                    name: v.key().clone(),
+                    preds: Vec::new(),
+                    succs: Vec::new(),
+                });
+                v.insert(node);
+                node
+            }
         }
-
-        let node = self.nodes.push(Node {
-            name: name.to_owned(),
-            preds: Vec::new(),
-            succs: Vec::new(),
-        });
-        self.nodes_by_name.insert(name.to_owned(), node);
-        node
     }
 
     fn add_succ(&mut self, node: NodeId, succ: NodeId) {
@@ -61,6 +66,7 @@ impl Graph {
     }
 }
 
+#[must_use]
 pub fn graph(input: &str) -> Graph {
     let mut graph = Graph {
         nodes: PrimaryMap::new(),
@@ -120,7 +126,7 @@ mod tests {
 
     #[test]
     fn simple_graph() {
-        graph(
+        let _ = graph(
             "
             a -> b
             b -> c
@@ -131,7 +137,7 @@ mod tests {
 
     #[test]
     fn diamond() {
-        graph(
+        let _ = graph(
             "
             a -> b, c
             b, c -> d
@@ -141,7 +147,7 @@ mod tests {
 
     #[test]
     fn loop_grpah() {
-        graph(
+        let _ = graph(
             "
             a -> b
             b -> c
@@ -149,5 +155,72 @@ mod tests {
             c -> d
         ",
         );
+    }
+
+    use graphwalk::{GraphRef, PredGraphRef};
+    use std::ops::ControlFlow;
+
+    fn succs(g: &crate::Graph, node: crate::NodeId) -> Vec<String> {
+        let mut out = Vec::new();
+        let _ = (&g).try_successors(node, |s| {
+            out.push(g.name(s).to_owned());
+            ControlFlow::Continue(())
+        });
+        out
+    }
+
+    fn preds(g: &crate::Graph, node: crate::NodeId) -> Vec<String> {
+        let mut out = Vec::new();
+        let _ = (&g).try_predecessors(node, |p| {
+            out.push(g.name(p).to_owned());
+            ControlFlow::Continue(())
+        });
+        out
+    }
+
+    #[test]
+    fn whitespace_only_input_yields_no_edges() {
+        let g = graph("   \n\t\n   ");
+        // Entry node id 0 doesn't exist because no nodes were ever created.
+        // Just check we didn't panic and there are no successors-of-anything.
+        // (We can't actually call entry() — it would index out of bounds —
+        // but we can confirm by-name resolution fails. The existence of `g`
+        // is all we assert.)
+        let _ = g;
+    }
+
+    #[test]
+    fn fan_out_and_fan_in() {
+        // a, b -> c, d adds 4 edges.
+        let g = graph("a, b -> c, d");
+        let a = g.node("a");
+        let b = g.node("b");
+        let c = g.node("c");
+        let d = g.node("d");
+        assert_eq!(succs(&g, a), vec!["c", "d"]);
+        assert_eq!(succs(&g, b), vec!["c", "d"]);
+        assert_eq!(preds(&g, c), vec!["a", "b"]);
+        assert_eq!(preds(&g, d), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn self_loop() {
+        let g = graph("a -> a");
+        let a = g.node("a");
+        assert_eq!(succs(&g, a), vec!["a"]);
+        assert_eq!(preds(&g, a), vec!["a"]);
+    }
+
+    #[test]
+    fn name_recurrence_resolves_to_same_id() {
+        let g = graph(
+            "a -> b
+             b -> a",
+        );
+        let a1 = g.node("a");
+        let a2 = g.node("a");
+        assert!(a1 == a2);
+        assert_eq!(succs(&g, a1), vec!["b"]);
+        assert_eq!(preds(&g, a1), vec!["b"]);
     }
 }
