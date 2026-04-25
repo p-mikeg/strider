@@ -56,9 +56,9 @@ impl<E: EntityRef> Default for Worklist<E> {
 
 impl<E: EntityRef> FromIterator<E> for Worklist<E> {
     fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
-        let worklist: VecDeque<_> = iter.into_iter().collect();
-        let workset: DenseEntitySet<_> = worklist.iter().copied().collect();
-        Self { worklist, workset }
+        let mut wl = Self::new();
+        wl.extend(iter);
+        wl
     }
 }
 
@@ -89,5 +89,17 @@ mod tests {
         // returns Some instead of None.
         assert_eq!(wl.dequeue(), Some(Id(7)));
         assert_eq!(wl.dequeue(), None);
+    }
+
+    #[test]
+    fn from_iter_dedups_duplicates() {
+        let mut wl: Worklist<Id> =
+            [Id(1), Id(2), Id(1), Id(3), Id(2)].into_iter().collect();
+        let mut got = Vec::new();
+        while let Some(e) = wl.dequeue() {
+            got.push(e);
+        }
+        // Order of first occurrence preserved; duplicates dropped.
+        assert_eq!(got, vec![Id(1), Id(2), Id(3)]);
     }
 }
