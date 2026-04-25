@@ -65,9 +65,9 @@ impl MemRegion {
     /// region's end as a plain `u64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
-        if start_addr.checked_add(len).is_none() {
-            return Err(error::ErrorKind::RegionOverflow { start_addr, len }.into());
-        }
+        start_addr
+            .checked_add(len)
+            .ok_or(error::ErrorKind::RegionOverflow { start_addr, len })?;
         Ok(Self { start_addr, data })
     }
 
