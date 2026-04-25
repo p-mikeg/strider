@@ -1,8 +1,43 @@
+use std::collections::VecDeque;
+
+use rustc_hash::FxHashSet;
+
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
+
+#[cfg(test)]
+mod tests;
+
+// ── Local worklist (hoisted to crate::worklist in Task 2.I) ───────────────────
+
+#[derive(Default)]
+struct WorkSet {
+    queued: FxHashSet<NodeId>,
+    queue: VecDeque<NodeId>,
+}
+
+impl WorkSet {
+    fn seeded(it: impl IntoIterator<Item = NodeId>) -> Self {
+        let mut q = Self::default();
+        for n in it {
+            q.push(n);
+        }
+        q
+    }
+    fn push(&mut self, n: NodeId) {
+        if self.queued.insert(n) {
+            self.queue.push_back(n);
+        }
+    }
+    fn pop(&mut self) -> Option<NodeId> {
+        let n = self.queue.pop_front()?;
+        self.queued.remove(&n);
+        Some(n)
+    }
+}
 
 // ── Dead-branch elimination ───────────────────────────────────────────────────
 
@@ -116,131 +151,15 @@ pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let nodes: Vec<_> = function.preorder().collect();
+        // DBE only fires on `If` nodes whose outputs are control edges; the
+        // node it eliminates is never re-checked by this pass (only one If per
+        // node id). A worklist with consumer re-enqueue gives no payoff here,
+        // so we just drain the seeded preorder once.
+        let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
-        for node_id in nodes {
+        while let Some(node_id) = work.pop() {
             result |= try_eliminate_dead_branch(function, node_id)?;
         }
         Ok(result)
-    }
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ir::FunctionBuilder;
-    use ir::node::NodeKind;
-
-    // Helper: count ControlState nodes with N ctrl inputs.
-    fn count_cs_with_n_inputs(fg: &ir::BuiltFunctionGraph, n: usize) -> usize {
-        fg.all_node_ids()
-            .filter(|&node| {
-                matches!(fg.graph.node_kind(node), NodeKind::ControlState)
-                    && fg.graph.node_inputs(node).len() == n
-            })
-            .count()
-    }
-
-    /// Build a function with `if(cond)`, two branches each ending in `return`.
-    fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-        let entry = b.create_region()?;
-        let true_region = b.create_region()?;
-        let false_region = b.create_region()?;
-
-        b.set_entry_region(entry)?;
-        b.set_region(entry);
-        let cond = b.build_boolean_const(cond_val);
-        b.build_if(cond, true_region, false_region)?;
-
-        b.set_region(true_region);
-        let true_val = b.build_int_const(1, ir::ValueType::U64);
-        b.build_return(Some(true_val), &[])?;
-
-        b.set_region(false_region);
-        let false_val = b.build_int_const(2, ir::ValueType::U64);
-        b.build_return(Some(false_val), &[])?;
-
-        Ok(b.build()?)
-    }
-
-    #[test]
-    fn dead_branch_false() -> Result<()> {
-        let mut fg = make_if_fn(false)?;
-
-        // Before: three ControlState nodes with 1 ctrl input each
-        // (entry, true-branch, false-branch).
-        assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
-
-        let result = DeadBranchElimination.optimize(&mut fg)?;
-        assert!(result.changed());
-
-        // After: true region's CS loses its input (dead branch removed).
-        // Entry CS and false region's CS each still have 1 input.
-        assert_eq!(
-            count_cs_with_n_inputs(&fg, 0),
-            1,
-            "dead branch CS should have 0 inputs"
-        );
-        assert_eq!(
-            count_cs_with_n_inputs(&fg, 1),
-            2,
-            "entry and live branch CS should have 1 input"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn dead_branch_true() -> Result<()> {
-        let mut fg = make_if_fn(true)?;
-
-        assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
-
-        let result = DeadBranchElimination.optimize(&mut fg)?;
-        assert!(result.changed());
-
-        assert_eq!(
-            count_cs_with_n_inputs(&fg, 0),
-            1,
-            "dead (false) branch CS should have 0 inputs"
-        );
-        assert_eq!(
-            count_cs_with_n_inputs(&fg, 1),
-            2,
-            "entry and live (true) branch CS should have 1 input"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn dead_branch_non_const_no_change() -> Result<()> {
-        // Build if(x) where x is a non-const boolean.
-        let mut fg = {
-            let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-            let entry = b.create_region()?;
-            let true_r = b.create_region()?;
-            let false_r = b.create_region()?;
-            b.set_entry_region(entry)?;
-            b.set_region(entry);
-            // Non-constant condition: BoolConst(true) & BoolConst(false)
-            // (two nodes combined so it won't be constant at the If level until
-            // ConstantFold runs — but we don't run ConstantFold here).
-            let t = b.build_boolean_const(true);
-            let f = b.build_boolean_const(false);
-            let cond = b.build_boolean_operation(t, f, ir::BoolBinaryOp::And)?;
-            b.build_if(cond, true_r, false_r)?;
-            b.set_region(true_r);
-            b.build_return(None, &[])?;
-            b.set_region(false_r);
-            b.build_return(None, &[])?;
-            b.build()?
-        };
-
-        // DeadBranchElimination alone should not fire because the condition
-        // is a BoolBinaryOp node, not a BoolConst.
-        assert!(!DeadBranchElimination.optimize(&mut fg)?.changed());
-        Ok(())
     }
 }
