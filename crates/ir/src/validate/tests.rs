@@ -658,3 +658,53 @@ fn layer_a_accepts_bool_value_phi_inputs() {
 
     validate(&graph, entry).expect("Bool-typed value phi inputs must validate");
 }
+
+#[test]
+fn layer_a_accepts_bool_post_call_var_state() {
+    // PostCallVarState re-establishes liveness of caller-saved registers after
+    // a call. Flag registers (CF/ZF/SF) are caller-clobbered and Bool-typed in
+    // the IR; their PostCallVarState output must therefore be allowed to be Bool.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+
+    let target = graph.create_node(
+        NodeKind::IntConst(0xdead_beef),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let target_out = graph.node_outputs(target).into_iter().next().unwrap();
+    // Call with one Bool clobbered output (a flag register).
+    let call = graph.create_node(
+        NodeKind::Call,
+        [entry_ctrl, mem, target_out],
+        [
+            NodeOutputKind::Control,
+            NodeOutputKind::Memory,
+            NodeOutputKind::OutputType(NodeOutputType::Bool),
+        ],
+    );
+    let call_ctrl = graph.node_outputs(call).into_iter().next().unwrap();
+    let call_mem = graph.node_outputs(call).into_iter().nth(1).unwrap();
+
+    let flag_vn = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x100,
+        },
+        size: 1,
+    };
+    let pcv = graph.create_node(
+        NodeKind::PostCallVarState(flag_vn),
+        [call_ctrl],
+        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+    );
+    let pcv_out = graph.node_outputs(pcv).into_iter().next().unwrap();
+
+    // Use the post-call Bool so Layer A walks to it.
+    graph.create_node(NodeKind::Return, [call_ctrl, call_mem, pcv_out], []);
+
+    validate(&graph, entry).expect("Bool-typed PostCallVarState must validate");
+}
