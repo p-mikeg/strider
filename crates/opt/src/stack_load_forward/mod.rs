@@ -265,8 +265,13 @@ fn realize(
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph
             // smaller and exposes it to later passes more cleanly.
-            if resolved.iter().all(|v| *v == resolved[0]) {
-                return Ok(resolved[0]);
+            // `windows(2).all` is vacuously true for len < 2, but `probe`
+            // already rejects MemPhi with fewer than 2 mem predecessors,
+            // so `resolved.first()` is the actual emptiness guard here.
+            if let Some(&first) = resolved.first()
+                && resolved.windows(2).all(|w| w[0] == w[1])
+            {
+                return Ok(first);
             }
             let value_phi = fg.graph.create_node(
                 NodeKind::ValuePhi,
