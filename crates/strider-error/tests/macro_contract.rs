@@ -138,4 +138,10 @@ fn bridge_error_macro_extends_chain_by_one() {
         "origin + one bridge push_caller = 2",
     );
     assert!(matches!(err.kind(), OuterKind::Inner(MyKind::Boom)));
+    let bridge_loc = err.locations()[1];
+    assert!(
+        bridge_loc.file().ends_with("tests/macro_contract.rs"),
+        "bridge push_caller must point at caller's file, got {}",
+        bridge_loc.file(),
+    );
 }
