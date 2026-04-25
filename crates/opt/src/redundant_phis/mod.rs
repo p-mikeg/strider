@@ -43,7 +43,7 @@ fn cleanup_if_dead(function: &mut ir::BuiltFunctionGraph, node_id: NodeId) -> Op
 fn remove_phis(
     function: &mut ir::BuiltFunctionGraph,
     node_id: NodeId,
-    reachable: &FxHashSet<NodeId>,
+    reachable: &std::collections::HashSet<NodeId>,
 ) -> Result<OptimizationResult> {
     match function.graph.node_kind(node_id) {
         // ControlPhi and MemPhi have identical input layouts after the builder
@@ -156,10 +156,7 @@ pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
     fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let reachable: FxHashSet<NodeId> =
-            ir::walk::cfg_reachable(&function.graph, function.entry)
-                .into_iter()
-                .collect();
+        let reachable = ir::walk::cfg_reachable(&function.graph, function.entry);
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
         // walk every node — pre-filter on the kinds we care about.
