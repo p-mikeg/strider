@@ -87,7 +87,9 @@ fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(v) => Kb::from_const(v, ty),
+        // IntConst stores u128; the guard above skips U128/U256, so v fits in u64 here.
+        #[allow(clippy::cast_possible_truncation)]
+        NodeKind::IntConst(v) => Kb::from_const(v as u64, ty),
 
         NodeKind::IntBinaryOp(op) => {
             let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;

@@ -52,9 +52,9 @@ pub fn first_value_input_type(ctx: &BuildCtx<'_>) -> Option<NodeOutputType> {
 /// Builds an `IntConst` node whose value is computed by `f` at build time.
 pub fn int_const_with_fn<F>(f: F) -> Pat
 where
-    F: Fn(&BuildCtx<'_>) -> Result<u64> + Send + Sync + 'static,
+    F: Fn(&BuildCtx<'_>) -> Result<u128> + Send + Sync + 'static,
 {
-    let f: BuildValueFn<u64> = Arc::new(f);
+    let f: BuildValueFn<u128> = Arc::new(f);
     NodePat::matcher(KindSpec::Any, InputsSpec::None)
         .with_post_match(never_match())
         .with_build_fn(
@@ -129,7 +129,7 @@ macro_rules! impl_from_ctx {
     };
 }
 
-impl_from_ctx!(IntVar, u64, get_int, "IntVar");
+impl_from_ctx!(IntVar, u128, get_int, "IntVar");
 impl_from_ctx!(BoolVar, bool, get_bool, "BoolVar");
 impl_from_ctx!(FloatVar, u64, get_float_bits, "FloatVar");
 impl_from_ctx!(

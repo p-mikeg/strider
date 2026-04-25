@@ -19,7 +19,7 @@ pub fn return_const(value: u64, ty: NodeOutputType) -> BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let v = b.build_int_const(value, ty).unwrap();
+    let v = b.build_int_const(value, ty);
     b.build_return(Some(v), &[]).unwrap();
     b.build().unwrap()
 }
@@ -35,8 +35,8 @@ pub fn return_binop(
     let region = bld.create_region().unwrap();
     bld.set_entry_region(region).unwrap();
     bld.set_region(region);
-    let va = bld.build_int_const(a, ty).unwrap();
-    let vb = bld.build_int_const(b, ty).unwrap();
+    let va = bld.build_int_const(a, ty);
+    let vb = bld.build_int_const(b, ty);
     let r = bld
         .build_int_binary_operation(va, vb, op, ty)
         .unwrap();
@@ -56,8 +56,8 @@ pub fn return_int_cmp(
     let region = bld.create_region().unwrap();
     bld.set_entry_region(region).unwrap();
     bld.set_region(region);
-    let va = bld.build_int_const(a, operand_ty).unwrap();
-    let vb = bld.build_int_const(b, operand_ty).unwrap();
+    let va = bld.build_int_const(a, operand_ty);
+    let vb = bld.build_int_const(b, operand_ty);
     let r = bld
         .build_int_cmp_operation(va, vb, op, operand_ty)
         .unwrap();

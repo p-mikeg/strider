@@ -37,11 +37,11 @@ fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
     b.build_if(cond, true_region, false_region)?;
 
     b.set_region(true_region);
-    let true_val = b.build_int_const(1, ir::ValueType::U64).unwrap();
+    let true_val = b.build_int_const(1u64, ir::ValueType::U64);
     b.build_return(Some(true_val), &[])?;
 
     b.set_region(false_region);
-    let false_val = b.build_int_const(2, ir::ValueType::U64).unwrap();
+    let false_val = b.build_int_const(2u64, ir::ValueType::U64);
     b.build_return(Some(false_val), &[])?;
 
     Ok(b.build()?)
@@ -152,7 +152,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_region(outer_f);
     b.build_return(None, &[])?;
     b.set_region(inner_t);
-    let v = b.build_int_const(1, ir::ValueType::U64).unwrap();
+    let v = b.build_int_const(1u64, ir::ValueType::U64);
     b.build_return(Some(v), &[])?;
     b.set_region(inner_f);
     b.build_return(None, &[])?;
@@ -264,12 +264,12 @@ fn control_phi_loses_dead_slot() -> Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1, NodeOutputType::U64).unwrap();
+    let v_t = b.build_int_const(1u64, NodeOutputType::U64);
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2, NodeOutputType::U64).unwrap();
+    let v_f = b.build_int_const(2u64, NodeOutputType::U64);
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 

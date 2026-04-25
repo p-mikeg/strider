@@ -16,13 +16,13 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         match space {
             rsleigh::VnSpace::CONST => Ok(self
                 .builder
-                .build_int_const(vn.addr.off, vn.size.try_into()?)?),
+                .build_int_const(vn.addr.off, vn.size.try_into()?)),
             rsleigh::VnSpace::UNIQUE => Ok(self.builder.read_variable(vn)?),
             space if space == default_code_space => {
                 let space_info = self.cfg.sleigh.space_info(space);
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
+                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
                 Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
             }
             rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
@@ -47,7 +47,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
                 let space_info = self.cfg.sleigh.space_info(space);
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
+                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
                 Ok(self.builder.build_store(addr, val, space)?)
             }
             rsleigh::VnSpace::REGISTER => self.write_reg_vn(vn, val),

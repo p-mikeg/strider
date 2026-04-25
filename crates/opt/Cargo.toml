@@ -11,6 +11,7 @@ rsleigh.workspace = true
 target.workspace = true
 strider-error.workspace = true
 thiserror = { workspace = true }
+ethnum.workspace = true
 rustc-hash = { workspace = true }
 
 [dev-dependencies]

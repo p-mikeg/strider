@@ -59,7 +59,7 @@ fn diamond_join_via_phi_visits_all_arms() {
     b.build_branch(join).unwrap();
 
     b.set_region(join);
-    let v = b.build_int_const(99, NodeOutputType::U32).unwrap();
+    let v = b.build_int_const(99u64, NodeOutputType::U32);
     b.build_return(Some(v), &[]).unwrap();
     let fg = b.build().unwrap();
 

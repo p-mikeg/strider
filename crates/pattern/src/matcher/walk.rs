@@ -30,7 +30,7 @@ mod tests {
     use super::*;
 
     use ir::FunctionBuilder;
-    use ir::node::NodeKind;
+    use ir::node::{NodeKind, NodeOutputType};
 
     use crate::matcher::Matcher;
 
@@ -41,7 +41,7 @@ mod tests {
         let r = b.create_region()?;
         b.set_entry_region(r)?;
         b.set_region(r);
-        let tgt = b.build_uint64_const(0x1234)?;
+        let tgt = b.build_int_const(0x1234u64, NodeOutputType::U64);
         b.build_call(tgt)?;
         b.build_return(None, &[])?;
         b.build()

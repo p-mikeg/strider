@@ -178,7 +178,8 @@ pub fn has_kind<F: Fn(&NodeKind) -> bool>(g: &ir::BuiltFunctionGraph, pred: F) -
 }
 
 pub fn has_constant(g: &ir::BuiltFunctionGraph, value: u64) -> bool {
-    has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == value))
+    // IntConst stores u128; compare against the u64 value widened to u128.
+    has_kind(g, |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)))
 }
 
 // ── per_arch_test! macro ─────────────────────────────────────────────────────

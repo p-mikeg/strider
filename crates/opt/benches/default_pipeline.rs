@@ -21,7 +21,7 @@ fn build_mixed(n: usize) -> ir::BuiltFunctionGraph {
     b.set_region(region);
     let mut acc = b.read_variable(&vn).unwrap();
     for _ in 0..n {
-        let one = b.build_int_const(1, NodeOutputType::U64).unwrap();
+        let one = b.build_int_const(1, NodeOutputType::U64);
         acc = b
             .build_int_binary_operation(acc, one, IntBinaryOp::Add, NodeOutputType::U64)
             .unwrap();

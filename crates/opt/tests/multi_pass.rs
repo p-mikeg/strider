@@ -56,10 +56,10 @@ fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
 fn known_bits_then_constant_fold() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 1);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let ff = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
+        let ff = b.build_int_const(0xFFu64, NodeOutputType::U8);
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         let masked = b.build_int_binary_operation(or_, ff, IntBinaryOp::And, NodeOutputType::U8)?;
-        let five = b.build_int_const(5, NodeOutputType::U8).unwrap();
+        let five = b.build_int_const(5u64, NodeOutputType::U8);
         Ok(b.build_int_binary_operation(masked, five, IntBinaryOp::Add, NodeOutputType::U8)?)
     })?;
     default_pipeline().run(&mut fg)?;
@@ -87,11 +87,11 @@ fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_r, false_r)?;
     b.set_region(true_r);
-    let v_t = b.build_int_const(11, NodeOutputType::U64).unwrap();
+    let v_t = b.build_int_const(11u64, NodeOutputType::U64);
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
     b.set_region(false_r);
-    let v_f = b.build_int_const(22, NodeOutputType::U64).unwrap();
+    let v_f = b.build_int_const(22u64, NodeOutputType::U64);
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
     b.set_region(join);
@@ -115,7 +115,7 @@ fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
 fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let eight = b.build_int_const(8, NodeOutputType::U64).unwrap();
+        let eight = b.build_int_const(8u64, NodeOutputType::U64);
         let plus = b.build_int_binary_operation(x, eight, IntBinaryOp::Add, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(plus, eight, IntBinaryOp::Sub, NodeOutputType::U64)?)
     })?;
@@ -148,9 +148,9 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     b.set_entry_region(region)?;
     b.set_region(region);
     let sp_v = b.read_variable(&sp)?;
-    let four = b.build_int_const(4, NodeOutputType::U32).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
     let addr = b.build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    let data = b.build_int_const(0xCAFE, NodeOutputType::U32).unwrap();
+    let data = b.build_int_const(0xCAFEu64, NodeOutputType::U32);
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
     b.build_return(Some(loaded), &[])?;
@@ -184,7 +184,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let mut acc = x;
         for _ in 0..20 {
-            let one = b.build_int_const(1, NodeOutputType::U64).unwrap();
+            let one = b.build_int_const(1u64, NodeOutputType::U64);
             acc = b.build_int_binary_operation(acc, one, IntBinaryOp::Add, NodeOutputType::U64)?;
         }
         Ok(acc)
@@ -243,10 +243,10 @@ fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
     b.set_region(outer_f);
     b.build_return(None, &[])?;
     b.set_region(inner_t);
-    let dead_v = b.build_int_const(99, NodeOutputType::U64).unwrap();
+    let dead_v = b.build_int_const(99u64, NodeOutputType::U64);
     b.build_return(Some(dead_v), &[])?;
     b.set_region(inner_f);
-    let live_v = b.build_int_const(7, NodeOutputType::U64).unwrap();
+    let live_v = b.build_int_const(7u64, NodeOutputType::U64);
     b.build_return(Some(live_v), &[])?;
 
     let mut fg = b.build()?;
@@ -279,13 +279,13 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     b.set_region(entry);
 
     // ConstantFold: c1 + c2.
-    let c1 = b.build_int_const(3, NodeOutputType::U8).unwrap();
-    let c2 = b.build_int_const(4, NodeOutputType::U8).unwrap();
+    let c1 = b.build_int_const(3u64, NodeOutputType::U8);
+    let c2 = b.build_int_const(4u64, NodeOutputType::U8);
     let _sum = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U8)?;
 
     // KnownBits-relevant: x | 0xFF then & 0xFF = 0xFF.
     let x = b.read_variable(&var)?;
-    let ff = b.build_int_const(0xFF, NodeOutputType::U8).unwrap();
+    let ff = b.build_int_const(0xFFu64, NodeOutputType::U8);
     let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
     let _masked = b.build_int_binary_operation(or_, ff, IntBinaryOp::And, NodeOutputType::U8)?;
 
@@ -294,7 +294,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     b.build_if(cond, live, dead)?;
 
     b.set_region(live);
-    let v = b.build_int_const(42, NodeOutputType::U64).unwrap();
+    let v = b.build_int_const(42u64, NodeOutputType::U64);
     b.build_return(Some(v), &[])?;
     b.set_region(dead);
     b.build_return(None, &[])?;
@@ -320,7 +320,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
 /// pipeline unchanged.
 #[test]
 fn pipeline_no_change_on_already_optimal() -> opt::Result<()> {
-    let mut fg = make_fn(|b| Ok(b.build_int_const(7, NodeOutputType::U64).unwrap()))?;
+    let mut fg = make_fn(|b| Ok(b.build_int_const(7u64, NodeOutputType::U64)))?;
     default_pipeline().run(&mut fg)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
     Ok(())
@@ -332,7 +332,7 @@ fn pipeline_no_change_on_already_optimal() -> opt::Result<()> {
 fn pipeline_keeps_zero_sub_x() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let zero = b.build_int_const(0, NodeOutputType::U64).unwrap();
+        let zero = b.build_int_const(0u64, NodeOutputType::U64);
         Ok(b.build_int_binary_operation(zero, x, IntBinaryOp::Sub, NodeOutputType::U64)?)
     })?;
     default_pipeline().run(&mut fg)?;

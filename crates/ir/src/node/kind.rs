@@ -114,8 +114,8 @@ pub enum NodeKind {
     StackStorePhi { space: rsleigh::VnSpace },
 
     // ── Integer constants and operations ──────────────────────────────────────
-    /// A compile-time integer constant of value `u64`.
-    IntConst(u64),
+    /// A compile-time integer constant of value `u128`.
+    IntConst(u128),
     /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
     IntUnaryOp(crate::ops::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).

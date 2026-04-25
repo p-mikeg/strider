@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── true branch ──────────────────────────────────────────────────────────
     builder.set_region(true_region);
-    let const_15 = builder.build_uint64_const(15).unwrap();
+    let const_15 = builder.build_int_const(15u64, NodeOutputType::U64);
     let rax_val = builder.read_variable(&rax)?;
     let or_result = builder.build_int_binary_operation(
         const_15,
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── false branch ──────────────────────────────────────────────────────────
     builder.set_region(false_region);
     let rbx_val = builder.read_variable(&rbx)?;
-    let const_5 = builder.build_uint64_const(5).unwrap();
+    let const_5 = builder.build_int_const(5u64, NodeOutputType::U64);
     // build_call takes only the call-target address output.
     builder.build_call(const_5)?;
     builder.build_store(rbx_val, const_5, rsleigh::VnSpace::RAM)?;
@@ -69,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── entry region: compute condition and branch ────────────────────────────
     builder.set_region(entry_region);
-    let const_5b = builder.build_uint64_const(5).unwrap();
+    let const_5b = builder.build_int_const(5u64, NodeOutputType::U64);
     let rax_val2 = builder.read_variable(&rax)?;
     let add = builder.build_int_binary_operation(
         const_5b,

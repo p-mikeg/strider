@@ -75,7 +75,7 @@ impl FunctionBuilder {
         // link-register ISAs `ret_stack_pop == 0` and we skip this entirely.
         if let Some((sp, pre)) = sp_pre_call {
             let sp_ty: NodeOutputType = sp.size.try_into()?;
-            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty)?;
+            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty);
             let adjusted =
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
             self.write_variable(&sp, adjusted)?;

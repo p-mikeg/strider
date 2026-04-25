@@ -23,6 +23,7 @@ strider-error = { path = "crates/strider-error" }
 rsleigh = { path="../rsleigh" }
 
 cranelift-bitset = "0.112.2"
+ethnum = "1.5"
 cranelift-entity = "0.112.2"
 smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",

@@ -42,7 +42,7 @@ impl Match {
     /// Returns the integer constant value bound to the [`IntVar`] `iv`, or
     /// `None` if `iv` was not captured in this match.
     #[must_use]
-    pub fn get_int(&self, iv: IntVar) -> Option<u64> {
+    pub fn get_int(&self, iv: IntVar) -> Option<u128> {
         self.bindings.get_int(iv)
     }
 
@@ -125,7 +125,7 @@ impl Match {
     /// the stored constant value.  Returns `None` for unbound vars or non-const
     /// outputs.
     #[must_use]
-    pub fn get_int_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
+    pub fn get_int_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u128> {
         let out = self.bindings.get(v)?;
         let node = graph.graph.get_node_from_output(out);
         match graph.graph.node_kind(node) {

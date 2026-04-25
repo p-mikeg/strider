@@ -156,7 +156,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let c = IntVar::new();
         let pat: Pat = and(var(x), any_int_const(c)).into();
         let pat = pat.when_match(move |_fg, ty, b| {
-            b.get_int(c) == ty.get_unsigned_int(u64::MAX)
+            b.get_int(c) == ty.get_unsigned_int_u128(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -243,7 +243,6 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             ))
         },
         // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
-        //    Skips when masking fails (U128/U256 — not representable in u64).
         {
             let op = IntUnaryOpVar::new();
             let v = IntVar::new();
@@ -254,7 +253,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                         IntUnaryOp::Neg => v.wrapping_neg(),
                         IntUnaryOp::Not => !v,
                     };
-                    ty.get_unsigned_int(raw).ok_or_else(pattern::Error::skip)?
+                    ty.get_unsigned_int_u128(raw).ok_or_else(pattern::Error::skip)?
                 }),
             ))
         },
@@ -295,8 +294,8 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         },
         // 6. SignExtend(IntConst(v)) =>
         //        int_const(sign_extend(v, in_ty) masked to ty, ty)
-        //    `in_ty` is the narrower input type; `get_signed_int` produces
-        //    the sign-extended i64 value, which `get_unsigned_int` then
+        //    `in_ty` is the narrower input type; `get_signed_int_i128` produces
+        //    the sign-extended i128 value, which `get_unsigned_int_u128` then
         //    masks to the wider output width.
         {
             let v = IntVar::new();
@@ -305,24 +304,18 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     let signed = input_ty
-                        .get_signed_int(v)
+                        .get_signed_int_i128(v)
                         .ok_or_else(|| {
                             pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
                                 input_ty,
                             ))
-                        })?
-                        as u64;
-                    ty.get_unsigned_int(signed).ok_or_else(pattern::Error::skip)?
+                        })? as u128;
+                    ty.get_unsigned_int_u128(signed).ok_or_else(pattern::Error::skip)?
                 }),
             ))
         },
         // 7. Popcount(IntConst(v)) =>
         //        int_const(masked(v, in_ty).count_ones(), ty)
-        //    Skip when in_ty is wider than u64 (U128/U256): the constant is
-        //    only stored in 64 bits and `get_unsigned_int` returns None for
-        //    those types. A skip is the right semantic — propagating
-        //    ExpectedIntegerType crashed the optimizer on any IR containing
-        //    a wide-int Popcount, which the IR semantically allows.
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
@@ -330,21 +323,17 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     let masked = input_ty
-                        .get_unsigned_int(v)
+                        .get_unsigned_int_u128(v)
                         .ok_or_else(pattern::Error::skip)?;
-                    masked.count_ones() as u64
+                    u128::from(masked.count_ones())
                 }),
             ))
         },
         // 8. Lzcount(IntConst(v)) =>
-        //        int_const(N if masked == 0 else (masked << (64 - N)).leading_zeros(), ty)
+        //        int_const(N if masked == 0 else (masked << (128 - N)).leading_zeros(), ty)
         //    The `masked == 0` case must return the input type's bit width;
-        //    `(0u64 << k).leading_zeros()` is always 64, which is wrong for
-        //    any narrower type (e.g. lzcount(0_U32) must be 32, not 64).
-        //    Same U128/U256 width guard as Popcount above — the masking-step
-        //    skip is also a load-bearing guard against a downstream
-        //    UB-shaped fault if the get_unsigned_int contract ever changed
-        //    to admit those types.
+        //    shifting by (128 - bits) aligns to the u128's MSB so
+        //    `leading_zeros()` gives the correct count within the type's width.
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
@@ -352,13 +341,13 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     let masked = input_ty
-                        .get_unsigned_int(v)
+                        .get_unsigned_int_u128(v)
                         .ok_or_else(pattern::Error::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     if masked == 0 {
-                        bits as u64
+                        u128::from(bits)
                     } else {
-                        (masked << (64 - bits)).leading_zeros() as u64
+                        u128::from((masked << (128 - bits)).leading_zeros())
                     }
                 }),
             ))
@@ -371,12 +360,12 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 bool_const_with!([v] => v != 0),
             ))
         },
-        // 10. CastToInt(BoolConst(b)) => int_const(b as u64, ty)
+        // 10. CastToInt(BoolConst(b)) => int_const(b as u128, ty)
         {
             let b = BoolVar::new();
             boxed_rule(rewrite_rule(
                 cast_to_int(any_bool_const(b)),
-                int_const_with!([b] => b as u64),
+                int_const_with!([b] => u128::from(b)),
             ))
         },
     ];

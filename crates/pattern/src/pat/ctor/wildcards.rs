@@ -33,8 +33,9 @@ pub fn var(v: Var) -> Pat {
 /// node at the root type.
 #[must_use]
 pub fn int_const(v: u64) -> Pat {
-    NodePat::matcher(KindSpec::Exact(NodeKind::IntConst(v)), InputsSpec::None)
-        .with_build_exact(NodeKind::IntConst(v), BuildTy::InheritRoot)
+    let v128 = u128::from(v);
+    NodePat::matcher(KindSpec::Exact(NodeKind::IntConst(v128)), InputsSpec::None)
+        .with_build_exact(NodeKind::IntConst(v128), BuildTy::InheritRoot)
         .into_pat()
 }
 

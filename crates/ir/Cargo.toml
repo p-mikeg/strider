@@ -15,6 +15,7 @@ itertools.workspace = true
 dot.workspace = true
 strider-error.workspace = true
 thiserror.workspace = true
+ethnum.workspace = true
 
 [dev-dependencies]
 proptest = "1"
