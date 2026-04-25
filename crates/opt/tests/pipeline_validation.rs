@@ -1,6 +1,13 @@
 //! `OptimizerPipeline::run` always calls `ir::validate::validate` at the end.
 //! If any pass leaves an invalid graph, run returns Err.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
+
 mod common;
 
 use ir::node::NodeOutputType;

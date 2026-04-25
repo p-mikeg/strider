@@ -1,6 +1,13 @@
 //! End-to-end tests for `opt::default_pipeline`. Black-box: exercises only
 //! the public API of the `opt` crate.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
+
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};

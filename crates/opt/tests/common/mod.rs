@@ -5,6 +5,12 @@
 
 #![allow(dead_code)] // Helpers are reused across files; rustc can't see all uses.
 #![allow(unused_imports)] // Re-exports and helpers may not all be used in every test file.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{BuiltFunctionGraph, FunctionBuilder, Value};

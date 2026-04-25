@@ -1,6 +1,13 @@
 //! Convergence and idempotency: the pipeline reaches fixed point in bounded
 //! iterations and running it twice yields no further change.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
+
 mod common;
 
 use ir::node::NodeOutputType;
