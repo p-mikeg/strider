@@ -9,7 +9,7 @@ use crate::set::DenseEntitySet;
 /// in the queue, a second `enqueue` call is a no-op.  This prevents redundant
 /// re-processing while still allowing an entity to be re-enqueued after it has
 /// been dequeued.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Worklist<E> {
     worklist: VecDeque<E>,
     workset: DenseEntitySet<E>,
@@ -204,5 +204,14 @@ mod tests {
         assert!(wl.contains(Id(5)));
         let _ = wl.dequeue();
         assert!(!wl.contains(Id(5)));
+    }
+
+    #[test]
+    fn debug_format_smoke() {
+        // `Worklist` derives Debug; this is a regression pin so the derive
+        // can't be silently removed.  We don't assert a specific format string.
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.enqueue(Id(1));
+        let _ = format!("{wl:?}");
     }
 }
