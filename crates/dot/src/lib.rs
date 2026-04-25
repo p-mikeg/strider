@@ -394,10 +394,20 @@ impl<G: GraphDotDumper> GraphDot<G> {
             .map_err(|e| svg_err(e.to_string()))?;
 
         if !output.status.success() {
-            return Err(svg_err(String::from_utf8_lossy(&output.stderr).to_string()));
+            // Embed the ExitStatus so a non-zero exit with empty stderr (e.g.
+            // dot killed by signal) still surfaces a useful diagnostic.
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(svg_err(format!(
+                "`dot -Tsvg` failed ({}): {}",
+                output.status,
+                stderr.trim()
+            )));
         }
 
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        // SVG output from `dot -Tsvg` is always UTF-8; treat any deviation
+        // as a real error rather than silently substituting U+FFFD.
+        String::from_utf8(output.stdout)
+            .map_err(|e| svg_err(format!("dot -Tsvg stdout was not UTF-8: {e}")))
     }
 
     /// Produces an HTML page that inlines a pre-rendered SVG with pan/zoom.
