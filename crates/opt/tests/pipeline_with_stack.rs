@@ -1,6 +1,13 @@
 //! End-to-end tests for an SP-aware pipeline like the one Analyzer wires:
 //! default + StackStoreDetect + StackLoadForward + CallStackArgCollect post-pass.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
+
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};

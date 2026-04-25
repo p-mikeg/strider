@@ -4,6 +4,13 @@
 //! variant) and asserts on the final state. Running any individual pass alone
 //! is *not* enough to reach the asserted result.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable
+)]
+
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};

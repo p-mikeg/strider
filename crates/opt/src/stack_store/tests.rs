@@ -325,7 +325,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     // 4× zero-init at buf[0..16] (esp+0, +4, +8, +12) = [-20, -16, -12, -8].
     let zero = b.build_int_const(0, NodeOutputType::U32).unwrap();
     for k in 0..4 {
-        let off = b.build_int_const((k * 4) as u64, NodeOutputType::U32).unwrap();
+        let off = b.build_int_const(u64::from((k * 4) as u32), NodeOutputType::U32).unwrap();
         let addr = b.build_int_binary_operation(
             sp_after_sub,
             off,
@@ -518,7 +518,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     b.set_region(region);
 
     // Only one push, at sp - 4.  If the convention expects [0, 4, 8, …]
-    // then call_sp_adjust = -4 and slot_0 would be at -4.  But if we
+    // then chain_anchor_offset = -4 and slot_0 would be at -4.  But if we
     // designed a convention where stack_arg_offsets[0] != 0 we'd
     // effectively simulate a missing slot.  Here we instead use an
     // offset table that expects slot_0 = -4 and slot_1 = 0.  Since

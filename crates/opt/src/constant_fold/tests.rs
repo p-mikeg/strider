@@ -483,6 +483,55 @@ fn fold_truncate_const() -> Result<()> {
     Ok(())
 }
 
+/// Rule 4 (`Truncate(IntConst(v)) => int_const(v, ty)`) must mask the
+/// stored value to the truncate's output width. Otherwise the IR-layer
+/// invariant "an IntConst's stored value fits its declared type" silently
+/// breaks: a `Truncate(IntConst(0xFFFF, U16))` would rewrite to
+/// `IntConst(0xFFFF, U8)` (typed-narrow but value-wide).
+///
+/// We can't directly emit `Truncate(IntConst)` because the builder's
+/// `truncate_if_needed` short-circuits constants. Instead we feed the
+/// truncate from a non-const expression that constant-folds *during* the
+/// optimizer's fixed-point loop: `(0xFFFF | 0xFFFF) → IntConst(0xFFFF)`,
+/// which then arrives at the still-extant Truncate node and triggers
+/// rule 4.
+#[test]
+fn truncate_int_const_emits_masked_value() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let a = b.build_int_const(0xFFFF, NodeOutputType::U16).unwrap();
+        let b_ = b.build_int_const(0xFFFF, NodeOutputType::U16).unwrap();
+        // Non-const node so truncate_if_needed emits a real Truncate node.
+        let or = b.build_int_binary_operation(a, b_, IntBinaryOp::Or, NodeOutputType::U16)?;
+        Ok(b.truncate_if_needed(or, NodeOutputType::U8)?)
+    })?;
+    // Sanity: builder did emit a Truncate node.
+    assert!(
+        fg.all_node_ids()
+            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+        "test setup expects a Truncate node before optimization",
+    );
+
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+
+    // After optimization the Return's value must be an `IntConst(0xFF)`,
+    // i.e. the low byte of 0xFFFF — *masked* to U8. A pre-fix run would
+    // store `0xFFFF` (the wider raw value) here.
+    let val = return_value(&fg)?;
+    let producer = fg.graph.get_node_from_output(val);
+    let kind = *fg.graph.node_kind(producer);
+    let raw = match kind {
+        NodeKind::IntConst(v) => v,
+        other => panic!("expected IntConst producer for Return value, got {other:?}"),
+    };
+    assert_eq!(
+        raw & 0xFF,
+        raw,
+        "Truncate of IntConst must store the masked value, got 0x{raw:X}",
+    );
+    assert_eq!(raw, 0xFF, "expected low byte 0xFF, got 0x{raw:X}");
+    Ok(())
+}
+
 // ── boolean folding ───────────────────────────────────────────────────────
 
 #[test]
@@ -1201,4 +1250,149 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
     }
     assert_sub_with_const(&fg, x, 10, NodeOutputType::U64)?;
     Ok(())
+}
+
+#[test]
+fn sdiv_narrow_int_min_neg_one_skips() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // i32::MIN as u32, then masked to u64. Same shape as the u64 case
+    // already guarded explicitly; should also return None.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x8000_0000, 0xFFFF_FFFF, NodeOutputType::U32),
+        None,
+        "Sdiv(i32::MIN, -1) on U32 must skip — signed overflow"
+    );
+    // i16::MIN, -1 on U16.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x8000, 0xFFFF, NodeOutputType::U16),
+        None,
+        "Sdiv(i16::MIN, -1) on U16 must skip — signed overflow"
+    );
+    // i8::MIN, -1 on U8.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x80, 0xFF, NodeOutputType::U8),
+        None,
+        "Sdiv(i8::MIN, -1) on U8 must skip — signed overflow"
+    );
+}
+
+#[test]
+fn srem_narrow_int_min_neg_one_skips() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Same INT_MIN/-1 case for Srem on every narrow signed type.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x8000_0000, 0xFFFF_FFFF, NodeOutputType::U32),
+        None,
+        "Srem(i32::MIN, -1) on U32 must skip"
+    );
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x8000, 0xFFFF, NodeOutputType::U16),
+        None,
+    );
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x80, 0xFF, NodeOutputType::U8),
+        None,
+    );
+}
+
+#[test]
+fn eval_int_binary_unsigned_div_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // U8 Div with l carrying high garbage bits beyond U8.
+    // Masked: 0xFF / 2 = 0x7F. Unmasked-eval: 0x1FF / 2 = 0xFF (wrong).
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Div, 0x1FF, 2, NodeOutputType::U8),
+        Some(0x7F),
+        "Div must mask inputs to U8 before division"
+    );
+}
+
+#[test]
+fn eval_int_binary_unsigned_rem_unmasked_u16() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFFFF % 0x10 = 0x0F. Unmasked-eval: 0x1FFFF % 0x10 = 0x0F.
+    // Pick a divisor that distinguishes: 0xFFFF % 7 = 1, 0x1FFFF % 7 = 5.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Rem, 0x1FFFF, 7, NodeOutputType::U16),
+        Some(1),
+        "Rem must mask inputs to U16 before remainder"
+    );
+}
+
+#[test]
+fn eval_int_binary_unsigned_shr_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFF >> 1 = 0x7F. Unmasked-eval: 0x1FF >> 1 = 0xFF, masked = 0xFF.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftRight, 0x1FF, 1, NodeOutputType::U8),
+        Some(0x7F),
+        "ShiftRight must mask the input to U8 before shifting"
+    );
+}
+
+#[test]
+fn eval_int_cmp_equal_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0xFF == 0xFF → true. Unmasked-eval: 0x1FF != 0xFF → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Equal, 0x1FF, 0xFF, NodeOutputType::U8).unwrap(),
+        "Equal must mask both sides to U8 before comparing"
+    );
+}
+
+#[test]
+fn eval_int_cmp_less_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Less, 0x100, 0x01, NodeOutputType::U8).unwrap(),
+        "Less must mask both sides to U8 before comparing"
+    );
+}
+
+#[test]
+fn eval_int_cmp_carry_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 + 0x00 → no carry. Unmasked-eval: 0x100 + 0 = 0x100 > 0xFF → false-carry.
+    assert!(
+        !eval_int_cmp(IntCmpOp::Carry, 0x100, 0, NodeOutputType::U8).unwrap(),
+        "Carry must mask both sides before checking overflow"
+    );
+}
+
+#[test]
+fn eval_int_cmp_borrow_unmasked_u8() {
+    use crate::constant_fold::eval_int::eval_int_cmp;
+    use ir::IntCmpOp;
+    use ir::node::NodeOutputType;
+
+    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
+    assert!(
+        eval_int_cmp(IntCmpOp::Borrow, 0x100, 0x01, NodeOutputType::U8).unwrap(),
+        "Borrow must mask both sides to U8 before comparing"
+    );
 }

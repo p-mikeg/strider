@@ -194,14 +194,14 @@ fn probe(
                 return None;
             }
             // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-            let inputs_vec: Vec<NodeOutputId> = fg.graph.node_inputs(node).into_iter().collect();
-            if inputs_vec.len() < 2 {
+            let inputs = fg.graph.node_inputs(node);
+            if inputs.len() < 2 {
                 return None;
             }
-            let phi_token = inputs_vec[0];
-            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs_vec.len() - 1);
-            for pred_mem in &inputs_vec[1..] {
-                preds.push(probe(fg, *pred_mem, offset, load_size, load_ty, visited)?);
+            let phi_token = inputs[0];
+            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs.len() - 1);
+            for pred_mem in inputs.into_iter().skip(1) {
+                preds.push(probe(fg, pred_mem, offset, load_size, load_ty, visited)?);
             }
             Some(ResolveShape::Phi { phi_token, preds })
         }
@@ -265,8 +265,13 @@ fn realize(
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph
             // smaller and exposes it to later passes more cleanly.
-            if resolved.iter().all(|v| *v == resolved[0]) {
-                return Ok(resolved[0]);
+            // `windows(2).all` is vacuously true for len < 2, but `probe`
+            // already rejects MemPhi with fewer than 2 mem predecessors,
+            // so `resolved.first()` is the actual emptiness guard here.
+            if let Some(&first) = resolved.first()
+                && resolved.windows(2).all(|w| w[0] == w[1])
+            {
+                return Ok(first);
             }
             let value_phi = fg.graph.create_node(
                 NodeKind::ValuePhi,
