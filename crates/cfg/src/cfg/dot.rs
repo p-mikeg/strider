@@ -8,50 +8,15 @@ use crate::error::{Error, ErrorKind, Result};
 
 impl<R: rsleigh::MemReader> Cfg<R> {
     /// Public entry — fetches Sleigh registers per call. Suitable for ad-hoc
-    /// callers; the DOT dumper uses [`Self::vn_to_name_with_regs`] instead so
+    /// callers; the DOT dumper uses [`vn_to_name_with_regs`] instead so
     /// it only fetches once per render.
     pub(super) fn vn_to_name(&self, vn: &rsleigh::Vn) -> Result<String> {
         match vn.addr.space {
             rsleigh::VnSpace::REGISTER => {
                 let regs = self.sleigh.regs().map_err(ErrorKind::SleighError)?;
-                Self::vn_to_name_with_regs(&regs, vn)
+                vn_to_name_with_regs(&regs, vn)
             }
-            _ => Self::vn_to_name_with_regs_unchecked(vn),
-        }
-    }
-
-    /// Render `vn` to a name, using a pre-fetched [`rsleigh::SleighRegs`] for
-    /// REGISTER lookups. The non-REGISTER spaces don't need `regs`.
-    ///
-    /// Currently `regs` is fetched once per node rendered by the DOT dumper.
-    /// If profiling later flags this as hot, lift the fetch into per-dump
-    /// state by changing `CfgDotDumper`'s `GraphDotDumper::State` from `()`
-    /// to `SleighRegs`.
-    fn vn_to_name_with_regs(regs: &rsleigh::SleighRegs, vn: &rsleigh::Vn) -> Result<String> {
-        if vn.addr.space == rsleigh::VnSpace::REGISTER {
-            return Ok(regs
-                .vn_to_name(*vn)
-                .ok_or(ErrorKind::InvalidRegVn(*vn))?
-                .to_string());
-        }
-        Self::vn_to_name_with_regs_unchecked(vn)
-    }
-
-    /// Render `vn` for non-REGISTER spaces. REGISTER input is a caller-routing
-    /// bug (the caller should have gone through [`Self::vn_to_name_with_regs`])
-    /// and yields [`ErrorKind::InvalidRegVn`].
-    fn vn_to_name_with_regs_unchecked(vn: &rsleigh::Vn) -> Result<String> {
-        let offset = vn.addr.off;
-        let size = vn.size;
-        match vn.addr.space {
-            rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
-            rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
-            rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-            rsleigh::VnSpace::REGISTER => {
-                // Caller error: should have routed through with-regs path.
-                Err(ErrorKind::InvalidRegVn(*vn).into())
-            }
-            s => Err(ErrorKind::UnsupportedVnSpaceDisplay(s).into()),
+            _ => vn_to_name_non_register(vn),
         }
     }
 
@@ -59,6 +24,41 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     #[must_use]
     pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
         CfgDotDumper(self)
+    }
+}
+
+/// Render `vn` to a name, using a pre-fetched [`rsleigh::SleighRegs`] for
+/// REGISTER lookups. The non-REGISTER spaces don't need `regs`.
+///
+/// Currently `regs` is fetched once per node rendered by the DOT dumper.
+/// If profiling later flags this as hot, lift the fetch into per-dump
+/// state by changing `CfgDotDumper`'s `GraphDotDumper::State` from `()`
+/// to `SleighRegs`.
+fn vn_to_name_with_regs(regs: &rsleigh::SleighRegs, vn: &rsleigh::Vn) -> Result<String> {
+    if vn.addr.space == rsleigh::VnSpace::REGISTER {
+        return Ok(regs
+            .vn_to_name(*vn)
+            .ok_or(ErrorKind::InvalidRegVn(*vn))?
+            .to_string());
+    }
+    vn_to_name_non_register(vn)
+}
+
+/// Render `vn` for non-REGISTER spaces. REGISTER input is a caller-routing
+/// bug (the caller should have gone through [`vn_to_name_with_regs`])
+/// and yields [`ErrorKind::InvalidRegVn`].
+fn vn_to_name_non_register(vn: &rsleigh::Vn) -> Result<String> {
+    let offset = vn.addr.off;
+    let size = vn.size;
+    match vn.addr.space {
+        rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
+        rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
+        rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
+        rsleigh::VnSpace::REGISTER => {
+            // Caller error: should have routed through with-regs path.
+            Err(ErrorKind::InvalidRegVn(*vn).into())
+        }
+        s => Err(ErrorKind::UnsupportedVnSpaceDisplay(s).into()),
     }
 }
 
@@ -121,7 +121,7 @@ impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
                 .output
                 .iter()
                 .chain(insn.insn.inputs.iter())
-                .map(|vn| Cfg::<R>::vn_to_name_with_regs(&regs, vn))
+                .map(|vn| vn_to_name_with_regs(&regs, vn))
                 .collect::<Result<_>>()?;
             let insn_addr = insn.addr.machine_addr.addr;
             write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode)
