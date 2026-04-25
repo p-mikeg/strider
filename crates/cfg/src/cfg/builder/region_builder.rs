@@ -295,10 +295,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             // subsequent machine instructions always start at 0.
             let start_pcode_idx = cur_addr.insn_index as usize;
             for (i, insn) in lift_res.insns.iter().enumerate().skip(start_pcode_idx) {
-                cur_addr = PcodeInsnAddr {
-                    machine_addr: cur_addr.machine_addr,
-                    insn_index: i as u64,
-                };
+                cur_addr.insn_index = i as u64;
                 let res = self.process_insn(insn, cur_addr, &lift_res)?;
                 if matches!(res, ProcessInsnRes::FinishedProcessing) {
                     return Ok(());
