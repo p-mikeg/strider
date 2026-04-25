@@ -166,8 +166,11 @@ fn escape_dot_label(s: &str) -> String {
 
 /// Wraps `s` in a JSON string literal with full escaping.
 ///
-/// Used to safely embed the DOT source inside an HTML file without risk of
-/// breaking JavaScript template literals or HTML structure.
+/// Tailored for embedding the DOT source inside an HTML
+/// `<script type="application/json">` element: in addition to the JSON
+/// escapes (`"`, `\`, `\n`, `\r`, `\t`, low control chars as `\uXXXX`),
+/// `<` is unconditionally emitted as `<` so a label containing
+/// `</script>` cannot break out of the surrounding script tag.
 fn json_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -178,6 +181,10 @@ fn json_quote(s: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            // Escape `<` to `<` so a label containing "</script>" can't
+            // terminate the surrounding <script type="application/json"> tag
+            // in `as_html_from_dot`'s output.
+            '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
                 let _ = std::fmt::write(&mut out, format_args!("\\u{:04x}", c as u32));
             }
@@ -536,5 +543,21 @@ mod label_tests {
         // expansion). Any compliant JSON parser accepts UTF-8 directly.
         assert_eq!(json_quote("café"), "\"café\"");
         assert_eq!(json_quote("→"), "\"→\"");
+    }
+
+    #[test]
+    fn json_quote_escapes_left_angle_to_avoid_script_break_out() {
+        // The JSON payload is embedded inside `<script type="application/json">`
+        // in the HTML template. If a DOT label contained `</script>`, the HTML
+        // parser would terminate the script tag and the rest of the JSON would
+        // leak into the document body. Escape `<` to `<` to forbid that.
+        assert_eq!(json_quote("</script>"), "\"\\u003c/script>\"");
+    }
+
+    #[test]
+    fn json_quote_escapes_bare_left_angle_too() {
+        // The escape is unconditional on `<` (not just `</`) — tagging only `</`
+        // would force whitespace / case-tolerance reasoning into the encoder.
+        assert_eq!(json_quote("a<b"), "\"a\\u003cb\"");
     }
 }
