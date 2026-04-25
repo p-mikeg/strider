@@ -54,3 +54,31 @@ fn aarch64_preset_resolves() {
 fn aarch64be_preset_resolves() {
     assert_preset_resolves("aarch64be", SleighArch::aarch64be());
 }
+
+/// Pins the [`target::Endianness`] field of every `SleighArch` preset.
+///
+/// `Endianness` is consumed by `analyzer::register_aliasing` to decide the
+/// shift direction when extracting a sub-register from its container; a
+/// mistyped value on a BE preset (or vice-versa) silently produces wrong
+/// shifts at the analyzer layer, with no signal from this crate.  Pin it
+/// here so a typo in `arch.rs` is caught at unit-test time.
+#[test]
+fn presets_endianness_matches_arch() {
+    use target::Endianness;
+    let cases: &[(&str, SleighArch, Endianness)] = &[
+        ("x86_64", SleighArch::x86_64(), Endianness::Little),
+        ("x86", SleighArch::x86(), Endianness::Little),
+        ("mipsbe32", SleighArch::mipsbe32(), Endianness::Big),
+        ("mipsle32", SleighArch::mipsle32(), Endianness::Little),
+        ("arm", SleighArch::arm(), Endianness::Little),
+        ("aarch64", SleighArch::aarch64(), Endianness::Little),
+        ("aarch64be", SleighArch::aarch64be(), Endianness::Big),
+    ];
+    for (label, arch, expected) in cases {
+        assert_eq!(
+            arch.endianness, *expected,
+            "{label}: expected {expected:?}, got {:?}",
+            arch.endianness,
+        );
+    }
+}
