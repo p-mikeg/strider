@@ -115,7 +115,7 @@ impl<'a, R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'a, R> {
         // Build node label once
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
-        for insn in node.insns.iter() {
+        for insn in &node.insns {
             let variables: Vec<String> = insn
                 .insn
                 .output
