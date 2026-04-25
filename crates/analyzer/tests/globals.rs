@@ -13,10 +13,9 @@ use common::*;
 per_arch_test!("globals", "read_const_byte",        const_byte_folds_to_0x61);
 per_arch_test!("globals", "read_const_int",         const_int_folds_to_value);
 per_arch_test!("globals", "branch_on_const_string", string_branch_folds_one_arm);
-per_arch_test!("globals", "runtime_const_idx",      runtime_idx_keeps_load, ignore = {
-    Mips32le: "BUG-3: MIPS bounds-check produces Bool fed into integer op (IR validator)",
-    Mips32be: "BUG-3: MIPS bounds-check produces Bool fed into integer op (IR validator)",
-});
+// runtime_const_idx: BUG-3 (extend_if_needed handles Bool input) is fixed;
+// the MIPS bounds-check Bool now flows into integer ops via CastToInt.
+per_arch_test!("globals", "runtime_const_idx",      runtime_idx_keeps_load);
 
 fn const_byte_folds_to_0x61(g: &ir::BuiltFunctionGraph) {
     // 'a' = 0x61.  After LoadReadOnly, this is an IntConst.

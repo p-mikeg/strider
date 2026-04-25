@@ -33,22 +33,12 @@ per_arch_test!("arithmetic", "mul",     has_mul, ignore = {
     Mips32le: "BUG-1: MIPS MULT writes HI/LO unique varnodes that the analyzer never lowers to IntBinaryOp::Mul",
     Mips32be: "BUG-1: MIPS MULT writes HI/LO unique varnodes that the analyzer never lowers to IntBinaryOp::Mul",
 });
-per_arch_test!("arithmetic", "udiv",    has_div, ignore = {
-    Mips32le: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-    Mips32be: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-});
-per_arch_test!("arithmetic", "umod",    has_rem, ignore = {
-    Mips32le: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-    Mips32be: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-});
-per_arch_test!("arithmetic", "sdiv",    has_sdiv, ignore = {
-    Mips32le: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-    Mips32be: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-});
-per_arch_test!("arithmetic", "smod",    has_srem, ignore = {
-    Mips32le: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-    Mips32be: "BUG-2: CFG builder rejects MIPS DIV's CONST-space branch target",
-});
+// udiv/umod/sdiv/smod: BUG-2 (MIPS DIV CFG fall-through) is fixed; these
+// are the regression coverage that prevents BUG-2 from re-emerging.
+per_arch_test!("arithmetic", "udiv",    has_div);
+per_arch_test!("arithmetic", "umod",    has_rem);
+per_arch_test!("arithmetic", "sdiv",    has_sdiv);
+per_arch_test!("arithmetic", "smod",    has_srem);
 per_arch_test!("arithmetic", "bit_and", has_and);
 per_arch_test!("arithmetic", "bit_or",  has_or);
 per_arch_test!("arithmetic", "bit_xor", has_xor);
