@@ -106,5 +106,5 @@ impl<E: Debug> From<std::io::Error> for Error<E> {
     }
 }
 
-/// Convenience `Result` alias that uses [`Error`] as the error type.
+/// Convenience `Result` alias that uses [`struct@Error`] as the error type.
 pub type Result<T, E> = std::result::Result<T, Error<E>>;

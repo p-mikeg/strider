@@ -52,7 +52,7 @@ pub trait GraphDotDumper {
     type Error: Debug;
     type State;
 
-    /// Creates the mutable state threaded through all [`dump_as_dot`] calls.
+    /// Creates the mutable state threaded through all [`Self::dump_as_dot`] calls.
     fn create_initial_state(&self) -> Self::State;
 
     /// Returns all nodes that should appear in the DOT output.
@@ -107,7 +107,7 @@ impl DotStyle {
         }
     }
 
-    /// Like [`dark`] but with CFG-appropriate node sizing: `Courier` font
+    /// Like [`Self::dark`] but with CFG-appropriate node sizing: `Courier` font
     /// (known metrics in viz.js) and extra margin so multiline labels fit.
     #[must_use]
     pub fn dark_cfg() -> Self {
@@ -358,10 +358,10 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Produces an HTML page that inlines a pre-rendered SVG with pan/zoom.
     ///
     /// Requires the system `dot` binary.  For a browser-rendered interactive
-    /// viewer that works without `dot`, use [`as_html_from_dot`] instead.
+    /// viewer that works without `dot`, use [`Self::as_html_from_dot`] instead.
     ///
     /// # Errors
-    /// Same as [`as_svg`].
+    /// Same as [`Self::as_svg`].
     pub fn as_html_from_svg(&self) -> Result<String, G::Error> {
         let mut svg = self.as_svg()?;
         // Strip the XML declaration and DOCTYPE that `dot` emits — they can
@@ -380,7 +380,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// what characters appear in node labels.
     ///
     /// # Errors
-    /// Same as [`as_dot`].
+    /// Same as [`Self::as_dot`].
     pub fn as_html_from_dot(&self) -> Result<String, G::Error> {
         let dot_src = self.as_dot()?;
         Ok(HTML_DOT_TEMPLATE.replace("__DOT_JSON__", &json_quote(&dot_src)))
@@ -401,7 +401,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Writes the raw DOT source to `out_path`.
     ///
     /// # Errors
-    /// Same as [`dump_as_html`].
+    /// Same as [`Self::dump_as_html`].
     pub fn dump_as_dot(&self, out_path: &str) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_dot()?)?;
         Ok(())
