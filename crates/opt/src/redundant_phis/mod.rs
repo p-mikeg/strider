@@ -181,7 +181,12 @@ impl Optimizer for RedundantPhis {
         for node_id in candidates {
             res |= remove_phis(function, node_id, &reachable)?;
         }
-        res |= crate::worklist::detach_unreachable_nodes(function);
+        // Detaching unreachable zombies is bookkeeping, not progress: an
+        // unreachable node cannot be a consumer of a reachable producer, so
+        // no other pass can act on the result.  Run it for hygiene but do
+        // NOT escalate it into a `Changed` signal — that just costs the
+        // pipeline one extra fixed-point iteration with no work to do.
+        let _ = crate::worklist::detach_unreachable_nodes(function);
         Ok(res)
     }
 }
