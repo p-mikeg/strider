@@ -675,8 +675,8 @@ impl FunctionBuilder {
         }
         for &v in incoming_values {
             let kind = self.graph().output_kind(v);
-            if !kind.is_control() {
-                return Err(ErrorKind::ExpectedControl(v, kind).into());
+            if !kind.is_value() {
+                return Err(ErrorKind::ExpectedValue(v, kind).into());
             }
         }
         let output_type = var.size.try_into()?;
