@@ -5,6 +5,11 @@
 
 int NOINLINE mul_then_add(int a, int b, int c) { return a * b + c; }
 
+/* chained_xor_mask: a three-deep (x ^ k1) & m1 ^ k2 chain.  ConstantFold
+ * may collapse the constants into a single fused mask, so pattern queries
+ * against this fixture should match on structural shape (xor/and/xor)
+ * with `any()` operands rather than insisting on three distinct IntConst
+ * captures. */
 int NOINLINE chained_xor_mask(unsigned x) {
     return (int)(((x ^ 0xdeadbeefu) & 0x00ff00ffu) ^ 0xcafebabeu);
 }

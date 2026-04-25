@@ -6,13 +6,10 @@ mod common;
 use common::*;
 
 per_arch_test!("stack", "volatile_three_writes", volatile_preserves_three_stores);
+// escape_via_ptr: BUG-12 (call elided) is fixed by an asm-volatile barrier
+// in external_take_ptr's body — see fixtures/cases/stack.c.
 per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call, ignore = {
-    X86:      "BUG-12: external_take_ptr call not emitted as Call node",
-    X64:      "BUG-12: external_take_ptr call not emitted as Call node",
-    Aarch64:  "BUG-12: external_take_ptr call not emitted as Call node",
-    Arm:      "BUG-12: external_take_ptr call not emitted as Call node",
-    Mips32le: "BUG-12: external_take_ptr call not emitted as Call node",
-    Mips32be: "BUG-12: external_take_ptr call not emitted as Call node",
+    Arm: "BUG-5: ARM escape_via_ptr lifts to BranchIndirect (intentional skip)",
 });
 // large_local_array: BUG-13 (AArch64 U128 array-init constant) is fixed by
 // the IntConst u128 widening — this is the regression coverage for that fix.
