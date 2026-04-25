@@ -262,36 +262,47 @@ impl Graph {
     /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
     /// now-modified node.
     pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
-        // If the owning node is cacheable, evict its current dedup-cache entry
-        // *before* mutating the input. The key is built from the current
-        // (kind, inputs, output_kinds) triple, which is about to change.
+        // Evict the cacheable owner's stale entry *before* mutating, while the
+        // current (kind, inputs, output_kinds) tuple still describes the node.
         let owner = self.inputs[input_id].node_id;
-        if self.nodes[owner].kind.is_cacheable() {
-            let input_outputs: Vec<NodeOutputId> = self.nodes[owner]
-                .inputs
-                .as_slice(&self.input_pool)
-                .iter()
-                .map(|&iid| self.inputs[iid].output_id)
-                .collect();
-            let output_kinds: Vec<NodeOutputKind> = self.nodes[owner]
-                .outputs
-                .as_slice(&self.output_pool)
-                .iter()
-                .map(|&oid| self.outputs[oid].kind)
-                .collect();
-            let stale_key = (
-                Node::new(self.nodes[owner].kind),
-                input_outputs,
-                output_kinds,
-            );
-            self.node_to_id.remove(&stale_key);
-        }
+        self.evict_cache_entry_if_cacheable(owner);
 
         // Remove the input usage on the current output id
         self.unlink_input_from_output_list(input_id);
         self.inputs[input_id].output_id = output_id;
         // Add usage of the new output_id
         self.link_input_to_output_list(input_id);
+    }
+
+    /// Removes `node_id` from the dedup cache (using its *current* inputs and
+    /// output kinds as the key) when its kind is cacheable. No-op for
+    /// non-cacheable kinds, which were never inserted in the first place.
+    ///
+    /// Both `update_input` and `detach_node_inputs` call this *before*
+    /// mutating the node, so the stale entry can never resurrect a node whose
+    /// inputs no longer match the original key.
+    fn evict_cache_entry_if_cacheable(&mut self, node_id: NodeId) {
+        if !self.nodes[node_id].kind.is_cacheable() {
+            return;
+        }
+        let input_outputs: Vec<NodeOutputId> = self.nodes[node_id]
+            .inputs
+            .as_slice(&self.input_pool)
+            .iter()
+            .map(|&iid| self.inputs[iid].output_id)
+            .collect();
+        let output_kinds: Vec<NodeOutputKind> = self.nodes[node_id]
+            .outputs
+            .as_slice(&self.output_pool)
+            .iter()
+            .map(|&oid| self.outputs[oid].kind)
+            .collect();
+        let key = (
+            Node::new(self.nodes[node_id].kind),
+            input_outputs,
+            output_kinds,
+        );
+        self.node_to_id.remove(&key);
     }
 
     /// Returns a cursor over the use-list of `output_id`.
@@ -311,37 +322,14 @@ impl Graph {
     ///
     /// After this call `node_id` has no inputs.
     pub fn detach_node_inputs(&mut self, node_id: NodeId) {
-        // Get all input ids of the node
+        // Evict before mutating — see `evict_cache_entry_if_cacheable` doc.
+        self.evict_cache_entry_if_cacheable(node_id);
+
         let input_ids: SmallVec<[NodeInputId; 4]> =
             self.nodes[node_id].inputs.as_slice(&self.input_pool).into();
-
-        // Remove the node from the dedup cache before we mutate its inputs —
-        // otherwise a later `create_node` with the original (kind, inputs,
-        // outputs) key would return this zombie with an empty input list.
-        if self.nodes[node_id].kind.is_cacheable() {
-            let input_outputs: Vec<NodeOutputId> = input_ids
-                .iter()
-                .map(|&iid| self.inputs[iid].output_id)
-                .collect();
-            let output_kinds: Vec<NodeOutputKind> = self.nodes[node_id]
-                .outputs
-                .as_slice(&self.output_pool)
-                .iter()
-                .map(|&oid| self.outputs[oid].kind)
-                .collect();
-            let key = (
-                Node::new(self.nodes[node_id].kind),
-                input_outputs,
-                output_kinds,
-            );
-            self.node_to_id.remove(&key);
-        }
-
-        // Remove their dependency on the output
         for &input_id in &input_ids {
             self.unlink_input_from_output_list(input_id);
         }
-        // Delete the inputs from the node
         self.nodes[node_id].inputs.clear(&mut self.input_pool);
     }
 
