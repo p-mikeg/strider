@@ -341,6 +341,11 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
             // On the very first machine instruction this may start at a non-zero
             // index (the work queue delivered a mid-instruction entry point);
             // subsequent machine instructions always start at 0.
+            //
+            // `Iterator::skip` requires `usize`. Pcode counts per machine
+            // instruction are bounded by Sleigh's per-insn output (≤ 256); on
+            // every supported target `usize ≥ u32`, so the cast cannot truncate.
+            #[allow(clippy::cast_possible_truncation)]
             let start_pcode_idx = cur_addr.insn_index as usize;
             for (i, insn) in lift_res.insns.iter().enumerate().skip(start_pcode_idx) {
                 cur_addr.insn_index = i as u64;
