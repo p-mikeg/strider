@@ -152,18 +152,15 @@ fn escape_dot_label(s: &str) -> String {
     while let Some(ch) = chars.next() {
         match ch {
             '"' => out.push_str("\\\""),
-            '\\' => {
-                // Pass through recognised DOT label escapes: \n \l \r
-                match chars.peek() {
-                    Some('n') | Some('l') | Some('r') => {
-                        out.push('\\');
-                        if let Some(c) = chars.next() {
-                            out.push(c);
-                        }
-                    }
-                    _ => out.push_str("\\\\"),
+            '\\' => match chars.peek() {
+                // Pass through recognised DOT label escapes: \n \l \r.
+                Some(&c @ ('n' | 'l' | 'r')) => {
+                    chars.next();
+                    out.push('\\');
+                    out.push(c);
                 }
-            }
+                _ => out.push_str("\\\\"),
+            },
             '\n' => out.push_str("\\n"),
             c => out.push(c),
         }
