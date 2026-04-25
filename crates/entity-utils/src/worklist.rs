@@ -34,6 +34,7 @@ impl<E: EntityRef> Worklist<E> {
     /// Has no effect if `entity` is already queued.
     pub fn enqueue(&mut self, entity: E) {
         if !self.workset.contains(entity) {
+            self.workset.insert(entity);
             self.worklist.push_back(entity);
         }
     }
@@ -66,5 +67,27 @@ impl<E: EntityRef> Extend<E> for Worklist<E> {
         for entity in iter {
             self.enqueue(entity);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_entity::entity_impl;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+    struct Id(u32);
+    entity_impl!(Id);
+
+    #[test]
+    fn enqueue_dedups_while_queued() {
+        let mut wl: Worklist<Id> = Worklist::new();
+        wl.enqueue(Id(7));
+        wl.enqueue(Id(7));
+        // Before the fix this would fail: enqueue never inserts into the
+        // workset, so both pushes land in the deque and the second dequeue
+        // returns Some instead of None.
+        assert_eq!(wl.dequeue(), Some(Id(7)));
+        assert_eq!(wl.dequeue(), None);
     }
 }
