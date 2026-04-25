@@ -168,3 +168,58 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
     // the unreachable store didn't leave an invalid graph.
     Ok(())
 }
+
+/// RedundantPhis must not report `Changed` when its only effect is detaching
+/// the inputs of CFG-unreachable zombies.  Detached zombies cannot be
+/// consumed by reachable nodes, so no other pass can act on the result —
+/// escalating the cleanup to `Changed` just costs the pipeline one extra
+/// fixed-point iteration.
+///
+/// Test fixture: run the default pipeline once to fully settle any real
+/// phi/state simplification, then graft an orphan Add node directly onto
+/// the arena via `Graph::create_node` — unreachable from `entry`, with
+/// non-empty inputs.  On the next RedundantPhis invocation the only thing
+/// the pass can do is detach that orphan's inputs, so the result must be
+/// `NoChange`.
+#[test]
+fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
+    use ir::node::NodeOutputKind;
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let entry = b.create_region()?;
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+    let c = b.build_int_const(0, NodeOutputType::U64);
+    b.build_return(Some(c), &[])?;
+    let mut fg = b.build()?;
+
+    // Settle the graph by running RedundantPhis to fixed point first.  After
+    // this, any further RedundantPhis invocation on the unmodified graph
+    // returns NoChange; that's our baseline.
+    while RedundantPhis.optimize(&mut fg)?.changed() {}
+    let baseline = RedundantPhis.optimize(&mut fg)?;
+    assert_eq!(
+        baseline,
+        OptimizationResult::NoChange,
+        "graph should be settled before grafting the orphan"
+    );
+
+    // Now graft an unreachable Add whose inputs are real outputs of
+    // reachable nodes. The Add itself is not consumed by anything reachable,
+    // so `preorder()` will not include it; `detach_unreachable_nodes` is the
+    // only thing in RedundantPhis that can touch it.
+    let one = fg.make_int_const(1, NodeOutputType::U64)?;
+    let two = fg.make_int_const(2, NodeOutputType::U64)?;
+    let _orphan = fg.graph.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [one, two],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    let res = RedundantPhis.optimize(&mut fg)?;
+    assert_eq!(
+        res,
+        OptimizationResult::NoChange,
+        "RedundantPhis must report NoChange when its only effect is orphan-input detachment"
+    );
+    Ok(())
+}
