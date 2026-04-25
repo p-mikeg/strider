@@ -43,6 +43,14 @@ pub struct CallingConvention {
     /// Resolved into [`BuiltCallingConvention::ret_val_regs`] by
     /// [`Self::build`].
     ret_val_regs: &'static [&'static str],
+    /// Sleigh register names for float return-value registers (e.g. `q0` on
+    /// aarch64, `XMM0` on x86_64, `d0` on ARM AAPCS soft-float, `f0` on
+    /// MIPS O32).  Listed separately from [`Self::ret_val_regs`] because
+    /// these registers have different widths from the integer return regs
+    /// (and the size invariant in the test suite checks the integer list).
+    /// Resolved into [`BuiltCallingConvention::ret_val_regs_float`] by
+    /// [`Self::build`].
+    ret_val_regs_float: &'static [&'static str],
     /// Byte offsets from the call-time stack pointer for each positional
     /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
     /// (after register arguments are exhausted).
@@ -70,6 +78,12 @@ pub struct BuiltCallingConvention {
     pub callee_saved_regs: Vec<rsleigh::Vn>,
     /// Varnodes used to return a value to the caller, in positional order.
     pub ret_val_regs: Vec<rsleigh::Vn>,
+    /// Varnodes used to return a *float* value to the caller, in positional
+    /// order (e.g. `[q0, q1]` on aarch64, `[XMM0, XMM1]` on x86_64).  These
+    /// have different widths from [`Self::ret_val_regs`] and are tracked
+    /// separately so the analyzer can include both in `Return`'s input list
+    /// without polluting integer-only patterns.
+    pub ret_val_regs_float: Vec<rsleigh::Vn>,
     /// The hardware stack-pointer varnode (e.g. `RSP` on x86-64, `sp` on
     /// AArch64).  Deliberately absent from all three resolved register lists
     /// ([`Self::arg_passing_regs`], [`Self::callee_saved_regs`],
@@ -106,6 +120,8 @@ impl CallingConvention {
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
             ret_val_regs: &["RAX", "RDX"],
+            // SSE return regs (16-byte XMM); used for `float`/`double` returns.
+            ret_val_regs_float: &["XMM0", "XMM1"],
             // Offsets start at +8: the `call` instruction pushes an 8-byte
             // return address, so SP-at-call points to the return address and
             // the first stack-passed arg (arg 7) lives one slot above it.
@@ -136,6 +152,13 @@ impl CallingConvention {
                 "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
             ],
             ret_val_regs: &["x0", "x1"],
+            // AArch64 float return regs.  Use d0/d1 (8-byte double-precision
+            // view) instead of q0/q1 (16-byte vector view) to avoid U128
+            // shift-constant materialisation in write_reg_vn (see
+            // analyzer-known-issues BUG-13).  d0/d1 is the natural width for
+            // C `float`/`double` return values, which is what user code
+            // actually queries.
+            ret_val_regs_float: &["d0", "d1"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
         }
@@ -159,6 +182,11 @@ impl CallingConvention {
             arg_passing_regs: &["r0", "r1", "r2", "r3"],
             callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr"],
             ret_val_regs: &["r0", "r1"],
+            // VFP return regs (8-byte d0/d1, also accessed as 4-byte s0/s1).
+            // For VFP-disabled (-mfloat-abi=soft) builds the float result still
+            // flows through r0/r1 — listing d0/d1 doesn't hurt because they're
+            // simply unused in that case.
+            ret_val_regs_float: &["d0", "d1"],
             stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
             ret_stack_pop: 0,
         }
@@ -190,6 +218,10 @@ impl CallingConvention {
             arg_passing_regs: &["a0", "a1", "a2", "a3"],
             callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
             ret_val_regs: &["v0", "v1"],
+            // FPU return regs (4-byte single-precision; doubles use the
+            // f0/f1 pair).  Even on soft-float builds the listing is harmless
+            // — these regs are simply unused.
+            ret_val_regs_float: &["f0", "f2"],
             stack_arg_offsets: &[16, 20, 24, 28],
             ret_stack_pop: 0,
         }
@@ -211,6 +243,11 @@ impl CallingConvention {
             arg_passing_regs: &[],
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
             ret_val_regs: &["EAX", "EDX"],
+            // x86 cdecl: floats and doubles return on the x87 stack (`ST0`),
+            // 10 bytes wide.  When -mfpmath=sse is used `XMM0` is also a
+            // candidate (16-byte SSE reg).  Listing both is harmless: at
+            // most one will hold the actual return.
+            ret_val_regs_float: &["ST0", "XMM0"],
             // Offsets start at +4: the `call` instruction pushes a 4-byte
             // return address, so SP-at-call points to the return address and
             // arg 0 lives one slot above it.
@@ -234,11 +271,13 @@ impl CallingConvention {
         let arg_passing_regs = regs_to_vns(sleigh_regs, self.arg_passing_regs)?;
         let callee_saved_regs = regs_to_vns(sleigh_regs, self.callee_saved_regs)?;
         let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
+        let ret_val_regs_float = regs_to_vns(sleigh_regs, self.ret_val_regs_float)?;
         let stack_ptr_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
         Ok(BuiltCallingConvention {
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,
+            ret_val_regs_float,
             stack_ptr_vn,
             stack_arg_offsets: self.stack_arg_offsets.to_vec(),
             ret_stack_pop: self.ret_stack_pop,
@@ -504,6 +543,7 @@ mod tests {
                 arg_passing_regs: std::slice::from_ref(bad_name),
                 callee_saved_regs: &[],
                 ret_val_regs: &[],
+                ret_val_regs_float: &[],
                 stack_arg_offsets: &[],
                 ret_stack_pop: 0,
             };
@@ -528,6 +568,7 @@ mod tests {
             arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
             callee_saved_regs: &[],
             ret_val_regs: &[],
+            ret_val_regs_float: &[],
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
         };
@@ -564,6 +605,7 @@ mod tests {
             arg_passing_regs: &[],
             callee_saved_regs: &[],
             ret_val_regs: &[],
+            ret_val_regs_float: &[],
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
         };
@@ -576,4 +618,36 @@ mod tests {
             "expected UnknownRegName(\"NOT_A_SP\"), got {result:?}"
         );
     }
+#[test]
+#[ignore = "probe"]
+fn probe_float_regs() {
+    fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
+        let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
+        let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe).unwrap().regs().unwrap();
+        for n in names {
+            let v = regs.name_to_vn(n);
+            println!("  {n:?} -> {v:?}");
+        }
+    }
+    println!("=== aarch64 ===");
+    try_resolve(crate::arch::SleighArch::aarch64(), &[
+        "q0", "q1", "v0", "v1", "d0", "d1", "s0", "s1", "Q0", "V0", "D0", "S0",
+    ]);
+    println!("=== x86_64 ===");
+    try_resolve(crate::arch::SleighArch::x86_64(), &[
+        "XMM0", "XMM1", "xmm0", "xmm1", "ST0", "ST1", "st0",
+    ]);
+    println!("=== arm ===");
+    try_resolve(crate::arch::SleighArch::arm(), &[
+        "s0", "s1", "d0", "d1", "S0", "D0",
+    ]);
+    println!("=== x86 ===");
+    try_resolve(crate::arch::SleighArch::x86(), &[
+        "XMM0", "ST0", "st0",
+    ]);
+    println!("=== mips32le ===");
+    try_resolve(crate::arch::SleighArch::mipsle32(), &[
+        "f0", "f1", "f2", "f3", "f12", "F0", "F12",
+    ]);
+}
 }

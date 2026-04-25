@@ -80,24 +80,32 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     pub(super) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ir::Value> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         let curr_reg_val = self.builder.read_variable(&container_reg)?;
-        let mut read_reg_val = curr_reg_val;
-        if container_reg != *reg {
-            // We need to shift the value if it is in the middle of a register
-            let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
-            if shift_value != 0 {
-                let shift_const = self
-                    .builder
-                    .build_int_const(shift_value, container_reg.size.try_into()?)?;
-                read_reg_val = self.builder.build_int_binary_operation(
-                    curr_reg_val,
-                    shift_const,
-                    IntBinaryOp::ShiftRight,
-                    reg.size.try_into()?,
-                )?;
-            }
+        if container_reg == *reg {
+            return Ok(curr_reg_val);
         }
-
-        Ok(read_reg_val)
+        // Sub-register read: shift the container's bits down to the LSB
+        // position, then truncate to the sub-register's width.  Even when
+        // the shift is zero (sub at offset 0 of the container), the
+        // truncate is required — without it the caller receives the full
+        // container width, which breaks downstream type-aware operations
+        // (e.g. CastToFloat(F32) on a U64 input cannot lower to a clean
+        // IntBitsToFloat and the optimizer ends up dropping the chain).
+        let reg_ty: ir::ValueType = reg.size.try_into()?;
+        let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
+        let shifted = if shift_value == 0 {
+            curr_reg_val
+        } else {
+            let shift_const = self
+                .builder
+                .build_int_const(shift_value, container_reg.size.try_into()?)?;
+            self.builder.build_int_binary_operation(
+                curr_reg_val,
+                shift_const,
+                IntBinaryOp::ShiftRight,
+                container_reg.size.try_into()?,
+            )?
+        };
+        Ok(self.builder.truncate_if_needed(shifted, reg_ty)?)
     }
 
     /// Emits IR nodes to write `val` into a register varnode.
