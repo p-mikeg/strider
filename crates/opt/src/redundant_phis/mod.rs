@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::error::{ErrorKind, Result};
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -155,7 +155,7 @@ fn remove_phis(
 /// severing their inputs is always safe.  This cleans up dead-block residue
 /// left behind by `DeadBranchElimination`.
 fn detach_unreachable_nodes(function: &mut ir::BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: std::collections::HashSet<ir::node::NodeId> = function.preorder().collect();
+    let reachable: HashSet<ir::node::NodeId> = function.preorder().collect();
     let mut changed = false;
     for node_id in function.all_node_ids().collect::<Vec<_>>() {
         if !reachable.contains(&node_id) && !function.graph.node_inputs(node_id).is_empty() {
@@ -180,10 +180,25 @@ pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
     fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let reachable = ir::walk::cfg_reachable(&function.graph, function.entry);
+        let reachable: HashSet<NodeId> =
+            ir::walk::cfg_reachable(&function.graph, function.entry)
+                .into_iter()
+                .collect();
         let mut res = OptimizationResult::NoChange;
-        let graph_nodes: Vec<_> = function.preorder().collect();
-        for node_id in graph_nodes {
+        // Only phi-like nodes can be simplified by `remove_phis`, so don't
+        // walk every node — pre-filter on the kinds we care about.
+        let candidates: Vec<NodeId> = function
+            .preorder()
+            .filter(|&n| {
+                matches!(
+                    function.graph.node_kind(n),
+                    ir::node::NodeKind::ControlPhi(_)
+                        | ir::node::NodeKind::MemPhi
+                        | ir::node::NodeKind::ControlState
+                )
+            })
+            .collect();
+        for node_id in candidates {
             res |= remove_phis(function, node_id, &reachable)?;
         }
         res |= detach_unreachable_nodes(function);
@@ -192,83 +207,4 @@ impl Optimizer for RedundantPhis {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ConstantFold, OptimizerPipeline};
-    use ir::node::{NodeKind, NodeOutputType};
-    use ir::{FunctionBuilder, IntBinaryOp};
-
-    fn sp_vn() -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x20,
-            },
-            size: 4,
-        }
-    }
-
-    /// Two reachable CFG predecessors feed the same `NodeOutputId` into the
-    /// ControlPhi at the join — exactly the shape the analyzer produces for
-    /// SP across an `if/else` where both arms write the same pre-computed
-    /// value (e.g. the loop-prologue `sub esp, 4` shared by the loop-entry
-    /// and loop-continue edges).  Without the "all live values identical"
-    /// rule the phi survives (distinct ctrl predecessors), leaving a
-    /// spurious `φ ESP` in the output.
-    #[test]
-    fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
-        let sp = sp_vn();
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-        let entry = b.create_region()?;
-        let a = b.create_region()?;
-        let bb = b.create_region()?;
-        let c = b.create_region()?;
-        b.set_entry_region(entry)?;
-
-        // entry: shared = sp - 4; if cond goto a else goto b
-        b.set_region(entry);
-        let sp_entry = b.read_variable(&sp)?;
-        let four = b.build_int_const(4, NodeOutputType::U32);
-        let shared_sp =
-            b.build_int_binary_operation(sp_entry, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
-        let cond = b.build_boolean_const(true);
-        b.build_if(cond, a, bb)?;
-
-        // a: sp = shared
-        b.set_region(a);
-        b.write_variable(&sp, shared_sp)?;
-        b.build_branch(c)?;
-
-        // b: sp = shared  (same NodeOutputId, so phi at c will have both
-        // data inputs equal).
-        b.set_region(bb);
-        b.write_variable(&sp, shared_sp)?;
-        b.build_branch(c)?;
-
-        // c: load through sp so the phi's output has a live use.
-        b.set_region(c);
-        let sp_c = b.read_variable(&sp)?;
-        let loaded = b.build_load(sp_c, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-        b.build_return(Some(loaded), &[])?;
-        let mut fg = b.build()?;
-
-        let mut pipeline = OptimizerPipeline::new();
-        pipeline.add(ConstantFold);
-        pipeline.add(RedundantPhis);
-        pipeline.run(&mut fg)?;
-
-        // The only ControlPhi(sp) at `c` had both predecessors feeding the
-        // same Sub output — must be gone after the pass.
-        let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-        let surviving_sp_phis = fg
-            .all_node_ids()
-            .filter(|n| reachable.contains(n))
-            .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ControlPhi(vn) if *vn == sp))
-            .count();
-        assert_eq!(
-            surviving_sp_phis, 0,
-            "ControlPhi(sp) with identical data inputs must be removed"
-        );
-        Ok(())
-    }
-}
+mod tests;
