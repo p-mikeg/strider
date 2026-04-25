@@ -37,6 +37,9 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         Self::vn_to_name_with_regs_unchecked(vn)
     }
 
+    /// Render `vn` for non-REGISTER spaces. REGISTER input is a caller-routing
+    /// bug (the caller should have gone through [`Self::vn_to_name_with_regs`])
+    /// and yields [`ErrorKind::InvalidRegVn`].
     fn vn_to_name_with_regs_unchecked(vn: &rsleigh::Vn) -> Result<String> {
         let offset = vn.addr.off;
         let size = vn.size;
