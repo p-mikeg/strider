@@ -277,12 +277,20 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 }),
             ))
         },
-        // 4. Truncate(IntConst(v)) => int_const(v, ty)
+        // 4. Truncate(IntConst(v)) => int_const(v masked to ty, ty)
+        //    The wider IntConst's raw value is *not* automatically masked
+        //    to the truncate's output width — `make_int_const` stores raw
+        //    u64s. Mask explicitly here so we don't plant an unmasked
+        //    narrow IntConst into the IR. Skip when ty is U128/U256 (the
+        //    truncate output is always narrower than U64 in practice, but
+        //    the skip costs nothing and is consistent with other rules).
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
                 truncate(any_int_const(v)),
-                int_const_with!([v] => v),
+                int_const_with!([v, ty] =>
+                    ty.get_unsigned_int(v).ok_or_else(pattern::Error::skip)?
+                ),
             ))
         },
         // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)

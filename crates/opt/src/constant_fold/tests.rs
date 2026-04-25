@@ -483,6 +483,55 @@ fn fold_truncate_const() -> Result<()> {
     Ok(())
 }
 
+/// Rule 4 (`Truncate(IntConst(v)) => int_const(v, ty)`) must mask the
+/// stored value to the truncate's output width. Otherwise the IR-layer
+/// invariant "an IntConst's stored value fits its declared type" silently
+/// breaks: a `Truncate(IntConst(0xFFFF, U16))` would rewrite to
+/// `IntConst(0xFFFF, U8)` (typed-narrow but value-wide).
+///
+/// We can't directly emit `Truncate(IntConst)` because the builder's
+/// `truncate_if_needed` short-circuits constants. Instead we feed the
+/// truncate from a non-const expression that constant-folds *during* the
+/// optimizer's fixed-point loop: `(0xFFFF | 0xFFFF) → IntConst(0xFFFF)`,
+/// which then arrives at the still-extant Truncate node and triggers
+/// rule 4.
+#[test]
+fn truncate_int_const_emits_masked_value() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let a = b.build_int_const(0xFFFF, NodeOutputType::U16).unwrap();
+        let b_ = b.build_int_const(0xFFFF, NodeOutputType::U16).unwrap();
+        // Non-const node so truncate_if_needed emits a real Truncate node.
+        let or = b.build_int_binary_operation(a, b_, IntBinaryOp::Or, NodeOutputType::U16)?;
+        Ok(b.truncate_if_needed(or, NodeOutputType::U8)?)
+    })?;
+    // Sanity: builder did emit a Truncate node.
+    assert!(
+        fg.all_node_ids()
+            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+        "test setup expects a Truncate node before optimization",
+    );
+
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+
+    // After optimization the Return's value must be an `IntConst(0xFF)`,
+    // i.e. the low byte of 0xFFFF — *masked* to U8. A pre-fix run would
+    // store `0xFFFF` (the wider raw value) here.
+    let val = return_value(&fg)?;
+    let producer = fg.graph.get_node_from_output(val);
+    let kind = *fg.graph.node_kind(producer);
+    let raw = match kind {
+        NodeKind::IntConst(v) => v,
+        other => panic!("expected IntConst producer for Return value, got {other:?}"),
+    };
+    assert_eq!(
+        raw & 0xFF,
+        raw,
+        "Truncate of IntConst must store the masked value, got 0x{raw:X}",
+    );
+    assert_eq!(raw, 0xFF, "expected low byte 0xFF, got 0x{raw:X}");
+    Ok(())
+}
+
 // ── boolean folding ───────────────────────────────────────────────────────
 
 #[test]
