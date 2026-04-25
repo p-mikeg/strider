@@ -138,6 +138,16 @@ impl<N: Copy> PreOrderContext<N> {
     }
 
     /// Resets the traversal, replacing the current stack with `roots`.
+    ///
+    /// **Root visit order:** because the internal stack is popped LIFO, roots are
+    /// visited in **reverse** of their iteration order. That is, if `roots`
+    /// yields `[u, v]` (with no path from `v` to `u` in the graph), the pre-order
+    /// walk yields `v` (and its subtree) before `u`. This is the *opposite* of
+    /// [`PostOrderContext::reset`], which is carefully shaped so source order is
+    /// preserved in any RPO derived from a post-order walk.
+    ///
+    /// Callers that want forward source-order over multiple roots should
+    /// reverse the iterator themselves (e.g. `roots.into_iter().rev()`).
     pub fn reset(&mut self, roots: impl IntoIterator<Item = N>) {
         self.stack.clear();
         self.stack.extend(roots);
