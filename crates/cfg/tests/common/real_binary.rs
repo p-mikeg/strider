@@ -23,7 +23,7 @@ pub fn symbol_addr(binary_path: &str, fn_name: &str) -> u64 {
     let obj: &'static object::File<'static> =
         Box::leak(Box::new(object::File::parse(leaked).expect("parse ELF")));
     obj.symbol_by_name(fn_name)
-        .unwrap_or_else(|| panic!("symbol '{}' not found in {}", fn_name, binary_path))
+        .unwrap_or_else(|| panic!("symbol '{fn_name}' not found in {binary_path}"))
         .address()
 }
 
@@ -43,5 +43,5 @@ pub fn build_cfg(
     let sleigh = rsleigh::Sleigh::new(sla_spec, pspec, mem_reader).expect("create Sleigh");
     cfg::Builder::new(sleigh, addr, cfg::OptionsBuilder::new().build())
         .build()
-        .unwrap_or_else(|e| panic!("CFG build failed for '{}': {e:?}", fn_name))
+        .unwrap_or_else(|e| panic!("CFG build failed for '{fn_name}': {e:?}"))
 }

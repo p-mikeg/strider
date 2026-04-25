@@ -118,10 +118,10 @@ pub fn make_region(addrs: &[(u64, u64)]) -> Region {
 
 /// Builds a `TestRegionBuilder` anchored at `start` with no parent edge.
 #[must_use]
-pub fn make_region_builder<'a>(
-    builder: &'a mut Builder<TestReader>,
+pub fn make_region_builder(
+    builder: &mut Builder<TestReader>,
     start: PcodeInsnAddr,
-) -> TestRegionBuilder<'a, TestReader> {
+) -> TestRegionBuilder<'_, TestReader> {
     TestRegionBuilder::new(builder, start)
 }
 
@@ -141,12 +141,14 @@ pub fn ret_bytes() -> Vec<u8> {
 
 /// Unconditional short `jmp rel8` followed by `ret`. Total 3 bytes.
 #[must_use]
+#[allow(clippy::cast_sign_loss)] // two's-complement byte reinterpretation for x86 short branch displacement
 pub fn jmp_rel8_ret_bytes(rel: i8) -> Vec<u8> {
     vec![0xeb, rel as u8, 0xc3]
 }
 
 /// `je rel8; ret; ret` — conditional short jump followed by two `ret`s. Total 4 bytes.
 #[must_use]
+#[allow(clippy::cast_sign_loss)] // two's-complement byte reinterpretation for x86 short branch displacement
 pub fn je_rel8_ret_ret_bytes(rel: i8) -> Vec<u8> {
     vec![0x74, rel as u8, 0xc3, 0xc3]
 }

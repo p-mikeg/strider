@@ -13,7 +13,7 @@
 //!
 //! Test binaries live in `binary_tests/out/<arch>` and are built with:
 //!
-//!   make -C binary_tests
+//!   make -C `binary_tests`
 //!
 //! ARM 32-bit tests are all `#[ignore]` because `BranchIndirect` is not yet
 //! handled as a region terminator — unignore them once that is fixed.

@@ -1,4 +1,9 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    // Two's-complement reinterpretation: CONST-space encodes signed pcode-offsets in a u64.
+    clippy::cast_sign_loss,
+)]
 
 //! Tests for `RegionBuilder::decode_branch_target` —
 //! CONST-relative / default-code-space-absolute / invalid-space-error paths.
@@ -177,7 +182,7 @@ fn decode_branch_target_const_space_index_past_end_errors() {
     // Synthetic lift result with a known pcode count. The target index will be
     // `pcode_count + 1`, which is one past the last valid pcode slot.
     let pcode_count = 4u64;
-    let lift = fake_lift_res(pcode_count as usize);
+    let lift = fake_lift_res(usize::try_from(pcode_count).expect("pcode_count fits in usize"));
 
     let vn = Vn {
         addr: VnAddr {
@@ -234,7 +239,7 @@ fn decode_branch_target_const_space_index_at_end_errors() {
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
 
     let pcode_count = 4u64;
-    let lift = fake_lift_res(pcode_count as usize);
+    let lift = fake_lift_res(usize::try_from(pcode_count).expect("pcode_count fits in usize"));
 
     let vn = Vn {
         addr: VnAddr {

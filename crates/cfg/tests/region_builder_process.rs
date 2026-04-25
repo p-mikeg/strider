@@ -22,7 +22,7 @@ fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {
 }
 
 /// Finds the first pcode insn in `lift` whose opcode matches `want`, returns
-/// (insn_index, insn clone).
+/// (`insn_index`, insn clone).
 #[allow(clippy::panic)]
 fn find_pcode(lift: &rsleigh::LiftRes, want: rsleigh::Opcode) -> (u64, rsleigh::Insn) {
     let (idx, i) = lift
