@@ -1,10 +1,15 @@
-use std::collections::HashMap;
+use std::collections::VecDeque;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
+
+#[cfg(test)]
+mod tests;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -57,7 +62,7 @@ impl Kb {
 fn node_known_bits(
     fg: &BuiltFunctionGraph,
     node_id: NodeId,
-    known: &HashMap<NodeOutputId, Kb>,
+    known: &FxHashMap<NodeOutputId, Kb>,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
     let kind = *fg.graph.node_kind(node_id);
 
@@ -226,14 +231,24 @@ impl Optimizer for KnownBits {
         // Collect once; mutations only add new nodes (never change existing ones).
         let nodes: Vec<_> = function.preorder().collect();
 
-        // ── Phase 1: propagate known bits to a fixed point ────────────────────
-        let mut known: HashMap<NodeOutputId, Kb> = HashMap::new();
-        let mut any_changed = true;
-        while any_changed {
-            any_changed = false;
-            for &node_id in &nodes {
-                if let Some((out, kb)) = node_known_bits(function, node_id, &known)? {
-                    any_changed |= known.entry(out).or_default().merge(kb);
+        // ── Phase 1: propagate known bits via worklist ────────────────────────
+        // Re-evaluate a node only when one of its inputs' Kb just changed.
+        let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
+        let mut queued: FxHashSet<NodeId> = nodes.iter().copied().collect();
+        let mut work: VecDeque<NodeId> = nodes.iter().copied().collect();
+        while let Some(node_id) = work.pop_front() {
+            queued.remove(&node_id);
+            let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
+                continue;
+            };
+            let merged = known.entry(out).or_default().merge(kb);
+            if !merged {
+                continue;
+            }
+            // Re-queue every consumer of `out`.
+            for (consumer, _idx) in function.graph.output_uses(out) {
+                if queued.insert(consumer) {
+                    work.push_back(consumer);
                 }
             }
         }
@@ -269,107 +284,3 @@ impl Optimizer for KnownBits {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::error::ErrorKind;
-    use ir::node::{NodeKind, NodeOutputType};
-    use ir::{FunctionBuilder, IntBinaryOp};
-
-    fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
-    where
-        F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
-    {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-        let region = b.create_region()?;
-        b.set_entry_region(region)?;
-        b.set_region(region);
-        let val = f(&mut b)?;
-        b.build_return(Some(val), &[])?;
-        Ok(b.build()?)
-    }
-
-    fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-        let ret = fg
-            .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-            .ok_or(ErrorKind::NoReturnNode)?;
-        let val = fg.graph.node_inputs(ret)[2];
-        Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
-    }
-
-    /// `(x | 7) & 4` — bits 0-2 of `Or` are known 1; after And with 4 every
-    /// bit is determined → should fold to `IntConst(4)`.
-    #[test]
-    fn known_bits_or_then_and() -> Result<()> {
-        // Re-build without ConstantFold touching x.
-        let mut fg2 = make_fn(|b| {
-            let x_seed = b.build_int_const(0, NodeOutputType::U64); // value 0; bits 0-2 = 0
-            let c7 = b.build_int_const(7, NodeOutputType::U64);
-            let c4 = b.build_int_const(4, NodeOutputType::U64);
-            let ored =
-                b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
-            Ok(b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)?)
-        })?;
-        // Run KnownBits until convergence.
-        let mut changed = true;
-        while changed {
-            changed = KnownBits.optimize(&mut fg2)?.changed();
-        }
-        assert_eq!(return_kind(&fg2)?, NodeKind::IntConst(4));
-        Ok(())
-    }
-
-    /// `(x & 0xF0) & 0x0F` — the two masks have no overlap, so the result is
-    /// always 0.
-    #[test]
-    fn known_bits_and_mask_then_and() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let x = b.build_int_const(0xFF, NodeOutputType::U8); // any value
-            let f0 = b.build_int_const(0xF0, NodeOutputType::U8);
-            let f = b.build_int_const(0x0F, NodeOutputType::U8);
-            let inner =
-                b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
-            Ok(b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)?)
-        })?;
-        let mut changed = true;
-        while changed {
-            changed = KnownBits.optimize(&mut fg)?.changed();
-        }
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
-        Ok(())
-    }
-
-    /// A plain `IntConst` already has all bits known — the optimizer must not
-    /// loop or report spurious changes.
-    #[test]
-    fn known_bits_const_no_change() -> Result<()> {
-        let mut fg = make_fn(|b| Ok(b.build_int_const(42, NodeOutputType::U64)))?;
-        // KnownBits should see the const node but not replace it with itself.
-        assert!(!KnownBits.optimize(&mut fg)?.changed());
-        Ok(())
-    }
-
-    // ── Popcount known-bits ───────────────────────────────────────────────────
-
-    /// `popcount(U8)` fits in 4 bits (max = 8), so bits 4..7 are known zero.
-    /// `and(popcount(x), 0xF0)` should fold to 0.
-    #[test]
-    fn known_bits_popcount_range() -> Result<()> {
-        let mut fg = make_fn(|b| {
-            let x = b.build_int_const(0xFF, NodeOutputType::U8);
-            let pc = b.build_popcount(x, NodeOutputType::U8)?;
-            let mask = b.build_int_const(0xF0, NodeOutputType::U8);
-            Ok(b.build_int_binary_operation(pc, mask, IntBinaryOp::And, NodeOutputType::U8)?)
-        })?;
-        let mut changed = true;
-        while changed {
-            changed = KnownBits.optimize(&mut fg)?.changed();
-        }
-        assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
-        Ok(())
-    }
-
-}
