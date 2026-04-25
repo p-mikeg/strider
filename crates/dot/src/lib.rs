@@ -508,9 +508,9 @@ mod label_tests {
 
     #[test]
     fn escape_dot_label_carriage_return_passes_through_as_is() {
-        // Locks the current implementation: a literal '\r' character is not
-        // stripped — it falls through to the catch-all push branch. (See
-        // Task 4 for the doc fix that brings the comment in line with this.)
+        // Locks the implementation: a literal '\r' character is passed
+        // through to the output unchanged (the doc above the function
+        // matches this — '\r' is not stripped despite an earlier doc claim).
         assert_eq!(escape_dot_label("a\rb"), "a\rb");
     }
 
