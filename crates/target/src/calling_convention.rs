@@ -112,6 +112,10 @@ impl CallingConvention {
     /// `sp` is the stack pointer (see `stack_ptr_reg_name`) and is not listed
     /// as callee-saved — `ret_stack_pop` is `0` on AAPCS64 because `bl` writes
     /// the return address to `lr` rather than pushing it.
+    ///
+    /// AAPCS64 register conventions are independent of byte order, so this
+    /// preset pairs equally with [`crate::SleighArch::aarch64`] (LE) and
+    /// [`crate::SleighArch::aarch64be`] (BE).
     #[must_use]
     pub fn aarch64_aapcs64() -> CallingConvention {
         CallingConvention {
