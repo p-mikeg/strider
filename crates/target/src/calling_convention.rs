@@ -11,7 +11,7 @@ fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh:
 
 /// Resolves a slice of Sleigh register names to varnodes in the same order.
 /// Short-circuits on the first unknown name.
-fn regs_to_vns(reg_names: &[&str], sleigh_regs: &rsleigh::SleighRegs) -> Result<Vec<rsleigh::Vn>> {
+fn regs_to_vns(sleigh_regs: &rsleigh::SleighRegs, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
     reg_names
         .iter()
         .map(|&name| vn_for_name(sleigh_regs, name))
@@ -200,9 +200,9 @@ impl CallingConvention {
     /// this convention (including the stack pointer) does not resolve against
     /// `sleigh_regs`.  The resolution short-circuits on the first failure.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
-        let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
-        let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
-        let ret_val_regs = regs_to_vns(self.ret_val_regs, sleigh_regs)?;
+        let arg_passing_regs = regs_to_vns(sleigh_regs, self.arg_passing_regs)?;
+        let callee_saved_regs = regs_to_vns(sleigh_regs, self.callee_saved_regs)?;
+        let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
         let stack_ptr_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
         Ok(BuiltCallingConvention {
             arg_passing_regs,
