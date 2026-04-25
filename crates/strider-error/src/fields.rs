@@ -78,7 +78,7 @@ impl ErrorFields {
 /// Generic over `W: std::fmt::Write` so both sinks work with one body;
 /// `Formatter<'_>` and `String` both implement the trait.
 pub(crate) fn write_chain_and_backtrace<W: std::fmt::Write>(
-    chain: &LocationChain,
+    chain: &[&'static Location<'static>],
     backtrace: &Backtrace,
     w: &mut W,
 ) -> std::fmt::Result {
@@ -92,7 +92,7 @@ pub(crate) fn write_chain_and_backtrace<W: std::fmt::Write>(
             loc.column(),
         )?;
     }
-    write!(w, "{}", backtrace)
+    write!(w, "{backtrace}")
 }
 
 /// Implemented by every error wrapper that carries an [`ErrorFields`] payload.

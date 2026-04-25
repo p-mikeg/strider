@@ -33,10 +33,8 @@ pub fn format_traceback(err: &(dyn Traceback + 'static)) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "error: {err}");
 
-    let mut cur = Error::source(err);
-    while let Some(e) = cur {
+    for e in std::iter::successors(Error::source(err), |e| Error::source(*e)) {
         let _ = writeln!(out, "  caused by: {e}");
-        cur = e.source();
     }
 
     let _ = crate::fields::write_chain_and_backtrace(
