@@ -318,6 +318,11 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         },
         // 7. Popcount(IntConst(v)) =>
         //        int_const(masked(v, in_ty).count_ones(), ty)
+        //    Skip when in_ty is wider than u64 (U128/U256): the constant is
+        //    only stored in 64 bits and `get_unsigned_int` returns None for
+        //    those types. A skip is the right semantic — propagating
+        //    ExpectedIntegerType crashed the optimizer on any IR containing
+        //    a wide-int Popcount, which the IR semantically allows.
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
@@ -326,17 +331,18 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
-                        .ok_or_else(|| {
-                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
-                                input_ty,
-                            ))
-                        })?;
+                        .ok_or_else(pattern::Error::skip)?;
                     masked.count_ones() as u64
                 }),
             ))
         },
         // 8. Lzcount(IntConst(v)) =>
         //        int_const((masked(v, in_ty) << (64 - in_ty.bit_width())).leading_zeros(), ty)
+        //    Same width guard as Popcount above. The shift formula
+        //    `64 - in_ty.bit_width()` underflows in u32 for wider types, so
+        //    the masking-step skip is also a load-bearing guard against a
+        //    downstream UB-shaped fault if the get_unsigned_int contract
+        //    ever changed to admit U128/U256.
         {
             let v = IntVar::new();
             boxed_rule(rewrite_rule(
@@ -345,11 +351,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
-                        .ok_or_else(|| {
-                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
-                                input_ty,
-                            ))
-                        })?;
+                        .ok_or_else(pattern::Error::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     (masked << (64 - bits)).leading_zeros() as u64
                 }),

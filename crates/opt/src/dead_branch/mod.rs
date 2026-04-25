@@ -56,7 +56,15 @@ fn try_eliminate_dead_branch(
 
     // ── Step 1: collect dead-ctrl uses before any mutation ────────────────────
     // Each use is (ControlState node, input_index_in_that_node).
-    let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
+    // Sort by `idx` descending so that if the same dead_ctrl is wired into one
+    // ControlState at multiple slots, removing the higher index first leaves
+    // lower indices pointing at their original slots. Removals at different
+    // consumers don't interact, so per-consumer descending is enough. The
+    // current `Graph` use-list is head-insertion (LIFO) so this sort is a
+    // no-op today, but depending on that implementation detail would silently
+    // miscompile if the use-list ever became insertion-order (FIFO).
+    let mut dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
+    dead_uses.sort_by(|a, b| b.1.cmp(&a.1));
 
     // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
     fg.replace_all_uses(live_ctrl, ctrl_in)?;

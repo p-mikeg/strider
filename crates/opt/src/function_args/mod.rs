@@ -278,6 +278,12 @@ fn detect_stack_args(
     Ok(result)
 }
 
+/// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,
+/// offset, load_size)`. Threaded through `detect_stack_args` so that two
+/// stack-arg-load candidates sharing the same memory predecessor reuse the
+/// walk's verdict.
+type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
+
 /// DFS through memory predecessors looking for a store that may shadow the
 /// byte range `[offset, offset + load_size)`.  Treats `MemPhi` as a fork
 /// where **every** value predecessor must be clean; `Call` / `PostCallMemState`
@@ -292,12 +298,6 @@ fn detect_stack_args(
 /// `StackStorePhi` offsets are per-predecessor and stored in
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
 /// construction (the only place that populates them is `StackStoreDetect`).
-/// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,
-/// offset, load_size)`. Threaded through `detect_stack_args` so that two
-/// stack-arg-load candidates sharing the same memory predecessor reuse the
-/// walk's verdict.
-type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
-
 fn mem_chain_is_dirty(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,

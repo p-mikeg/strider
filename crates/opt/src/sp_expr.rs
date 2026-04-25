@@ -76,10 +76,15 @@ pub(crate) fn decompose_sp(
     }
     let result = decompose_sp_inner(fg, out, node, sp_vn, memo, visiting);
     visiting.remove(&node);
-    // Only cache when no cycle was hit on this call path. Approximation:
-    // visiting empty here means we returned cleanly.
-    if visiting.is_empty() {
-        memo.insert(out, result.clone());
+    // Cache `Some(_)` results unconditionally — the decomposition is a
+    // deterministic function of `out`. Don't cache `None`: it could mean
+    // "genuinely not SP-rooted" (safe to recompute) OR "cycle-truncated on
+    // this call path" (must NOT be cached, since a different call path
+    // where `node` isn't on the stack may decompose it cleanly). The
+    // `Some(_)` filter is sound because the cycle-truncation early-return
+    // above always returns `None`.
+    if let Some(ref e) = result {
+        memo.insert(out, Some(e.clone()));
     }
     result
 }
@@ -302,6 +307,70 @@ mod tests {
         let mut memo = SpExprMemo::default();
         let mut visiting = std::collections::HashSet::new();
         assert!(decompose_sp(&fg, c, sp, &mut memo, &mut visiting).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_memo_caches_intermediate_results() -> crate::Result<()> {
+        // Edge case: decomposing the outermost node of a deep `sp - K1 - K2 - K3`
+        // chain must populate the memo for ALL intermediate sub-expressions, so
+        // a sibling walk hitting any of them gets a cache hit. The previous
+        // `if visiting.is_empty()` predicate only fired at the outermost call
+        // frame, so intermediates were never cached and the memo was useless
+        // for cross-call sharing.
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        let four = b.build_int_const(4, NodeOutputType::U32);
+        let eight = b.build_int_const(8, NodeOutputType::U32);
+        let twelve = b.build_int_const(12, NodeOutputType::U32);
+        let s1 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let s2 = b.build_int_binary_operation(s1, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let s3 =
+            b.build_int_binary_operation(s2, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_return(Some(s3), &[])?;
+        let fg = b.build()?;
+
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        let r = decompose_sp(&fg, s3, sp, &mut memo, &mut visiting);
+        assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
+
+        // After one top-level walk, all three intermediate outputs must be
+        // memoized. (sp_val itself is cached too, but its NodeOutputId is
+        // ControlPhi-of-InitialVar, which we don't directly check here.)
+        assert!(memo.contains_key(&s3), "expected memo entry for s3");
+        assert!(memo.contains_key(&s2), "expected memo entry for s2");
+        assert!(memo.contains_key(&s1), "expected memo entry for s1");
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_sp_does_not_cache_none_results() -> crate::Result<()> {
+        // Edge case: a `None` verdict could be either "genuinely not SP-rooted"
+        // (safe to recompute) or "cycle-truncated on this call path" (must not
+        // be cached, because a different call path may resolve it). Caching
+        // None conservatively for both cases would be wrong for the cycle case.
+        // The simpler invariant — never cache None — is what we assert here.
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let c = b.build_int_const(0x1000, NodeOutputType::U32);
+        b.build_return(Some(c), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = std::collections::HashSet::new();
+        let r = decompose_sp(&fg, c, sp, &mut memo, &mut visiting);
+        assert!(r.is_none());
+        assert!(
+            !memo.contains_key(&c),
+            "decompose_sp must not cache None verdicts (cycle-truncation cannot be distinguished from genuine 'not SP-rooted' here)"
+        );
         Ok(())
     }
 }

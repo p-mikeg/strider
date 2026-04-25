@@ -599,6 +599,105 @@ fn fold_lzcount_one() -> Result<()> {
     Ok(())
 }
 
+/// Builds a function whose Return value is `kind(wide_const)`, where the
+/// wide constant has declared type `wide_ty` (U128 or U256) and `kind` is
+/// either `NodeKind::Lzcount` or `NodeKind::Popcount`.
+///
+/// `FunctionBuilder::build_int_const` panics on U128/U256 by design, and
+/// `build_lzcount`/`build_popcount` would coerce through `convert_to_int_if_needed`
+/// (truncating the input to U64). So we build the placeholder skeleton with
+/// a U64 const + return, then graft the wide const + unary node directly via
+/// the `BuiltFunctionGraph` / `Graph` mutators and rewire the Return.
+fn build_unary_with_wide_const_input(
+    kind: NodeKind,
+    wide_ty: NodeOutputType,
+    out_ty: NodeOutputType,
+) -> Result<ir::BuiltFunctionGraph> {
+    use ir::node::NodeOutputKind;
+    let mut fg = make_fn(|b| Ok(b.build_int_const(0, NodeOutputType::U64)))?;
+    let placeholder = return_value(&fg)?;
+    let wide_const = fg.make_int_const(0xFF, wide_ty)?;
+    let unary_node = fg.graph.create_node(
+        kind,
+        [wide_const],
+        [NodeOutputKind::OutputType(out_ty)],
+    );
+    let unary_out = fg.graph.node_outputs_exact::<1>(unary_node)?[0];
+    fg.replace_all_uses(placeholder, unary_out)?;
+    Ok(fg)
+}
+
+#[test]
+fn fold_lzcount_u128_input_skips_cleanly() -> Result<()> {
+    // Lzcount on a U128 IntConst must not propagate ExpectedIntegerType — the
+    // fold can't compute leading-zeros for a width that doesn't fit u64, so
+    // the rule should silently skip (Error::skip) rather than crash the
+    // whole optimizer pipeline.
+    let mut fg = build_unary_with_wide_const_input(
+        NodeKind::Lzcount,
+        NodeOutputType::U128,
+        NodeOutputType::U64,
+    )?;
+    let result = ConstantFold.optimize(&mut fg);
+    assert!(
+        result.is_ok(),
+        "ConstantFold must not error on Lzcount(U128 const), got {:?}",
+        result.err(),
+    );
+    Ok(())
+}
+
+#[test]
+fn fold_lzcount_u256_input_skips_cleanly() -> Result<()> {
+    let mut fg = build_unary_with_wide_const_input(
+        NodeKind::Lzcount,
+        NodeOutputType::U256,
+        NodeOutputType::U64,
+    )?;
+    let result = ConstantFold.optimize(&mut fg);
+    assert!(
+        result.is_ok(),
+        "ConstantFold must not error on Lzcount(U256 const), got {:?}",
+        result.err(),
+    );
+    Ok(())
+}
+
+#[test]
+fn fold_popcount_u128_input_skips_cleanly() -> Result<()> {
+    // Popcount on a U128 IntConst has the same shape: the masking step
+    // (get_unsigned_int(U128, _) == None) must trigger a skip, not propagate
+    // ExpectedIntegerType up through the pipeline.
+    let mut fg = build_unary_with_wide_const_input(
+        NodeKind::Popcount,
+        NodeOutputType::U128,
+        NodeOutputType::U64,
+    )?;
+    let result = ConstantFold.optimize(&mut fg);
+    assert!(
+        result.is_ok(),
+        "ConstantFold must not error on Popcount(U128 const), got {:?}",
+        result.err(),
+    );
+    Ok(())
+}
+
+#[test]
+fn fold_popcount_u256_input_skips_cleanly() -> Result<()> {
+    let mut fg = build_unary_with_wide_const_input(
+        NodeKind::Popcount,
+        NodeOutputType::U256,
+        NodeOutputType::U64,
+    )?;
+    let result = ConstantFold.optimize(&mut fg);
+    assert!(
+        result.is_ok(),
+        "ConstantFold must not error on Popcount(U256 const), got {:?}",
+        result.err(),
+    );
+    Ok(())
+}
+
 // ── Float constant folding ────────────────────────────────────────────────
 
 #[test]
