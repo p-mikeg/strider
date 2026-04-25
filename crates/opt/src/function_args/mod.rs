@@ -163,11 +163,11 @@ fn detect_stack_args(
     // `K` is a convention offset, and (b) nothing on its memory chain may
     // alias that slot (DFS shadow check).  If *any* load at offset K is
     // shadowed, the whole K-group is disqualified (conservative).
-    let mut memo: SpExprMemo = Default::default();
-    let mut shadow_memo: ShadowMemo = Default::default();
-    let mut groups: std::collections::HashMap<usize, Vec<NodeId>> =
-        std::collections::HashMap::new();
-    let mut disqualified: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut memo: SpExprMemo = SpExprMemo::default();
+    let mut shadow_memo: ShadowMemo = ShadowMemo::default();
+    let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> =
+        rustc_hash::FxHashMap::default();
+    let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
     let node_ids: Vec<NodeId> = fg.preorder().collect();
     for node_id in node_ids {
         if !matches!(fg.graph.node_kind(node_id), NodeKind::Load(_)) {
