@@ -41,6 +41,12 @@ use layer_c::{
 /// tolerant of detached nodes: `detach_node_inputs` scrubs the use-lists of
 /// the producers it disconnects, so a detached node contributes no inputs and
 /// no live use-list entries anywhere.
+///
+/// # Errors
+///
+/// Returns a [`ValidationErrors`] bundle aggregating every Layer A / B / C
+/// violation found in `graph`. Validation does not fail fast — every layer
+/// runs to completion so the caller sees the full set of problems at once.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     let reachable: HashSet<NodeId> = walk_graph(graph, entry).collect();
     let mut errs: Vec<ValidationError> = Vec::new();

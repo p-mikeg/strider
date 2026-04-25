@@ -9,6 +9,12 @@ impl BuiltFunctionGraph {
     ///
     /// Returns `true` if at least one use was replaced, `false` if `old` had
     /// no uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::NullCursorUse`] if the use-list is corrupted
+    /// such that `replace_current_with` is invoked on a null cursor (would
+    /// indicate a graph-construction bug, not user error).
     pub fn replace_all_uses(
         &mut self,
         old: NodeOutputId,

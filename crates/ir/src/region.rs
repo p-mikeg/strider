@@ -162,6 +162,10 @@ impl FunctionBuilder {
     }
 
     /// Writes `value` to variable `var_id` in the active region.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::NoCurrentRegion`] when no region is active.
     pub fn write_variable_from_id(&mut self, var_id: VarId, value: NodeOutputId) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value;
@@ -218,6 +222,13 @@ impl FunctionBuilder {
     }
 
     /// Links `child_region` as the fallthrough successor of `parent_region`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the variants from [`Self::link_region`] —
+    /// [`crate::ErrorKind::ExpectedControl`] / [`crate::ErrorKind::ExpectedMemory`]
+    /// when `parent_region`'s snapshotted edges are mistyped, plus any
+    /// `add_node_input` errors when wiring per-variable phi inputs.
     pub fn link_regions(&mut self, parent_region: RegionId, child_region: RegionId) -> Result<()> {
         let (ctrl, mem) = (
             self.regions[parent_region].cur_ctrl,

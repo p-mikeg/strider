@@ -8,6 +8,11 @@ impl FunctionBuilder {
     ///
     /// Returns an error if the output does not carry a value (e.g. it is a
     /// control or memory edge).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is a control,
+    /// memory, or control-phi edge.
     pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
         let kind = self.graph().output_kind(output_id);
         kind.as_value()
@@ -18,6 +23,11 @@ impl FunctionBuilder {
     ///
     /// Returns `Ok(None)` for non-constant nodes.  An `IntConst` is considered
     /// `true` when non-zero.  Returns an error if the output is not a value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
         let output_type = self.get_output_type(output_id)?;
         let node_id = self.graph().get_node_from_output(output_id);
@@ -30,6 +40,11 @@ impl FunctionBuilder {
 
     /// Converts `output_id` to a boolean output, inserting a `CastToBool`
     /// node if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn convert_to_bool_if_needed(&mut self, output_id: NodeOutputId) -> Result<NodeOutputId> {
         let output_kind = self.graph().output_kind(output_id);
         if !output_kind.is_value() {
@@ -51,6 +66,11 @@ impl FunctionBuilder {
     /// declared [`NodeOutputType`] as an unsigned 64-bit integer.
     ///
     /// Returns `Ok(None)` for non-constant nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn get_as_unsigned_int(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
         let output_type = self.get_output_type(output_id)?;
         let node_id = self.graph().get_node_from_output(output_id);
@@ -67,6 +87,11 @@ impl FunctionBuilder {
     /// sign-extended to `i64` according to the declared [`NodeOutputType`].
     ///
     /// Returns `Ok(None)` for non-constant nodes and for `Bool` constants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn get_as_signed_int(&self, output_id: NodeOutputId) -> Result<Option<i64>> {
         let output_type = self.get_output_type(output_id)?;
         let node_id = self.graph().get_node_from_output(output_id);
@@ -80,6 +105,11 @@ impl FunctionBuilder {
 
     /// Returns both the unsigned and signed interpretations of `output_id` if
     /// it is an integer constant, or `None` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn get_as_int(&self, output_id: NodeOutputId) -> Result<Option<(u64, i64)>> {
         let unsigned_val = self.get_as_unsigned_int(output_id)?;
         let signed_val = self.get_as_signed_int(output_id)?;
@@ -91,6 +121,11 @@ impl FunctionBuilder {
 
     /// If `output_id` is a `FloatConst` node, returns its raw bit pattern.
     /// Returns `Ok(None)` for non-constant nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn get_as_float_bits(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
         let output_type = self.get_output_type(output_id)?;
         if !output_type.is_float() {
@@ -104,6 +139,11 @@ impl FunctionBuilder {
     }
 
     /// Truncates `output_id` to `output_type` if it is currently wider.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn truncate_if_needed(
         &mut self,
         output_id: NodeOutputId,
@@ -123,6 +163,12 @@ impl FunctionBuilder {
     }
 
     /// Extends `output_id` to `output_type` using zero- or sign-extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge, or [`ErrorKind::ExpectedInteger`] when `output_type` is not an
+    /// integer type and the input is not already a constant we can fold.
     pub fn extend_if_needed(
         &mut self,
         output_id: NodeOutputId,
@@ -149,6 +195,11 @@ impl FunctionBuilder {
     }
 
     /// Converts `output_id` to `output_type`, truncating or zero-extending as needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// edge.
     pub fn convert_to_int_if_needed(
         &mut self,
         output_id: NodeOutputId,

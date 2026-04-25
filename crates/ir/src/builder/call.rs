@@ -6,6 +6,16 @@ use smallvec::SmallVec;
 
 impl FunctionBuilder {
     /// Terminates the current region with a `Call` node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region to advance, [`ErrorKind::ExpectedValue`]
+    /// when `call_address` or any read clobbered/arg-passing variable is not
+    /// a value edge, [`ErrorKind::VariableNotFound`] when an arg-passing or
+    /// clobbered varnode is not tracked, and [`ErrorKind::UnsupportedOutputSize`]
+    /// when the stack-pointer varnode's byte size has no matching
+    /// [`NodeOutputType`] (only applicable on stack-push ISAs).
     pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
@@ -82,6 +92,12 @@ impl FunctionBuilder {
     /// `output_ty` is `Some` when the source instruction has an output varnode
     /// and `None` when the intrinsic produces no value (e.g. `syscall` without
     /// an explicit return).  Memory is always treated as clobbered.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region, or [`ErrorKind::ExpectedValue`] when
+    /// any element of `args` is not a value edge.
     pub fn build_call_other(
         &mut self,
         user_op_id: u64,

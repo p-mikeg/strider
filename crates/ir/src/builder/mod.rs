@@ -91,6 +91,12 @@ impl FunctionBuilder {
     /// every variable not callee-saved (and not SP) is recorded as
     /// call-clobbered; SP is rebound at each call site via an explicit
     /// `Add(sp, ret_stack_pop)` node.
+    ///
+    /// # Errors
+    ///
+    /// Propagates whatever [`Self::new_raw`] would return — currently
+    /// [`ErrorKind::UnsupportedOutputSize`] from the entry-block setup when
+    /// a tracked variable's byte size has no matching `NodeOutputType`.
     pub fn new(
         all_used_variables: Vec<rsleigh::Vn>,
         cc: &target::BuiltCallingConvention,
@@ -109,6 +115,12 @@ impl FunctionBuilder {
     /// unpacked slices.  Used by synthetic tests that don't resolve a real
     /// calling convention against a Sleigh register table — production code
     /// should use [`FunctionBuilder::new`] with a [`target::BuiltCallingConvention`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::UnsupportedOutputSize`] when any tracked variable
+    /// has a byte size with no matching `NodeOutputType` (the entry-block
+    /// builder allocates an `InitialVar` per tracked variable).
     pub fn new_raw(
         all_used_variables: Vec<rsleigh::Vn>,
         arg_passing_vars: &[rsleigh::Vn],
@@ -224,6 +236,13 @@ impl FunctionBuilder {
 
     /// Finalises and returns the completed [`BuiltFunctionGraph`], after running
     /// structural validation on the built graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ValidationFailed`] wrapping a
+    /// [`crate::validate::ValidationErrors`] bundle if the built graph fails
+    /// any of validate's three layers (local typing, use-list consistency,
+    /// graph-level invariants).
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
         let built = crate::function::BuiltFunctionGraph {
             graph: self.function.graph,

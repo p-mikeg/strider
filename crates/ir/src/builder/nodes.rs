@@ -16,6 +16,11 @@ impl FunctionBuilder {
     }
 
     /// Emits a boolean binary operation node and returns its output id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either operand is not a
+    /// value edge.
     pub fn build_boolean_operation(
         &mut self,
         lhs_id: NodeOutputId,
@@ -40,6 +45,11 @@ impl FunctionBuilder {
     }
 
     /// Emits a boolean unary operation node and returns its output id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input_id` is not a value
+    /// edge.
     pub fn build_boolean_unary_operation(
         &mut self,
         input_id: NodeOutputId,
@@ -76,6 +86,11 @@ impl FunctionBuilder {
     }
 
     /// Emits an integer binary operation node with automatic type coercion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either operand is not a
+    /// value edge.
     pub fn build_int_binary_operation(
         &mut self,
         lhs_id: NodeOutputId,
@@ -93,6 +108,11 @@ impl FunctionBuilder {
     }
 
     /// Emits an integer unary operation node with automatic type coercion.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input_id` is not a value
+    /// edge.
     pub fn build_int_unary_operation(
         &mut self,
         input_id: NodeOutputId,
@@ -108,6 +128,11 @@ impl FunctionBuilder {
     }
 
     /// Emits a `Popcount` node that counts set bits in `input_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input_id` is not a value
+    /// edge.
     pub fn build_popcount(
         &mut self,
         input_id: NodeOutputId,
@@ -118,6 +143,11 @@ impl FunctionBuilder {
     }
 
     /// Emits a `Lzcount` node that counts leading zero bits in `input_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input_id` is not a value
+    /// edge.
     pub fn build_lzcount(
         &mut self,
         input_id: NodeOutputId,
@@ -128,6 +158,11 @@ impl FunctionBuilder {
     }
 
     /// Emits an integer comparison node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either operand is not a
+    /// value edge.
     pub fn build_int_cmp_operation(
         &mut self,
         lhs_id: NodeOutputId,
@@ -169,6 +204,11 @@ impl FunctionBuilder {
     ///
     /// Inputs that are not already `output_type` are automatically wrapped in a
     /// `CastToFloat` node (int inputs, or float inputs of a different precision).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either operand is not a
+    /// value edge.
     pub fn build_float_binary_op(
         &mut self,
         lhs: NodeOutputId,
@@ -184,6 +224,10 @@ impl FunctionBuilder {
     /// Emits a float unary operation node (neg, abs, sqrt, ceil, floor, round).
     ///
     /// If `input` is not already `output_type`, a `CastToFloat` node is inserted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge.
     pub fn build_float_unary_op(
         &mut self,
         input: NodeOutputId,
@@ -198,6 +242,11 @@ impl FunctionBuilder {
     ///
     /// The float type is inferred from the inputs (existing float type, or
     /// mapped from integer byte size).  Both inputs are cast if needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either operand is not a
+    /// value edge.
     pub fn build_float_cmp_op(
         &mut self,
         lhs: NodeOutputId,
@@ -216,6 +265,12 @@ impl FunctionBuilder {
 
     /// Emits an `IntToFloat` node: converts an integer value to the nearest
     /// representable float (like C's `(float)n`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge,
+    /// [`ErrorKind::ExpectedInteger`] when `input` is a non-integer value, or
+    /// [`ErrorKind::ExpectedFloatType`] when `float_type` is not `F32`/`F64`.
     pub fn build_int_to_float(
         &mut self,
         input: NodeOutputId,
@@ -232,6 +287,12 @@ impl FunctionBuilder {
 
     /// Emits a `FloatToInt` node: truncates a float toward zero to an integer
     /// (like C's `(int)f`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge,
+    /// [`ErrorKind::ExpectedFloat`] when `input` is not a float value, or
+    /// [`ErrorKind::ExpectedIntegerType`] when `int_type` is not an integer.
     pub fn build_float_to_int(
         &mut self,
         input: NodeOutputId,
@@ -247,6 +308,12 @@ impl FunctionBuilder {
     }
 
     /// Emits a `FloatToFloat` node: converts between float precisions (F32 ↔ F64).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge,
+    /// [`ErrorKind::ExpectedFloat`] when `input` is not a float, or
+    /// [`ErrorKind::ExpectedFloatType`] when `float_type` is not `F32`/`F64`.
     pub fn build_float_to_float(
         &mut self,
         input: NodeOutputId,
@@ -264,6 +331,12 @@ impl FunctionBuilder {
     /// Emits an `IntBitsToFloat` node: reinterprets an integer's bit pattern as
     /// a float of the same width.  If the input is an `IntConst`, immediately
     /// returns a `FloatConst` with the same bit pattern (no extra node created).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge,
+    /// [`ErrorKind::ExpectedInteger`] when `input` is not an integer, or
+    /// [`ErrorKind::ExpectedFloatType`] when `float_type` is not `F32`/`F64`.
     pub fn build_int_bits_to_float(
         &mut self,
         input: NodeOutputId,
@@ -286,6 +359,12 @@ impl FunctionBuilder {
     /// Emits a `FloatBitsToInt` node: reinterprets a float's bit pattern as an
     /// integer of the same width.  If the input is a `FloatConst`, immediately
     /// returns an `IntConst` with the same bit pattern (no extra node created).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge,
+    /// [`ErrorKind::ExpectedFloat`] when `input` is not a float, or
+    /// [`ErrorKind::ExpectedIntegerType`] when `int_type` is not an integer.
     pub fn build_float_bits_to_int(
         &mut self,
         input: NodeOutputId,
@@ -306,6 +385,12 @@ impl FunctionBuilder {
     }
 
     /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::WrongOutputCount`] if the freshly created `Entry`
+    /// or `InitialMemory` nodes do not have their expected single output
+    /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
         self.function = FunctionGraph::new_invalid();
 
@@ -321,6 +406,16 @@ impl FunctionBuilder {
     }
 
     /// Terminates the current region with a `Return` node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region; [`ErrorKind::VariableNotFound`] when
+    /// any element of `ret_vars` is not tracked; [`ErrorKind::ExpectedControl`]
+    /// or [`ErrorKind::ExpectedMemory`] if the region's snapshotted ctrl/mem
+    /// edges are mistyped (graph-construction bug); or
+    /// [`ErrorKind::ExpectedValue`] when `value` or any read return register
+    /// is not a value edge.
     pub fn build_return(
         &mut self,
         value: Option<NodeOutputId>,
@@ -355,6 +450,13 @@ impl FunctionBuilder {
     }
 
     /// Terminates the current region with an unconditional branch to `dest`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region; [`ErrorKind::ExpectedControl`] /
+    /// [`ErrorKind::ExpectedMemory`] when the region's snapshotted edges are
+    /// mistyped (graph-construction bug).
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
         let ctrl_kind = self.graph().output_kind(res.control);
@@ -369,6 +471,14 @@ impl FunctionBuilder {
     }
 
     /// Terminates the current region with a conditional branch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region; [`ErrorKind::ExpectedValue`] when
+    /// `cond` is not a `Bool` value; [`ErrorKind::ExpectedControl`] when the
+    /// region's snapshotted control edge is mistyped;
+    /// [`ErrorKind::WrongOutputCount`] from the freshly created `If` node.
     pub fn build_if(
         &mut self,
         cond: NodeOutputId,
@@ -399,6 +509,11 @@ impl FunctionBuilder {
 
     /// Emits a `SegmentOp` node (pure computation: segment + offset → flat
     /// pointer) and returns its value output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when either `segment` or `offset`
+    /// is not a value edge.
     pub fn build_segment_op(
         &mut self,
         op_id: u64,
@@ -424,6 +539,11 @@ impl FunctionBuilder {
     /// Emits a `CPoolRef` node (opaque JVM constant-pool lookup) and returns
     /// its value output.  `refs` holds the opaque reference inputs as emitted
     /// by Sleigh.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when any element of `refs` is not
+    /// a value edge.
     pub fn build_cpool_ref(
         &mut self,
         refs: &[NodeOutputId],
@@ -441,6 +561,11 @@ impl FunctionBuilder {
 
     /// Emits a `New` node (opaque JVM allocation) and returns its value
     /// output.  `args` are the raw Sleigh inputs (typically a size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when any element of `args` is not
+    /// a value edge.
     pub fn build_new(
         &mut self,
         args: &[NodeOutputId],
@@ -458,6 +583,13 @@ impl FunctionBuilder {
 
     /// Emits a `Store` node writing `data` to `addr` in `space` and advances
     /// the region's memory token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region; [`ErrorKind::ExpectedMemory`] /
+    /// [`ErrorKind::ExpectedValue`] when the memory, address, or data edge is
+    /// mistyped.
     pub fn build_store(
         &mut self,
         addr: NodeOutputId,
@@ -489,6 +621,13 @@ impl FunctionBuilder {
 
     /// Emits a `Load` node reading from `addr` in `space` and returns the
     /// loaded value output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
+    /// when there is no active region; [`ErrorKind::ExpectedMemory`] when the
+    /// memory edge is mistyped; [`ErrorKind::ExpectedValue`] when `addr` is
+    /// not a value edge.
     pub fn build_load(
         &mut self,
         addr: NodeOutputId,
