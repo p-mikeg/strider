@@ -241,3 +241,21 @@ fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
         .ok_or(ErrorKind::NoReturnNode)?;
     Ok(fg.graph.node_inputs(ret)[2])
 }
+
+#[test]
+fn merge_preserves_invariant_under_conflict() {
+    // Bit 0 is ones in `a`, zeros in `b`. After merging both into `c`,
+    // ones & zeros must be 0 — `ones` wins on conflict.
+    let mut c = super::Kb::default();
+    let a = super::Kb { ones: 0b1, zeros: 0 };
+    let b = super::Kb { ones: 0, zeros: 0b1 };
+    c.merge(a);
+    c.merge(b);
+    assert_eq!(
+        c.ones & c.zeros,
+        0,
+        "ones & zeros must be 0; got ones={:#b} zeros={:#b}",
+        c.ones,
+        c.zeros
+    );
+}
