@@ -860,3 +860,125 @@ fn cast_to_float_cross_precision_lowers_to_float_to_float() -> Result<()> {
     assert_eq!(return_kind(&fg)?, NodeKind::FloatToFloat);
     Ok(())
 }
+
+// ── Comprehensive tests added in Task 2.E ─────────────────────────────────────
+
+/// Shift constant evaluation: `1 << 4` for U32 → 0x10.
+#[test]
+fn fold_shl_const_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let x = b.build_int_const(1, NodeOutputType::U32);
+        let n = b.build_int_const(4, NodeOutputType::U32);
+        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x10));
+    Ok(())
+}
+
+/// Shift at width boundary: `1 << 31` for U32 → 0x80000000.
+#[test]
+fn fold_shl_at_width_boundary_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let x = b.build_int_const(1, NodeOutputType::U32);
+        let n = b.build_int_const(31, NodeOutputType::U32);
+        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x8000_0000));
+    Ok(())
+}
+
+/// Shift right: `0x80 >> 7` for U8 → 1.
+#[test]
+fn fold_shr_const_u8() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let x = b.build_int_const(0x80, NodeOutputType::U8);
+        let n = b.build_int_const(7, NodeOutputType::U8);
+        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftRight, NodeOutputType::U8)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
+    Ok(())
+}
+
+/// NaN propagates through binary float arithmetic.
+#[test]
+fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
+    let nan = f64::NAN.to_bits();
+    let mut fg = make_fn(|b| {
+        let a = b.build_float_const(nan, NodeOutputType::F64);
+        let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
+        Ok(b.build_float_binary_op(a, one, FloatBinaryOp::Add, NodeOutputType::F64)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    let val = return_value(&fg)?;
+    if let NodeKind::FloatConst(bits) = *fg.graph.node_kind(fg.graph.get_node_from_output(val)) {
+        assert!(f64::from_bits(bits).is_nan(), "NaN must propagate through Add");
+    } else {
+        return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());
+    }
+    Ok(())
+}
+
+/// `inf - inf` is NaN per IEEE 754.
+#[test]
+fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
+    let inf = f64::INFINITY.to_bits();
+    let mut fg = make_fn(|b| {
+        let a = b.build_float_const(inf, NodeOutputType::F64);
+        let bb = b.build_float_const(inf, NodeOutputType::F64);
+        Ok(b.build_float_binary_op(a, bb, FloatBinaryOp::Sub, NodeOutputType::F64)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    let val = return_value(&fg)?;
+    if let NodeKind::FloatConst(bits) = *fg.graph.node_kind(fg.graph.get_node_from_output(val)) {
+        assert!(f64::from_bits(bits).is_nan());
+    } else {
+        return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());
+    }
+    Ok(())
+}
+
+/// Bitcast roundtrip on f32 — `IntBitsToFloat(FloatBitsToInt(non-const))` → non-const.
+/// Uses a non-const float (the result of a float Add) so the builder doesn't
+/// fold the inner cast eagerly.
+#[test]
+fn fold_bitcast_roundtrip_f32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let a = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
+        let b2 = b.build_float_const(1.5f32.to_bits() as u64, NodeOutputType::F32);
+        let sum = b.build_float_binary_op(a, b2, FloatBinaryOp::Add, NodeOutputType::F32)?;
+        let as_int = b.build_float_bits_to_int(sum, NodeOutputType::U32)?;
+        Ok(b.build_int_bits_to_float(as_int, NodeOutputType::F32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
+    // collapses to that constant.
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::FloatConst(2.5f32.to_bits() as u64)
+    );
+    Ok(())
+}
+
+/// 10-deep `((((x - 1) - 1) ...) - 1)` chain — must collapse to `x - 10`
+/// via the worklist re-enqueueing reassociation rules along the way.
+#[test]
+fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+        let mut acc = x;
+        for _ in 0..10 {
+            let one = b.build_int_const(1, NodeOutputType::U64);
+            acc = b.build_int_binary_operation(acc, one, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        }
+        Ok(acc)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    assert_sub_with_const(&fg, x, 10, NodeOutputType::U64)?;
+    Ok(())
+}

@@ -1,5 +1,9 @@
-use ir::node::{NodeId, NodeKind};
+use std::collections::VecDeque;
+
+use rustc_hash::FxHashSet;
+
 use ir::BuiltFunctionGraph;
+use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -11,6 +15,32 @@ mod rules;
 mod tests;
 
 use rules::*;
+
+// Local worklist (hoisted to crate::worklist in Task 2.I).
+#[derive(Default)]
+struct WorkSet {
+    queued: FxHashSet<NodeId>,
+    queue: VecDeque<NodeId>,
+}
+impl WorkSet {
+    fn seeded(it: impl IntoIterator<Item = NodeId>) -> Self {
+        let mut q = Self::default();
+        for n in it {
+            q.push(n);
+        }
+        q
+    }
+    fn push(&mut self, n: NodeId) {
+        if self.queued.insert(n) {
+            self.queue.push_back(n);
+        }
+    }
+    fn pop(&mut self) -> Option<NodeId> {
+        let n = self.queue.pop_front()?;
+        self.queued.remove(&n);
+        Some(n)
+    }
+}
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
@@ -71,14 +101,29 @@ pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
     fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let nodes: Vec<_> = function.preorder().collect();
+        let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
-        for node_id in nodes {
-            result |= apply_identity_rules(function, node_id)?;
-            result |= apply_const_eval_rules(function, node_id)?;
-            result |= apply_bool_float_rules(function, node_id)?;
-            result |= apply_reassoc_and_mask_rules(function, node_id)?;
-            result |= apply_bitcast_extend_rules(function, node_id)?;
+        while let Some(node_id) = work.pop() {
+            // Snapshot outputs before each rule sweep so we can re-enqueue
+            // consumers when an output is replaced.
+            let outs_before: Vec<NodeOutputId> = function
+                .graph
+                .node_outputs(node_id)
+                .into_iter()
+                .collect();
+            let r = apply_identity_rules(function, node_id)?
+                | apply_const_eval_rules(function, node_id)?
+                | apply_bool_float_rules(function, node_id)?
+                | apply_reassoc_and_mask_rules(function, node_id)?
+                | apply_bitcast_extend_rules(function, node_id)?;
+            if r.changed() {
+                result |= r;
+                for o in &outs_before {
+                    for (consumer, _) in function.graph.output_uses(*o) {
+                        work.push(consumer);
+                    }
+                }
+            }
         }
         Ok(result)
     }
