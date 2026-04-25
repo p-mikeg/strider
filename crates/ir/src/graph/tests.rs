@@ -849,6 +849,40 @@ fn node_inputs_exact_errors_on_wrong_count() {
 }
 
 #[test]
+fn update_input_self_redirect_preserves_use_list_order() {
+    use crate::ops::IntUnaryOp;
+    let mut graph = Graph::new();
+    let c = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let cval = graph.node_outputs(c).into_iter().next().unwrap();
+    // Two consumers of cval to give the use-list real ordering.
+    let _a = graph.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        [cval],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let b = graph.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::Not),
+        [cval],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    let head_before = graph.output_first_use_id(cval);
+
+    let b_in0 = graph.node_input_id_at(b, 0).unwrap();
+    graph.update_input(b_in0, cval); // self-redirect — should be a no-op
+
+    assert_eq!(
+        head_before,
+        graph.output_first_use_id(cval),
+        "self-redirect must not re-order the use-list"
+    );
+}
+
+#[test]
 fn remove_node_input_returns_error_on_out_of_bounds() {
     let mut graph = Graph::new();
     let cs = graph.create_node(

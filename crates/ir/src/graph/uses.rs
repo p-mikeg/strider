@@ -151,6 +151,13 @@ impl Graph {
     /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
     /// now-modified node.
     pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+        // Self-redirect: nothing changes, so do nothing. Avoids a spurious
+        // unlink/relink (which would re-order the use-list) and a redundant
+        // cache eviction.
+        if self.inputs[input_id].output_id == output_id {
+            return;
+        }
+
         // Evict the cacheable owner's stale entry *before* mutating, while the
         // current (kind, inputs, output_kinds) tuple still describes the node.
         let owner = self.inputs[input_id].node_id;
