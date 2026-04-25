@@ -1,19 +1,20 @@
 use crate::error::{ErrorKind, Result};
 
-/// Converts a slice of register name strings into their corresponding varnode
-/// representations using the provided Sleigh register map.
-///
-/// Iterates over each name in `reg_names`, looks it up in `sleigh_regs`, and
-/// returns the list of resolved varnodes in the same order.  Returns an error
-/// the moment any name is not found.
+/// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
+/// [`ErrorKind::UnknownRegName`] if the name is not known.  Single source of
+/// truth for the name-to-varnode error path.
+fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
+    sleigh_regs
+        .name_to_vn(name)
+        .ok_or_else(|| ErrorKind::UnknownRegName(name.to_string()).into())
+}
+
+/// Resolves a slice of Sleigh register names to varnodes in the same order.
+/// Short-circuits on the first unknown name.
 fn regs_to_vns(reg_names: &[&str], sleigh_regs: &rsleigh::SleighRegs) -> Result<Vec<rsleigh::Vn>> {
     reg_names
         .iter()
-        .map(|&reg_name| {
-            sleigh_regs
-                .name_to_vn(reg_name)
-                .ok_or_else(|| ErrorKind::UnknownRegName(reg_name.to_string()).into())
-        })
+        .map(|&name| vn_for_name(sleigh_regs, name))
         .collect()
 }
 
@@ -192,9 +193,7 @@ impl CallingConvention {
         let arg_passing_regs = regs_to_vns(self.arg_passing_regs, sleigh_regs)?;
         let callee_saved_regs = regs_to_vns(self.callee_saved_regs, sleigh_regs)?;
         let ret_val_regs = regs_to_vns(self.ret_val_regs, sleigh_regs)?;
-        let stack_ptr_vn = sleigh_regs
-            .name_to_vn(self.stack_ptr_reg_name)
-            .ok_or_else(|| ErrorKind::UnknownRegName(self.stack_ptr_reg_name.to_string()))?;
+        let stack_ptr_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
         Ok(BuiltCallingConvention {
             arg_passing_regs,
             callee_saved_regs,
