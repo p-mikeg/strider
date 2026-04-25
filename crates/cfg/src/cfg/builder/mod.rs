@@ -213,7 +213,7 @@ pub mod test_api {
     #[must_use]
     pub fn work_queue<R: rsleigh::MemReader>(
         b: &Builder<R>,
-    ) -> &Vec<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)> {
+    ) -> &[(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)] {
         &b.work_queue
     }
 
