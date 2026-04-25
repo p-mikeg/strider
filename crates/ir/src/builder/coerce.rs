@@ -193,6 +193,15 @@ impl FunctionBuilder {
             return Err(ErrorKind::ExpectedInteger(output_id).into());
         }
 
+        // Non-integer input (Bool / Float) into an integer extend: insert a
+        // CastToInt first so the Extend node receives an AnyInt input as its
+        // signature requires.  Without this, comparison results (Bool) flowing
+        // through register writes via write_reg_vn would fail IR validation
+        // with "OutputType(Bool), expected AnyInt".
+        if !curr_output_type.is_integer() {
+            return self.convert_to_int_if_needed(output_id, output_type);
+        }
+
         if curr_output_type.byte_size() >= output_type.byte_size() {
             return Ok(output_id);
         }
