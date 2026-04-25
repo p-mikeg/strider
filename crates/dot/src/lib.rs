@@ -38,7 +38,7 @@
 //!
 //! [`@viz-js/viz`]: https://github.com/mdaines/viz-js
 
-use std::{fmt::Debug, io::Write};
+use std::{fmt::Debug, io::Write, path::Path};
 
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
@@ -289,7 +289,7 @@ fn emit_attr_block(out: &mut String, name: &str, attrs: &[(&str, &str)]) {
 // ── GraphDot ──────────────────────────────────────────────────────────────────
 
 /// Wraps a [`GraphDotDumper`] and produces DOT / SVG / HTML output.
-pub struct GraphDot<G: GraphDotDumper + Sized> {
+pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,
     name: String,
@@ -415,7 +415,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
     /// - [`ErrorKind::IoError`] if writing `out_path` fails.
-    pub fn dump_as_html(&self, out_path: &str) -> Result<(), G::Error> {
+    pub fn dump_as_html(&self, out_path: impl AsRef<Path>) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_html_from_dot()?)?;
         Ok(())
     }
@@ -424,7 +424,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     ///
     /// # Errors
     /// Same as [`Self::dump_as_html`].
-    pub fn dump_as_dot(&self, out_path: &str) -> Result<(), G::Error> {
+    pub fn dump_as_dot(&self, out_path: impl AsRef<Path>) -> Result<(), G::Error> {
         std::fs::write(out_path, self.as_dot()?)?;
         Ok(())
     }
