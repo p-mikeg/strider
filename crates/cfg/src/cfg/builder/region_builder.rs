@@ -6,6 +6,29 @@ use crate::cfg::types::{
 };
 use crate::error::{ErrorKind, Result};
 
+/// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
+/// the lifted machine instruction `lift_res`.
+///
+/// - If `addr.insn_index + 1` is still within `lift_res.insns`, returns the
+///   same machine address with `insn_index` advanced by one.
+/// - Otherwise returns the start (`insn_index = 0`) of the *next* machine
+///   instruction.
+fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> PcodeInsnAddr {
+    if (addr.insn_index as usize) + 1 < lift_res.insns.len() {
+        PcodeInsnAddr {
+            machine_addr: addr.machine_addr,
+            insn_index: addr.insn_index + 1,
+        }
+    } else {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr {
+                addr: addr.machine_addr.addr + lift_res.machine_insn_len as u64,
+            },
+            insn_index: 0,
+        }
+    }
+}
+
 /// Outcome of processing a single pcode instruction in [`RegionBuilder`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProcessInsnRes {
@@ -192,20 +215,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 self.builder
                     .work_queue
                     .push((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
-                // The false case requires calculation of the next instruction (is it in the current pcode instr or the next one)
-                let next_insn_addr = if addr.insn_index + 1 == lift_res.insns.len() as u64 {
-                    PcodeInsnAddr {
-                        machine_addr: MachineInsnAddr {
-                            addr: addr.machine_addr.addr + lift_res.machine_insn_len as u64,
-                        },
-                        insn_index: 0,
-                    }
-                } else {
-                    PcodeInsnAddr {
-                        machine_addr: addr.machine_addr,
-                        insn_index: addr.insn_index + 1,
-                    }
-                };
+                let next_insn_addr = next_pcode_addr(addr, lift_res);
 
                 // Add the false case
                 self.builder
@@ -300,12 +310,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 }
             }
             // We're done exploring a single machine insn, continue to the next one
-            cur_addr = PcodeInsnAddr {
-                machine_addr: MachineInsnAddr {
-                    addr: cur_addr.machine_addr.addr + (lift_res.machine_insn_len as u64),
-                },
-                insn_index: 0,
-            };
+            cur_addr = next_pcode_addr(cur_addr, &lift_res);
         }
     }
 }
