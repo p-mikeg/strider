@@ -42,9 +42,16 @@ pub(super) fn eval_int_binary(
             if sr == 0 {
                 return None;
             }
-            if sl == i64::MIN && sr == -1 {
+            // Signed overflow: INT_MIN / -1 is undefined for every signed
+            // integer width. The narrow-type case looks "well-defined" at
+            // i64 width (e.g. -i32::MIN as i64 = 2^31 fits), but masking
+            // back to the type silently wraps to INT_MIN, which is not the
+            // mathematical result. Skip rather than emit a wraparound.
+            let bits = ty.bit_width() as u32;
+            let int_min: i64 = i64::MIN >> (64 - bits);
+            if sl == int_min && sr == -1 {
                 return None;
-            } // overflow
+            }
             (sl / sr) as u64
         }
         IntBinaryOp::Rem => {
@@ -57,6 +64,14 @@ pub(super) fn eval_int_binary(
             let sl = ty.get_signed_int(l)?;
             let sr = ty.get_signed_int(r)?;
             if sr == 0 {
+                return None;
+            }
+            // Signed-overflow guard: INT_MIN % -1 is mathematically 0 but
+            // hardware idiv raises #DE; treat it as undefined and skip,
+            // matching the Sdiv case.
+            let bits = ty.bit_width() as u32;
+            let int_min: i64 = i64::MIN >> (64 - bits);
+            if sl == int_min && sr == -1 {
                 return None;
             }
             (sl % sr) as u64

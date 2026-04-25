@@ -1202,3 +1202,52 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
     assert_sub_with_const(&fg, x, 10, NodeOutputType::U64)?;
     Ok(())
 }
+
+#[test]
+fn sdiv_narrow_int_min_neg_one_skips() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // i32::MIN as u32, then masked to u64. Same shape as the u64 case
+    // already guarded explicitly; should also return None.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x8000_0000, 0xFFFF_FFFF, NodeOutputType::U32),
+        None,
+        "Sdiv(i32::MIN, -1) on U32 must skip — signed overflow"
+    );
+    // i16::MIN, -1 on U16.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x8000, 0xFFFF, NodeOutputType::U16),
+        None,
+        "Sdiv(i16::MIN, -1) on U16 must skip — signed overflow"
+    );
+    // i8::MIN, -1 on U8.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Sdiv, 0x80, 0xFF, NodeOutputType::U8),
+        None,
+        "Sdiv(i8::MIN, -1) on U8 must skip — signed overflow"
+    );
+}
+
+#[test]
+fn srem_narrow_int_min_neg_one_skips() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+    use ir::IntBinaryOp;
+    use ir::node::NodeOutputType;
+
+    // Same INT_MIN/-1 case for Srem on every narrow signed type.
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x8000_0000, 0xFFFF_FFFF, NodeOutputType::U32),
+        None,
+        "Srem(i32::MIN, -1) on U32 must skip"
+    );
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x8000, 0xFFFF, NodeOutputType::U16),
+        None,
+    );
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::Srem, 0x80, 0xFF, NodeOutputType::U8),
+        None,
+    );
+}
