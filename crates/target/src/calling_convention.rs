@@ -60,7 +60,11 @@ pub struct BuiltCallingConvention {
     /// Varnodes used to return a value to the caller, in positional order.
     pub ret_val_regs: Vec<rsleigh::Vn>,
     /// The hardware stack-pointer varnode (e.g. `RSP` on x86-64, `sp` on
-    /// AArch64).  Deliberately not listed in [`Self::callee_saved_regs`].
+    /// AArch64).  Deliberately absent from all three resolved register lists
+    /// ([`Self::arg_passing_regs`], [`Self::callee_saved_regs`],
+    /// [`Self::ret_val_regs`]) — SP's cross-call behaviour is expressed
+    /// through [`Self::ret_stack_pop`] instead.  This invariant is pinned by
+    /// the `presets_stack_pointer_and_arg_offsets` unit test.
     pub stack_ptr_vn: rsleigh::Vn,
     /// Byte offsets from the call-time stack pointer for each positional
     /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
