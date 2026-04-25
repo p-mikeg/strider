@@ -216,7 +216,13 @@ impl DotEmitter {
         Self { out: s }
     }
 
-    /// Emits a node statement.  The `label` is automatically escaped for DOT.
+    /// Emits a node statement. The `label` is escaped via `escape_dot_label`
+    /// before being wrapped in DOT double-quotes.
+    ///
+    /// `extra` attributes are inserted verbatim as `key=value` pairs — the
+    /// caller is responsible for any quoting or escaping of the value
+    /// (e.g. `("fillcolor", "\"#3a2a10\"")` for a hex colour, or
+    /// `("style", "dashed")` for a bare identifier).
     pub fn node(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
         let label = escape_dot_label(label);
         self.out.push_str("  \"");
@@ -237,6 +243,9 @@ impl DotEmitter {
     }
 
     /// Emits a directed edge statement.
+    ///
+    /// `extra` attributes follow the same caller-quotes-the-value contract
+    /// as [`DotEmitter::node`] — they are inserted verbatim as `key=value`.
     pub fn edge(&mut self, from: &str, to: &str, extra: &[(&str, &str)]) {
         self.out.push_str("  \"");
         self.out.push_str(from);
