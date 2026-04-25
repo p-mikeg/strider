@@ -1,9 +1,7 @@
 use super::*;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pipeline::Optimizer;
-use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
-use ir::BuiltFunctionGraph;
-use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {

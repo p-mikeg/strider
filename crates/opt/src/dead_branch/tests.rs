@@ -1,7 +1,6 @@
 use super::*;
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
-use ir::IntBinaryOp;
 
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 

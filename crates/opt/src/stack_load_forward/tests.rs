@@ -1,9 +1,7 @@
 use super::*;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pipeline::Optimizer;
-use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
-use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 /// Fake 4-byte SP varnode (x86-cdecl-like).
