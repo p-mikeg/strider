@@ -23,6 +23,11 @@ struct Node {
     succs: Vec<NodeId>,
 }
 
+/// A small directed graph built from the [`graph`] DSL, used as a fixture
+/// for `graphwalk` traversal tests.
+///
+/// `&Graph` implements [`graphwalk::GraphRef`] and [`graphwalk::PredGraphRef`],
+/// so it plugs straight into [`graphwalk::PreOrder`] / [`graphwalk::PostOrder`].
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
