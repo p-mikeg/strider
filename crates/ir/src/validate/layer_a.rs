@@ -51,13 +51,19 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
         });
     }
 
-    // Kinds: check only the fixed head prefix for both inputs and outputs.
-    // Variadic tails are intentionally not checked here — some kinds (e.g.
-    // `Call` args) accept any value type in practice but are typed AnyInt
-    // in the signature table for documentation purposes.
-    let check_len = input_head_len.min(actual_inputs.len());
-    for (idx, &input) in actual_inputs.iter().enumerate().take(check_len) {
-        let slot = sig.inputs.head[idx];
+    // Kinds: check the head prefix slot-by-slot, then — if the slot list
+    // is variadic — check every past-head index against the repeating
+    // tail slot. The signature table is the source of truth: tails that
+    // need to accept any value type declare AnyValue (or AnyInt for
+    // integer-only tails); honest narrow tails like `MemPhi`'s MEM and
+    // `ControlState`'s CTRL are caught here when violated, regardless of
+    // what Layer C does.
+    for (idx, &input) in actual_inputs.iter().enumerate() {
+        let Some(slot) = sig.inputs.at(idx) else {
+            // Past the head of a fixed-arity list — arity check above
+            // already reported a count mismatch.
+            break;
+        };
         let actual = graph.output_kind(input);
         if !kind_matches(slot.kind, actual) {
             errs.push(ValidationError::NodeInputKindMismatch {
@@ -69,9 +75,10 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
         }
     }
 
-    let check_len = output_head_len.min(actual_outputs.len());
-    for (idx, &actual) in actual_outputs.iter().enumerate().take(check_len) {
-        let slot = sig.outputs.head[idx];
+    for (idx, &actual) in actual_outputs.iter().enumerate() {
+        let Some(slot) = sig.outputs.at(idx) else {
+            break;
+        };
         if !kind_matches(slot.kind, actual) {
             errs.push(ValidationError::NodeOutputKindMismatch {
                 node,

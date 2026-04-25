@@ -573,3 +573,48 @@ fn layer_c_duplicate_function_arg_index_detected() {
         "expected DuplicateFunctionArg, got: {errs:?}"
     );
 }
+
+/// Regression: Layer A must check variadic input tails, not just the fixed
+/// head prefix. A `MemPhi` whose per-predecessor inputs are not Memory
+/// (e.g. a Control token leaks through) used to slip past validation
+/// because the variadic-tail kind check was elided.
+#[test]
+fn layer_a_mem_phi_variadic_tail_must_be_memory() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem = graph.node_outputs(mem).into_iter().next().unwrap();
+
+    // ControlState with one valid Control predecessor (entry).
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+    );
+    let cs_outputs: Vec<_> = graph.node_outputs(cs).into_iter().collect();
+    let cs_ctrl = cs_outputs[0];
+    let cs_phi_token = cs_outputs[1];
+
+    // MemPhi with: phi_token (correct PHI kind), then a Control output as
+    // its variadic predecessor (WRONG — should be Memory).
+    let bad_mem_phi = graph.create_node(
+        NodeKind::MemPhi,
+        [cs_phi_token, entry_ctrl],
+        [NodeOutputKind::Memory],
+    );
+    let bad_mem_out = graph.node_outputs(bad_mem_phi).into_iter().next().unwrap();
+    let _ = init_mem; // unused but kept to satisfy InitialMemory uniqueness
+
+    // Reach the MemPhi via a Return so Layer A walks to it.
+    graph.create_node(NodeKind::Return, [cs_ctrl, bad_mem_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::NodeInputKindMismatch { input_idx: 1, .. }
+        )),
+        "expected NodeInputKindMismatch on MemPhi input[1], got: {errs:?}"
+    );
+}

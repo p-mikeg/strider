@@ -220,15 +220,27 @@ const TARGET: Slot = Slot {
     name: "target",
     role: R::Target,
 };
+// `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
+// passing or return values can hold integer, float, or bool values (e.g.
+// the x86 flag registers CF/ZF/SF, modelled as Bool in the IR, are
+// caller-clobbered and therefore appear in Call / Return tails on real
+// binaries). Tightening to `AnyInt` would reject valid graphs.
 const ARG: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "arg",
     role: R::Arg,
 };
 const RET: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "ret",
     role: R::Ret,
+};
+/// Call output tail: clobbered-register outputs. Same any-value relaxation
+/// as `ARG`/`RET` — flag registers are Bool-typed and routinely appear here.
+const CALL_OUT: Slot = Slot {
+    kind: AnyValue,
+    name: "val",
+    role: R::Val,
 };
 const SEG: Slot = Slot {
     kind: AnyInt,
@@ -313,7 +325,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // Outputs: [Control, Memory, ...clobbered varnode values].
         NodeKind::Call => sig!(
             inputs: [CTRL, MEM, TARGET]; in_tail: ARG,
-            outputs: [CTRL, MEM]; out_tail: INT_VAL,
+            outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         NodeKind::PostCallMemState => sig!(inputs: [CTRL], outputs: [MEM]),
         NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [INT_VAL]),
