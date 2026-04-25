@@ -8,7 +8,9 @@
 pub use crate::cfg::test_api::*;
 
 #[doc(hidden)]
-pub use crate::cfg::region_builder_test_api::{ProcessInsnRes, TestRegionBuilder};
+pub use crate::cfg::region_builder_test_api::{
+    ProcessInsnRes, TestRegionBuilder, next_pcode_addr,
+};
 
 #[doc(hidden)]
 pub use crate::cfg::dot_test_api::vn_to_name;

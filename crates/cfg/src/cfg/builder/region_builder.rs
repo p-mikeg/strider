@@ -13,20 +13,29 @@ use crate::error::{ErrorKind, Result};
 ///   same machine address with `insn_index` advanced by one.
 /// - Otherwise returns the start (`insn_index = 0`) of the *next* machine
 ///   instruction.
-fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> PcodeInsnAddr {
+///
+/// # Errors
+/// Returns [`ErrorKind::MachineAddrOverflow`] when the current machine
+/// address plus `lift_res.machine_insn_len` overflows `u64`.
+fn next_pcode_addr(
+    addr: PcodeInsnAddr,
+    lift_res: &rsleigh::LiftRes,
+) -> Result<PcodeInsnAddr> {
     if (addr.insn_index as usize) + 1 < lift_res.insns.len() {
-        PcodeInsnAddr {
+        return Ok(PcodeInsnAddr {
             machine_addr: addr.machine_addr,
             insn_index: addr.insn_index + 1,
-        }
-    } else {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr {
-                addr: addr.machine_addr.addr + lift_res.machine_insn_len as u64,
-            },
-            insn_index: 0,
-        }
+        });
     }
+    let next_machine = addr
+        .machine_addr
+        .addr
+        .checked_add(lift_res.machine_insn_len as u64)
+        .ok_or(ErrorKind::MachineAddrOverflow(addr))?;
+    Ok(PcodeInsnAddr {
+        machine_addr: MachineInsnAddr { addr: next_machine },
+        insn_index: 0,
+    })
 }
 
 /// Outcome of processing a single pcode instruction in [`RegionBuilder`].
@@ -229,7 +238,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 self.builder
                     .work_queue
                     .push((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
-                let next_insn_addr = next_pcode_addr(addr, lift_res);
+                let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
                 // Add the false case
                 self.builder
@@ -322,7 +331,7 @@ impl<R: rsleigh::MemReader> RegionBuilder<'_, R> {
                 }
             }
             // We're done exploring a single machine insn, continue to the next one
-            cur_addr = next_pcode_addr(cur_addr, &lift_res);
+            cur_addr = next_pcode_addr(cur_addr, &lift_res)?;
         }
     }
 }
@@ -337,6 +346,18 @@ pub mod test_api {
     use crate::cfg::Builder;
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
+
+    /// Test-only forwarder for the private free function `next_pcode_addr`.
+    ///
+    /// # Errors
+    /// Returns [`crate::ErrorKind::MachineAddrOverflow`] when advancing past
+    /// the last pcode op overflows the 64-bit machine-address space.
+    pub fn next_pcode_addr(
+        addr: PcodeInsnAddr,
+        lift: &rsleigh::LiftRes,
+    ) -> Result<PcodeInsnAddr> {
+        super::next_pcode_addr(addr, lift)
+    }
 
     /// Mirror of `ProcessInsnRes` for test consumers.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

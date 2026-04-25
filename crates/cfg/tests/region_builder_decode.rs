@@ -4,7 +4,7 @@
 //! CONST-relative / default-code-space-absolute / invalid-space-error paths.
 
 mod common;
-use common::{addr, fake_lift_res, make_builder, make_region_builder};
+use common::{addr, fake_lift_res, fake_lift_res_with_len, make_builder, make_region_builder};
 
 use cfg::ErrorKind;
 use rsleigh::{Vn, VnAddr, VnSpace};
@@ -195,6 +195,34 @@ fn decode_branch_target_const_space_index_past_end_errors() {
         "expected InvalidBranchTargetVaErr; got {:?}",
         err.kind()
     );
+}
+
+/// Pinned contract: advancing past the last pcode op of the machine insn
+/// at the very top of the address space returns
+/// `ErrorKind::MachineAddrOverflow` rather than silently wrapping.
+#[test]
+fn next_pcode_addr_machine_address_overflow_errors() {
+    // 1 pcode op, machine_insn_len = 16. The current addr is the only valid
+    // pcode index, so `next_pcode_addr` advances by `machine_insn_len`. Place
+    // the machine address near the top of the u64 range so the addition wraps.
+    let lift = fake_lift_res_with_len(1, 16);
+    let cur = addr(u64::MAX - 8, 0);
+    let err = cfg::test_api::next_pcode_addr(cur, &lift).unwrap_err();
+    assert!(
+        matches!(err.kind(), ErrorKind::MachineAddrOverflow(_)),
+        "expected MachineAddrOverflow; got {:?}",
+        err.kind()
+    );
+}
+
+/// Sanity sibling: advancing past a non-saturating address still returns
+/// `Ok(...)` after the signature change.
+#[test]
+fn next_pcode_addr_non_overflowing_advance_succeeds() {
+    let lift = fake_lift_res_with_len(1, 4);
+    let cur = addr(0x1000, 0);
+    let next = cfg::test_api::next_pcode_addr(cur, &lift).unwrap();
+    assert_eq!(next, addr(0x1004, 0));
 }
 
 /// Pinned contract: a CONST-space relative branch target whose computed pcode

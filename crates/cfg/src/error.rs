@@ -18,6 +18,9 @@ pub enum ErrorKind {
     #[error("invalid tail call at opcode {0:?}")]
     InvalidTailCall(PcodeInsnAddr),
 
+    #[error("machine-address overflow advancing past pcode addr {0:?}")]
+    MachineAddrOverflow(PcodeInsnAddr),
+
     #[error("cfg failed accessing starting region")]
     FailedCreatingStartRegion,
 

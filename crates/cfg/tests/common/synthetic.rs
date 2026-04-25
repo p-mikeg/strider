@@ -80,9 +80,17 @@ pub fn fake_insn() -> rsleigh::Insn {
 /// the actual `Insn` content is irrelevant for those paths.
 #[must_use]
 pub fn fake_lift_res(n_insns: usize) -> rsleigh::LiftRes {
+    fake_lift_res_with_len(n_insns, 1)
+}
+
+/// Variant of [`fake_lift_res`] with caller-supplied `machine_insn_len`.
+/// Needed by tests that exercise the next-machine-address arithmetic in
+/// `next_pcode_addr` (e.g. the overflow path).
+#[must_use]
+pub fn fake_lift_res_with_len(n_insns: usize, machine_insn_len: usize) -> rsleigh::LiftRes {
     rsleigh::LiftRes {
         insns: (0..n_insns).map(|_| fake_insn()).collect(),
-        machine_insn_len: 1,
+        machine_insn_len,
     }
 }
 
