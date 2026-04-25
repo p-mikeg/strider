@@ -258,7 +258,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::Return => {
-                let _region = self.finish_current_region(false)?;
+                self.finish_current_region(false)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),
