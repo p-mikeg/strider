@@ -37,8 +37,11 @@ use crate::{MemRegion, MemRegionsLookupTable, Result, error};
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if the
-/// segment's file-backed data cannot be read.
+/// Returns:
+/// - `ErrorKind::Object` wrapping the underlying `object::Error` if the
+///   segment's file-backed data cannot be read.
+/// - `ErrorKind::RegionOverflow` if `segment.address() + data.len()` would
+///   exceed `u64::MAX`.
 pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
     MemRegion::new(segment.address(), segment.data()?.to_vec())
 }
@@ -47,8 +50,11 @@ pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Res
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if the
-/// section's file-backed data cannot be read.
+/// Returns:
+/// - `ErrorKind::Object` wrapping the underlying `object::Error` if the
+///   section's file-backed data cannot be read.
+/// - `ErrorKind::RegionOverflow` if `section.address() + data.len()` would
+///   exceed `u64::MAX`.
 pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
     MemRegion::new(section.address(), section.data()?.to_vec())
 }
@@ -63,11 +69,16 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if a
-/// segment accepted by `filter` has file-backed data that cannot be
-/// read. Segments rejected by `filter` are never read, so malformed
-/// rejected segments do not surface as errors. Accepted empty-data
-/// segments (e.g. `p_filesz == 0`) are skipped rather than reported.
+/// Returns:
+/// - `ErrorKind::Object` wrapping the underlying `object::Error` if a
+///   segment accepted by `filter` has file-backed data that cannot be
+///   read. Segments rejected by `filter` are never read, so malformed
+///   rejected segments do not surface as errors.
+/// - `ErrorKind::RegionOverflow` if an accepted segment's
+///   `address() + data.len()` would exceed `u64::MAX`.
+///
+/// Accepted empty-data segments (e.g. `p_filesz == 0`) are skipped rather
+/// than reported.
 pub fn elf_segments_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Segment<'_, '_>) -> bool,
@@ -96,12 +107,16 @@ pub fn elf_segments_to_mem_regions(
 ///
 /// # Errors
 ///
-/// Returns an error wrapping the underlying `object::Error` if a
-/// section accepted by `filter` has file-backed data that cannot be
-/// read. Sections rejected by `filter` are never read, so malformed
-/// rejected sections do not surface as errors. Accepted empty-data
-/// sections (e.g. `SHT_NOBITS`-equivalents) are skipped rather than
-/// reported.
+/// Returns:
+/// - `ErrorKind::Object` wrapping the underlying `object::Error` if a
+///   section accepted by `filter` has file-backed data that cannot be
+///   read. Sections rejected by `filter` are never read, so malformed
+///   rejected sections do not surface as errors.
+/// - `ErrorKind::RegionOverflow` if an accepted section's
+///   `address() + data.len()` would exceed `u64::MAX`.
+///
+/// Accepted empty-data sections (e.g. `SHT_NOBITS`-equivalents) are
+/// skipped rather than reported.
 pub fn elf_sections_to_mem_regions(
     obj: &object::File<'_>,
     filter: impl Fn(&object::read::Section<'_, '_>) -> bool,
@@ -153,8 +168,9 @@ fn section_is_code_or_readonly(sec: &object::read::Section<'_, '_>) -> bool {
 ///
 /// # Errors
 ///
-/// Propagates any `object::Error` from the underlying section/segment
-/// iteration; see [`elf_segments_to_mem_regions`].
+/// Propagates any error from the underlying segment iteration; see
+/// [`elf_segments_to_mem_regions`] for the full error set
+/// (`Object` + `RegionOverflow`).
 pub fn elf_get_executable_segments_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -166,8 +182,9 @@ pub fn elf_get_executable_segments_as_mem_regions(
 ///
 /// # Errors
 ///
-/// Propagates any `object::Error` from the underlying section iteration;
-/// see [`elf_sections_to_mem_regions`].
+/// Propagates any error from the underlying section iteration; see
+/// [`elf_sections_to_mem_regions`] for the full error set
+/// (`Object` + `RegionOverflow`).
 pub fn elf_get_executable_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -186,8 +203,9 @@ pub fn elf_get_executable_sections_as_mem_regions(
 ///
 /// # Errors
 ///
-/// Propagates any `object::Error` from the underlying section iteration;
-/// see [`elf_sections_to_mem_regions`].
+/// Propagates any error from the underlying section iteration; see
+/// [`elf_sections_to_mem_regions`] for the full error set
+/// (`Object` + `RegionOverflow`).
 pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     obj: &object::File<'_>,
 ) -> Result<Vec<MemRegion>> {
@@ -218,7 +236,10 @@ impl ElfFileMemReader {
     ///
     /// # Errors
     ///
-    /// Propagates any `object::Error` from reading the selected sections.
+    /// Propagates any error from
+    /// [`elf_get_code_and_readonly_sections_as_mem_regions`]: `Object` for
+    /// unreadable section data and `RegionOverflow` if any included
+    /// section's `address() + data.len()` would exceed `u64::MAX`.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let regions = elf_get_code_and_readonly_sections_as_mem_regions(obj)?;
         Ok(Self {

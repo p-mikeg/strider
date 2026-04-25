@@ -338,3 +338,81 @@ fn elf_sections_to_mem_regions_skips_rejected_malformed_section() {
         .expect("filter-rejected malformed section must not surface an error");
     assert!(regions.is_empty(), "nothing was accepted");
 }
+
+// ── Pinned contract: RegionOverflow from MemRegion::new propagates ──────
+
+/// Pinned contract: when an accepted section's `sh_addr + sh_size` would
+/// overflow `u64`, `MemRegion::new` returns `ErrorKind::RegionOverflow`,
+/// and the converter must propagate that — *not* silently drop it and not
+/// rewrap it as `ErrorKind::Object(_)`.
+///
+/// This complements `elf_sections_to_mem_regions_propagates_data_error`:
+/// that test pins the `object::Error` arm of the converter's error set;
+/// this test pins the `RegionOverflow` arm. Together they enumerate
+/// every error variant the converters can return.
+///
+/// We synthesize the failure by building a section whose `sh_addr` is one
+/// less than `u64::MAX` and whose `sh_size` is 4. The data block fits in
+/// the file (no `object::Error`), but `addr + len` overflows by 3 bytes,
+/// so `MemRegion::new` must reject it.
+#[test]
+fn elf_sections_to_mem_regions_propagates_region_overflow() {
+    use object::Endianness;
+    use object::elf;
+    use object::write::elf::{FileHeader, SectionHeader, Writer};
+
+    let payload = [0u8, 0, 0, 0]; // 4 bytes of data on disk
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(Endianness::Little, true, &mut buf);
+        let _null = w.reserve_null_section_index();
+        let name = w.add_section_name(b".overflow");
+        let _sec = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        w.reserve_file_header();
+        let data_off = w.reserve(payload.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_EXEC,
+            e_machine: elf::EM_X86_64,
+            e_entry: 0,
+            e_flags: 0,
+        })
+        .expect("write file header");
+        w.write(&payload);
+        w.write_shstrtab();
+        w.write_null_section_header();
+        w.write_section_header(&SectionHeader {
+            name: Some(name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            // sh_addr near top of address space; sh_addr + sh_size > u64::MAX
+            sh_addr: u64::MAX - 1,
+            sh_offset: data_off as u64,
+            sh_size: payload.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        w.write_shstrtab_section_header();
+    }
+    let obj = parse(&buf);
+    let err = elf_sections_to_mem_regions(&obj, |_| true)
+        .expect_err("addr+len overflow must surface as RegionOverflow");
+    assert!(
+        matches!(
+            err.kind(),
+            reader::ErrorKind::RegionOverflow { start_addr, len }
+                if *start_addr == u64::MAX - 1 && *len == 4
+        ),
+        "got {:?}",
+        err.kind(),
+    );
+}
