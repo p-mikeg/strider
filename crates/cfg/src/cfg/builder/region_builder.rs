@@ -21,7 +21,10 @@ fn next_pcode_addr(
     addr: PcodeInsnAddr,
     lift_res: &rsleigh::LiftRes,
 ) -> Result<PcodeInsnAddr> {
-    if (addr.insn_index as usize) + 1 < lift_res.insns.len() {
+    // Compare in u64 space: usize → u64 is widening on every supported
+    // target and avoids a potentially-truncating u64 → usize cast.
+    let pcode_count = lift_res.insns.len() as u64;
+    if addr.insn_index + 1 < pcode_count {
         return Ok(PcodeInsnAddr {
             machine_addr: addr.machine_addr,
             insn_index: addr.insn_index + 1,
