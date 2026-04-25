@@ -114,60 +114,50 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         if container_reg == *reg {
             return Ok(self.builder.write_variable(reg, val)?);
         }
+        let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;
-
-        // The register is in the part of a bigger container
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
 
-        // Calculate the shifted value that should be in the reg inside the container
+        // Position `val`'s bits inside the container's bit window.
         let shifted_value = if shift_bits == 0 {
-            self.builder.extend_if_needed(
-                val,
-                container_reg.size.try_into()?,
-                ExtendOp::ZeroExtend,
-            )?
+            self.builder
+                .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?
         } else {
-            let shift_const = self
-                .builder
-                .build_int_const(shift_bits, container_reg.size.try_into()?)?;
+            let shift_const = self.builder.build_int_const(shift_bits, container_ty)?;
             self.builder.build_int_binary_operation(
                 val,
                 shift_const,
                 IntBinaryOp::ShiftLeft,
-                reg.size.try_into()?,
+                reg.size.try_into()?,  // intentionally reg's size: shifting in reg's domain before merging
             )?
         };
 
-        // Calculate the masked value of the reg in the container
+        // Mask `val` to its declared width inside the container.
         let reg_mask = crate::utils::vn_mask(reg)?;
-        let reg_mask_val = self
-            .builder
-            .build_int_const(reg_mask, container_reg.size.try_into()?)?;
+        let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty)?;
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
             shifted_value,
             IntBinaryOp::And,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
 
-        // Calculate the rest of the container
-        let container_mask = crate::utils::vn_mask(&container_reg)? & (!reg_mask);
-        let container_mask_val = self
-            .builder
-            .build_int_const(container_mask, container_reg.size.try_into()?)?;
+        // Mask out the old bits of `reg` from the container.
+        let container_mask = crate::utils::vn_mask(&container_reg)? & !reg_mask;
+        let container_mask_val = self.builder.build_int_const(container_mask, container_ty)?;
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val,
             container_reg_val,
             IntBinaryOp::And,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
 
-        // Merge the containers
+        // Merge.
         let final_container_value = self.builder.build_int_binary_operation(
             container_val,
             reg_val,
             IntBinaryOp::Or,
-            container_reg.size.try_into()?,
+            container_ty,
         )?;
         self.write_reg_vn(&container_reg, final_container_value)?;
         Ok(())
