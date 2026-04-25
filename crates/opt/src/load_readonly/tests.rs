@@ -46,7 +46,7 @@ fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
 #[test]
 fn load_from_rom_const_addr() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000, NodeOutputType::U64);
+        let addr = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
         Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
     })?;
     assert!(LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
@@ -57,7 +57,7 @@ fn load_from_rom_const_addr() -> Result<()> {
 #[test]
 fn load_non_rom_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0xDEAD, NodeOutputType::U64);
+        let addr = b.build_int_const(0xDEAD, NodeOutputType::U64).unwrap();
         Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
     })?;
     assert!(!LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
@@ -74,8 +74,8 @@ fn load_non_const_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
         // addr = 0x1000 + 0 — a non-trivial expression that constant_fold
         // would simplify, but we don't run constant_fold here.
-        let base = b.build_int_const(0x1000, NodeOutputType::U64);
-        let off = b.build_int_const(0, NodeOutputType::U64);
+        let base = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
+        let off = b.build_int_const(0, NodeOutputType::U64).unwrap();
         let addr =
             b.build_int_binary_operation(base, off, ir::IntBinaryOp::Add, NodeOutputType::U64)?;
         Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
@@ -103,7 +103,7 @@ fn load_oversize_read_no_change() -> Result<()> {
         }
     }
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000, NodeOutputType::U64);
+        let addr = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
         // Request 8 bytes — limited ROM returns None.
         Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
     })?;
@@ -126,7 +126,7 @@ fn load_other_space_no_change() -> Result<()> {
         }
     }
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000, NodeOutputType::U64);
+        let addr = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
         Ok(b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::U64)?)
     })?;
     assert!(!LoadReadOnly(RamOnly).optimize(&mut fg)?.changed());
@@ -138,7 +138,7 @@ fn load_other_space_no_change() -> Result<()> {
 #[test]
 fn load_u8_masks_to_byte() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x2000, NodeOutputType::U64);
+        let addr = b.build_int_const(0x2000, NodeOutputType::U64).unwrap();
         Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?)
     })?;
     assert!(LoadReadOnly(TestRom).optimize(&mut fg)?.changed());
@@ -150,8 +150,8 @@ fn load_u8_masks_to_byte() -> Result<()> {
 #[test]
 fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let a1 = b.build_int_const(0x1000, NodeOutputType::U64);
-        let a2 = b.build_int_const(0x2000, NodeOutputType::U64);
+        let a1 = b.build_int_const(0x1000, NodeOutputType::U64).unwrap();
+        let a2 = b.build_int_const(0x2000, NodeOutputType::U64).unwrap();
         let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(l1, l2, ir::IntBinaryOp::Add, NodeOutputType::U64)?)

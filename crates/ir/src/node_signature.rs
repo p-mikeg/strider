@@ -220,15 +220,27 @@ const TARGET: Slot = Slot {
     name: "target",
     role: R::Target,
 };
+// `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
+// passing or return values can hold integer, float, or bool values (e.g.
+// the x86 flag registers CF/ZF/SF, modelled as Bool in the IR, are
+// caller-clobbered and therefore appear in Call / Return tails on real
+// binaries). Tightening to `AnyInt` would reject valid graphs.
 const ARG: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "arg",
     role: R::Arg,
 };
 const RET: Slot = Slot {
-    kind: AnyInt,
+    kind: AnyValue,
     name: "ret",
     role: R::Ret,
+};
+/// Call output tail: clobbered-register outputs. Same any-value relaxation
+/// as `ARG`/`RET` — flag registers are Bool-typed and routinely appear here.
+const CALL_OUT: Slot = Slot {
+    kind: AnyValue,
+    name: "val",
+    role: R::Val,
 };
 const SEG: Slot = Slot {
     kind: AnyInt,
@@ -290,8 +302,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
-        NodeKind::InitialVar(_) => sig!(inputs: [], outputs: [INT_VAL]),
-        NodeKind::FunctionArg { .. } => sig!(inputs: [], outputs: [INT_VAL]),
+        NodeKind::InitialVar(_) | NodeKind::FunctionArg { .. } => {
+            sig!(inputs: [], outputs: [INT_VAL])
+        }
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // ControlState: one Control input per predecessor (variadic).
@@ -299,10 +312,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // ControlPhi: [phi_token, ...per-predecessor values].
-        NodeKind::ControlPhi(_) => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL]),
-        // ValuePhi: [phi_token, ...per-predecessor values].  Same shape as
-        // ControlPhi but not tied to a source varnode.
-        NodeKind::ValuePhi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL]),
+        // ValuePhi: same shape as ControlPhi but not tied to a source varnode.
+        NodeKind::ControlPhi(_) | NodeKind::ValuePhi => {
+            sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [INT_VAL])
+        }
 
         // ── Conditional branch ──────────────────────────────────────────────
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
@@ -312,7 +325,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // Outputs: [Control, Memory, ...clobbered varnode values].
         NodeKind::Call => sig!(
             inputs: [CTRL, MEM, TARGET]; in_tail: ARG,
-            outputs: [CTRL, MEM]; out_tail: INT_VAL,
+            outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         NodeKind::PostCallMemState => sig!(inputs: [CTRL], outputs: [MEM]),
         NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [INT_VAL]),
@@ -331,14 +344,15 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
         // ── Integer constants and operations ────────────────────────────────
         NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
-        NodeKind::IntUnaryOp(_) => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
+        // Unary integer ops: same single-input single-output shape.
+        NodeKind::IntUnaryOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extend(_) => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
         NodeKind::IntBinaryOp(_) => sig!(inputs: [LHS, RHS], outputs: [INT_VAL]),
         NodeKind::IntCmpOp(_) => sig!(inputs: [LHS, RHS], outputs: [BOOL_VAL]),
         NodeKind::CastToInt => sig!(inputs: [ANY_VAL], outputs: [INT_VAL]),
-        NodeKind::Truncate => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
-        NodeKind::Popcount => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
-        NodeKind::Lzcount => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
-        NodeKind::Extend(_) => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
 
         // ── Boolean constants and operations ────────────────────────────────
         NodeKind::BoolConst(_) => sig!(inputs: [], outputs: [BOOL_VAL]),
@@ -349,13 +363,19 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Float constants and operations ──────────────────────────────────
         NodeKind::FloatConst(_) => sig!(inputs: [], outputs: [FLOAT_VAL]),
         NodeKind::FloatBinaryOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [FLOAT_VAL]),
-        NodeKind::FloatUnaryOp(_) => sig!(inputs: [FLOAT_VAL], outputs: [FLOAT_VAL]),
+        // float→float of one input: FloatUnaryOp and FloatToFloat share shape.
+        NodeKind::FloatUnaryOp(_) | NodeKind::FloatToFloat => {
+            sig!(inputs: [FLOAT_VAL], outputs: [FLOAT_VAL])
+        }
         NodeKind::FloatCmpOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [BOOL_VAL]),
-        NodeKind::IntToFloat => sig!(inputs: [INT_VAL], outputs: [FLOAT_VAL]),
-        NodeKind::FloatToInt => sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL]),
-        NodeKind::FloatToFloat => sig!(inputs: [FLOAT_VAL], outputs: [FLOAT_VAL]),
-        NodeKind::IntBitsToFloat => sig!(inputs: [INT_VAL], outputs: [FLOAT_VAL]),
-        NodeKind::FloatBitsToInt => sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL]),
+        // int→float of one input.
+        NodeKind::IntToFloat | NodeKind::IntBitsToFloat => {
+            sig!(inputs: [INT_VAL], outputs: [FLOAT_VAL])
+        }
+        // float→int of one input.
+        NodeKind::FloatToInt | NodeKind::FloatBitsToInt => {
+            sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL])
+        }
         NodeKind::CastToFloat => sig!(inputs: [ANY_VAL], outputs: [FLOAT_VAL]),
 
         // ── User-defined / opaque opcodes ───────────────────────────────────

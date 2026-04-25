@@ -60,7 +60,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let space_info = self.cfg.sleigh.space_info(target_vn.addr.space);
         let call_address = self
             .builder
-            .build_int_const(target_vn.addr.off, space_info.addr_size().try_into()?);
+            .build_int_const(target_vn.addr.off, space_info.addr_size().try_into()?)?;
         self.builder.build_call(call_address)?;
         Ok(())
     }

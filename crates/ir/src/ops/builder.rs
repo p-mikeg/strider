@@ -13,6 +13,12 @@ impl BuiltFunctionGraph {
     /// let n = g.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
     /// let [out] = g.node_outputs_exact::<1>(n)?;
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// node does not have exactly one output (this would indicate a graph or
+    /// signature-table bug, not user error).
     pub fn make_value_node(
         &mut self,
         kind: NodeKind,
@@ -27,6 +33,11 @@ impl BuiltFunctionGraph {
     }
 
     /// Convenience: create an `IntBitsToFloat` node with the given result type.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::ErrorKind::WrongOutputCount`] from
+    /// [`Self::make_value_node`].
     pub fn make_int_bits_to_float_node(
         &mut self,
         input: NodeOutputId,
@@ -36,6 +47,11 @@ impl BuiltFunctionGraph {
     }
 
     /// Convenience: create a `FloatToFloat` node with the given result type.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`crate::ErrorKind::WrongOutputCount`] from
+    /// [`Self::make_value_node`].
     pub fn make_float_to_float_node(
         &mut self,
         input: NodeOutputId,

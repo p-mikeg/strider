@@ -8,6 +8,7 @@ use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 impl BuiltFunctionGraph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type), or `None` if the output is not an integer constant.
+    #[must_use] 
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.graph.output_kind(out).as_value()?;
         if !ty.is_integer() {
@@ -22,6 +23,7 @@ impl BuiltFunctionGraph {
 
     /// Returns the boolean constant value of `out`, or `None` if it is not a
     /// `BoolConst` node.
+    #[must_use] 
     pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
         if !self.graph.output_kind(out).is_bool() {
             return None;
@@ -35,6 +37,7 @@ impl BuiltFunctionGraph {
 
     /// Returns the raw bits of a float constant, or `None` if the output is
     /// not a `FloatConst` node.
+    #[must_use] 
     pub fn float_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.graph.output_kind(out).as_value()?;
         if !ty.is_float() {
@@ -49,6 +52,11 @@ impl BuiltFunctionGraph {
 
     /// Creates (or retrieves from the dedup cache) an `IntConst(val)` node of
     /// type `ty` and returns its single output.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         let node = self.graph.create_node(
             NodeKind::IntConst(val),
@@ -59,6 +67,11 @@ impl BuiltFunctionGraph {
     }
 
     /// Creates (or retrieves) a `BoolConst(val)` node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_bool_const(&mut self, val: bool) -> Result<NodeOutputId> {
         let node = self.graph.create_node(
             NodeKind::BoolConst(val),
@@ -69,6 +82,11 @@ impl BuiltFunctionGraph {
     }
 
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         let node = self.graph.create_node(
             NodeKind::FloatConst(bits),
