@@ -407,3 +407,103 @@ impl<G: GraphDotDumper> GraphDot<G> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod label_tests {
+    use super::{escape_dot_label, json_quote};
+
+    // ── escape_dot_label ────────────────────────────────────────────────────
+
+    #[test]
+    fn escape_dot_label_passes_through_plain_ascii() {
+        assert_eq!(escape_dot_label("hello world"), "hello world");
+    }
+
+    #[test]
+    fn escape_dot_label_empty_input_yields_empty_output() {
+        assert_eq!(escape_dot_label(""), "");
+    }
+
+    #[test]
+    fn escape_dot_label_double_quote_becomes_backslash_quote() {
+        assert_eq!(escape_dot_label("a\"b"), "a\\\"b");
+    }
+
+    #[test]
+    fn escape_dot_label_literal_newline_becomes_backslash_n() {
+        // A real \n char in the input is rendered as the DOT centre-justify escape.
+        assert_eq!(escape_dot_label("a\nb"), "a\\nb");
+    }
+
+    #[test]
+    fn escape_dot_label_recognised_dot_escapes_pass_through() {
+        // The two-char sequences \n, \l, \r in the input are DOT escape codes
+        // (centre / left / right justified line break) and must survive
+        // unchanged so callers can hand-emit DOT line breaks.
+        assert_eq!(escape_dot_label("a\\nb"), "a\\nb");
+        assert_eq!(escape_dot_label("a\\lb"), "a\\lb");
+        assert_eq!(escape_dot_label("a\\rb"), "a\\rb");
+    }
+
+    #[test]
+    fn escape_dot_label_other_backslash_doubles() {
+        assert_eq!(escape_dot_label("a\\b"), "a\\\\b");
+        assert_eq!(escape_dot_label("\\"), "\\\\");
+    }
+
+    #[test]
+    fn escape_dot_label_carriage_return_passes_through_as_is() {
+        // Locks the current implementation: a literal '\r' character is not
+        // stripped — it falls through to the catch-all push branch. (See
+        // Task 4 for the doc fix that brings the comment in line with this.)
+        assert_eq!(escape_dot_label("a\rb"), "a\rb");
+    }
+
+    #[test]
+    fn escape_dot_label_combined_inputs_round_trip() {
+        // A realistic node label from the IR/CFG dumper: contains both a
+        // recognised DOT escape (\l) and a literal newline.
+        let input = "Instruction(addr=0x401000)\n\\l0x401000: ADD";
+        let want = "Instruction(addr=0x401000)\\n\\l0x401000: ADD";
+        assert_eq!(escape_dot_label(input), want);
+    }
+
+    // ── json_quote ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn json_quote_wraps_empty_input_in_double_quotes() {
+        assert_eq!(json_quote(""), "\"\"");
+    }
+
+    #[test]
+    fn json_quote_passes_through_plain_ascii() {
+        assert_eq!(json_quote("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn json_quote_escapes_double_quote_backslash_and_whitespace() {
+        assert_eq!(json_quote("\""), "\"\\\"\"");
+        assert_eq!(json_quote("\\"), "\"\\\\\"");
+        assert_eq!(json_quote("\n"), "\"\\n\"");
+        assert_eq!(json_quote("\r"), "\"\\r\"");
+        assert_eq!(json_quote("\t"), "\"\\t\"");
+    }
+
+    #[test]
+    fn json_quote_escapes_low_control_chars_as_unicode() {
+        // \u{0001} is < 0x20 and not one of the recognised short escapes,
+        // so the implementation falls through to \uXXXX form.
+        assert_eq!(json_quote("\u{0001}"), "\"\\u0001\"");
+        assert_eq!(json_quote("\u{001f}"), "\"\\u001f\"");
+        // 0x20 (space) is the boundary: it must NOT be unicode-escaped.
+        assert_eq!(json_quote(" "), "\" \"");
+    }
+
+    #[test]
+    fn json_quote_passes_through_high_unicode_unchanged() {
+        // Non-ASCII chars >= 0x20 are emitted verbatim (no surrogate
+        // expansion). Any compliant JSON parser accepts UTF-8 directly.
+        assert_eq!(json_quote("café"), "\"café\"");
+        assert_eq!(json_quote("→"), "\"→\"");
+    }
+}
