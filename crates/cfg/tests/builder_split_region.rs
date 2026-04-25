@@ -17,10 +17,24 @@ fn split_at_start_is_noop() {
         &mut b,
         make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]),
     ).unwrap();
+
+    let edges_before = test_api::graph(&b).edge_references().count();
+    let map_len_before = test_api::start_addr_to_region_id(&b).len();
+
     let result = test_api::split_region(&mut b, id, addr(0x1000, 0)).unwrap();
 
     assert_eq!(result, id, "split at start must return original id");
     assert_eq!(test_api::graph(&b).node_count(), 1, "no new region created");
+    assert_eq!(
+        test_api::graph(&b).edge_references().count(),
+        edges_before,
+        "no-op split must not add an edge",
+    );
+    assert_eq!(
+        test_api::start_addr_to_region_id(&b).len(),
+        map_len_before,
+        "no-op split must not insert into start_addr_to_region_id",
+    );
 }
 
 #[test]
