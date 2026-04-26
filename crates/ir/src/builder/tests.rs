@@ -939,6 +939,108 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     Ok(())
 }
 
+// ── BUG-8 regression: ret-val regs that the overlap filter dropped must
+// upgrade to their tracked container ────────────────────────────────────
+//
+// MIPS-O32 lists `f0` (4-byte) as the float return register, but a
+// double-returning function only writes through the 8-byte combined
+// f0/f1 view.  The overlap-filter drops 4-byte f0 in favour of the
+// wider 8-byte view.  Pre-fix code then dropped `f0` from
+// `ret_val_vars` because it was no longer in `variable_to_id`, and
+// the Return node never read the float chain — `f64_arith` returned
+// junk from the integer ret-regs.
+//
+// The fix in `FunctionBuilder::new_raw` upgrades a filtered-out ret
+// reg to the smallest tracked variable that fully contains it.
+
+/// 4-byte ret-reg overlapped by an 8-byte tracked view: `ret_val_vars`
+/// must contain the 8-byte container, not be empty.
+#[test]
+fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
+    let f0_4byte = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let f0_f1_8byte = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    // Both varnodes referenced (mimicking the f64-using function): the
+    // overlap filter will keep only the 8-byte view.
+    let b = FunctionBuilder::new_raw(
+        vec![f0_4byte, f0_f1_8byte],
+        &[],
+        &[],
+        &[f0_4byte],
+        None,
+        0,
+    )?;
+    assert_eq!(
+        b.ret_val_vars(),
+        &[f0_f1_8byte],
+        "ret_val_vars must upgrade the filtered-out 4-byte f0 to its \
+         8-byte tracked container so the Return node still reads the \
+         float result chain"
+    );
+    Ok(())
+}
+
+/// Single-precision case: when only the 4-byte view is referenced, the
+/// filter doesn't drop it, so no upgrade happens — the ret slot stays at
+/// reg's declared 4-byte width.
+#[test]
+fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
+    let f0_4byte = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let b = FunctionBuilder::new_raw(
+        vec![f0_4byte],
+        &[],
+        &[],
+        &[f0_4byte],
+        None,
+        0,
+    )?;
+    assert_eq!(
+        b.ret_val_vars(),
+        &[f0_4byte],
+        "ret_val_vars must keep the original 4-byte reg when it's tracked"
+    );
+    Ok(())
+}
+
+/// Ret reg whose container isn't tracked AND no wider view is tracked
+/// stays dropped — the upgrade falls back to None when no container
+/// exists in the variable set.
+#[test]
+fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
+    let f0_4byte = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let unrelated = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x2000, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    // f0_4byte is not in the input set at all.  ret_val_vars upgrade has
+    // no candidate, so `f0` is simply dropped from the ret list.
+    let b = FunctionBuilder::new_raw(
+        vec![unrelated],
+        &[],
+        &[],
+        &[f0_4byte],
+        None,
+        0,
+    )?;
+    assert!(
+        b.ret_val_vars().is_empty(),
+        "ret_val_vars must drop ret regs with no tracked container; got {:?}",
+        b.ret_val_vars()
+    );
+    Ok(())
+}
+
 /// End-to-end: write a Bool to a 1-byte register variable through the
 /// coerce-then-write sequence the analyzer's `write_reg_vn` uses.  Reading
 /// the variable back must return an integer-typed output, never the raw

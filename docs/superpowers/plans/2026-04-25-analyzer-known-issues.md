@@ -15,8 +15,8 @@
 | BUG-5  | OPEN (intentional skip per user) | a few residual | High | `BranchIndirect` opcode unimplemented |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |
 | BUG-7  | **FIXED** | (was: x86, x64) | Medium | Indirect call CFG MemReadErr no longer reproducible |
-| BUG-8  | mostly fixed | x86 (x87), mips32 (f64) residues | High | Float arith chain — fixed on aarch64 by BUG-9 root-cause fix (write_reg_vn mask positioning) |
-| BUG-9  | mostly fixed | x86 (x87), mips32 residues | High | Float conversion — analyzer fix in `bd8994b`, root-cause fix in write_reg_vn mask positioning |
+| BUG-8  | mostly fixed | x86 (x87 only) | High | Float arith chain — fixed on aarch64 by write_reg_vn mask positioning, fixed on mips32 by ret-val-regs upgrade-to-container |
+| BUG-9  | mostly fixed | x86 (x87 only) | High | Float conversion — analyzer fix in `bd8994b`, write_reg_vn mask positioning, ret-val-regs upgrade |
 | BUG-10 | mostly fixed | x86, arm residues | High | cmov-tolerant compare assertion (commit `c822688`) |
 | BUG-11 | mostly fixed | aarch64, x86 residues | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`) |
 | BUG-12 | **FIXED** | (was: all 6 archs) | Medium | asm-volatile barrier in `external_take_ptr` (commit `fee1b10`) |

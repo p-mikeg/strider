@@ -204,15 +204,42 @@ impl FunctionBuilder {
             let var_id = variables.push(variable);
             variable_to_id.insert(variable, var_id);
         }
+        // For arg-passing and ret-val regs that the overlap filter dropped
+        // (because the function uses a wider view of the same physical
+        // register — e.g. MIPS-O32 lists "f0" as 4-byte but a double-
+        // returning function writes the 8-byte combined f0/f1 view), fall
+        // back to the smallest tracked container.  This keeps the Return /
+        // Call's ret-val slots wired to the actual function's return chain
+        // instead of silently dropping them.
+        let upgrade_to_tracked = |vn: &rsleigh::Vn| -> Option<rsleigh::Vn> {
+            if variable_to_id.contains_key(vn) {
+                return Some(*vn);
+            }
+            if !is_aliasable_space(vn.addr.space) {
+                return None;
+            }
+            // Find the smallest tracked variable in the same space whose
+            // byte-range fully covers `vn`.  "Smallest" wins because we
+            // want the tightest container — useful when multiple wider
+            // views happen to be tracked.
+            let vn_end = vn.addr.off + vn.size as u64;
+            variable_to_id
+                .keys()
+                .filter(|t| {
+                    t.addr.space == vn.addr.space
+                        && t.addr.off <= vn.addr.off
+                        && t.addr.off + t.size as u64 >= vn_end
+                })
+                .min_by_key(|t| t.size)
+                .copied()
+        };
         let arg_passing_vars: Vec<_> = arg_passing_vars
             .iter()
-            .copied()
-            .filter(|vn| variable_to_id.contains_key(vn))
+            .filter_map(upgrade_to_tracked)
             .collect();
         let ret_val_vars: Vec<_> = ret_vars
             .iter()
-            .copied()
-            .filter(|vn| variable_to_id.contains_key(vn))
+            .filter_map(upgrade_to_tracked)
             .collect();
 
         let mut fb = FunctionBuilder {
