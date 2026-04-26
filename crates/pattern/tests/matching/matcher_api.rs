@@ -232,3 +232,285 @@ fn get_vn_on_unbound_var_returns_none() {
     let never_bound = Var::new();
     assert_eq!(m.get_vn(never_bound, &g), None);
 }
+
+// ── MatcherOptions: ignore_casts / ignore_control_states flags ──────────────
+//
+// The flags default to off (strict exact-walk semantics).  Phases 2/3/4
+// implement the actual walk-through; Phase 1 only adds the API surface
+// and verifies the existing matcher behavior is unchanged when both flags
+// stay at their defaults.  These tests pin those contracts so a future
+// refactor of the option type doesn't silently change defaults.
+
+#[test]
+fn matcher_default_options_are_both_off() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g);
+    let opts = m.options_for_test();
+    assert!(!opts.ignore_casts, "ignore_casts must default to false");
+    assert!(
+        !opts.ignore_control_states,
+        "ignore_control_states must default to false"
+    );
+}
+
+#[test]
+fn ignore_casts_chains_and_flips_flag() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g).ignore_casts();
+    let opts = m.options_for_test();
+    assert!(opts.ignore_casts, "ignore_casts() must enable the flag");
+    assert!(
+        !opts.ignore_control_states,
+        "ignore_casts() must not touch ignore_control_states"
+    );
+}
+
+#[test]
+fn ignore_control_states_chains_and_flips_flag() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g).ignore_control_states();
+    let opts = m.options_for_test();
+    assert!(
+        opts.ignore_control_states,
+        "ignore_control_states() must enable the flag"
+    );
+    assert!(
+        !opts.ignore_casts,
+        "ignore_control_states() must not touch ignore_casts"
+    );
+}
+
+#[test]
+fn both_flags_chain_independently() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g).ignore_casts().ignore_control_states();
+    let opts = m.options_for_test();
+    assert!(opts.ignore_casts);
+    assert!(opts.ignore_control_states);
+}
+
+/// Regression: with both flags off, existing pattern queries return the
+/// same matches as before.  If a future contributor flips a default,
+/// this test catches the silent change.
+#[test]
+fn existing_pattern_unchanged_with_default_options() {
+    // `add(5, 3)` graph has exactly one Add and the matcher must find it
+    // — same as the existing kind-prefilter test, but explicitly via a
+    // `Matcher::new` (no flags).
+    let g = shapes::add_consts(5, 3);
+    let pat: Pat = add(int_const(5), int_const(3)).into();
+    let hits = Matcher::new(&g).find_all(&pat);
+    assert_eq!(
+        hits.len(),
+        1,
+        "Matcher::new (default options) must find the Add — flags off must \
+         preserve existing behavior"
+    );
+}
+
+// ── ignore_casts walk-through (Phase 4 integration) ──────────────────────────
+//
+// Build a small graph that contains an `Add(Extend(Mul), c)` shape — the
+// canonical BUG-19 problem.  Without `ignore_casts` the strict matcher
+// can't see the Mul through the Extend; with the flag set, it does.
+
+/// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at U64,
+/// where the Mul is at U32.  Mirrors x64's IMUL register-merge chain in
+/// miniature.
+fn graph_add_zext_mul() -> ir::BuiltFunctionGraph {
+    use ir::node::NodeOutputType;
+    let mut t = Tb::empty();
+    let two = t.u32(2);
+    let three = t.u32(3);
+    let mul = t.int_bin_at(two, three, ir::IntBinaryOp::Mul, NodeOutputType::U32);
+    let widened = t.zext_to(mul, NodeOutputType::U64);
+    let four = t.u64(4);
+    let total = t.add(widened, four);
+    t.ret_val(total)
+}
+
+/// Strict pattern `add(mul(_,_), _)` against `Add(ZeroExt(Mul), c)` must
+/// fail without `ignore_casts` — pinning the pre-fix behavior so a later
+/// contributor doesn't accidentally add transparent walking by default.
+#[test]
+fn add_mul_pattern_does_not_match_through_extend_by_default() {
+    let g = graph_add_zext_mul();
+    let pat: Pat = add(mul(any(), any()), any()).into();
+    let hits = Matcher::new(&g).find_all(&pat);
+    assert!(
+        hits.is_empty(),
+        "default matcher must NOT walk through Extend; got {} hits",
+        hits.len()
+    );
+}
+
+/// `add(mul(_,_), _)` finds the Mul through an intervening ZeroExtend
+/// when `ignore_casts` is set.  This is the BUG-19 fix in miniature.
+#[test]
+fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
+    let g = graph_add_zext_mul();
+    let pat: Pat = add(mul(any(), any()), any()).into();
+    let hits = Matcher::new(&g).ignore_casts().find_all(&pat);
+    assert_eq!(
+        hits.len(),
+        1,
+        "ignore_casts must let add(mul,_,_) walk through Extend to find Mul; \
+         got {} hits",
+        hits.len()
+    );
+}
+
+/// Walk-through must chain through multiple casts (Mul → Trunc → Extend).
+/// Tests that `match_one` recurses into the cast's input and the recursive
+/// match itself benefits from the same flag.
+#[test]
+fn add_mul_pattern_matches_through_chained_casts() {
+    use ir::node::NodeOutputType;
+    let g = {
+        let mut t = Tb::empty();
+        let two = t.u64(2);
+        let three = t.u64(3);
+        let mul = t.mul(two, three);
+        let truncated = t.trunc_to(mul, NodeOutputType::U32);
+        let widened = t.zext_to(truncated, NodeOutputType::U64);
+        let four = t.u64(4);
+        let total = t.add(widened, four);
+        t.ret_val(total)
+    };
+    let pat: Pat = add(mul(any(), any()), any()).into();
+    let hits = Matcher::new(&g).ignore_casts().find_all(&pat);
+    assert_eq!(
+        hits.len(),
+        1,
+        "ignore_casts must walk through chained Trunc+Extend to reach Mul"
+    );
+}
+
+/// Strict patterns that explicitly ask for a cast (e.g. `truncate(x)`)
+/// continue to match the literal cast node when `ignore_casts` is set —
+/// the direct-match-first ordering preserves it.  Without this guarantee,
+/// `truncate(x)` would silently walk through to `x`.
+#[test]
+fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
+    use ir::node::{NodeKind, NodeOutputType};
+    let g = {
+        let mut t = Tb::empty();
+        // Use a non-const expression so `truncate_if_needed` actually
+        // emits a Truncate node (it short-circuits on IntConst inputs).
+        let a = t.u64(0xDEAD_BEEF);
+        let b = t.u64(0x1234_5678);
+        let or = t.bor(a, b);
+        let truncated = t.trunc_to(or, NodeOutputType::U32);
+        t.ret_val(truncated)
+    };
+    // `truncate(any())` must match the Truncate node directly, NOT walk
+    // through to the IntConst behind it.
+    let m = Matcher::new(&g).ignore_casts();
+    let hits = m.find_all(&truncate(any()));
+    assert_eq!(hits.len(), 1, "truncate(any) must match the Truncate node");
+    assert!(matches!(
+        g.graph.node_kind(hits[0].root),
+        NodeKind::Truncate
+    ));
+}
+
+/// Commutative retry interacts cleanly with walk-through: if the LHS
+/// fails to match directly and as-cast, the matcher swaps and retries
+/// the RHS as the cast-bearing operand.
+#[test]
+fn commutative_add_finds_mul_in_either_operand_through_extend() {
+    use ir::node::NodeOutputType;
+    // `Add(arg, ZeroExt(Mul))` — Mul is on the RHS, behind an Extend.
+    let g = {
+        let mut t = Tb::empty();
+        let two = t.u32(2);
+        let three = t.u32(3);
+        let mul = t.int_bin_at(two, three, ir::IntBinaryOp::Mul, NodeOutputType::U32);
+        let widened = t.zext_to(mul, NodeOutputType::U64);
+        let four = t.u64(4);
+        // Note the operand order: arg first, mul-via-extend second.
+        let total = t.add(four, widened);
+        t.ret_val(total)
+    };
+    let pat: Pat = add(mul(any(), any()), any()).into();
+    let hits = Matcher::new(&g).ignore_casts().find_all(&pat);
+    assert_eq!(
+        hits.len(),
+        1,
+        "commutative add must find Mul-via-Extend on either operand"
+    );
+}
+
+// ── ignore_control_states walk-through ──────────────────────────────────────
+//
+// Build a graph where Return ← ControlState ← Call.  Without the flag,
+// `ret().preceded_by(call())` matches against ControlState (the Return's
+// direct ctrl input is the ControlState's Control output) and fails.
+// With `ignore_control_states`, the walk-through tries each of the
+// ControlState's control inputs — finding the Call.
+
+/// Two-region graph: entry region runs `Call`; tail region runs `Return`.
+/// The Return's ctrl input is the tail region's `ControlState`, whose
+/// own control inputs trace back to the Call.
+fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
+    let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
+    let head = t.fb_mut().create_region().expect("head");
+    t.fb_mut().set_entry_region(head).expect("entry head");
+    t.fb_mut().set_region(head);
+
+    let target = t
+        .fb_mut()
+        .build_int_const(0xCAFEu64, ir::node::NodeOutputType::U64);
+    t.fb_mut().build_call(target).expect("call");
+
+    let tail = t.fb_mut().create_region().expect("tail");
+    t.fb_mut().build_branch(tail).expect("branch to tail");
+
+    t.fb_mut().set_region(tail);
+    t.fb_mut().build_return(None, &[]).expect("ret");
+
+    t.finish()
+}
+
+/// Without `ignore_control_states`, `ret(call(...))` does NOT match the
+/// graph above because the Return's direct ctrl predecessor is a
+/// ControlState (the tail region's join), not the Call.
+#[test]
+fn ret_call_does_not_match_through_controlstate_by_default() {
+    let g = graph_ret_via_controlstate_after_call();
+    let pat: Pat = ret().preceded_by(call()).into();
+    let hits = Matcher::new(&g).find_all(&pat);
+    assert!(
+        hits.is_empty(),
+        "default matcher must not walk through ControlState; got {} hits",
+        hits.len()
+    );
+}
+
+/// With `ignore_control_states`, the matcher walks past the ControlState
+/// and finds the Call.
+#[test]
+fn ret_call_matches_through_controlstate_with_ignore_control_states() {
+    let g = graph_ret_via_controlstate_after_call();
+    let pat: Pat = ret().preceded_by(call()).into();
+    let hits = Matcher::new(&g).ignore_control_states().find_all(&pat);
+    assert_eq!(
+        hits.len(),
+        1,
+        "ignore_control_states must walk through ControlState to find Call"
+    );
+}
+
+/// Both flags can be combined without interference.  Pattern `add(mul, _)`
+/// against `Add(ZeroExt(Mul), c)` still works when `ignore_control_states`
+/// is also set.
+#[test]
+fn both_flags_together_do_not_interfere_with_value_walk_through() {
+    let g = graph_add_zext_mul();
+    let pat: Pat = add(mul(any(), any()), any()).into();
+    let hits = Matcher::new(&g)
+        .ignore_casts()
+        .ignore_control_states()
+        .find_all(&pat);
+    assert_eq!(hits.len(), 1, "value walk-through still works with both flags on");
+}

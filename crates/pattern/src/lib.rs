@@ -80,6 +80,32 @@
 //! Binary operations that are mathematically commutative (`add`, `mul`, `and`,
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
 //! operand orderings.  Call `.ordered()` on the returned builder to opt out.
+//!
+//! ## Walk-through flags ([`MatcherOptions`])
+//!
+//! The matcher's default semantics are **strict exact-walk** — every input
+//! position must match the pattern there directly.  Two opt-in flags relax
+//! this when register-merge / width-cast noise from the lifter / optimizer
+//! makes patterns brittle:
+//!
+//! * [`Matcher::ignore_casts`] — walk through value-passthrough cast nodes
+//!   (`Extend`, `Truncate`, `CastToInt`, `CastToFloat`, `CastToBool`,
+//!   `IntBitsToFloat`, `FloatBitsToInt`) when matching value inputs.
+//!   Lets `add(mul(_,_), _)` find `Add(Extend(Mul), arg)` without re-shaping
+//!   the source.
+//! * [`Matcher::ignore_control_states`] — walk through `ControlState`
+//!   (region-join) nodes when traversing control chains.  Lets
+//!   `ret(call(...))` cross region joins between the Return and the Call.
+//!
+//! Both default to off; both are sticky on the matcher instance.  Direct
+//! match is always tried first, so strict patterns (e.g. `truncate(x)`
+//! looking for a literal `Truncate`) keep working unchanged.
+//!
+//! ```rust,ignore
+//! let m = Matcher::new(&graph)
+//!     .ignore_casts()
+//!     .ignore_control_states();
+//! ```
 
 pub mod error;
 pub use error::{Error, ErrorKind, Result};
@@ -97,7 +123,7 @@ pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_w
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
-pub use matcher::{Bindings, Match, Matcher};
+pub use matcher::{Bindings, Match, Matcher, MatcherOptions};
 pub use pat::{IntoPat, MatchPredicateFn, Pat, PredicateFn};
 
 // ── Capture variables ────────────────────────────────────────────────────────

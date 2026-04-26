@@ -13,6 +13,7 @@ mod bindings;
 pub(crate) mod commutativity;
 mod match_result;
 pub(crate) mod walk;
+pub(crate) mod walk_through;
 
 pub use bindings::Bindings;
 pub use match_result::Match;
@@ -27,6 +28,30 @@ pub use match_result::Match;
 /// `FunctionArg` per index, so at most one entry exists per key.
 struct FunctionArgIndex(HashMap<u32, NodeId>);
 
+/// Optional behaviors that change how the matcher walks through "transparent"
+/// producer / consumer nodes during input or control-chain matching.
+///
+/// Both flags default to `false` (strict exact-walk semantics — the existing
+/// behavior).  Enable them via [`Matcher::ignore_casts`] /
+/// [`Matcher::ignore_control_states`] when you want the matcher to look
+/// through structural noise the lifter / optimizer leaves in the IR.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MatcherOptions {
+    /// Walk through value-passthrough cast nodes (`Extend`, `Truncate`,
+    /// `CastToInt`, `CastToFloat`, `CastToBool`, `IntBitsToFloat`,
+    /// `FloatBitsToInt`) when matching value inputs.  Direct match is
+    /// always tried first; the walk-through is the fallback.
+    ///
+    /// Use case: x86 / x64 register-merge chains and width casts cause
+    /// patterns like `add(mul(_,_), _)` to find `Add(Extend(Mul), arg)`
+    /// without re-shaping the source.  See BUG-19.
+    pub ignore_casts: bool,
+    /// Walk through `ControlState` (region-join) nodes when traversing
+    /// control chains.  Lets `ret(call(...))`, `if_node().true_branch(p)`
+    /// etc. cross region joins without intermediate awareness.
+    pub ignore_control_states: bool,
+}
+
 /// Executes pattern queries against a [`BuiltFunctionGraph`].
 ///
 /// Construction is O(1); the `FunctionArg` index is built lazily on first
@@ -34,17 +59,46 @@ struct FunctionArgIndex(HashMap<u32, NodeId>);
 /// of the graph each call and tries the pattern against every node.
 pub struct Matcher<'g> {
     pub(super) fn_graph: &'g BuiltFunctionGraph,
+    pub(crate) options: MatcherOptions,
     function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher`.
+    /// Creates a new `Matcher` with default options (both walk-through
+    /// flags off — strict exact-walk semantics).
     #[must_use]
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
         Self {
             fn_graph,
+            options: MatcherOptions::default(),
             function_arg_index: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Enables transparent walk-through of value-passthrough cast nodes
+    /// (Extend / Truncate / CastTo* / IntBitsToFloat / FloatBitsToInt) when
+    /// matching value inputs.  See [`MatcherOptions::ignore_casts`].
+    #[must_use]
+    pub fn ignore_casts(mut self) -> Self {
+        self.options.ignore_casts = true;
+        self
+    }
+
+    /// Enables transparent walk-through of `ControlState` (region-join)
+    /// nodes when traversing control chains.  See
+    /// [`MatcherOptions::ignore_control_states`].
+    #[must_use]
+    pub fn ignore_control_states(mut self) -> Self {
+        self.options.ignore_control_states = true;
+        self
+    }
+
+    /// Returns the active matcher options.  Used by walk-through helpers
+    /// that gate their behavior on the flags, and by tests that pin the
+    /// builder-API contracts.
+    #[must_use]
+    pub fn options_for_test(&self) -> MatcherOptions {
+        self.options
     }
 
     /// Returns the lazily-built `FunctionArg` index.
@@ -211,5 +265,40 @@ impl<'g> Matcher<'g> {
     /// override).
     pub(crate) fn match_node_id(&self, node: NodeId, pat: &Pat, bindings: &mut Bindings) -> bool {
         pat.as_dyn().try_match_node(&self.ctx(), node, bindings)
+    }
+
+    /// Top-level "match with options" entry point used by `NodePat::try_once`
+    /// when walking sub-pattern inputs.  Tries direct match first; on
+    /// failure, falls back to the walk-through helpers gated by
+    /// [`MatcherOptions`].  The walk-through helpers call this method
+    /// recursively so chained casts (e.g. `Extend(Truncate(Mul))`) also
+    /// resolve.
+    pub(crate) fn match_output_with_walk_through(
+        &self,
+        out: NodeOutputId,
+        pat: &Pat,
+        b: &mut Bindings,
+    ) -> bool {
+        let mark = b.mark();
+        if self.match_output(out, pat, b) {
+            return true;
+        }
+        b.restore(mark);
+
+        if self.options.ignore_casts
+            && walk_through::try_walk_through_cast(&self.ctx(), out, pat, b)
+        {
+            return true;
+        }
+        b.restore(mark);
+
+        if self.options.ignore_control_states
+            && walk_through::try_walk_through_control_state(&self.ctx(), out, pat, b)
+        {
+            return true;
+        }
+        b.restore(mark);
+
+        false
     }
 }

@@ -540,6 +540,11 @@ fn try_once(
     true
 }
 
+/// Match `pat` against the value produced by `out`.  Delegates to the
+/// matcher's `match_output_with_walk_through` so the walk-through
+/// behavior (gated on `MatcherOptions`) is consistent across every
+/// recursion path — direct match first, then cast walk-through, then
+/// ControlState walk-through.
 fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pat::Pat, b: &mut Bindings) -> bool {
-    ctx.matcher.match_output(out, pat, b)
+    ctx.matcher.match_output_with_walk_through(out, pat, b)
 }

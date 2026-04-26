@@ -12,20 +12,17 @@ use common::*;
 use pattern::{Matcher, Pat, add, mul, call, any};
 
 // mul_then_add: BUG-19 (pattern `add(mul(_,_), _)` walks exact graph
-// topology) is fixed for mips32le/be and x86 by:
-//   * `Truncate_<W>(Mul(SignExt(a), SignExt(b))) → Mul_<W>(a, b)` — narrow
-//     a doubled-precision mul through the truncate (mips32 hot path).
-//   * `Truncate_<W>(Or(any, And(high_mask, _)))` → drop the high-mask
-//     half — collapses x86's register-merge Or after `mov $eax, ...`.
-//   * `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the mask
-//     is redundant when the truncate already zeroes the upper bits.
-//   * `Truncate(Extend(x))` round-trip — already there from earlier.
-// x64 still has `Add(Extend_zext(Mul@W), arg)` which keeps the Mul one
-// hop deeper than the matcher walks; pushing Extend through Mul is not
-// a valid identity in general so this remains as a matcher limitation.
-per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_match, ignore = {
-    X64: "BUG-19 residue: x64 IMUL chain has Extend(Mul) — pattern matcher's exact-walk doesn't see Mul through the surrounding Extend",
-});
+// topology) is fixed across all archs by:
+//   * On the analyzer side: Truncate-narrowing rules in ConstantFold
+//     (mips32 hot path), drop-high-half-in-Or-Trunc, drop-low-mask-
+//     under-Trunc, Truncate(Extend(x)) round-trip.
+//   * On the matcher side: `Matcher::ignore_casts()` lets the matcher
+//     transparently walk through Extend / Truncate / CastTo* nodes that
+//     the optimizer couldn't fully eliminate (x64 `Add(Extend(Mul), arg)`
+//     register-merge chain — pushing Extend through Mul is not a valid
+//     identity in general, but skipping it during pattern matching is
+//     fine when the user opts in).
+per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_match);
 // chained_xor_mask: BUG-20 (ConstantFold collapses the literal constants)
 // is mitigated by relaxing the pattern to match structural shape only.
 per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_finds_match);
@@ -40,8 +37,12 @@ per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
 fn mac_pattern_finds_match(g: &ir::BuiltFunctionGraph) {
-    // Pattern: add(mul(?, ?), ?)
-    let m = Matcher::new(g);
+    // Pattern: add(mul(?, ?), ?).  We use `.ignore_casts()` because some
+    // arches (notably x64) lower this as `Add(Extend_zext(Mul@W), arg)`
+    // — the Mul is one hop deeper than the matcher's exact-walk would
+    // see otherwise.  Other arches don't have intervening casts, so the
+    // flag is a no-op there (direct match still tried first).
+    let m = Matcher::new(g).ignore_casts();
     let pat: Pat = add(mul(any(), any()), any()).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
