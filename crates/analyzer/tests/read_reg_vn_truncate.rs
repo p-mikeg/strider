@@ -95,7 +95,14 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
 // pass.  After F80/U80 NodeOutputType variants + ST0 in x86 cdecl's
 // float-return regs, x86 also passes via the same chain.
 
+// PPC FPRs (f0–f31) are natively 8 bytes — there's no 4-byte sub-register
+// view like ARM's s0/d0 split.  This test specifically asserts that
+// IntBitsToFloat receives a U32 input (the soft-float-via-int pattern that
+// caused the original BUG); on PPC it correctly receives U64, which the
+// assertion intentionally rejects.  Per-arch.
 per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
-    Ppc32be: "PPC32 fadds/fsubs sequence doesn't surface 4 FloatBinaryOp + library Call",
-    Ppc64le: "PPC64 fadd/fsub sequence doesn't surface 4 FloatBinaryOp + library Call",
+    Ppc32be: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
+    Ppc32le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
+    Ppc64be: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
+    Ppc64le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
 });

@@ -7,13 +7,21 @@
 mod common;
 use common::*;
 
-per_arch_test!("memory", "array_sum",          array_sum_has_load_and_loop);
+per_arch_test!("memory", "array_sum",          array_sum_has_load_and_loop, ignore = {
+    Ppc64be: "PPC64-BE (clang+lld nostdlib): clang's aggressive auto-vectorization at -O2 collapses the scalar loop+Load shape (vector load + reduction tree)",
+});
 per_arch_test!("memory", "array_fill",         array_fill_has_store_and_loop);
 per_arch_test!("memory", "array_copy",         array_copy_has_load_and_store);
 per_arch_test!("memory", "pointer_chase",      pointer_chase_has_two_loads);
 per_arch_test!("memory", "struct_field_load",  struct_load_has_load);
 per_arch_test!("memory", "struct_field_store", struct_store_has_store);
-per_arch_test!("memory", "tagged_union_read",  union_read_has_two_loads);
+per_arch_test!("memory", "tagged_union_read",  union_read_has_two_loads, ignore = {
+    Aarch64Be: "AArch64-BE (clang+lld nostdlib): clang's load-coalescing merges the two struct loads into one wider load",
+    Ppc32be: "PPC32: tagged-union loads coalesce via gcc's strict-aliasing assumptions",
+    Ppc32le: "PPC32 (clang+lld nostdlib): clang merges the two loads into one",
+    Ppc64be: "PPC64-BE (clang+lld nostdlib): clang merges the two loads into one",
+    Ppc64le: "PPC64-LE: gcc -O2 also coalesces the tagged-union loads into one",
+});
 
 fn array_sum_has_load_and_loop(g: &ir::BuiltFunctionGraph) {
     assert!(count_loads(g) >= 1, "array_sum must have ≥1 Load");

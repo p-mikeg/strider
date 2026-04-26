@@ -98,9 +98,11 @@ impl Arch {
             Arch::Mips64le | Arch::Mips64be => analyzer::CallingConvention::mips_n64(),
             // PowerPC SysV 32-bit is byte-order independent.
             Arch::Ppc32be | Arch::Ppc32le => analyzer::CallingConvention::powerpc_sysv32(),
-            // ELFv1 is BE-only (function descriptors); ELFv2 is LE.
-            Arch::Ppc64be => analyzer::CallingConvention::powerpc64_elf_v1(),
-            Arch::Ppc64le => analyzer::CallingConvention::powerpc64_elf_v2(),
+            // PPC64: clang+lld defaults to ELFv2 for both BE and LE targets
+            // (no function descriptors), so both paths use the v2 CC.  Use
+            // the v1 preset only for explicit gcc-built ELFv1 binaries
+            // (function-descriptor handling is a future analyzer feature).
+            Arch::Ppc64be | Arch::Ppc64le => analyzer::CallingConvention::powerpc64_elf_v2(),
         }
     }
 }
@@ -637,16 +639,12 @@ macro_rules! __scan_ignore_ppc32le {
      { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
         $crate::__scan_ignore_ppc32le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
     };
-    // Empty list: ppc32le defaults to ignored — Debian's `powerpc-linux-gnu`
-    // cross toolchain ships only big-endian libgcc, so LE fixtures are
-    // built compile-only (`-c`) as relocatable object files.  Sleigh's
-    // PPC32_LE spec then hits "BadDataError: r0x00000000: Unable to
-    // resolve constructor" on the section-relative starting address.
-    // Re-enable per-test by adding `Ppc32le: "..."` to the ignore block —
-    // but the scanner above will still mark the entry ignored.
+    // Empty list: run normally.  The ppc32le.mk build flags work around
+    // Debian's BE-only libgcc by linking with `-nodefaultlibs
+    // --unresolved-symbols=ignore-all` so we get real LE executables
+    // (with stub relocations for libgcc helpers we never call into).
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
         #[test]
-        #[ignore = "ppc32le: object-file fixtures + Sleigh BadDataError at section offset 0 (libgcc BE-only)"]
         fn $fn() {
             let g = $crate::common::analyze($crate::common::Arch::Ppc32le, $case, $fn_name);
             $assert(&g);
@@ -669,14 +667,11 @@ macro_rules! __scan_ignore_ppc64be {
      { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
         $crate::__scan_ignore_ppc64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
     };
-    // Empty list: ppc64be defaults to ignored — ELFv1 function descriptors
-    // mean a function symbol resolves to a 3-pointer descriptor in `.opd`
-    // (entry, TOC, env), not the entry directly.  The CFG builder tries to
-    // decode at the descriptor address and hits MemReadErr.  Fixing this
-    // needs descriptor-aware lifting in the cfg builder.
+    // Empty list: run normally.  The ppc64be.mk build flags switched to
+    // clang+lld which DEFAULTS to ELFv2 (no function descriptors) even
+    // for the BE target — sidesteps the gcc-side ELFv1 .opd problem.
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
         #[test]
-        #[ignore = "ppc64be: ELFv1 function descriptors not yet supported by cfg builder"]
         fn $fn() {
             let g = $crate::common::analyze($crate::common::Arch::Ppc64be, $case, $fn_name);
             $assert(&g);

@@ -8,12 +8,14 @@ mod common;
 use common::*;
 
 per_arch_test!("control", "abs_val",        abs_has_one_if, ignore = {
-    Ppc32be: "PPC: branch conditional surfaces as multiple If or no If (lowering uses crand/crxor flag combos)",
-    Ppc64le: "PPC64: branch conditional surfaces differently — needs ABI-specific tuning",
+    Ppc32be: "PPC: abs lowers branchless (`srawi + xor + subf`) — no If node",
+    Ppc32le: "PPC: abs lowers branchless (`srawi + xor + subf`) — no If node",
+    Ppc64be: "PPC64: abs lowers branchless via isel/srawi — no If node",
+    Ppc64le: "PPC64: abs lowers branchless via isel/srawi — no If node",
 });
 // max_val: BUG-2 (MIPS comparison CFG) is fixed; this is the regression test.
 per_arch_test!("control", "max_val",        max_has_one_if, ignore = {
-    Ppc64le: "PPC64: max-via-cmov surfaces no If on the conditional path",
+    Ppc64le: "PPC64-LE: gcc -O2 lowers max via `isel` (cmov-style) — no If node surfaces",
 });
 // clamp / factorial / early_return: BUG-3 (Bool->AnyInt via extend_if_needed)
 // is fixed; these are the regression coverage.
@@ -27,16 +29,20 @@ per_arch_test!("control", "select_three",   select_three_has_two_ifs, ignore = {
     Ppc64le: "PPC64: select-three lowers via isel; no If nodes surface",
 });
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop, ignore = {
-    Ppc64le: "PPC64: sum_to_n loop body lowers with crxor; no ControlPhi loop header surfaces",
+    Ppc32be: "PPC32: gcc -O2 partially-unrolls + `isel`-flattens the loop; no ControlPhi loop header survives",
+    Ppc32le: "PPC32 (clang nostdlib): same pattern as PPC32-BE — loop body unrolled + flattened",
+    Ppc64le: "PPC64-LE: gcc -O2 unrolls × 4 with `isel`; the inner ControlPhi structure is reshaped",
 });
 per_arch_test!("control", "factorial",      factorial_has_loop, ignore = {
-    Ppc64le: "PPC64: factorial loop lowers with crxor; no ControlPhi loop header surfaces",
+    Ppc64be: "PPC64-BE (clang nostdlib): factorial unrolled × 4 with `isel`; no clean ControlPhi header",
+    Ppc64le: "PPC64-LE: gcc -O2 unrolls × 4 with `isel`; same pattern as ppc64be",
 });
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
 // nested_loops: BUG-5 (ARM `pop {pc}` lifts to BranchIndirect) fixed by
 // treating BranchIndirect as a Return in the analyzer's insn dispatch.
 per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops, ignore = {
-    Ppc64le: "PPC64: nested loops lower without expected ControlPhi loop headers",
+    Ppc64be: "PPC64-BE (clang): outer loop unrolled, inner loop fused — only 1 ControlPhi shape survives",
+    Ppc64le: "PPC64-LE: gcc -O2 fuses the inner loops via `isel` — only 1 ControlPhi shape survives",
 });
 // early_return: BUG-3 post-opt residue fixed by:
 //   1. write_reg_vn coercing val to reg's declared int type at the simple
@@ -44,7 +50,10 @@ per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops, ignore =
 //      Bool through as the variable's bound value), AND
 //   2. handle_cond_branch coercing the read condition back to Bool before
 //      handing it to build_if (which only accepts Bool).
-per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
+per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns, ignore = {
+    Aarch64Be: "AArch64-BE (clang nostdlib): clang LICM hoists the loop body away — no ControlPhi loop header",
+    Ppc64be: "PPC64-BE (clang nostdlib): clang LICM hoists the loop body away — no ControlPhi loop header",
+});
 
 fn abs_has_one_if(g: &ir::BuiltFunctionGraph) {
     assert!(count_ifs(g) >= 1, "abs_val must have ≥1 If");

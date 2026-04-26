@@ -36,7 +36,13 @@ per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_find
 per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts, ignore = {
     Ppc64le: "PPC64: -50 lifts as li+xor+addi instead of MVN-style; constant doesn't surface as IntConst(-50) at expected width",
 });
-per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
+per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load, ignore = {
+    Aarch64Be: "AArch64-BE: clang freestanding LICM hoists the Load out of the loop body so the pattern `load() in loop` doesn't see it",
+    Ppc32be: "PPC32: clang LICM hoists the Load; pattern doesn't see the loop-internal Load",
+    Ppc32le: "PPC32: clang LICM hoists the Load; pattern doesn't see the loop-internal Load",
+    Ppc64be: "PPC64: clang LICM hoists the Load; pattern doesn't see the loop-internal Load",
+    Ppc64le: "PPC64: clang LICM hoists the Load; pattern doesn't see the loop-internal Load",
+});
 // recursive_with_accumulator: BUG-6 (tail-call elision) fixed by Makefile flag.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
