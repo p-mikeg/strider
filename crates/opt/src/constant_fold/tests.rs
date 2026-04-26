@@ -614,6 +614,106 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
     Ok(())
 }
 
+/// `Truncate_<W>(Mul(SignExt_<W→W'>(a_<W>), SignExt_<W→W'>(b_<W>)))`
+/// → `Mul_<W>(a, b)` — narrowing through Mul preserves the lower W bits.
+/// MIPS32 lifts `mul a, b` (32×32→64 IntMul) followed by a 32-bit
+/// Truncate to recover the integer-register width; without this rule
+/// the pattern matcher's data-flow walk for `add(mul(_,_), _)` can't
+/// see the Mul through the surrounding Truncate.
+#[test]
+fn fold_narrow_mul_through_sign_extend() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let lhs = b.build_int_const(3u64, NodeOutputType::U32);
+        let rhs = b.build_int_const(7u64, NodeOutputType::U32);
+        // Use non-const expressions so the constant folder doesn't
+        // collapse before our rule runs.
+        let lhs_or = b.build_int_binary_operation(lhs, lhs, IntBinaryOp::Or, NodeOutputType::U32)?;
+        let rhs_or = b.build_int_binary_operation(rhs, rhs, IntBinaryOp::Or, NodeOutputType::U32)?;
+        let lhs_ext = b.extend_if_needed(lhs_or, NodeOutputType::U64, ExtendOp::SignExtend)?;
+        let rhs_ext = b.extend_if_needed(rhs_or, NodeOutputType::U64, ExtendOp::SignExtend)?;
+        let mul = b.build_int_binary_operation(lhs_ext, rhs_ext, IntBinaryOp::Mul, NodeOutputType::U64)?;
+        Ok(b.truncate_if_needed(mul, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at U32.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(21));
+    // Nothing wider than U32 should survive (no SignExtend/Mul@U64/Truncate).
+    for nid in fg.preorder() {
+        let kind = fg.graph.node_kind(nid);
+        assert!(
+            !matches!(kind, NodeKind::Extend(ExtendOp::SignExtend) | NodeKind::Truncate),
+            "narrowing rule must collapse the SignExt-Mul-Truncate chain; \
+             found {kind:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `Truncate_<W>(Or(any, And(high_mask, _)))` → `Truncate_<W>(any)` —
+/// the high-mask half contributes nothing to the lower W bits, so
+/// dropping it doesn't change the truncated value.  This is the x86
+/// `mov $eax, ...` register-merge cleanup.
+#[test]
+fn fold_drop_high_half_in_or_truncate() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // Build the merge shape: Or(low_part, And(high_mask, junk)).
+        let low_part = b.build_int_const(0xAAu64, NodeOutputType::U64);
+        let junk = b.build_int_const(0x12345678_DEADBEEFu64, NodeOutputType::U64);
+        // Make low_part non-const via Or so the rule fires through it.
+        let low_or = b.build_int_binary_operation(
+            low_part, low_part, IntBinaryOp::Or, NodeOutputType::U64)?;
+        // High mask = 0xFFFF_FFFF_0000_0000 (low 32 bits are zero).
+        let high_mask = b.build_int_const(0xFFFFFFFF_00000000u64, NodeOutputType::U64);
+        let high_part = b.build_int_binary_operation(
+            high_mask, junk, IntBinaryOp::And, NodeOutputType::U64)?;
+        let merged = b.build_int_binary_operation(
+            low_or, high_part, IntBinaryOp::Or, NodeOutputType::U64)?;
+        Ok(b.truncate_if_needed(merged, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    // After dropping the high half + folding 0xAA | 0xAA = 0xAA at U32:
+    // the result is IntConst(0xAA).  No Or remains.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xAA));
+    for nid in fg.preorder() {
+        let kind = fg.graph.node_kind(nid);
+        assert!(
+            !matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+            "high-mask half drop must collapse the Or; found {kind:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
+/// effect of zeroing all bits above W is redundant when the truncate
+/// is going to discard those bits anyway.
+#[test]
+fn fold_drop_low_mask_under_truncate() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // x is a non-const U64 expression.
+        let a = b.build_int_const(0x1234_5678_DEAD_BEEFu64, NodeOutputType::U64);
+        let x = b.build_int_binary_operation(a, a, IntBinaryOp::Or, NodeOutputType::U64)?;
+        let low_mask = b.build_int_const(0xFFFFFFFFu64, NodeOutputType::U64);
+        let masked = b.build_int_binary_operation(
+            low_mask, x, IntBinaryOp::And, NodeOutputType::U64)?;
+        Ok(b.truncate_if_needed(masked, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    // After dropping the redundant And + folding the OR-of-itself:
+    // result is IntConst(0xDEADBEEF) at U32.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xDEADBEEF));
+    Ok(())
+}
+
 /// The round-trip rule must NOT fire when `x`'s type is *narrower* than
 /// the truncate's output type — that's a real width-narrowing operation,
 /// not an identity.  `Truncate_U16(Extend_U64(x_U32))` is still a real

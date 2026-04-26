@@ -11,17 +11,20 @@ mod common;
 use common::*;
 use pattern::{Matcher, Pat, add, mul, call, any};
 
+// mul_then_add: BUG-19 (pattern `add(mul(_,_), _)` walks exact graph
+// topology) is fixed for mips32le/be and x86 by:
+//   * `Truncate_<W>(Mul(SignExt(a), SignExt(b))) → Mul_<W>(a, b)` — narrow
+//     a doubled-precision mul through the truncate (mips32 hot path).
+//   * `Truncate_<W>(Or(any, And(high_mask, _)))` → drop the high-mask
+//     half — collapses x86's register-merge Or after `mov $eax, ...`.
+//   * `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the mask
+//     is redundant when the truncate already zeroes the upper bits.
+//   * `Truncate(Extend(x))` round-trip — already there from earlier.
+// x64 still has `Add(Extend_zext(Mul@W), arg)` which keeps the Mul one
+// hop deeper than the matcher walks; pushing Extend through Mul is not
+// a valid identity in general so this remains as a matcher limitation.
 per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_match, ignore = {
-    // The pattern `add(mul(_,_), _)` requires direct data-flow without
-    // intervening Truncate/Extend/Cast.  On x86/x64 IMUL writes to RAX:RDX
-    // and the result threads through extension nodes; on MIPS the IntMul
-    // is at U64 width while the surrounding Add is U32, with a Truncate
-    // between.  Both are pattern-matcher limitations rather than analyzer
-    // bugs (BUG-19 covers them generically).
-    X86:      "BUG-19: x86 IMUL result chain has intervening width-cast nodes",
-    X64:      "BUG-19: x86 IMUL result chain has intervening width-cast nodes",
-    Mips32le: "BUG-19: MIPS IntMul is U64 but surrounding Add is U32, Truncate breaks chain",
-    Mips32be: "BUG-19: MIPS IntMul is U64 but surrounding Add is U32, Truncate breaks chain",
+    X64: "BUG-19 residue: x64 IMUL chain has Extend(Mul) — pattern matcher's exact-walk doesn't see Mul through the surrounding Extend",
 });
 // chained_xor_mask: BUG-20 (ConstantFold collapses the literal constants)
 // is mitigated by relaxing the pattern to match structural shape only.

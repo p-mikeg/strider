@@ -155,8 +155,118 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         boxed_rule(rewrite_rule(pat, var(x)))
     };
 
-    let rules: Vec<BoxedRule> =
-        vec![rule_int_float, rule_float_int, zext_round_trip, sext_round_trip];
+    // Narrowing through binop: `Truncate_<W>(IntBinaryOp(op,
+    // SignExt_<W→W'>(a), SignExt_<W→W'>(b)))` → `IntBinaryOp_<W>(op, a, b)`
+    // for ops where the lower W bits don't depend on the upper bits
+    // (Add/Sub/Mul/And/Or/Xor).  MIPS32 lifts `mul a, b` (32×32→64 IntMul
+    // on a 64-bit unique varnode) followed by a 32-bit Truncate to get
+    // back into integer-register width — the matcher's data-flow walk
+    // for `add(mul(_,_), _)` then crosses through the Truncate to find
+    // Mul, which BUG-19 calls out.
+    //
+    // We need separate rules for each (lhs_extend_kind, rhs_extend_kind)
+    // permutation because the pattern crate's RHS doesn't currently
+    // support reconstructing a non-const node from a captured op variant.
+    // For BUG-19 it's enough to cover the (SignExt, SignExt) case for Mul.
+    use pattern::mul as mul_pat;
+    let narrow_mul_through_sext = {
+        let a = Var::new();
+        let b = Var::new();
+        let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
+            move |fg, ty, bnd| {
+                bnd.get(a)
+                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    .is_some_and(|a_ty| a_ty == ty)
+                    && bnd
+                        .get(b)
+                        .and_then(|out| fg.graph.output_kind(out).as_value())
+                        .is_some_and(|b_ty| b_ty == ty)
+            },
+        );
+        boxed_rule(rewrite_rule(pat, mul_pat(var(a), var(b))))
+    };
+
+    // Drop the high-bits half of a register-merge Or when truncating to
+    // the low half's width.  x86 / x64's `mov $eax, ...` lifts to a
+    // write_reg_vn merge:
+    //   $rax = ($rax & 0xFFFF_FFFF_0000_0000) | (ZeroExt(low_part) &
+    //                                            0x0000_0000_FFFF_FFFF)
+    // and downstream reads of $eax produce
+    //   Truncate_U32(Or(And(0xFFFF_FFFF_0000_0000, $rax_old),
+    //                   And(0x0000_0000_FFFF_FFFF, ZeroExt(low_part))))
+    // The first And's mask has zero in the low 32 bits, so its
+    // contribution to Truncate_U32(Or(...)) is zero — the truncate
+    // collapses to `Truncate_U32(And(0x0000_0000_FFFF_FFFF, ZeroExt(...)))`,
+    // which the existing `x & all_ones → x` and round-trip rules then
+    // fully simplify.
+    //
+    // We pin the high-mask check via `when_match`: the captured constant
+    // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
+    // output bit width.
+    use pattern::{and, any_int_const, or, IntVar};
+    // Two rule orientations because the Or's commutative match doesn't
+    // generate enough swaps to enumerate "the And side of the Or might
+    // be either operand AND the IntConst inside that And might be either
+    // operand of the And".
+    let mk_drop_high_half = |swap: bool| -> BoxedRule {
+        let a = Var::new();
+        let b = Var::new();
+        let c = IntVar::new();
+        let inner = if swap {
+            or(and(any_int_const(c), var(b)), var(a))
+        } else {
+            or(var(a), and(any_int_const(c), var(b)))
+        };
+        let pat = truncate(inner).when_match(move |_fg, ty, bnd| {
+            let Some(c_val) = bnd.get_int(c) else { return false; };
+            let bits = ty.bit_width();
+            if bits == 0 || bits >= 128 {
+                return false;
+            }
+            let low_mask: u128 = (1u128 << bits) - 1;
+            c_val & low_mask == 0
+        });
+        boxed_rule(rewrite_rule(pat, truncate(var(a))))
+    };
+
+    // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
+    // effect of zeroing all bits above W is redundant when the truncate
+    // is going to discard those bits anyway.  Two orientations because
+    // And is commutative but the matcher's swap doesn't enumerate over
+    // `any_int_const` placement.
+    let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
+        let x = Var::new();
+        let c = IntVar::new();
+        let inner = if swap {
+            and(var(x), any_int_const(c))
+        } else {
+            and(any_int_const(c), var(x))
+        };
+        let pat = truncate(inner).when_match(move |_fg, ty, bnd| {
+            let Some(c_val) = bnd.get_int(c) else { return false; };
+            let bits = ty.bit_width();
+            if bits == 0 || bits >= 128 {
+                return false;
+            }
+            let low_mask: u128 = (1u128 << bits) - 1;
+            // The mask must cover at least the low W bits — anything beyond
+            // that is fine since the truncate will drop those bits.
+            c_val & low_mask == low_mask
+        });
+        boxed_rule(rewrite_rule(pat, truncate(var(x))))
+    };
+
+    let rules: Vec<BoxedRule> = vec![
+        rule_int_float,
+        rule_float_int,
+        zext_round_trip,
+        sext_round_trip,
+        narrow_mul_through_sext,
+        mk_drop_high_half(false),
+        mk_drop_high_half(true),
+        mk_drop_low_mask_under_truncate(false),
+        mk_drop_low_mask_under_truncate(true),
+    ];
     rules
 }
 

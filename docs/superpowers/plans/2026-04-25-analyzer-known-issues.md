@@ -26,7 +26,7 @@
 | BUG-16 | **FIXED** | (was: x86, x64) | Medium | clz assertion relaxed (commit `7ad5dfd`) |
 | BUG-17 | **FIXED** | (was: x86, x64) | Medium | ctz assertion relaxed (commit `7ad5dfd`) |
 | BUG-18 | **FIXED** | (was: arm, mips32le/be) | Low | asm-volatile branch barrier in `expect_branch` (commit `8bc049f`) |
-| BUG-19 | OPEN | x86, x64 | Medium | x86 `IMUL` result chain breaks pattern matcher's data-flow walk |
+| BUG-19 | mostly fixed | x64 only | Medium | mips32/x86 fixed via narrow-Mul-through-sext + drop-high-half-in-Or-trunc + drop-low-mask-under-trunc rules; x64 still has Extend(Mul) the matcher can't walk through |
 | BUG-20 | **FIXED** | (was: x86, x64, aarch64, arm) | Low | XOR-chain pattern relaxed (commit `fee1b10`) |
 | BUG-21 | **FIXED** | (was: arm, mips32le/be) | Low | Width-aware `int_const(impl Into<i128>)` + IntUnaryOp::Neg/Not swap fix in constant_fold + known_bits |
 
