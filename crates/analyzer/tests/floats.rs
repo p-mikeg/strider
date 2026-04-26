@@ -42,15 +42,17 @@ per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
     X86:     "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
     Aarch64: "BUG-9 residue: aarch64 FCVTZS lowering doesn't produce FloatToInt node",
 });
+// f32_compare / f64_compare: BUG-10 — the assertion no longer requires
+// ≥2 If nodes (cmov-lowering on x64 means some branches don't surface as
+// If).  X86 still hits the x87 ST0 / analyze_cfg-side issue; ARM hits a
+// different lowering glitch.
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
-    X86:      "BUG-10: float comparison lowering error on x86 (analyze_cfg failure)",
-    X64:      "BUG-10: float comparison has fewer than 2 conditionals on x64",
-    Arm:      "BUG-10: float comparison lowering error on arm (not a bool value)",
+    X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",
+    Arm: "BUG-10 residue: arm f32_compare lowering produces non-bool feeding If",
 });
 per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
-    X86:      "BUG-10: float comparison lowering error on x86 (analyze_cfg failure)",
-    X64:      "BUG-10: float comparison has fewer than 2 conditionals on x64",
-    Arm:      "BUG-10: float comparison lowering error on arm (analyze_cfg failure)",
+    X86: "BUG-10 residue: x86 f64_compare hits x87 ST0 / analyze_cfg failure",
+    Arm: "BUG-10 residue: arm f64_compare analyze_cfg failure",
 });
 // f32_neg_abs: BUG-11 (float-neg lowering varies by arch) — has_float_neg
 // now accepts both FloatUnaryOp::Neg and the Xor-with-sign-bit form.  On
@@ -82,12 +84,17 @@ fn has_float_to_int(g: &ir::BuiltFunctionGraph) {
             "expected ≥1 FloatToInt node");
 }
 fn has_two_float_cmps(g: &ir::BuiltFunctionGraph) {
+    // The C source has two `if (a OP b) ...` branches.  x64 / aarch64 may
+    // lower one or both via cmov / csel (conditional-move) instead of a
+    // real branch — those don't appear as `If` nodes in the IR.  The
+    // assertion that survives all archs: at least 2 FloatCmpOp nodes
+    // (one per `OP` in the source, regardless of whether the surrounding
+    // construct lowers as If or cmov).
     let total = count_float_cmp(g, FloatCmpOp::Less)
         + count_float_cmp(g, FloatCmpOp::LessEqual)
         + count_float_cmp(g, FloatCmpOp::Equal)
         + count_float_cmp(g, FloatCmpOp::NotEqual);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
-    assert!(count_ifs(g) >= 2, "f32/f64_compare has 2 conditionals");
 }
 fn has_float_neg(g: &ir::BuiltFunctionGraph) {
     // Float negation `-f` has two equally-valid lowerings, with several

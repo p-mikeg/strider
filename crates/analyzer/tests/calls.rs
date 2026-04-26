@@ -13,14 +13,12 @@ per_arch_test!("calls", "mutual_b",           mutual_has_one_call);
 per_arch_test!("calls", "nested_3deep",       nested_has_one_call);
 per_arch_test!("calls", "repeat_call_pair",   repeat_has_two_calls);
 per_arch_test!("calls", "pass_through",       pass_through_has_one_call);
-per_arch_test!("calls", "apply_indirect",     indirect_has_call, ignore = {
-    X86:      "BUG-7: indirect call follows fn-pointer into unmapped memory (CFG MemReadErr)",
-    X64:      "BUG-7: indirect call follows fn-pointer into unmapped memory (CFG MemReadErr)",
-    Aarch64:  "BUG-5: BranchIndirect p-code opcode unimplemented",
-    Arm:      "BUG-5: BranchIndirect p-code opcode unimplemented",
-    Mips32le: "BUG-5: BranchIndirect p-code opcode unimplemented",
-    Mips32be: "BUG-5: BranchIndirect p-code opcode unimplemented",
-});
+// apply_indirect: BUG-7 (CFG MemReadErr on indirect call target) and BUG-5
+// (BranchIndirect unimplemented) — both no longer hit for this fixture.
+// GCC at -O2 with -fno-optimize-sibling-calls inlines the function-pointer
+// target as a direct call before the analyzer sees indirection, making
+// the indirect branch path unreachable on every arch.
+per_arch_test!("calls", "apply_indirect",     indirect_has_call);
 
 fn fib_has_two_calls(g: &ir::BuiltFunctionGraph) {
     // fib(n-1) + fib(n-2) — two recursive calls.
