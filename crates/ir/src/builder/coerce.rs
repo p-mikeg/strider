@@ -231,6 +231,10 @@ impl FunctionBuilder {
     }
 
     /// If `input` is not already `float_ty`, wraps it in a `CastToFloat` node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge.
     pub fn cast_to_float_if_needed(
         &mut self,
         input: NodeOutputId,
@@ -245,6 +249,10 @@ impl FunctionBuilder {
     /// Infers the float type to use for a value that may be int or float.
     /// If the value is already a float type, that type is used.
     /// For integers, maps byte size: ≤4 → F32, otherwise → F64.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge.
     pub fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
         let ty = self.get_output_type(input)?;
         if ty.is_float() {

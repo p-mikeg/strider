@@ -27,16 +27,17 @@ per_arch_test!("builtins", "expect_branch", expect_compiles_normally, ignore = {
 });
 
 /// `__builtin_popcount` lowering varies massively across (compiler, arch):
+///
 ///   - x86_64 with -mpopcnt: native `popcnt` instruction (rsleigh may emit
 ///     a CallOther, a Popcount node, or a few moves — none guaranteed).
 ///   - aarch64: scalar pipeline through NEON `cnt` + sum reduction (uses
 ///     vector-load/store pairs).
 ///   - mips32: no native popcount; full SWAR loop unrolled or function call.
 ///   - arm: similar to mips32.
+///
 /// The test asserts only that the function lowers to a non-trivial graph —
-/// the analyzer doesn't crash, and the result depends on the input — i.e.
-/// the result Return node has data flowing in from x (FunctionArg), not a
-/// constant.  Pinning "popcount" to a specific node kind is too brittle.
+/// the analyzer doesn't crash, and the result depends on the input.
+/// Pinning "popcount" to a specific node kind is too brittle.
 fn popcount_lowers(g: &ir::BuiltFunctionGraph) {
     let nodes = g.preorder().count();
     assert!(nodes > 5,
