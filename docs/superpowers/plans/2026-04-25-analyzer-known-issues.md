@@ -28,8 +28,7 @@
 | BUG-18 | **FIXED** | (was: arm, mips32le/be) | Low | asm-volatile branch barrier in `expect_branch` (commit `8bc049f`) |
 | BUG-19 | OPEN | x86, x64 | Medium | x86 `IMUL` result chain breaks pattern matcher's data-flow walk |
 | BUG-20 | **FIXED** | (was: x86, x64, aarch64, arm) | Low | XOR-chain pattern relaxed (commit `fee1b10`) |
-| BUG-21 | **FIXED** | (was: arm, mips32le/be) | Low | Width-aware `int_const(impl Into<i128>)` (commit `20417f3`) |
-| BUG-21 | arm, mips32le, mips32be     | Low    | 32-bit `IntConst(-50)` sign-extension differs from `u32`/`u64` expectations |
+| BUG-21 | **FIXED** | (was: arm, mips32le/be) | Low | Width-aware `int_const(impl Into<i128>)` + IntUnaryOp::Neg/Not swap fix in constant_fold + known_bits |
 
 ## Per-bug detail
 

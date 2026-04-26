@@ -249,9 +249,14 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 int_unary_any(op, any_int_const(v)),
                 int_const_with!([op, v, ty] => {
+                    // The IR's enum names follow Sleigh's counter-intuitive
+                    // convention (see arithmetic.rs comments and analyzer
+                    // insn dispatch):
+                    //   `IntUnaryOp::Neg` is BITWISE NOT (Sleigh `IntNeg`).
+                    //   `IntUnaryOp::Not` is TWO'S COMPLEMENT (Sleigh `Int2Comp`).
                     let raw = match op {
-                        IntUnaryOp::Neg => v.wrapping_neg(),
-                        IntUnaryOp::Not => !v,
+                        IntUnaryOp::Neg => !v,
+                        IntUnaryOp::Not => v.wrapping_neg(),
                     };
                     ty.get_unsigned_int_u128(raw).ok_or_else(pattern::Error::skip)?
                 }),

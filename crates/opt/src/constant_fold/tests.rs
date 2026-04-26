@@ -1398,3 +1398,106 @@ fn eval_int_cmp_borrow_unmasked_u8() {
         "Borrow must mask both sides to U8 before comparing"
     );
 }
+
+// ── BUG-21 ARM residue: IntUnaryOp::Neg/Not constant-fold semantics ──
+//
+// The IR's enum variants follow Sleigh's counter-intuitive opcode
+// naming, which the analyzer dispatch table propagates:
+//   * `IntUnaryOp::Neg` is BITWISE NOT (Sleigh `IntNeg`).
+//   * `IntUnaryOp::Not` is TWO'S COMPLEMENT (Sleigh `Int2Comp`).
+//
+// Pre-fix the constant-fold rules had the two operations swapped:
+// `Neg => v.wrapping_neg()` and `Not => !v`.  The MVN-based ARM
+// `if_returns_const` lowering produced `IntUnaryOp::Neg(IntConst(49))`
+// (= ~49 = -50), but the fold computed `wrapping_neg(49) = -49`,
+// off by one — the `has_constant(g, -50)` pattern check failed.
+
+use ir::IntUnaryOp;
+
+/// `IntUnaryOp::Neg` of `IntConst(49)` at U32 must fold to `~49`
+/// (= 0xFFFF_FFCE = 4_294_967_246) — bitwise NOT, NOT two's complement.
+#[test]
+fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(49u64, NodeOutputType::U32);
+        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0xFFFF_FFCE),
+        "IntUnaryOp::Neg(49) must fold to bitwise NOT (=~49=0xFFFFFFCE), \
+         not two's complement (=0xFFFFFFCF=-49)"
+    );
+    Ok(())
+}
+
+/// `IntUnaryOp::Not` of `IntConst(50)` at U32 must fold to `-50`
+/// (= 0xFFFF_FFCE = 4_294_967_246) — two's complement, NOT bitwise NOT.
+#[test]
+fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(50u64, NodeOutputType::U32);
+        Ok(b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0xFFFF_FFCE),
+        "IntUnaryOp::Not(50) must fold to two's complement (=-50=0xFFFFFFCE), \
+         not bitwise NOT (=~50=0xFFFFFFCD)"
+    );
+    Ok(())
+}
+
+/// Round-trip at U8: `Neg(Neg(0xAA)) = 0xAA` (bitwise NOT is its own
+/// inverse).  Pre-fix the fold computed `wrapping_neg(wrapping_neg(0xAA))
+/// = 0xAA` too — coincidentally correct only because two's complement
+/// is also its own inverse.  This test pins the *value* at the
+/// intermediate step.
+#[test]
+fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(0xAAu64, NodeOutputType::U8);
+        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U8)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0x55),
+        "Neg(0xAA) at U8 must be ~0xAA = 0x55 (bitwise NOT)"
+    );
+    Ok(())
+}
+
+/// Two's complement of 0 is 0 — even with the swap, this case is
+/// invariant.  Included as a sanity check for the U64 path.
+#[test]
+fn fold_int_unary_not_zero_is_zero() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(0u64, NodeOutputType::U64);
+        Ok(b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U64)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    Ok(())
+}
+
+/// Bitwise NOT of 0 is all-ones at the type width.  Pre-fix's swap
+/// would have computed `wrapping_neg(0) = 0` here — distinguishing
+/// the two operations cleanly.
+#[test]
+fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(0u64, NodeOutputType::U32);
+        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)?)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0xFFFF_FFFF),
+        "Neg(0) at U32 must be ~0 = 0xFFFFFFFF (bitwise NOT); pre-fix \
+         swapped fold would have produced wrapping_neg(0) = 0"
+    );
+    Ok(())
+}

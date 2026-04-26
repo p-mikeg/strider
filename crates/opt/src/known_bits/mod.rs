@@ -158,10 +158,15 @@ fn node_known_bits(
             }
         }
 
-        NodeKind::IntUnaryOp(IntUnaryOp::Not) => {
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg) => {
+            // The IR's `IntUnaryOp::Neg` is *bitwise NOT* (Sleigh `IntNeg`),
+            // not arithmetic negation — the name is counter-intuitive but
+            // matches the Sleigh opcode mapping.  Bitwise NOT swaps known
+            // ones and zeros.  (Two's complement negate — `IntUnaryOp::Not` —
+            // has no closed-form known-bits propagation: it depends on the
+            // borrow chain across the input's bits.)
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
-            // NOT swaps known ones and zeros.
             Kb {
                 ones: kb.zeros & type_mask,
                 zeros: kb.ones & type_mask,

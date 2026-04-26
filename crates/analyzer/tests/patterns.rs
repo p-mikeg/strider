@@ -26,12 +26,12 @@ per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_matc
 // chained_xor_mask: BUG-20 (ConstantFold collapses the literal constants)
 // is mitigated by relaxing the pattern to match structural shape only.
 per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_finds_match);
-// if_returns_const: BUG-21 (width-aware int_const matching) is fixed for mips32le/mips32be.
-// Arm still hits a pre-existing Bool→AnyInt validation error in the pipeline
-// (separate issue, not BUG-21).
-per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts, ignore = {
-    Arm: "pre-existing Bool→AnyInt validation error in ARM if_returns_const pipeline (not BUG-21)",
-});
+// if_returns_const: BUG-21 (width-aware int_const matching) fixed across
+// all archs.  ARM's MVN-based -50 lifting (`mvnle r0, #49` → `~49`) was
+// previously off-by-one because constant_fold and known_bits had the
+// IR's `IntUnaryOp::Neg` (bitwise NOT) and `IntUnaryOp::Not` (two's
+// complement) swapped in their evaluators.
+per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts);
 per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
 // recursive_with_accumulator: BUG-6 (tail-call elision) fixed by Makefile flag.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);

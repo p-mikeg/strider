@@ -193,17 +193,22 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     Ok(())
 }
 
-/// NOT swaps known-ones and known-zeros. `(x | 0xFF) NOT NOT` for U8 returns
-/// 0xFF — testing that NOT propagation is correct round-trip.
+/// Bitwise NOT swaps known-ones and known-zeros.  `(x | 0xFF) NOT NOT`
+/// for U8 returns 0xFF — testing that bitwise-NOT propagation is correct
+/// round-trip.
+///
+/// IR convention: `IntUnaryOp::Neg` IS bitwise NOT (Sleigh `IntNeg`); the
+/// name is counter-intuitive but matches the analyzer's Sleigh-opcode
+/// dispatch.  `IntUnaryOp::Not` is two's complement.
 #[test]
-fn known_bits_not_round_trip() -> Result<()> {
+fn known_bits_neg_round_trip() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xAAu64, NodeOutputType::U8);
         let ff = b.build_int_const(0xFFu64, NodeOutputType::U8);
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
-        // !!(x|0xFF) — NOT NOT = identity at the bit level.
-        let n1 = b.build_int_unary_operation(or_, ir::IntUnaryOp::Not, NodeOutputType::U8)?;
-        Ok(b.build_int_unary_operation(n1, ir::IntUnaryOp::Not, NodeOutputType::U8)?)
+        // ~~(x|0xFF) — bitwise-NOT round-trip = identity.
+        let n1 = b.build_int_unary_operation(or_, ir::IntUnaryOp::Neg, NodeOutputType::U8)?;
+        Ok(b.build_int_unary_operation(n1, ir::IntUnaryOp::Neg, NodeOutputType::U8)?)
     })?;
     let mut changed = true;
     while changed {
