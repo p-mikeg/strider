@@ -288,7 +288,7 @@ pub(super) fn apply_bitcast_extend_rules(
 /// Builds the rule vec for [`apply_identity_rules`].
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, IntVar, Pat, Var, add, and, any_int_const, boxed_rule, int_const, mul, or,
+        BoxedRule, IntVar, Pat, Var, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -304,6 +304,19 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
             b.get_int(c) == ty.get_unsigned_int_u128(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
+    };
+    // x ^ all_ones → ~x  (commutative).  Clang lowers `~a` to `xor a, -1`
+    // on PPC at -O0 (gcc emits the `nor` instruction → IntUnaryOp::Neg);
+    // canonicalize so downstream consumers see one shape regardless of
+    // compiler choice.
+    let xor_all_ones_rule = {
+        let x = Var::new();
+        let c = IntVar::new();
+        let pat: Pat = xor(var(x), any_int_const(c)).into();
+        let pat = pat.when_match(move |_fg, ty, b| {
+            b.get_int(c) == ty.get_unsigned_int_u128(u128::MAX)
+        });
+        boxed_rule(rewrite_rule(pat, neg(var(x))))
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -336,6 +349,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         // x >>> 0 → x  (arithmetic / signed shift right)
         boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), var(x))),
         all_ones_rule,
+        xor_all_ones_rule,
     ];
     rules
 }

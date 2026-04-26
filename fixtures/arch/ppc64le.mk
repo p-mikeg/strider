@@ -1,14 +1,15 @@
 # 64-bit PowerPC little-endian (ELFv2).  Debian's `powerpc64le-linux-gnu-gcc`
-# ships a full ELFv2 sysroot and links normally.  gcc's -O2 doesn't
-# auto-vectorize as aggressively as clang, which matches the structural
-# assertions our existing tests were tuned for.
+# ships a full ELFv2 sysroot and links normally.
 CC     := $(shell command -v powerpc64le-linux-gnu-gcc 2>/dev/null || echo false)
-# `-mcpu=power8`: Sleigh's PPC_64_LE spec doesn't decode some Power9 ISA
-# 3.0 instructions (e.g. `xxspltib`), and gcc's default `-mcpu=power9`
-# emits them.  Targeting Power8 keeps the codegen within Sleigh's
-# decode capability.
-# `-ffp-contract=off`: PPC's `-O2` fuses fadd+fmul into `fmadd`/`fmsub`
-# (FMA), collapsing 4 conceptual float ops into 3 IR nodes — disable
-# so each op stays a separate `FloatBinaryOp`.
-CFLAGS := -mcpu=power8 -O2 -g -fno-stack-protector -fno-pic -no-pie \
+# `-O0`: keeps source-level structural shape (real loops, real branches,
+# real Loads, real conversions) — see ppc32be.mk for the full rationale.
+# `-mcpu=power8`: needed for the ELFv2/POWER8 ABI; Sleigh's
+# `PPC_64_ISA_ALTIVEC_LE` spec decodes Power7+ scalar ops (popcntw,
+# cntlzd, …) and Altivec vector ops.
+# `-mno-vsx`: gcc with VSX lowers `(int)f` to `xscvdpsxws`, which the
+# Sleigh VSX spec emits as a `xscvdpsxwsOp` user p-code op (lifts to
+# `CallOther` in our IR — opaque, no `FloatToInt` node).  Disabling VSX
+# routes `(int)f` through plain `fctiwz` which lifts as `float2int`.
+# `-ffp-contract=off`: prevents fadd+fmul fusion into fmadd/fmsub.
+CFLAGS := -mcpu=power8 -mno-vsx -O0 -g -fno-stack-protector -fno-pic -no-pie \
           -ffp-contract=off

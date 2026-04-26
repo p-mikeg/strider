@@ -3,8 +3,11 @@
  */
 #define NOINLINE __attribute__((noinline))
 
-int NOINLINE abs_val(int x)             { return x < 0 ? -x : x; }
-int NOINLINE max_val(int a, int b)      { return a > b ? a : b; }
+/* `?:` lowers to a branchless idiom on PPC even at -O0 (`srawi+xor+subf`)
+ * — drop to explicit if-else so every arch emits a real branch and the
+ * `abs_has_one_if` assertion is meaningful cross-platform. */
+int NOINLINE abs_val(int x)             { if (x < 0) return -x; return x; }
+int NOINLINE max_val(int a, int b)      { if (a > b) return a; return b; }
 int NOINLINE clamp(int x, int lo, int hi) {
     if (x < lo) return lo;
     if (x > hi) return hi;

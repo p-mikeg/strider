@@ -17,37 +17,19 @@ use ir::node::NodeKind;
 //      registers natively, plus listing ST0 in x86 cdecl's float-return
 //      regs so the upgrade-to-container path connects the float chain.
 per_arch_test!("floats", "f32_arith",    has_four_float_binops);
-per_arch_test!("floats", "f64_arith",    has_four_float_binops, ignore = {
-    Ppc64le: "PPC64 fadd/fsub/fmul/fdiv lift via VSX vector ops; not all 4 FloatBinaryOp",
-});
-per_arch_test!("floats", "f32_to_f64",   has_float_to_float, ignore = {
-    Ppc32be: "PPC32: f32→f64 implicit in fmr/lfs; no FloatToFloat node",
-    Ppc32le: "PPC32: f32→f64 implicit in fmr/lfs; no FloatToFloat node",
-    Ppc64be: "PPC64: f32→f64 implicit in lfs; no FloatToFloat node",
-    Ppc64le: "PPC64: f32→f64 implicit in lfs; no FloatToFloat node",
-});
-per_arch_test!("floats", "f64_to_f32",   has_float_to_float, ignore = {
-    Ppc64le: "PPC64: f64→f32 lifts via xsrsp/frsp without FloatToFloat node",
-});
-per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
-    Ppc32be: "PPC32: int→float lifts as bit moves + fcfid sequence, not IntToFloat",
-    Ppc32le: "PPC32: int→float lifts as bit moves + fcfid sequence, not IntToFloat",
-    Ppc64le: "PPC64: int→float lifts as bit moves + fcfid sequence, not IntToFloat",
-});
-per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
-    Ppc64le: "PPC64: float→int lifts via fctidz + bit moves, not FloatToInt",
-});
+per_arch_test!("floats", "f64_arith",    has_four_float_binops);
+per_arch_test!("floats", "f32_to_f64",   has_float_to_float);
+per_arch_test!("floats", "f64_to_f32",   has_float_to_float);
+per_arch_test!("floats", "int_to_float", has_int_to_float);
+per_arch_test!("floats", "float_to_int", has_float_to_int);
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
     X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",
-    Ppc64le: "PPC64: f32_compare lifts as fcmpu+isel; no FloatCmpOp node count of 2",
 });
 per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
     X86: "BUG-10 residue: x86 f64_compare hits x87 ST0 / analyze_cfg failure",
-    Ppc64le: "PPC64: f64_compare lifts as fcmpu+isel; no FloatCmpOp node count of 2",
 });
 per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
     X86: "BUG-11 residue: x86 float-neg via vector-load doesn't surface Xor or Neg in IR",
-    Ppc64le: "PPC64: float-neg lowers via xvnegsp; no Neg or Xor in scalar IR",
 });
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {

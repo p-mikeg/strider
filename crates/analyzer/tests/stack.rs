@@ -17,7 +17,6 @@ per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call
 // rooted in the same Bool→AnyInt edge after RedundantPhis).
 per_arch_test!("stack", "large_local_array",     large_local_has_stack_store_and_loop, ignore = {
     ArmThumb: "ARM Thumb: large_local_array memcpy lowers without expected StackStore + ControlPhi loop",
-    Ppc64be: "PPC64-BE (clang nostdlib): large_local_array uses unresolved memcpy stub; loop shape lost",
 });
 per_arch_test!("stack", "inplace_swap",          swap_has_two_loads_and_two_stores);
 // recursive_stack_growth: BUG-6 (tail-call elision) fixed by Makefile flag.

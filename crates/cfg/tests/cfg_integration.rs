@@ -228,12 +228,7 @@ arch_tests!(
     mod aarch64be,
     arch  = "aarch64be",
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
-    pspec = rsleigh::pspec::PSPEC_AARCH64,
-    // The fixtures are clang+lld+nostdlib (no aarch64_be gcc toolchain).
-    // Clang -O2 closed-form-rewrites `sum_to_n` (n*(n+1)/2) so no
-    // back-edge cycle survives.  Same overall analyzer paths as aarch64,
-    // just structural-shape skew.  Per-test tuning is its own follow-up.
-    ignore = "AArch64-BE: clang+lld+nostdlib produces different region shapes than the gcc-tuned cfg assertions"
+    pspec = rsleigh::pspec::PSPEC_AARCH64
 );
 
 arch_tests!(
@@ -254,39 +249,26 @@ arch_tests!(
     mod ppc32be,
     arch  = "ppc32be",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
-    pspec = rsleigh::pspec::PSPEC_PPC_32,
-    ignore = "PPC region-count assertions need per-arch tuning (linkage area + epilog adds extra regions)"
+    pspec = rsleigh::pspec::PSPEC_PPC_32
 );
 
 arch_tests!(
     mod ppc32le,
     arch  = "ppc32le",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
-    pspec = rsleigh::pspec::PSPEC_PPC_32,
-    // ppc32le fixtures are compile-only object files (`.o` renamed `.elf`)
-    // because Debian's powerpc-linux-gnu libgcc is BE-only — linking LE
-    // freestanding builds fails.  Section-relative addressing surfaces
-    // BadDataError at offset 0 from Sleigh's PPC32_LE constructor.
-    ignore = "ppc32le fixtures are object files (libgcc BE-only); Sleigh PPC32_LE BadDataError at section offset 0"
+    pspec = rsleigh::pspec::PSPEC_PPC_32
 );
 
 arch_tests!(
     mod ppc64be,
     arch  = "ppc64be",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_BE,
-    pspec = rsleigh::pspec::PSPEC_PPC_64,
-    // ELFv1 function descriptors: a function symbol resolves to a 3-pointer
-    // descriptor in `.opd` (entry, TOC, env), not the entry directly.  The
-    // CFG builder tries to decode at the descriptor address and hits
-    // MemReadErr.  Fixing this needs descriptor-aware lifting in the cfg
-    // builder (read 8 bytes at descriptor.addr, jump to entry).
-    ignore = "PPC64 ELFv1 function descriptors need descriptor-aware cfg-builder support"
+    pspec = rsleigh::pspec::PSPEC_PPC_64
 );
 
 arch_tests!(
     mod ppc64le,
     arch  = "ppc64le",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_LE,
-    pspec = rsleigh::pspec::PSPEC_PPC_64,
-    ignore = "PPC region-count assertions need per-arch tuning (TOC restore + epilog adds extra regions)"
+    pspec = rsleigh::pspec::PSPEC_PPC_64
 );

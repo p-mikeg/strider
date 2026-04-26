@@ -148,11 +148,14 @@ impl SleighArch {
 
     /// Returns the big-endian PowerPC 64-bit architecture descriptor.
     /// Used by `powerpc64-linux-gnu-gcc` (ELFv1 ABI with function
-    /// descriptors).
+    /// descriptors).  Uses the Power ISA + Altivec sla spec so Power7+
+    /// scalar ops (`popcntw`, `popcntd`, `cntlzd`, `cnttzd`, …) and
+    /// Altivec vector ops decode — the stripped `PPC_64_BE` spec
+    /// rejects them with `Unable to resolve constructor`.
     #[must_use]
     pub fn ppc64be() -> SleighArch {
         SleighArch {
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_BE,
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_BE,
             pspec: rsleigh::pspec::PSPEC_PPC_64,
             endianness: Endianness::Big,
         }
@@ -160,11 +163,12 @@ impl SleighArch {
 
     /// Returns the little-endian PowerPC 64-bit architecture descriptor.
     /// Used by `powerpc64le-linux-gnu-gcc` (ELFv2 ABI — no function
-    /// descriptors, dot-prefixed symbols).
+    /// descriptors, dot-prefixed symbols).  Uses the Power ISA + Altivec
+    /// sla spec — see `ppc64be` for the rationale.
     #[must_use]
     pub fn ppc64le() -> SleighArch {
         SleighArch {
-            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_LE,
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_LE,
             pspec: rsleigh::pspec::PSPEC_PPC_64,
             endianness: Endianness::Little,
         }

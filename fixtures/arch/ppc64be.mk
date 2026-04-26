@@ -3,8 +3,8 @@
 # doesn't yet dereference); `-mabi=elfv2` forces ELFv2 — symbols point
 # directly into `.text`, no descriptor indirection.
 CC     := clang
-# `-ffp-contract=off`: prevent FMA fusion (clang fuses fadd+fmul → fmadd
-# at -O2, collapsing 4 float ops into 3 IR nodes).
-CFLAGS := --target=powerpc64-linux-gnu -mabi=elfv2 -fuse-ld=lld -O2 -g \
+# `-O1` (instead of `-O2`): see ppc32be.mk — preserves structural shape.
+# `-ffp-contract=off`: prevent FMA fusion (fadd+fmul → fmadd).
+CFLAGS := --target=powerpc64-linux-gnu -mabi=elfv2 -fuse-ld=lld -O0 -g \
           -fno-stack-protector -fno-pic -static -nostdlib -ffreestanding \
           -ffp-contract=off
