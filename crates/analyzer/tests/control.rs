@@ -13,9 +13,10 @@ per_arch_test!("control", "max_val",        max_has_one_if);
 // clamp / factorial / early_return: BUG-3 (Bool->AnyInt via extend_if_needed)
 // is fixed; these are the regression coverage.
 per_arch_test!("control", "clamp",          clamp_has_two_ifs);
-per_arch_test!("control", "select_three",   select_three_has_two_ifs, ignore = {
-    Arm: "BUG-4: ARM conditional select emits non-Bool to a node expecting Bool",
-});
+// select_three: BUG-4 (ARM conditional select non-Bool) is fixed by the
+// BUG-3 coerce-on-write at write_reg_vn — same Bool-flag-via-1-byte-reg
+// chain.
+per_arch_test!("control", "select_three",   select_three_has_two_ifs);
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);

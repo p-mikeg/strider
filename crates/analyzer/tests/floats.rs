@@ -42,24 +42,20 @@ per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
 });
 // f32_compare / f64_compare: BUG-10 — the assertion no longer requires
 // ≥2 If nodes (cmov-lowering on x64 means some branches don't surface as
-// If).  X86 still hits the x87 ST0 / analyze_cfg-side issue; ARM hits a
-// different lowering glitch.
+// If).  ARM residue cleared by the BUG-3 coerce-on-write fix; x86 still
+// hits the x87 ST0 / analyze_cfg-side issue (same as the rest of x86 floats).
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
     X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",
-    Arm: "BUG-10 residue: arm f32_compare lowering produces non-bool feeding If",
 });
 per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
     X86: "BUG-10 residue: x86 f64_compare hits x87 ST0 / analyze_cfg failure",
-    Arm: "BUG-10 residue: arm f64_compare analyze_cfg failure",
 });
 // f32_neg_abs: BUG-11 (float-neg lowering varies by arch) — has_float_neg
-// now accepts both FloatUnaryOp::Neg and the Xor-with-sign-bit form.  On
-// aarch64/x86 the lowering produces neither (rsleigh's Sleigh spec for
-// these archs emits the float-neg as a vector-load + bit-blend pattern
-// that doesn't surface either node kind); those archs stay ignored.
+// now accepts both FloatUnaryOp::Neg and the Xor-with-sign-bit form.
+// AArch64 residue cleared by the BUG-9 / ret-val-regs upgrade chain.  x86
+// still emits a vector-load + bit-blend that doesn't surface either node.
 per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
-    Aarch64: "BUG-11 residue: aarch64 fneg lifts to neither FloatUnaryOp::Neg nor Xor",
-    X86:     "BUG-11 residue: x86 float-neg via vector-load doesn't surface Xor or Neg in IR",
+    X86: "BUG-11 residue: x86 float-neg via vector-load doesn't surface Xor or Neg in IR",
 });
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {

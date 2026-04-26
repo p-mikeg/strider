@@ -11,14 +11,14 @@
 | BUG-1  | OPEN | mips32le, mips32be | High | MIPS `MULT`/HI-LO not lowered to `IntBinaryOp::Mul` |
 | BUG-2  | **FIXED** | (was: mips32le, mips32be) | High | CFG fall-through idiom + narrow-CONST sign-extension (commits `fa6a5c1`, `7ad5dfd`) |
 | BUG-3  | **FIXED** | (was: arm post-opt residue) | High | Comparison emits Bool to AnyInt; coerce-on-write at write_reg_vn + coerce-on-read at handle_cond_branch |
-| BUG-4  | OPEN | arm | Medium | ARM conditional select emits non-Bool where Bool expected |
+| BUG-4  | **FIXED** | (was: arm) | Medium | ARM conditional select non-Bool — fixed transitively by BUG-3 |
 | BUG-5  | OPEN (intentional skip per user) | a few residual | High | `BranchIndirect` opcode unimplemented |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |
 | BUG-7  | **FIXED** | (was: x86, x64) | Medium | Indirect call CFG MemReadErr no longer reproducible |
 | BUG-8  | mostly fixed | x86 (x87 only) | High | Float arith chain — fixed on aarch64 by write_reg_vn mask positioning, fixed on mips32 by ret-val-regs upgrade-to-container |
 | BUG-9  | mostly fixed | x86 (x87 only) | High | Float conversion — analyzer fix in `bd8994b`, write_reg_vn mask positioning, ret-val-regs upgrade |
-| BUG-10 | mostly fixed | x86, arm residues | High | cmov-tolerant compare assertion (commit `c822688`) |
-| BUG-11 | mostly fixed | aarch64, x86 residues | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`) |
+| BUG-10 | mostly fixed | x86 (x87 only) | High | cmov-tolerant compare assertion (commit `c822688`); ARM cleared by BUG-3 |
+| BUG-11 | mostly fixed | x86 (vector-load only) | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`); aarch64 cleared by BUG-9 chain |
 | BUG-12 | **FIXED** | (was: all 6 archs) | Medium | asm-volatile barrier in `external_take_ptr` (commit `fee1b10`) |
 | BUG-13 | **FIXED** | (was: aarch64) | Medium | U128 IntConst storage (merge `04026bc`) |
 | BUG-14 | **FIXED** | (was: arm) | Medium | Optimizer pipeline panic on ARM `large_local_array` — fixed transitively by BUG-3 coerce-on-write at write_reg_vn |
