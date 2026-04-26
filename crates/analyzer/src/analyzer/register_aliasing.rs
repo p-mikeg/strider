@@ -132,12 +132,19 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
             // Coerce `val` to reg's declared integer type before storing.
-            // Without this, a Bool-producing op (e.g. IntCmpOp::Sless writing
-            // to an ARM N flag) leaves the variable bound to a Bool node,
-            // and downstream phi reductions can promote that Bool into
-            // AnyInt-expecting consumers (e.g. another IntCmpOp's input) —
-            // the BUG-3 post-opt validator failure.  `convert_to_int_if_needed`
-            // is a no-op when `val` is already the right integer type.
+            // Register variables always hold integer-typed values; the read
+            // side (handle_float_*, builder's auto-cast in build_float_*)
+            // re-introduces a Bool/Float view via CastToFloat /
+            // convert_to_bool_if_needed when downstream needs it.  The
+            // ConstantFold bitcast-extend rules
+            // (`IntBitsToFloat(FloatBitsToInt(x)) → x`) clean up the
+            // round-trip when both sides match.
+            //
+            // BUG-3: without this coerce, a Bool-producing op (e.g.
+            // IntCmpOp::Sless writing to an ARM N flag) leaves the variable
+            // bound to a Bool node, and downstream phi reductions can later
+            // promote that Bool into AnyInt-expecting consumers — the
+            // post-opt validator failure.
             let reg_ty: ir::ValueType = reg.size.try_into()?;
             let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
             return Ok(self.builder.write_variable(reg, coerced)?);

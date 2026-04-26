@@ -21,7 +21,7 @@
 | BUG-11 | mostly fixed | aarch64, x86 residues | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`) |
 | BUG-12 | **FIXED** | (was: all 6 archs) | Medium | asm-volatile barrier in `external_take_ptr` (commit `fee1b10`) |
 | BUG-13 | **FIXED** | (was: aarch64) | Medium | U128 IntConst storage (merge `04026bc`) |
-| BUG-14 | OPEN | arm | Medium | Optimizer pipeline panics on ARM `large_local_array` |
+| BUG-14 | **FIXED** | (was: arm) | Medium | Optimizer pipeline panic on ARM `large_local_array` — fixed transitively by BUG-3 coerce-on-write at write_reg_vn |
 | BUG-15 | **FIXED** | (was: all 6 archs) | Medium | popcount/clz/ctz assertions structural now (commit `7ad5dfd`) |
 | BUG-16 | **FIXED** | (was: x86, x64) | Medium | clz assertion relaxed (commit `7ad5dfd`) |
 | BUG-17 | **FIXED** | (was: x86, x64) | Medium | ctz assertion relaxed (commit `7ad5dfd`) |
