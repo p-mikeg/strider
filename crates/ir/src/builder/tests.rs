@@ -818,3 +818,73 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     );
     Ok(())
 }
+
+// ── BUG-1 regression: UNIQUE-space overlapping varnode filtering ─────────
+//
+// Sleigh occasionally writes a wider UNIQUE varnode and reads a narrow slice
+// of it (e.g. on MIPS, MULT writes a 64-bit unique then a Copy reads a 4-byte
+// slice into $v0).  Without filtering, the 4-byte and 8-byte unique varnodes
+// were treated as independent SSA variables — the narrow read returned an
+// undefined `InitialVar` and the multiplication never materialised in IR.
+//
+// The fix in `FunctionBuilder::new_raw` extends the same overlap-filter that
+// REGISTER space uses to UNIQUE space: when both an outer and an inner
+// varnode are touched, the outer wins, and the analyzer's register-aliasing
+// logic rebuilds the inner via shift/truncate when needed.
+
+fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
+    rsleigh::Vn {
+        addr: rsleigh::VnAddr { space: rsleigh::VnSpace::UNIQUE, off },
+        size,
+    }
+}
+
+/// When two UNIQUE-space varnodes overlap (a narrow one fully contained in
+/// a wider one), only the wider one must be tracked as an SSA variable.
+/// This is the BUG-1 root-cause check: without this filter, MIPS MULT's
+/// 64-bit result and the 32-bit Copy slice are kept as two independent
+/// variables and the multiplication is dropped.
+#[test]
+fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
+    let outer = unique_vn(0x100, 8);
+    let inner = unique_vn(0x100, 4); // same offset, narrower
+    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+    assert!(
+        tracked.contains(&outer),
+        "wider UNIQUE varnode must remain tracked; got {tracked:?}"
+    );
+    assert!(
+        !tracked.contains(&inner),
+        "narrower UNIQUE varnode contained in `outer` must be filtered; got {tracked:?}"
+    );
+    Ok(())
+}
+
+/// Mid-slice (non-zero offset within the container) UNIQUE sub-varnodes
+/// must also be filtered.  Mirrors REGISTER-space sub-register handling
+/// (e.g. `ah` at offset 1 inside `ax`).
+#[test]
+fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
+    let outer = unique_vn(0x200, 8);
+    let inner = unique_vn(0x204, 4); // upper 4 bytes of outer
+    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+    assert!(tracked.contains(&outer));
+    assert!(!tracked.contains(&inner));
+    Ok(())
+}
+
+/// Non-overlapping UNIQUE varnodes (different offsets, no containment)
+/// must both remain tracked.  Sanity check that the filter does not over-
+/// reach.
+#[test]
+fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
+    let a = unique_vn(0x300, 4);
+    let b_vn = unique_vn(0x400, 4); // different offset, disjoint
+    let b = FunctionBuilder::new_raw(vec![a, b_vn], &[], &[], &[], None, 0)?;
+    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+    assert!(tracked.contains(&a));
+    assert!(tracked.contains(&b_vn));
+    Ok(())
+}
