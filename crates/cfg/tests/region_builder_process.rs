@@ -5,8 +5,8 @@
 
 mod common;
 use common::{
-    addr, je_rel8_ret_ret_bytes, jmp_rel8_ret_bytes, make_builder, make_builder_with_bytes,
-    make_region, make_region_builder, make_sleigh_with_bytes, ret_bytes,
+    addr, je_rel8_ret_ret_bytes, jmp_rax_bytes, jmp_rel8_ret_bytes, make_builder,
+    make_builder_with_bytes, make_region, make_region_builder, make_sleigh_with_bytes, ret_bytes,
 };
 
 use cfg::test_api::{self, ProcessInsnRes, RegionInstruction};
@@ -68,6 +68,30 @@ fn return_ends_region() {
 
     let res = rb.process_new_insn(&ret_insn, addr(base, pos), &lift).unwrap();
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+}
+
+/// BUG-5 regression: `BranchIndirect` (e.g. ARM `bx lr` return, x86 `jmp rax`)
+/// must terminate the region.  Pre-fix, BranchIndirect fell into the catch-
+/// all "didn't finish processing" branch and the CFG builder kept walking
+/// past the function boundary, absorbing adjacent code.
+#[test]
+fn branch_indirect_ends_region() {
+    let base = 0x1000u64;
+    let bytes = jmp_rax_bytes();
+    let lift = lift_at(bytes.clone(), base, base);
+    let (pos, indirect_insn) = find_pcode(&lift, rsleigh::Opcode::BranchIndirect);
+    let mut b = make_builder_with_bytes(bytes, base);
+    let mut rb = make_region_builder(&mut b, addr(base, 0));
+
+    let res = rb
+        .process_new_insn(&indirect_insn, addr(base, pos), &lift)
+        .unwrap();
+    assert_eq!(
+        res,
+        ProcessInsnRes::FinishedProcessing,
+        "BranchIndirect must terminate the region — without this the CFG \
+         builder walks past the function boundary"
+    );
 }
 
 #[test]

@@ -81,7 +81,18 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             Opcode::Copy => self.handle_copy(insn)?,
             Opcode::Load => self.handle_load(insn)?,
             Opcode::Store => self.handle_store(insn)?,
-            Opcode::Return => self.handle_return(insn)?,
+            // `Return` and `BranchIndirect` share a handler:
+            //   * Return: explicit p-code return op.
+            //   * BranchIndirect: target is a runtime register/memory value.
+            //     ARM's `bx lr` lifts here (target = link register), which
+            //     is semantically a return.  Jump tables / computed gotos
+            //     also lift here; the CFG builder already terminates the
+            //     region on BranchIndirect, so the analyzer has no
+            //     successor edges to wire up — emit a Return so the IR is
+            //     well-formed.  This may misclassify a true non-tail
+            //     computed-goto as a return, but the Sleigh-level info
+            //     doesn't cleanly distinguish jump-table from return.
+            Opcode::Return | Opcode::BranchIndirect => self.handle_return(insn)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
             Opcode::Subpiece => self.handle_subpiece(insn)?,

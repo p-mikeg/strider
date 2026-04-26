@@ -20,9 +20,9 @@ per_arch_test!("control", "select_three",   select_three_has_two_ifs);
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
-per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops, ignore = {
-    Arm: "BUG-5: BranchIndirect p-code opcode unimplemented (ARM jump table)",
-});
+// nested_loops: BUG-5 (ARM `pop {pc}` lifts to BranchIndirect) fixed by
+// treating BranchIndirect as a Return in the analyzer's insn dispatch.
+per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops);
 // early_return: BUG-3 post-opt residue fixed by:
 //   1. write_reg_vn coercing val to reg's declared int type at the simple
 //      `container == reg` write path (so 1-byte flag registers don't smuggle

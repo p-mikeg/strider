@@ -288,6 +288,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 self.finish_current_region(false)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
+            rsleigh::Opcode::BranchIndirect => {
+                // ARM's `bx lr` lifts to BranchIndirect (target = register
+                // value) — semantically a return.  Jump tables also lift to
+                // BranchIndirect; we conservatively terminate the region in
+                // both cases.  The analyzer's `BranchIndirect` insn handler
+                // is responsible for emitting a Return-or-equivalent in the
+                // IR.  Without this terminator the CFG builder walks past
+                // the function boundary and absorbs adjacent code.
+                self.finish_current_region(false)?;
+                Ok(ProcessInsnRes::FinishedProcessing)
+            }
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),
         }
     }

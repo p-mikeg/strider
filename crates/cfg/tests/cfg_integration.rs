@@ -204,6 +204,8 @@ arch_tests!(
     mod arm,
     arch  = "arm",
     sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
-    pspec = rsleigh::pspec::PSPEC_ARMCORTEX,
-    ignore = "ARM BranchIndirect not yet handled as region terminator"
+    // PSPEC_ARM_V45 (32-bit ARM mode) matches the `-marm` build flag.
+    // PSPEC_ARMCORTEX is Thumb-only (Cortex-M) and would mis-decode the
+    // 4-byte ARM instructions as 2-byte Thumb halfwords.
+    pspec = rsleigh::pspec::PSPEC_ARM_V45
 );

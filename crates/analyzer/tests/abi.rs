@@ -13,9 +13,9 @@ per_arch_test!("abi", "eight_int_args",  eight_args_has_seven_adds);
 per_arch_test!("abi", "mixed_args",      mixed_has_loads_and_adds);
 per_arch_test!("abi", "point_sum",       point_sum_has_add);
 per_arch_test!("abi", "make_pair",       make_pair_has_return);
-per_arch_test!("abi", "tail_caller",     tail_caller_has_call, ignore = {
-    Arm: "BUG-5: ARM tail-call generates BranchIndirect (unimplemented)",
-});
+// tail_caller: BUG-5 (ARM BranchIndirect from tail call) fixed by treating
+// BranchIndirect as a Return in the analyzer's insn dispatch.
+per_arch_test!("abi", "tail_caller",     tail_caller_has_call);
 
 fn eight_args_has_seven_adds(g: &ir::BuiltFunctionGraph) {
     // a + b + c + d + e + f + g + h = 7 add nodes (left-fold).

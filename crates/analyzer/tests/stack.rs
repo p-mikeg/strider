@@ -8,9 +8,9 @@ use common::*;
 per_arch_test!("stack", "volatile_three_writes", volatile_preserves_three_stores);
 // escape_via_ptr: BUG-12 (call elided) is fixed by an asm-volatile barrier
 // in external_take_ptr's body — see fixtures/cases/stack.c.
-per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call, ignore = {
-    Arm: "BUG-5: ARM escape_via_ptr lifts to BranchIndirect (intentional skip)",
-});
+// escape_via_ptr: BUG-5 (ARM BranchIndirect) fixed by treating BranchIndirect
+// as a region terminator in CFG and a Return in the analyzer's insn dispatch.
+per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call);
 // large_local_array: BUG-13 (AArch64 U128 array-init constant) is fixed by
 // the IntConst u128 widening.  BUG-14 (ARM optimizer panic) is fixed
 // transitively by BUG-3's coerce-on-write at write_reg_vn (the panic was

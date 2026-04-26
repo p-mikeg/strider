@@ -152,3 +152,11 @@ pub fn jmp_rel8_ret_bytes(rel: i8) -> Vec<u8> {
 pub fn je_rel8_ret_ret_bytes(rel: i8) -> Vec<u8> {
     vec![0x74, rel as u8, 0xc3, 0xc3]
 }
+
+/// `jmp rax` (indirect jump through a register) encoded for x86-64.  Sleigh
+/// lifts this as `Opcode::BranchIndirect` — the same opcode ARM emits for
+/// `bx lr` returns and computed-goto / jump-table dispatches.
+#[must_use]
+pub fn jmp_rax_bytes() -> Vec<u8> {
+    vec![0xff, 0xe0]
+}
