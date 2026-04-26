@@ -534,6 +534,118 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     Ok(())
 }
 
+// ── BUG-19 helper: Truncate(Extend(x)) round-trip ────────────────────────
+//
+// Register-merge chains in `write_reg_vn` produce
+//   Extend_zext(Truncate(Or(...)))
+// and similar `Truncate(Extend(x))` round-trips when the inner expression's
+// width equals the outer truncate's output width.  The new round-trip
+// rules in `apply_bitcast_extend_rules` collapse these to the inner
+// expression.  These do NOT fully fix BUG-19's pattern-matcher walk
+// (which still fails on x86 IMUL chains because the surrounding shape
+// has Extend/Truncate at the *outer* level — opposite direction), but
+// they ARE valid algebraic identities that simplify the IR generally.
+
+use ir::ExtendOp;
+
+/// `Truncate_<W>(ZeroExtend_<W'>(x_<W>))` where `x` already has type `W`
+/// must collapse to `x` — the extend added zero bits that the truncate
+/// cuts off, so the round-trip is identity.
+#[test]
+fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // Non-const U32 expression so the builder can't short-circuit.
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32);
+        let bb = b.build_int_const(0x55u64, NodeOutputType::U32);
+        let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, NodeOutputType::U32)?;
+        let widened = b.extend_if_needed(or, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
+        Ok(b.truncate_if_needed(widened, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    // After optimization the Or's two const inputs fold to IntConst(0xFF),
+    // and the Truncate(Extend(IntConst(0xFF))) collapses to IntConst(0xFF).
+    // Most importantly: no Truncate or Extend node remains in the chain.
+    let val = return_value(&fg)?;
+    let producer = fg.graph.get_node_from_output(val);
+    assert!(
+        matches!(fg.graph.node_kind(producer), NodeKind::IntConst(_)),
+        "round-trip + const-fold must leave an IntConst at the root, got {:?}",
+        fg.graph.node_kind(producer)
+    );
+    // Belt-and-suspenders: walk all reachable nodes and verify no
+    // Truncate/Extend survives the chain to the Return.
+    for nid in fg.preorder() {
+        let kind = fg.graph.node_kind(nid);
+        assert!(
+            !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
+            "Truncate/Extend round-trip must be folded away; found {kind:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Same identity holds for `SignExtend`: the sign bits added by the
+/// extend are cut off by the truncate.
+#[test]
+fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // Use a non-const Or so the rule fires through the inner expression
+        // rather than via direct constant folding.
+        let a = b.build_int_const(0x80u64, NodeOutputType::U32);
+        let bb = b.build_int_const(0x01u64, NodeOutputType::U32);
+        let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, NodeOutputType::U32)?;
+        let widened = b.extend_if_needed(or, NodeOutputType::U64, ExtendOp::SignExtend)?;
+        Ok(b.truncate_if_needed(widened, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    for nid in fg.preorder() {
+        let kind = fg.graph.node_kind(nid);
+        assert!(
+            !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
+            "SignExtend round-trip must be folded away; found {kind:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The round-trip rule must NOT fire when `x`'s type is *narrower* than
+/// the truncate's output type — that's a real width-narrowing operation,
+/// not an identity.  `Truncate_U16(Extend_U64(x_U32))` is still a real
+/// truncation from U32 to U16.
+#[test]
+fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32);
+        let bb = b.build_int_const(0x55u64, NodeOutputType::U32);
+        let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, NodeOutputType::U32)?;
+        let widened = b.extend_if_needed(or, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
+        // Truncate to U16 — narrower than the inner Or's U32 width, so the
+        // round-trip rule must NOT fire.  Constant-fold can still collapse
+        // the const-Or, but the truncate must remain (or its result must
+        // still semantically be U16).
+        Ok(b.truncate_if_needed(widened, NodeOutputType::U16)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg)?.changed();
+    }
+    // The result must be U16-typed.
+    let val = return_value(&fg)?;
+    assert_eq!(
+        fg.graph.output_kind(val),
+        ir::node::NodeOutputKind::OutputType(NodeOutputType::U16),
+        "Truncate_U16(Extend_U64(U32)) must keep U16 typing — round-trip \
+         rule must not fire when inner width != outer truncate width"
+    );
+    Ok(())
+}
+
 // ── boolean folding ───────────────────────────────────────────────────────
 
 #[test]

@@ -104,7 +104,8 @@ pub(super) fn apply_reassoc_and_mask_rules(
 /// Builds the rule vec for [`apply_bitcast_extend_rules`].
 fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, Var, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule, var,
+        BoxedRule, Var, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
+        sign_extend, truncate, var, zero_extend,
     };
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
@@ -121,7 +122,41 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         var(x),
     ));
 
-    let rules: Vec<BoxedRule> = vec![rule_int_float, rule_float_int];
+    // Truncate(ZeroExtend(x)) → x — when `x`'s type equals the truncate's
+    // output type, the round-trip is identity (the extend added zero bits
+    // that the truncate cuts away).  Without this rule, register-merge
+    // chains in write_reg_vn (which always extend then truncate to land
+    // in container width) leave the round-trip in the IR and the pattern
+    // matcher's data-flow walk crosses through Extend/Truncate to find
+    // Mul/Add — BUG-19.
+    //
+    // The width-equality check uses `when_match` on the Bindings: the
+    // captured `x`'s output type must equal the rule root's `ty`.
+    let zext_round_trip = {
+        let x = Var::new();
+        let pat = truncate(zero_extend(var(x))).when_match(move |fg, ty, b| {
+            b.get(x)
+                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .is_some_and(|x_ty| x_ty == ty)
+        });
+        boxed_rule(rewrite_rule(pat, var(x)))
+    };
+
+    // Truncate(SignExtend(x)) → x — same identity at the bit level when
+    // widths match (sign-extension's added bits are sign replication; the
+    // truncate cuts them off and recovers the original bits).
+    let sext_round_trip = {
+        let x = Var::new();
+        let pat = truncate(sign_extend(var(x))).when_match(move |fg, ty, b| {
+            b.get(x)
+                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .is_some_and(|x_ty| x_ty == ty)
+        });
+        boxed_rule(rewrite_rule(pat, var(x)))
+    };
+
+    let rules: Vec<BoxedRule> =
+        vec![rule_int_float, rule_float_int, zext_round_trip, sext_round_trip];
     rules
 }
 
