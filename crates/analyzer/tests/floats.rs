@@ -25,15 +25,9 @@ per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
     Ppc32le: "BUG-23: same magic-number lowering as ppc32be (clang at -O0)",
 });
 per_arch_test!("floats", "float_to_int", has_float_to_int);
-per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
-    X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",
-});
-per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
-    X86: "BUG-10 residue: x86 f64_compare hits x87 ST0 / analyze_cfg failure",
-});
-per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
-    X86: "BUG-11 residue: x86 float-neg via vector-load doesn't surface Xor or Neg in IR",
-});
+per_arch_test!("floats", "f32_compare",  has_two_float_cmps);
+per_arch_test!("floats", "f64_compare",  has_two_float_cmps);
+per_arch_test!("floats", "f32_neg_abs",  has_float_neg);
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {
     let total = count_float_binop(g, FloatBinaryOp::Add)
