@@ -737,6 +737,61 @@ fn extend_if_needed_with_bool_input_inserts_cast_to_int() -> Result<()> {
     Ok(())
 }
 
+// ── F80 / U80 bit-conversion: skip the immediate-fold ────────────────────
+//
+// `build_int_bits_to_float(IntConst, F32/F64)` and
+// `build_float_bits_to_int(FloatConst, U8..U128)` immediate-fold to the
+// other constant kind because F32/F64 fit in `FloatConst`'s u64 payload.
+// F80 is 80 bits — doesn't fit — so the immediate-fold must be skipped
+// and a real bit-conversion node emitted.  This pins that behavior so a
+// future contributor doesn't accidentally truncate F80 by re-enabling
+// the fold for all widths.
+
+#[test]
+fn int_bits_to_float_f80_emits_node_not_const() -> Result<()> {
+    let mut b = empty_builder()?;
+    let int_const = b.build_int_const(0xDEAD_BEEF_CAFEu64, NodeOutputType::U80);
+    let result = b.build_int_bits_to_float(int_const, NodeOutputType::F80)?;
+    let node = b.graph().get_node_from_output(result);
+    assert_eq!(
+        b.graph().node_kind(node),
+        &NodeKind::IntBitsToFloat,
+        "F80 path must emit IntBitsToFloat node, not fold to FloatConst"
+    );
+    // Non-F80 path still folds for safety regression: F64 IntBitsToFloat
+    // collapses to FloatConst.
+    let int_const64 = b.build_int_const(0u64, NodeOutputType::U64);
+    let result_f64 = b.build_int_bits_to_float(int_const64, NodeOutputType::F64)?;
+    let node_f64 = b.graph().get_node_from_output(result_f64);
+    assert!(
+        matches!(b.graph().node_kind(node_f64), NodeKind::FloatConst(_)),
+        "F64 path must still fold to FloatConst (regression check)"
+    );
+    Ok(())
+}
+
+#[test]
+fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
+    let mut b = empty_builder()?;
+    let float_const = b.build_float_const(0xBEEFu64, NodeOutputType::F80);
+    let result = b.build_float_bits_to_int(float_const, NodeOutputType::U80)?;
+    let node = b.graph().get_node_from_output(result);
+    assert_eq!(
+        b.graph().node_kind(node),
+        &NodeKind::FloatBitsToInt,
+        "F80 input must emit FloatBitsToInt node, not fold to IntConst"
+    );
+    // Non-F80 path still folds: F64 FloatBitsToInt collapses to IntConst.
+    let float_const64 = b.build_float_const(0u64, NodeOutputType::F64);
+    let result_u64 = b.build_float_bits_to_int(float_const64, NodeOutputType::U64)?;
+    let node_u64 = b.graph().get_node_from_output(result_u64);
+    assert!(
+        matches!(b.graph().node_kind(node_u64), NodeKind::IntConst(_)),
+        "F64 path must still fold to IntConst (regression check)"
+    );
+    Ok(())
+}
+
 // ── post-call SP adjust ─────────────────────────────────────────────────
 
 /// Fake 8-byte stack pointer varnode in the REGISTER space.

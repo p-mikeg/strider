@@ -241,14 +241,17 @@ impl CallingConvention {
             arg_passing_regs: &[],
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
             ret_val_regs: &["EAX", "EDX"],
-            // x86 cdecl float return: ST0 (x87 stack, 10-byte) is the
-            // strict-spec answer, but the IR's NodeOutputType doesn't
-            // model 10-byte values.  -mfpmath=sse2 (default for many
-            // toolchains) returns floats in XMM0 instead, which matches
-            // a NodeOutputType variant.  Listing only XMM0 trades x87
-            // accuracy for IR tractability — see analyzer-known-issues
-            // for the long-term plan.
-            ret_val_regs_float: &["XMM0"],
+            // x86 cdecl returns floats in `ST0` (the x87 FPU's 80-bit
+            // top-of-stack).  GCC's i686 default lowers floats through
+            // x87 even when arithmetic is via SSE.  Listing ST0 here
+            // (now that the IR has F80 / U80 support) keeps the Return
+            // node connected to the float chain.
+            //
+            // XMM0 is also listed as a fallback for SSE-default builds
+            // (`-mfpmath=sse2`).  When neither is referenced by the
+            // function, `FunctionBuilder::new_raw`'s upgrade-to-
+            // container logic skips them harmlessly.
+            ret_val_regs_float: &["ST0", "XMM0"],
             // Offsets start at +4: the `call` instruction pushes a 4-byte
             // return address, so SP-at-call points to the return address and
             // arg 0 lives one slot above it.

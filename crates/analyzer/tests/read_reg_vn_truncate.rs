@@ -92,11 +92,7 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
 //   "OutputType(U64), expected AnyInt(U32)" from IntBitsToFloat's signature.
 //
 // After the BUG-9 write_reg_vn mask-positioning fix, x64 and aarch64 also
-// pass: the And/Or register-merge composition no longer zeros the lower
-// container half on upper-half writes, so the float chain survives
-// ConstantFold.  x86 still fails because GCC uses the 80-bit x87 stack
-// (10-byte registers — unsupported NodeOutputType in the IR).
+// pass.  After F80/U80 NodeOutputType variants + ST0 in x86 cdecl's
+// float-return regs, x86 also passes via the same chain.
 
-per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
-    X86: "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
-});
+per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid);

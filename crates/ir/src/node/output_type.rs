@@ -12,12 +12,26 @@ pub enum NodeOutputType {
     U16,
     U32,
     U64,
+    /// 80-bit unsigned integer.  Models x87 ST0/STn registers'
+    /// integer/bit-pattern view; values are stored in `u128` payloads
+    /// masked to the low 80 bits.  No native Rust type matches this
+    /// width, so opt rules that need a `u64`-fitting value return
+    /// `None` for U80 and let the rule skip.
+    U80,
     U128,
     U256,
     /// 32-bit IEEE 754 single-precision float.
     F32,
     /// 64-bit IEEE 754 double-precision float.
     F64,
+    /// 80-bit x87 extended-precision float (Intel "long double" /
+    /// 80-bit FPU stack registers).  Rust has no native `f80`, so opt
+    /// rules don't constant-fold F80 arithmetic — the nodes simply
+    /// remain in the IR for pattern-matching workloads.  Bit-conversion
+    /// constructors (`IntBitsToFloat` / `FloatBitsToInt`) skip the
+    /// immediate-fold for F80 because `FloatConst`'s u64 payload can't
+    /// hold the 80-bit pattern.
+    F80,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,10 +55,12 @@ const TYPE_INFO: &[TypeInfo] = &[
     TypeInfo { name: "u16",  byte_size: 2,  category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u32",  byte_size: 4,  category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u64",  byte_size: 8,  category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u80",  byte_size: 10, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u128", byte_size: 16, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u256", byte_size: 32, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "f32",  byte_size: 4,  category: NodeOutputTypeCategory::Float },
     TypeInfo { name: "f64",  byte_size: 8,  category: NodeOutputTypeCategory::Float },
+    TypeInfo { name: "f80",  byte_size: 10, category: NodeOutputTypeCategory::Float },
 ];
 
 impl NodeOutputType {
@@ -118,6 +134,7 @@ impl NodeOutputType {
             NodeOutputType::U16 => NodeOutputType::U16,
             NodeOutputType::U32 | NodeOutputType::F32 => NodeOutputType::U32,
             NodeOutputType::U64 | NodeOutputType::F64 => NodeOutputType::U64,
+            NodeOutputType::U80 | NodeOutputType::F80 => NodeOutputType::U80,
             NodeOutputType::U128 => NodeOutputType::U128,
             NodeOutputType::U256 => NodeOutputType::U256,
         }
@@ -133,10 +150,12 @@ impl NodeOutputType {
     pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
         match self {
             NodeOutputType::Bool
+            | NodeOutputType::U80
             | NodeOutputType::U128
             | NodeOutputType::U256
             | NodeOutputType::F32
-            | NodeOutputType::F64 => None,
+            | NodeOutputType::F64
+            | NodeOutputType::F80 => None,
             NodeOutputType::U8 => Some(val as u8 as u64),
             NodeOutputType::U16 => Some(val as u16 as u64),
             NodeOutputType::U32 => Some(val as u32 as u64),
@@ -154,10 +173,12 @@ impl NodeOutputType {
     pub fn get_signed_int(self, val: u64) -> Option<i64> {
         match self {
             NodeOutputType::Bool
+            | NodeOutputType::U80
             | NodeOutputType::U128
             | NodeOutputType::U256
             | NodeOutputType::F32
-            | NodeOutputType::F64 => None,
+            | NodeOutputType::F64
+            | NodeOutputType::F80 => None,
             NodeOutputType::U8 => Some(val as i8 as i64),
             NodeOutputType::U16 => Some(val as i16 as i64),
             NodeOutputType::U32 => Some(val as i32 as i64),
@@ -250,6 +271,7 @@ impl TryFrom<u32> for NodeOutputType {
             2 => Ok(Self::U16),
             4 => Ok(Self::U32),
             8 => Ok(Self::U64),
+            10 => Ok(Self::U80),
             16 => Ok(Self::U128),
             32 => Ok(Self::U256),
             n => Err(crate::error::ErrorKind::UnsupportedOutputSize(n).into()),
@@ -335,5 +357,112 @@ mod tests {
             NodeOutputType::U128.get_signed_int_i128(max_pos),
             Some(i128::MAX)
         );
+    }
+
+    // ── F80 / U80 (x87 80-bit FPU) ────────────────────────────────────────
+
+    /// `U80` and `F80` widths must be 10 bytes / 80 bits — the x87 ST0
+    /// register width that the analyzer needs in order to handle x86
+    /// floats without erroring at `analyze_cfg` setup.
+    #[test]
+    fn u80_f80_widths() {
+        assert_eq!(NodeOutputType::U80.byte_size(), 10);
+        assert_eq!(NodeOutputType::U80.bit_width(), 80);
+        assert_eq!(NodeOutputType::F80.byte_size(), 10);
+        assert_eq!(NodeOutputType::F80.bit_width(), 80);
+    }
+
+    /// `U80` is an integer type; `F80` is a float type.  The category
+    /// classifier drives `is_integer` / `is_float`, used by validator
+    /// signature checks (Layer A) and by the analyzer's coerce helpers.
+    #[test]
+    fn u80_is_integer_and_f80_is_float() {
+        assert!(NodeOutputType::U80.is_integer());
+        assert!(!NodeOutputType::U80.is_float());
+        assert!(NodeOutputType::F80.is_float());
+        assert!(!NodeOutputType::F80.is_integer());
+    }
+
+    /// `to_natural_int_type` must map `F80 → U80` (mirrors `F64 → U64`)
+    /// and `U80 → U80` (identity).  This is the path the analyzer's
+    /// `read_reg_vn` / `write_reg_vn` use when bridging between float
+    /// and integer views of the same SSA variable.
+    #[test]
+    fn to_natural_int_type_handles_u80_and_f80() {
+        assert_eq!(
+            NodeOutputType::U80.to_natural_int_type(),
+            NodeOutputType::U80
+        );
+        assert_eq!(
+            NodeOutputType::F80.to_natural_int_type(),
+            NodeOutputType::U80
+        );
+    }
+
+    /// `bit_mask_u128(U80)` must be `(1u128 << 80) - 1` — the 80-bit
+    /// all-ones mask.  Existing opt rules use this mask for value-aware
+    /// rewrites like `x & all_ones → x`.
+    #[test]
+    fn bit_mask_u128_for_u80() {
+        let expected: u128 = (1u128 << 80) - 1;
+        assert_eq!(NodeOutputType::U80.bit_mask_u128(), expected);
+        // F80 is a float type — defensive `0` like F32/F64.
+        assert_eq!(NodeOutputType::F80.bit_mask_u128(), 0);
+    }
+
+    /// `get_unsigned_int(U80) → None` because 80 bits don't fit in `u64`.
+    /// Callers needing the value must use `get_unsigned_int_u128`.
+    #[test]
+    fn get_unsigned_int_u80_returns_none() {
+        assert_eq!(NodeOutputType::U80.get_unsigned_int(0xDEADBEEF), None);
+        assert_eq!(NodeOutputType::U80.get_signed_int(0xDEADBEEF), None);
+    }
+
+    /// `get_unsigned_int_u128(U80)` masks the value to 80 bits.
+    #[test]
+    fn get_unsigned_int_u128_for_u80_masks_to_80_bits() {
+        // Bits beyond the low 80 must be cleared.
+        let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
+        let mask: u128 = (1u128 << 80) - 1;
+        assert_eq!(
+            NodeOutputType::U80.get_unsigned_int_u128(raw),
+            Some(mask)
+        );
+        // Already-masked values pass through.
+        assert_eq!(
+            NodeOutputType::U80.get_unsigned_int_u128(0x12345678),
+            Some(0x12345678)
+        );
+    }
+
+    /// `get_signed_int_i128(U80)` sign-extends the 80-bit value to i128.
+    /// The high bit at position 79 (mask `1u128 << 79`) determines sign.
+    #[test]
+    fn get_signed_int_i128_for_u80_sign_extends() {
+        // -1 at U80: all 80 bits set.  Sign-extended to i128 should be -1.
+        let neg1_at_u80 = (1u128 << 80) - 1;
+        assert_eq!(
+            NodeOutputType::U80.get_signed_int_i128(neg1_at_u80),
+            Some(-1i128)
+        );
+        // Positive small value stays positive.
+        assert_eq!(
+            NodeOutputType::U80.get_signed_int_i128(50u128),
+            Some(50i128)
+        );
+        // -50 at U80: mask 0xFFFFFFFFFFFFFFFFFFCE within 80 bits.
+        let neg50 = ((1u128 << 80) - 1) ^ 49;
+        assert_eq!(
+            NodeOutputType::U80.get_signed_int_i128(neg50),
+            Some(-50i128)
+        );
+    }
+
+    /// `TryFrom<u32> for NodeOutputType` must accept 10 → U80 so the
+    /// analyzer's varnode→type conversion succeeds for x87 80-bit regs.
+    #[test]
+    fn try_from_u32_10_is_u80() {
+        let ty: NodeOutputType = 10u32.try_into().expect("10 must convert to U80");
+        assert_eq!(ty, NodeOutputType::U80);
     }
 }

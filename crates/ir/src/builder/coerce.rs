@@ -248,7 +248,11 @@ impl FunctionBuilder {
 
     /// Infers the float type to use for a value that may be int or float.
     /// If the value is already a float type, that type is used.
-    /// For integers, maps byte size: ≤4 → F32, otherwise → F64.
+    /// For integers, maps byte size: ≤4 → F32, =10 → F80, otherwise → F64.
+    ///
+    /// The 10-byte case targets x87 ST0/STn registers (which the analyzer
+    /// represents as U80 on the int side); inferring F80 keeps the
+    /// `CastToFloat` round-trip width-preserving.
     ///
     /// # Errors
     ///
@@ -258,10 +262,10 @@ impl FunctionBuilder {
         if ty.is_float() {
             return Ok(ty);
         }
-        Ok(if ty.byte_size() <= 4 {
-            NodeOutputType::F32
-        } else {
-            NodeOutputType::F64
+        Ok(match ty.byte_size() {
+            0..=4 => NodeOutputType::F32,
+            10 => NodeOutputType::F80,
+            _ => NodeOutputType::F64,
         })
     }
 }

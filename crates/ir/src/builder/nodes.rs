@@ -358,11 +358,17 @@ impl FunctionBuilder {
         if !float_type.is_float() {
             return Err(ErrorKind::ExpectedFloatType(float_type).into());
         }
-        // Immediate fold: IntConst → FloatConst (same bits).
+        // Immediate fold: IntConst → FloatConst (same bits).  F80 is
+        // 80-bit and `FloatConst`'s payload is `u64`, so the bit pattern
+        // doesn't fit — skip the immediate-fold and emit the node
+        // unchanged.  The graph keeps the IntBitsToFloat node opaque,
+        // which is fine for pattern matching.
         let node_id = self.graph().get_node_from_output(input);
-        if let NodeKind::IntConst(bits) = *self.graph().node_kind(node_id) {
-            // FloatConst stores bits as u64; float types are at most 64 bits wide,
-            // so the value fits — u128 payload is masked to the type's width already.
+        if let NodeKind::IntConst(bits) = *self.graph().node_kind(node_id)
+            && float_type != NodeOutputType::F80
+        {
+            // FloatConst stores bits as u64; F32/F64 fit, so the value
+            // fits — u128 payload is masked to the type's width already.
             #[allow(clippy::cast_possible_truncation)]
             return Ok(self.build_float_const(bits as u64, float_type));
         }
@@ -383,15 +389,22 @@ impl FunctionBuilder {
         input: NodeOutputId,
         int_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !self.get_output_type(input)?.is_float() {
+        let input_ty = self.get_output_type(input)?;
+        if !input_ty.is_float() {
             return Err(ErrorKind::ExpectedFloat(input).into());
         }
         if !int_type.is_integer() {
             return Err(ErrorKind::ExpectedIntegerType(int_type).into());
         }
-        // Immediate fold: FloatConst → IntConst (same bits).
+        // Immediate fold: FloatConst → IntConst (same bits).  F80 input
+        // is skipped because `FloatConst` only stores 64 bits — even if a
+        // FloatConst at F80 type somehow appeared, its u64 payload
+        // wouldn't fully represent the 80-bit pattern.  Emit the node
+        // unchanged.
         let node_id = self.graph().get_node_from_output(input);
-        if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id) {
+        if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id)
+            && input_ty != NodeOutputType::F80
+        {
             return Ok(self.build_int_const(bits, int_type));
         }
         Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))

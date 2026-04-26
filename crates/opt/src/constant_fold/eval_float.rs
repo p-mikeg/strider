@@ -100,6 +100,60 @@ pub(super) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) 
             };
             Some(result.to_bits())
         }
+        // F80 (and all non-float types) fall through.  Rust has no native
+        // 80-bit float type, so opt rules can't constant-fold F80 ops —
+        // the rule sees `None` and skips, leaving the F80 node in the IR
+        // for pattern-matching workloads.  Bit-exact F80 emulation is out
+        // of scope; pattern queries care about graph shape, not values.
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F80 binary op evaluation must return `None` so the const-fold rule
+    /// skips and the F80 node remains in the graph.  Pinned to prevent
+    /// future contributors from adding a partial F80 path that loses
+    /// precision (Rust's `f64`-via-conversion would silently truncate).
+    #[test]
+    fn eval_f80_binary_returns_none() {
+        let zero = 0u64;
+        for op in [
+            FloatBinaryOp::Add,
+            FloatBinaryOp::Sub,
+            FloatBinaryOp::Mul,
+            FloatBinaryOp::Div,
+        ] {
+            assert_eq!(eval_float_binary(op, zero, zero, NodeOutputType::F80), None);
+        }
+    }
+
+    #[test]
+    fn eval_f80_cmp_returns_none() {
+        let zero = 0u64;
+        for op in [
+            FloatCmpOp::Equal,
+            FloatCmpOp::NotEqual,
+            FloatCmpOp::Less,
+            FloatCmpOp::LessEqual,
+        ] {
+            assert_eq!(eval_float_cmp(op, zero, zero, NodeOutputType::F80), None);
+        }
+    }
+
+    #[test]
+    fn eval_f80_unary_returns_none() {
+        for op in [
+            FloatUnaryOp::Neg,
+            FloatUnaryOp::Abs,
+            FloatUnaryOp::Sqrt,
+            FloatUnaryOp::Ceil,
+            FloatUnaryOp::Floor,
+            FloatUnaryOp::Round,
+        ] {
+            assert_eq!(eval_float_unary(op, 0, NodeOutputType::F80), None);
+        }
     }
 }

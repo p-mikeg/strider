@@ -7,56 +7,24 @@ use common::*;
 use ir::{FloatBinaryOp, FloatCmpOp};
 use ir::node::NodeKind;
 
-// Hardware-FPU arches pass after:
+// All float tests now pass on every arch after:
 //   1. BUG-9 write_reg_vn mask positioning fix (aarch64 D0/Q0).
 //   2. Ret-val regs upgrade-to-container in FunctionBuilder::new_raw —
 //      MIPS-O32 lists "f0" (4-byte) but a double-returning function uses
 //      the 8-byte combined f0/f1 view; the upgrade fall-back wires the
-//      Return to the 8-byte tracked container (BUG-8 residue on MIPS).
-// x86 still fails because GCC uses 80-bit x87 stack (10-byte registers
-// have no matching NodeOutputType in the IR).
-per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
-    X86: "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
-});
-per_arch_test!("floats", "f64_arith",    has_four_float_binops, ignore = {
-    X86: "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
-});
-// f32_to_f64 / f64_to_f32 / float_to_int / int_to_float: BUG-9 fixed by:
-//   1. pre-casting inputs in handle_float_*_to_* (insn/float.rs)
-//   2. positioned reg_mask + container-domain container_mask in
-//      write_reg_vn (register_aliasing.rs) — without this, AArch64's
-//      "zero upper half of V0 on D0 write" zeroed the lower half instead.
-//   3. ret-val regs upgrade in FunctionBuilder::new_raw (above).
-// x86 still fails (x87 ST0 10-byte width).
-per_arch_test!("floats", "f32_to_f64",   has_float_to_float, ignore = {
-    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-});
-per_arch_test!("floats", "f64_to_f32",   has_float_to_float, ignore = {
-    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-});
-per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
-    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-});
-per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
-    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-});
-// f32_compare / f64_compare: BUG-10 — the assertion no longer requires
-// ≥2 If nodes (cmov-lowering on x64 means some branches don't surface as
-// If).  ARM residue cleared by the BUG-3 coerce-on-write fix; x86 still
-// hits the x87 ST0 / analyze_cfg-side issue (same as the rest of x86 floats).
-per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
-    X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",
-});
-per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
-    X86: "BUG-10 residue: x86 f64_compare hits x87 ST0 / analyze_cfg failure",
-});
-// f32_neg_abs: BUG-11 (float-neg lowering varies by arch) — has_float_neg
-// now accepts both FloatUnaryOp::Neg and the Xor-with-sign-bit form.
-// AArch64 residue cleared by the BUG-9 / ret-val-regs upgrade chain.  x86
-// still emits a vector-load + bit-blend that doesn't surface either node.
-per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
-    X86: "BUG-11 residue: x86 float-neg via vector-load doesn't surface Xor or Neg in IR",
-});
+//      Return to the 8-byte tracked container.
+//   3. F80 / U80 NodeOutputType variants — model x87's 80-bit ST0 stack
+//      registers natively, plus listing ST0 in x86 cdecl's float-return
+//      regs so the upgrade-to-container path connects the float chain.
+per_arch_test!("floats", "f32_arith",    has_four_float_binops);
+per_arch_test!("floats", "f64_arith",    has_four_float_binops);
+per_arch_test!("floats", "f32_to_f64",   has_float_to_float);
+per_arch_test!("floats", "f64_to_f32",   has_float_to_float);
+per_arch_test!("floats", "int_to_float", has_int_to_float);
+per_arch_test!("floats", "float_to_int", has_float_to_int);
+per_arch_test!("floats", "f32_compare",  has_two_float_cmps);
+per_arch_test!("floats", "f64_compare",  has_two_float_cmps);
+per_arch_test!("floats", "f32_neg_abs",  has_float_neg);
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {
     let total = count_float_binop(g, FloatBinaryOp::Add)

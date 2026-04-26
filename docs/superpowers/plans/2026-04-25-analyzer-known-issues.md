@@ -15,10 +15,10 @@
 | BUG-5  | **mostly fixed** | tail-call & jump-table residue | High | CFG terminates region on BranchIndirect; analyzer treats BranchIndirect as Return — correct for `bx lr` / `pop {pc}` returns, **incorrect** for real tail calls (loses the Call site) and jump tables (loses successor edges).  Our fixtures avoid both cases (`-fno-optimize-sibling-calls`, no switch-jump-tables).  External binaries needing accurate tail-call / jump-table modelling would need a target-input-classifying refinement. |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |
 | BUG-7  | **FIXED** | (was: x86, x64) | Medium | Indirect call CFG MemReadErr no longer reproducible |
-| BUG-8  | mostly fixed | x86 (x87 only) | High | Float arith chain — fixed on aarch64 by write_reg_vn mask positioning, fixed on mips32 by ret-val-regs upgrade-to-container |
-| BUG-9  | mostly fixed | x86 (x87 only) | High | Float conversion — analyzer fix in `bd8994b`, write_reg_vn mask positioning, ret-val-regs upgrade |
-| BUG-10 | mostly fixed | x86 (x87 only) | High | cmov-tolerant compare assertion (commit `c822688`); ARM cleared by BUG-3 |
-| BUG-11 | mostly fixed | x86 (vector-load only) | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`); aarch64 cleared by BUG-9 chain |
+| BUG-8  | **FIXED** | (was: x86 x87 residue) | High | Float arith chain — write_reg_vn mask positioning + ret-val-regs upgrade + F80/U80 NodeOutputType + ST0 in x86 cdecl float ret regs |
+| BUG-9  | **FIXED** | (was: x86 x87 residue) | High | Float conversion — same chain as BUG-8 |
+| BUG-10 | **FIXED** | (was: x86 x87 residue) | High | cmov-tolerant compare assertion (commit `c822688`); x86 / ARM cleared by F80 + BUG-3 chain |
+| BUG-11 | **FIXED** | (was: x86 residue) | Medium | Float-neg accepts Xor-with-sign-bit (commit `8bc049f`); x86 cleared by F80 chain (Sleigh's `fchs` lifts to FloatUnaryOp::Neg or Xor) |
 | BUG-12 | **FIXED** | (was: all 6 archs) | Medium | asm-volatile barrier in `external_take_ptr` (commit `fee1b10`) |
 | BUG-13 | **FIXED** | (was: aarch64) | Medium | U128 IntConst storage (merge `04026bc`) |
 | BUG-14 | **FIXED** | (was: arm) | Medium | Optimizer pipeline panic on ARM `large_local_array` — fixed transitively by BUG-3 coerce-on-write at write_reg_vn |

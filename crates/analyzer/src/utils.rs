@@ -7,15 +7,19 @@ use crate::error::{ErrorKind, Result};
 /// sub-register so they can be merged with the surrounding bits of the
 /// container.
 ///
-/// Supported sizes are 1, 2, 4, 8, and 16 bytes — wider sub-register writes
-/// through 16-byte SIMD container registers (XMM0 on x86_64, q0 on aarch64)
-/// need a u128-wide mask.
+/// Supported sizes:
+/// * 1, 2, 4, 8 bytes — standard integer-register widths.
+/// * 10 bytes — x87 ST0/STn 80-bit FPU stack registers.  Models the
+///   80-bit extended-precision width via `(1u128 << 80) - 1`.
+/// * 16 bytes — wider sub-register writes through 16-byte SIMD container
+///   registers (XMM0 on x86_64, q0 on aarch64).
 pub fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
     match reg.size {
         1 => Ok(u128::from(u8::MAX)),
         2 => Ok(u128::from(u16::MAX)),
         4 => Ok(u128::from(u32::MAX)),
         8 => Ok(u128::from(u64::MAX)),
+        10 => Ok((1u128 << 80) - 1),
         16 => Ok(u128::MAX),
         _ => Err(ErrorKind::UnsupportedRegSize(reg.size).into()),
     }
@@ -42,7 +46,23 @@ mod tests {
         assert_eq!(vn_mask(&reg(2))?, u128::from(u16::MAX));
         assert_eq!(vn_mask(&reg(4))?, u128::from(u32::MAX));
         assert_eq!(vn_mask(&reg(8))?, u128::from(u64::MAX));
+        assert_eq!(vn_mask(&reg(10))?, (1u128 << 80) - 1);
         assert_eq!(vn_mask(&reg(16))?, u128::MAX);
+        Ok(())
+    }
+
+    /// Pinned: 10-byte mask is exactly the low 80 bits — used by
+    /// `write_reg_vn` for x87 ST0/STn sub-register writes.  Off-by-one
+    /// errors here would silently corrupt bits during register-merge.
+    #[test]
+    fn vn_mask_for_10_bytes_is_low_80_bits() -> Result<()> {
+        let mask = vn_mask(&reg(10))?;
+        // Low 80 bits all set.
+        assert_eq!(mask & ((1u128 << 80) - 1), (1u128 << 80) - 1);
+        // Bits 80..128 all clear.
+        assert_eq!(mask >> 80, 0);
+        // Direct equality.
+        assert_eq!(mask, 0x_0000_FFFF_FFFF_FFFF_FFFF_FFFFu128);
         Ok(())
     }
 

@@ -135,6 +135,15 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
                     let v = f32::from_bits(*bits as u32);
                     format!("const {v}:f32")
                 }
+                Some(NodeOutputType::F80) => {
+                    // F80 (x87 extended precision) has no native Rust type;
+                    // display the raw bit pattern.  In practice F80
+                    // FloatConst nodes don't get created (the bit-conversion
+                    // builders skip the immediate-fold for F80), but if
+                    // one ever appears we don't want a crash or a silently-
+                    // misformatted f64 label.
+                    format!("const {bits:#x}:f80")
+                }
                 _ => {
                     let v = f64::from_bits(*bits);
                     format!("const {v}:f64")

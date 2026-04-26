@@ -9,11 +9,13 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     // ── Float helpers ─────────────────────────────────────────────────────────
 
     /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].
-    /// Returns an error for sizes other than 4 (F32) or 8 (F64).
+    /// Supports 4 (F32), 8 (F64), and 10 (F80, x87 extended precision).
+    /// Returns an error for any other size.
     pub(super) fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<NodeOutputType> {
         match vn.size {
             4 => Ok(NodeOutputType::F32),
             8 => Ok(NodeOutputType::F64),
+            10 => Ok(NodeOutputType::F80),
             n => Err(ErrorKind::UnsupportedFloatSize(n).into()),
         }
     }
