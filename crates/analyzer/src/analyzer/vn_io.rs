@@ -9,8 +9,8 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     /// - `CONST` → an integer constant node.
     /// - `UNIQUE` → delegates to [`read_reg_vn`] for sub-view aliasing
     ///   (Sleigh occasionally writes a wide unique and reads a narrow slice
-    ///    of it — e.g. MIPS MULT writes a 64-bit unique then Copy reads a
-    ///    32-bit slice).
+    ///   of it — e.g. MIPS MULT writes a 64-bit unique then Copy reads a
+    ///   32-bit slice).
     /// - default code space → a [`NodeKind::Load`] from the code address space.
     /// - `REGISTER` → delegates to [`read_reg_vn`] for aliasing handling.
     pub(super) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ir::Value> {

@@ -19,10 +19,10 @@
 //! containers.  The analyzer must emit a U32 value for such sub-register reads
 //! so that `IntBitsToFloat(F32)` receives the correct input width.
 //!
-//! Hardware-FPU x86/x64/aarch64 paths are still known-broken for a separate
-//! reason (BUG-8: ConstantFold identity rewrites collapse the write_reg_vn
-//! And/Or composition and orphan the FloatBinaryOp chain), so those three
-//! architectures remain ignored here.
+//! After the BUG-9 write_reg_vn fix (positioned reg_mask + container-domain
+//! container_mask), x64 and aarch64 now pass.  x86 still fails for a
+//! separate reason: GCC uses the 80-bit x87 stack (10-byte registers),
+//! which has no matching `NodeOutputType` in the IR.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -91,12 +91,12 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
 // Without the read_reg_vn fix these tests fail with an IR validation error:
 //   "OutputType(U64), expected AnyInt(U32)" from IntBitsToFloat's signature.
 //
-// x86 / x64 / aarch64 are hardware-FPU arches; the optimizer's ConstantFold
-// pass collapses the And/Or register-merge composition and orphans the float
-// chain, so they remain ignored (BUG-8).
+// After the BUG-9 write_reg_vn mask-positioning fix, x64 and aarch64 also
+// pass: the And/Or register-merge composition no longer zeros the lower
+// container half on upper-half writes, so the float chain survives
+// ConstantFold.  x86 still fails because GCC uses the 80-bit x87 stack
+// (10-byte registers — unsupported NodeOutputType in the IR).
 
 per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
-    X86:     "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
-    X64:     "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
-    Aarch64: "BUG-8: ConstantFold collapses write_reg_vn And/Or on hardware-FPU arches",
+    X86: "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
 });

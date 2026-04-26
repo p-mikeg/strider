@@ -7,40 +7,39 @@ use common::*;
 use ir::{FloatBinaryOp, FloatCmpOp};
 use ir::node::NodeKind;
 
+// Hardware-FPU arches now pass after the BUG-9 write_reg_vn fix
+// (positioned reg_mask + container-domain mask).  x86 still fails because
+// GCC uses x87 ST0 (10-byte / unsupported width); MIPS still fails on
+// f64_arith because the lifter routes the FP arithmetic through HI/LO-style
+// unique chains the analyzer doesn't yet model — separate from BUG-8.
 per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
-    X86:      "BUG-8: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
-    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on aarch64",
+    X86: "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
 });
 per_arch_test!("floats", "f64_arith",    has_four_float_binops, ignore = {
-    X86:      "BUG-8: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
-    Aarch64:  "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on aarch64",
-    Mips32le: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on mips32",
-    Mips32be: "BUG-8: float arithmetic instructions not lowered to FloatBinaryOp on mips32",
+    X86:      "BUG-8 residue: x86 uses 80-bit x87 stack (10-byte registers); analyze_cfg errors on unsupported output size",
+    Mips32le: "BUG-8 residue: MIPS f64 arithmetic instructions not lowered to FloatBinaryOp",
+    Mips32be: "BUG-8 residue: MIPS f64 arithmetic instructions not lowered to FloatBinaryOp",
 });
-// f32_to_f64 / f64_to_f32 / float_to_int / int_to_float: BUG-9 fixed by
-// pre-casting inputs in handle_float_*_to_* via cast_to_float_if_needed /
-// convert_to_int_if_needed (see crates/analyzer/src/analyzer/insn/float.rs).
-// x86 still fails because GCC uses x87 ST0 (10-byte / unsupported width);
-// aarch64 uses a different rsleigh lowering path that doesn't produce a
-// dedicated FloatToFloat / FloatToInt / IntToFloat node — needs deeper
-// rsleigh / Sleigh-spec investigation.
+// f32_to_f64 / f64_to_f32 / float_to_int / int_to_float: BUG-9 fixed by:
+//   1. pre-casting inputs in handle_float_*_to_* (insn/float.rs)
+//   2. positioned reg_mask + container-domain container_mask in
+//      write_reg_vn (register_aliasing.rs) — without this, AArch64's
+//      "zero upper half of V0 on D0 write" zeroed the lower half instead.
+// x86 still fails (x87 ST0 10-byte width); MIPS f32_to_f64 still fails
+// because cvt.d.s lifts through a HI/LO-style chain.
 per_arch_test!("floats", "f32_to_f64",   has_float_to_float, ignore = {
     X86:      "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-    Aarch64:  "BUG-9 residue: aarch64 FCVT lowering doesn't produce FloatToFloat node",
     Mips32le: "BUG-9 residue: MIPS cvt.d.s lowering doesn't produce FloatToFloat node",
     Mips32be: "BUG-9 residue: MIPS cvt.d.s lowering doesn't produce FloatToFloat node",
 });
 per_arch_test!("floats", "f64_to_f32",   has_float_to_float, ignore = {
-    X86:     "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-    Aarch64: "BUG-9 residue: aarch64 FCVT lowering doesn't produce FloatToFloat node",
+    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
 });
 per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
-    X86:     "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-    Aarch64: "BUG-9 residue: aarch64 SCVTF lowering doesn't produce IntToFloat node",
+    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
 });
 per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
-    X86:     "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
-    Aarch64: "BUG-9 residue: aarch64 FCVTZS lowering doesn't produce FloatToInt node",
+    X86: "BUG-9 residue: x86 uses x87 ST0 (10-byte output not in NodeOutputType)",
 });
 // f32_compare / f64_compare: BUG-10 — the assertion no longer requires
 // ≥2 If nodes (cmov-lowering on x64 means some branches don't surface as

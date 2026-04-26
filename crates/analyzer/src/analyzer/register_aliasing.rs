@@ -115,9 +115,17 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     ///
     /// If `reg` is a sub-register the method:
     /// 1. Reads the current container value.
-    /// 2. Shifts and masks `val` into the correct bit range.
-    /// 3. Masks out the old bits of `reg` inside the container.
+    /// 2. Extends `val` to container width and shifts it into reg's bit slot.
+    /// 3. Masks the bits *not* belonging to `reg` from the container.
     /// 4. ORs the two together and writes back to the container.
+    ///
+    /// All masks are computed in **container coordinates** — the reg's
+    /// `vn_mask` (always low-bits domain) is shifted by `shift_bits` to land
+    /// at reg's actual position inside the container, and the container's
+    /// "preserve" mask is the complement.  Without this positioning, an
+    /// upper-half write (e.g. AArch64's "FCVT D0,S0 zeroes upper 64 bits of
+    /// V0") inverts the mask and silently zeros the lower half of the
+    /// container — see BUG-9.
     ///
     /// If `reg` is equal to its own container the write is direct.
     pub(super) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
@@ -129,22 +137,30 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         let container_reg_val = self.builder.read_variable(&container_reg)?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
 
-        // Position `val`'s bits inside the container's bit window.
-        let shifted_value = if shift_bits == 0 {
+        // Extend `val` to container width first, then shift it into position.
+        // Shifting at container width is the only way the mask AND afterwards
+        // can preserve the bits we just placed: shifting at reg's narrower
+        // width followed by an implicit extend would overflow at non-zero
+        // shift counts.
+        let val_extended =
             self.builder
-                .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?
+                .extend_if_needed(val, container_ty, ExtendOp::ZeroExtend)?;
+        let shifted_value = if shift_bits == 0 {
+            val_extended
         } else {
             let shift_const = self.builder.build_int_const(shift_bits, container_ty);
             self.builder.build_int_binary_operation(
-                val,
+                val_extended,
                 shift_const,
                 IntBinaryOp::ShiftLeft,
-                reg.size.try_into()?,  // intentionally reg's size: shifting in reg's domain before merging
+                container_ty,
             )?
         };
 
-        // Mask `val` to its declared width inside the container.
-        let reg_mask = crate::utils::vn_mask(reg)?;
+        // Build the *positioned* reg mask: vn_mask(reg) is in low-bits domain,
+        // so shifting it by the same `shift_bits` lands it at reg's actual
+        // bit slot inside the container.
+        let reg_mask = crate::utils::vn_mask(reg)? << shift_bits;
         let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty);
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
@@ -153,7 +169,9 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             container_ty,
         )?;
 
-        // Mask out the old bits of `reg` from the container.
+        // The "preserve" mask is the bits of the container that don't belong
+        // to reg — i.e. the container's full mask minus the positioned reg
+        // mask.
         let container_mask = crate::utils::vn_mask(&container_reg)? & !reg_mask;
         let container_mask_val = self.builder.build_int_const(container_mask, container_ty);
         let container_val = self.builder.build_int_binary_operation(
@@ -235,5 +253,132 @@ mod shift_formula_tests {
     }
     fn compute_shift_be(reg: &Vn, container: &Vn) -> u64 {
         8 * (container.size as u64 - reg.size as u64 - (reg.addr.off - container.addr.off))
+    }
+}
+
+// ── BUG-9: positioned reg-mask in container coordinates ─────────────────────
+//
+// Sub-register writes in `write_reg_vn` need a mask that picks out **reg's
+// position inside the container**, not reg's bits in low-bytes domain.  The
+// pre-fix code used `vn_mask(reg)` directly — which is always in low-bytes
+// domain regardless of where reg sits inside the container.  For shift==0
+// (low sub-register) it accidentally worked; for shift>0 (e.g. upper 8 bytes
+// of a 16-byte SIMD register, written when AArch64 FCVT D0,S0 zeroes the
+// upper half of V0) it produced an inverted container_mask that silently
+// zeroed the lower half — orphaning the FCVT chain through ConstantFold's
+// `(a&C1 | b&C2) & C3 → (a&(C1&C3)) | (b&(C2&C3))` and `x & 0 → 0` rules.
+//
+// The fix: positioned_reg_mask = vn_mask(reg) << shift_bits, then
+// container_mask = vn_mask(container) & !positioned_reg_mask.
+
+#[cfg(test)]
+mod positioned_mask_tests {
+    use crate::utils::vn_mask;
+    use rsleigh::{Vn, VnAddr, VnSpace};
+
+    fn reg_at(off: u64, size: u32) -> Vn {
+        Vn { addr: VnAddr { off, space: VnSpace::REGISTER }, size }
+    }
+
+    /// Positioned mask = `vn_mask(reg) << shift_bits` must select exactly the
+    /// bits reg occupies inside its container.  These cases drive the
+    /// AArch64 V0/Q0 (16 bytes) → S0 (4) / D0 (8) / upper-half (8 at offset 8)
+    /// chain that BUG-9 unmasked.
+    #[test]
+    fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
+        let q0 = reg_at(0, 16);
+        let s0 = reg_at(0, 4);    // lower 4 bytes
+        let d0 = reg_at(0, 8);    // lower 8 bytes
+        let v0_upper8 = reg_at(8, 8); // upper 8 bytes (the BUG-9 hot spot)
+
+        let q0_mask = vn_mask(&q0).unwrap();
+        assert_eq!(q0_mask, u128::MAX, "container mask should be all-ones");
+
+        let s0_pos = vn_mask(&s0).unwrap(); // shift = 0 → no shift needed
+        assert_eq!(s0_pos, 0xFFFF_FFFF, "s0 occupies bits 0..32");
+
+        let d0_pos = vn_mask(&d0).unwrap();
+        assert_eq!(d0_pos, 0xFFFF_FFFF_FFFF_FFFF, "d0 occupies bits 0..64");
+
+        let upper8_pos = vn_mask(&v0_upper8).unwrap() << 64;
+        assert_eq!(
+            upper8_pos,
+            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            "upper 8-byte sub at offset 8 occupies bits 64..128"
+        );
+
+        // The two halves are disjoint and union to the full container mask.
+        assert_eq!(d0_pos & upper8_pos, 0, "d0 and upper-half are disjoint");
+        assert_eq!(d0_pos | upper8_pos, q0_mask, "d0 ∪ upper-half = full q0");
+    }
+
+    /// `container_mask = vn_mask(container) & !positioned_reg_mask` must
+    /// preserve exactly the bits that DON'T belong to reg.  For a 16-byte
+    /// container with reg = upper 8 bytes (shift=64), the container mask
+    /// must be the lower 8 bytes — pre-fix code returned the upper 8 bytes
+    /// (BIG), which zeroed the FCVT result on AArch64 D0 writes.
+    #[test]
+    fn container_mask_for_upper_half_write_keeps_lower_half() {
+        let q0 = reg_at(0, 16);
+        let upper8 = reg_at(8, 8);
+
+        let positioned_reg_mask = vn_mask(&upper8).unwrap() << 64;
+        let container_mask = vn_mask(&q0).unwrap() & !positioned_reg_mask;
+
+        assert_eq!(
+            container_mask,
+            0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
+            "upper-8 write must preserve the lower 8 bytes of q0"
+        );
+        assert_ne!(
+            container_mask,
+            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            "BUG-9 regression check: container_mask must NOT be the upper-half mask \
+             (the pre-fix code used reg_mask in low-bytes domain instead of \
+              positioned, so `& !reg_mask` produced the upper-half mask and \
+              zeroed the lower half — including any sub-register write that \
+              landed there)"
+        );
+    }
+
+    /// `container_mask` for the lower-half write path (shift=0) must also be
+    /// correct — this case used to "accidentally work" before the fix, but
+    /// the new formula must keep producing the same result.
+    #[test]
+    fn container_mask_for_lower_half_write_keeps_upper_half() {
+        let q0 = reg_at(0, 16);
+        let d0 = reg_at(0, 8);
+
+        let positioned_reg_mask = vn_mask(&d0).unwrap();
+        let container_mask = vn_mask(&q0).unwrap() & !positioned_reg_mask;
+
+        assert_eq!(
+            container_mask,
+            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            "d0 (lower 8) write must preserve the upper 8 bytes of q0"
+        );
+    }
+
+    /// 4-byte container with byte-sized sub-registers at each offset —
+    /// exercises every shift count the LE formula produces.
+    #[test]
+    fn container_mask_byte_subregs_in_4byte_container() {
+        let container = reg_at(0, 4);
+        let cases: [(u64, u32, u32); 4] = [
+            (0, 0,  0xFFFF_FF00),
+            (1, 8,  0xFFFF_00FF),
+            (2, 16, 0xFF00_FFFF),
+            (3, 24, 0x00FF_FFFF),
+        ];
+        for (off, shift, expected_container_mask) in cases {
+            let sub = reg_at(off, 1);
+            let positioned = vn_mask(&sub).unwrap() << shift;
+            let mask = vn_mask(&container).unwrap() & !positioned;
+            assert_eq!(
+                mask & 0xFFFF_FFFF, u128::from(expected_container_mask),
+                "byte-sub at off {off}, shift {shift}: \
+                 expected container_mask 0x{expected_container_mask:08x}, got 0x{mask:032x}"
+            );
+        }
     }
 }
