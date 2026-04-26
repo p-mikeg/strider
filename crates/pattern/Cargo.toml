@@ -9,6 +9,7 @@ rsleigh.workspace = true
 strider-error.workspace = true
 thiserror.workspace = true
 ethnum.workspace = true
+bitflags = "2"
 
 [lints]
 workspace = true

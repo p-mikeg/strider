@@ -1,10 +1,11 @@
-//! Walk-through helpers for [`MatcherOptions::ignore_casts`] and
+//! Walk-through helpers for [`MatcherOptions::ignore_cast_mask`] and
 //! [`MatcherOptions::ignore_control_states`].
 //!
-//! When a flag is set, the matcher's input-walking layer falls through
-//! these helpers if a direct match fails: instead of giving up, it
-//! recurses past a "transparent" producer node (a value-passthrough cast,
-//! or a region-join `ControlState`) and retries the inner pattern.
+//! When a flag / mask bit is set, the matcher's input-walking layer falls
+//! through these helpers if a direct match fails: instead of giving up,
+//! it recurses past a "transparent" producer node (a value-passthrough
+//! cast selected by the mask, or a region-join `ControlState`) and
+//! retries the inner pattern.
 //!
 //! Direct match is always tried first — the fallback runs only after a
 //! direct attempt and bindings rollback, so strict patterns (like
@@ -13,75 +14,12 @@
 use ir::node::{NodeKind, NodeOutputId};
 
 use crate::matcher::Bindings;
+use crate::matcher::cast_mask::cast_mask_of;
 use crate::pat::Pat;
 use crate::pat::traits::MatchCtx;
 
-/// Returns `true` for value-passthrough cast kinds — node kinds that take
-/// a single value input and produce a value output of potentially
-/// different width / type but conceptually carry "the same value" along
-/// the data-flow chain.
-///
-/// The set covers width casts (`Extend`, `Truncate`), type casts
-/// (`CastToInt`, `CastToFloat`, `CastToBool`), and bitcasts
-/// (`IntBitsToFloat`, `FloatBitsToInt`).  Future cast-like additions to
-/// `NodeKind` should extend this match — the exhaustive form (no `_`
-/// catch-all) makes the omission a compile error.
-#[must_use]
-pub(crate) fn is_cast_kind(kind: &NodeKind) -> bool {
-    match kind {
-        NodeKind::Extend(_)
-        | NodeKind::Truncate
-        | NodeKind::CastToInt
-        | NodeKind::CastToFloat
-        | NodeKind::CastToBool
-        | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => true,
-
-        // Explicit non-cast list: every other NodeKind variant.  The
-        // exhaustive `match` (no `_`) catches future cast-like additions
-        // at compile time so a new cast-like kind doesn't silently miss
-        // the walk-through.
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)
-        | NodeKind::FunctionArg { .. }
-        | NodeKind::ControlState
-        | NodeKind::ControlPhi(_)
-        | NodeKind::MemPhi
-        | NodeKind::ValuePhi
-        | NodeKind::If
-        | NodeKind::Call
-        | NodeKind::CallOther { .. }
-        | NodeKind::Return
-        | NodeKind::PostCallMemState
-        | NodeKind::PostCallVarState(_)
-        | NodeKind::Load(_)
-        | NodeKind::Store(_)
-        | NodeKind::StackStore { .. }
-        | NodeKind::StackStorePhi { .. }
-        | NodeKind::IntConst(_)
-        | NodeKind::IntUnaryOp(_)
-        | NodeKind::IntBinaryOp(_)
-        | NodeKind::IntCmpOp(_)
-        | NodeKind::Popcount
-        | NodeKind::Lzcount
-        | NodeKind::BoolConst(_)
-        | NodeKind::BoolUnaryOp(_)
-        | NodeKind::BoolBinaryOp(_)
-        | NodeKind::FloatConst(_)
-        | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatCmpOp(_)
-        | NodeKind::IntToFloat
-        | NodeKind::FloatToInt
-        | NodeKind::FloatToFloat
-        | NodeKind::SegmentOp { .. }
-        | NodeKind::CPoolRef
-        | NodeKind::New => false,
-    }
-}
-
-/// If `target`'s producer is a cast node, recurse into the cast's first
+/// If `target`'s producer is a cast node selected by
+/// `ctx.matcher.options.ignore_cast_mask`, recurse into the cast's first
 /// (value) input and try matching `pat` there.  Returns whether the
 /// recursive match succeeded.
 ///
@@ -90,9 +28,9 @@ pub(crate) fn is_cast_kind(kind: &NodeKind) -> bool {
 /// rollback because the snapshot is shared with the direct-match attempt
 /// in `match_one`.
 ///
-/// Returns `false` immediately if the producer is not a cast or the cast
-/// has no inputs (defensive — every cast in our IR has exactly one
-/// value input by signature).
+/// Returns `false` immediately if the producer is not a cast, the cast's
+/// bit is not set in the mask, or the cast has no inputs (defensive —
+/// every cast in our IR has exactly one value input by signature).
 #[must_use]
 pub(crate) fn try_walk_through_cast(
     ctx: &MatchCtx,
@@ -101,7 +39,11 @@ pub(crate) fn try_walk_through_cast(
     b: &mut Bindings,
 ) -> bool {
     let producer = ctx.graph.graph.get_node_from_output(target);
-    if !is_cast_kind(ctx.graph.graph.node_kind(producer)) {
+    let bit = cast_mask_of(ctx.graph.graph.node_kind(producer));
+    // Non-cast kinds yield `empty()`, and `empty().is_subset(anything)` is
+    // true — so we must filter out non-casts up front before the mask
+    // membership test, otherwise every node would walk through.
+    if bit.is_empty() || !ctx.matcher.options.ignore_cast_mask.contains(bit) {
         return false;
     }
     // Casts have exactly one input; treat any unexpected shape as
@@ -156,11 +98,12 @@ pub(crate) fn try_walk_through_control_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::matcher::cast_mask::CastMask;
     use ir::ExtendOp;
 
-    /// All seven value-passthrough cast kinds must classify as casts.
+    /// All eight value-passthrough cast kinds must yield a non-empty mask.
     #[test]
-    fn is_cast_kind_returns_true_for_all_cast_kinds() {
+    fn cast_mask_of_returns_non_empty_for_all_cast_kinds() {
         let casts = [
             NodeKind::Extend(ExtendOp::ZeroExtend),
             NodeKind::Extend(ExtendOp::SignExtend),
@@ -173,18 +116,18 @@ mod tests {
         ];
         for k in casts {
             assert!(
-                is_cast_kind(&k),
-                "expected is_cast_kind({k:?}) = true"
+                !cast_mask_of(&k).is_empty(),
+                "expected cast_mask_of({k:?}) to be non-empty"
             );
         }
     }
 
-    /// A representative selection of non-cast kinds must classify as
-    /// non-casts.  (Exhaustive coverage is enforced by the no-`_`
-    /// match in `is_cast_kind` itself — adding a NodeKind variant
-    /// without classifying it is a compile error.)
+    /// A representative selection of non-cast kinds must yield empty.
+    /// (Exhaustive coverage is enforced by the no-`_` match in
+    /// `cast_mask_of` itself — adding a NodeKind variant without
+    /// classifying it is a compile error.)
     #[test]
-    fn is_cast_kind_returns_false_for_non_cast_kinds() {
+    fn cast_mask_of_returns_empty_for_non_cast_kinds() {
         let non_casts = [
             NodeKind::Entry,
             NodeKind::IntConst(0),
@@ -203,9 +146,10 @@ mod tests {
             NodeKind::Call,
         ];
         for k in non_casts {
-            assert!(
-                !is_cast_kind(&k),
-                "expected is_cast_kind({k:?}) = false"
+            assert_eq!(
+                cast_mask_of(&k),
+                CastMask::empty(),
+                "expected cast_mask_of({k:?}) = empty"
             );
         }
     }
@@ -216,9 +160,9 @@ mod tests {
     /// looking for a Mul should not silently match through a
     /// FloatToInt that semantically changed the value.
     #[test]
-    fn is_cast_kind_excludes_float_conversions() {
-        assert!(!is_cast_kind(&NodeKind::FloatToFloat));
-        assert!(!is_cast_kind(&NodeKind::FloatToInt));
-        assert!(!is_cast_kind(&NodeKind::IntToFloat));
+    fn cast_mask_of_excludes_float_conversions() {
+        assert_eq!(cast_mask_of(&NodeKind::FloatToFloat), CastMask::empty());
+        assert_eq!(cast_mask_of(&NodeKind::FloatToInt), CastMask::empty());
+        assert_eq!(cast_mask_of(&NodeKind::IntToFloat), CastMask::empty());
     }
 }

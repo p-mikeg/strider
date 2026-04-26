@@ -88,11 +88,16 @@
 //! this when register-merge / width-cast noise from the lifter / optimizer
 //! makes patterns brittle:
 //!
-//! * [`Matcher::ignore_casts`] — walk through value-passthrough cast nodes
-//!   (`Extend`, `Truncate`, `CastToInt`, `CastToFloat`, `CastToBool`,
-//!   `IntBitsToFloat`, `FloatBitsToInt`) when matching value inputs.
-//!   Lets `add(mul(_,_), _)` find `Add(Extend(Mul), arg)` without re-shaping
-//!   the source.
+//! * [`Matcher::ignore_casts`] — walk through every value-passthrough
+//!   cast (`Extend`, `Truncate`, `CastToInt`, `CastToFloat`,
+//!   `CastToBool`, `IntBitsToFloat`, `FloatBitsToInt`) when matching
+//!   value inputs.  Equivalent to
+//!   `.ignore_casts_mask(CastMask::all())`.  Lets `add(mul(_,_), _)`
+//!   find `Add(Extend(Mul), arg)` without re-shaping the source.
+//! * [`Matcher::ignore_casts_mask`] — selective version: walks through
+//!   only the cast kinds whose [`CastMask`] bits are set.  Multiple
+//!   calls union.  Use this when you want to skip e.g. width casts but
+//!   not bitcasts.
 //! * [`Matcher::ignore_control_states`] — walk through `ControlState`
 //!   (region-join) nodes when traversing control chains.  Lets
 //!   `ret(call(...))` cross region joins between the Return and the Call.
@@ -134,7 +139,7 @@ pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_w
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
-pub use matcher::{Bindings, Match, Matcher, MatcherOptions};
+pub use matcher::{Bindings, CastMask, Match, Matcher, MatcherOptions};
 pub use pat::{IntoPat, MatchPredicateFn, Pat, PredicateFn};
 
 // ── Capture variables ────────────────────────────────────────────────────────

@@ -246,7 +246,10 @@ fn matcher_default_options_are_both_off() {
     let g = Tb::empty().ret_nothing();
     let m = Matcher::new(&g);
     let opts = m.options_for_test();
-    assert!(!opts.ignore_casts, "ignore_casts must default to false");
+    assert!(
+        opts.ignore_cast_mask.is_empty(),
+        "ignore_cast_mask must default to empty"
+    );
     assert!(
         !opts.ignore_control_states,
         "ignore_control_states must default to false"
@@ -258,7 +261,11 @@ fn ignore_casts_chains_and_flips_flag() {
     let g = Tb::empty().ret_nothing();
     let m = Matcher::new(&g).ignore_casts();
     let opts = m.options_for_test();
-    assert!(opts.ignore_casts, "ignore_casts() must enable the flag");
+    assert_eq!(
+        opts.ignore_cast_mask,
+        CastMask::all(),
+        "ignore_casts() must set the mask to CastMask::all()"
+    );
     assert!(
         !opts.ignore_control_states,
         "ignore_casts() must not touch ignore_control_states"
@@ -275,8 +282,8 @@ fn ignore_control_states_chains_and_flips_flag() {
         "ignore_control_states() must enable the flag"
     );
     assert!(
-        !opts.ignore_casts,
-        "ignore_control_states() must not touch ignore_casts"
+        opts.ignore_cast_mask.is_empty(),
+        "ignore_control_states() must not touch ignore_cast_mask"
     );
 }
 
@@ -285,7 +292,7 @@ fn both_flags_chain_independently() {
     let g = Tb::empty().ret_nothing();
     let m = Matcher::new(&g).ignore_casts().ignore_control_states();
     let opts = m.options_for_test();
-    assert!(opts.ignore_casts);
+    assert_eq!(opts.ignore_cast_mask, CastMask::all());
     assert!(opts.ignore_control_states);
 }
 
@@ -513,4 +520,73 @@ fn both_flags_together_do_not_interfere_with_value_walk_through() {
         .ignore_control_states()
         .find_all(&pat);
     assert_eq!(hits.len(), 1, "value walk-through still works with both flags on");
+}
+
+// ── ignore_casts_mask builder API ──────────────────────────────────────────
+//
+// `ignore_casts_mask(mask)` is the selective version of `ignore_casts()`:
+// it sets specific cast-walk bits without enabling all of them.  Multiple
+// calls union (OR-combine).  `ignore_casts()` widens to `CastMask::all()`.
+
+/// Default: `ignore_cast_mask` is empty.
+#[test]
+fn matcher_default_ignore_cast_mask_is_empty() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g);
+    assert!(
+        m.options_for_test().ignore_cast_mask.is_empty(),
+        "default ignore_cast_mask must be empty"
+    );
+}
+
+/// `ignore_casts()` sets the mask to `CastMask::all()`.
+#[test]
+fn ignore_casts_sets_mask_to_all() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g).ignore_casts();
+    assert_eq!(
+        m.options_for_test().ignore_cast_mask,
+        CastMask::all(),
+        "ignore_casts() must set the mask to CastMask::all()"
+    );
+}
+
+/// `ignore_casts_mask(TRUNCATE)` sets only the TRUNCATE bit.
+#[test]
+fn ignore_casts_mask_sets_just_truncate() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g).ignore_casts_mask(CastMask::TRUNCATE);
+    assert_eq!(
+        m.options_for_test().ignore_cast_mask,
+        CastMask::TRUNCATE,
+        "ignore_casts_mask(TRUNCATE) must set only the TRUNCATE bit"
+    );
+}
+
+/// Two `ignore_casts_mask` calls union (OR-combine).
+#[test]
+fn ignore_casts_mask_unions_repeated_calls() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g)
+        .ignore_casts_mask(CastMask::TRUNCATE)
+        .ignore_casts_mask(CastMask::EXTEND);
+    assert_eq!(
+        m.options_for_test().ignore_cast_mask,
+        CastMask::TRUNCATE | CastMask::EXTEND,
+        "repeated ignore_casts_mask calls must union"
+    );
+}
+
+/// `ignore_casts()` after `ignore_casts_mask(TRUNCATE)` widens to `all()`.
+#[test]
+fn ignore_casts_after_mask_widens_to_all() {
+    let g = Tb::empty().ret_nothing();
+    let m = Matcher::new(&g)
+        .ignore_casts_mask(CastMask::TRUNCATE)
+        .ignore_casts();
+    assert_eq!(
+        m.options_for_test().ignore_cast_mask,
+        CastMask::all(),
+        "ignore_casts() after a mask must widen to all()"
+    );
 }

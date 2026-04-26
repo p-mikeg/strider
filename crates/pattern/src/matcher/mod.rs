@@ -10,12 +10,14 @@ mod function_arg_handle;
 pub use function_arg_handle::FunctionArgHandle;
 
 mod bindings;
+pub(crate) mod cast_mask;
 pub(crate) mod commutativity;
 mod match_result;
 pub(crate) mod walk;
 pub(crate) mod walk_through;
 
 pub use bindings::Bindings;
+pub use cast_mask::CastMask;
 pub use match_result::Match;
 
 // ── Matcher ───────────────────────────────────────────────────────────────────
@@ -31,21 +33,23 @@ struct FunctionArgIndex(HashMap<u32, NodeId>);
 /// Optional behaviors that change how the matcher walks through "transparent"
 /// producer / consumer nodes during input or control-chain matching.
 ///
-/// Both flags default to `false` (strict exact-walk semantics — the existing
-/// behavior).  Enable them via [`Matcher::ignore_casts`] /
-/// [`Matcher::ignore_control_states`] when you want the matcher to look
-/// through structural noise the lifter / optimizer leaves in the IR.
+/// Defaults are strict exact-walk semantics: `ignore_cast_mask` is empty
+/// and `ignore_control_states` is `false`.  Enable selective cast
+/// walk-through via [`Matcher::ignore_casts_mask`] /
+/// [`Matcher::ignore_casts`], and control-state walk-through via
+/// [`Matcher::ignore_control_states`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MatcherOptions {
-    /// Walk through value-passthrough cast nodes (`Extend`, `Truncate`,
-    /// `CastToInt`, `CastToFloat`, `CastToBool`, `IntBitsToFloat`,
-    /// `FloatBitsToInt`) when matching value inputs.  Direct match is
-    /// always tried first; the walk-through is the fallback.
+    /// Mask of value-passthrough cast `NodeKind`s the matcher walks
+    /// through transparently when matching value inputs.  Default:
+    /// [`CastMask::empty()`] (no walk-through — strict semantics).
+    /// [`Matcher::ignore_casts`] sets it to [`CastMask::all()`] for
+    /// source-compatibility with the previous boolean toggle.
     ///
     /// Use case: x86 / x64 register-merge chains and width casts cause
     /// patterns like `add(mul(_,_), _)` to find `Add(Extend(Mul), arg)`
     /// without re-shaping the source.  See BUG-19.
-    pub ignore_casts: bool,
+    pub ignore_cast_mask: CastMask,
     /// Walk through `ControlState` (region-join) nodes when traversing
     /// control chains.  Lets `ret(call(...))`, `if_node().true_branch(p)`
     /// etc. cross region joins without intermediate awareness.
@@ -75,12 +79,39 @@ impl<'g> Matcher<'g> {
         }
     }
 
-    /// Enables transparent walk-through of value-passthrough cast nodes
-    /// (Extend / Truncate / CastTo* / IntBitsToFloat / FloatBitsToInt) when
-    /// matching value inputs.  See [`MatcherOptions::ignore_casts`].
+    /// Enables transparent walk-through of every value-passthrough cast
+    /// kind — equivalent to `.ignore_casts_mask(CastMask::all())`, and
+    /// to the previous boolean `ignore_casts()` behaviour.  See
+    /// [`MatcherOptions::ignore_cast_mask`].
     #[must_use]
     pub fn ignore_casts(mut self) -> Self {
-        self.options.ignore_casts = true;
+        self.options.ignore_cast_mask = CastMask::all();
+        self
+    }
+
+    /// Enables transparent walk-through of only the cast kinds present
+    /// in `mask`.  Multiple calls union (OR-combine):
+    ///
+    /// ```rust
+    /// # use ir::FunctionBuilder;
+    /// # use pattern::{CastMask, Matcher};
+    /// # let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    /// # let r = fb.create_region().unwrap();
+    /// # fb.set_entry_region(r).unwrap();
+    /// # fb.set_region(r);
+    /// # fb.build_return(None, &[]).unwrap();
+    /// # let g = fb.build().unwrap();
+    /// let m = Matcher::new(&g)
+    ///     .ignore_casts_mask(CastMask::TRUNCATE)
+    ///     .ignore_casts_mask(CastMask::EXTEND);
+    /// assert_eq!(
+    ///     m.options_for_test().ignore_cast_mask,
+    ///     CastMask::TRUNCATE | CastMask::EXTEND
+    /// );
+    /// ```
+    #[must_use]
+    pub fn ignore_casts_mask(mut self, mask: CastMask) -> Self {
+        self.options.ignore_cast_mask |= mask;
         self
     }
 
@@ -285,7 +316,7 @@ impl<'g> Matcher<'g> {
         }
         b.restore(mark);
 
-        if self.options.ignore_casts
+        if !self.options.ignore_cast_mask.is_empty()
             && walk_through::try_walk_through_cast(&self.ctx(), out, pat, b)
         {
             return true;
