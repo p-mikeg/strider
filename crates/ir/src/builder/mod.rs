@@ -149,18 +149,29 @@ impl FunctionBuilder {
         stack_ptr_vn: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
     ) -> Result<Self> {
-        // For register varnodes, keep only the largest enclosing register.
-        // e.g. if both `rdi` and `edi` are clobbered, drop `edi` because
-        // clobbering `rdi` already implies `edi`.
+        // For overlapping varnodes in the same fixed-offset space, keep only
+        // the largest enclosing one.  E.g. if both `rdi` and `edi` are
+        // touched, drop `edi`.  Same applies to UNIQUE space — Sleigh's
+        // MIPS lifter writes a 64-bit IntMul result to a unique varnode
+        // and Copies a 4-byte slice of it to a register; without the filter
+        // the 4-byte and 8-byte unique varnodes are treated as independent
+        // SSA variables (BUG-1: MIPS MULT not lowered).
+        //
+        // CONST and code-space varnodes don't behave like fixed-offset
+        // registers — they're addressed by literal value or runtime address,
+        // so containment-by-offset is meaningless there.
+        let is_aliasable_space = |s: rsleigh::VnSpace| {
+            s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
+        };
         let all_variables: Vec<_> = all_used_variables
             .iter()
             .filter(|v| {
-                if v.addr.space != rsleigh::VnSpace::REGISTER {
+                if !is_aliasable_space(v.addr.space) {
                     return true;
                 }
                 !all_used_variables.iter().any(|other| {
                     other != *v
-                        && other.addr.space == rsleigh::VnSpace::REGISTER
+                        && other.addr.space == v.addr.space
                         && other.addr.off <= v.addr.off
                         && other.addr.off + other.size as u64 >= v.addr.off + v.size as u64
                         && other.size > v.size

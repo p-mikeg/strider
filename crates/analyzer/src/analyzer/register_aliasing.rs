@@ -5,32 +5,35 @@ use crate::error::{ErrorKind, Result};
 use super::IrAnalyzer;
 
 impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
-    /// Finds the largest architectural register that fully contains `reg`.
+    /// Finds the largest variable in the same space that fully contains `reg`.
     ///
-    /// For example, given `al` (offset 0, size 1) this returns `rax`
-    /// (offset 0, size 8) on x86-64 because writes to `al` always go through
-    /// `rax`.  The returned register is the widest one in the variable set
-    /// whose byte range fully covers `reg`'s byte range.
+    /// For REGISTER space this is the architectural register containment
+    /// (e.g. `al` -> `rax` on x86-64).  For UNIQUE space the same containment
+    /// logic applies — Sleigh sometimes writes a wider unique varnode and
+    /// reads a narrow slice of it (e.g. MIPS MULT writes a 64-bit unique
+    /// and the next instruction Copies a 4-byte slice to a register).
+    /// Without this aliasing the narrow read returns an undefined InitialVar.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::UnsupportedVnSpace`] if `reg` is not in
-    /// [`rsleigh::VnSpace::REGISTER`].  Returns
+    /// Returns [`ErrorKind::UnsupportedVnSpace`] if `reg` is not in a
+    /// fixed-offset space (REGISTER or UNIQUE).  Returns
     /// [`ErrorKind::NoRegisterContainer`] if no variable in the builder
     /// covers `reg`'s byte range — this should never happen because every
-    /// register at least contains itself.
+    /// varnode at least contains itself.
     pub(super) fn find_largest_fitting_register(
         &self,
         reg: &rsleigh::Vn,
     ) -> Result<rsleigh::Vn> {
-        if reg.addr.space != rsleigh::VnSpace::REGISTER {
-            return Err(ErrorKind::UnsupportedVnSpace(reg.addr.space).into());
+        let space = reg.addr.space;
+        if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
+            return Err(ErrorKind::UnsupportedVnSpace(space).into());
         }
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
         let mut best: Option<rsleigh::Vn> = None;
         for sleigh_reg in self.builder.variables() {
-            if sleigh_reg.addr.space != rsleigh::VnSpace::REGISTER {
+            if sleigh_reg.addr.space != space {
                 continue;
             }
             let s = sleigh_reg.addr.off;

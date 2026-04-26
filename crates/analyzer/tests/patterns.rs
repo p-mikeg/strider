@@ -12,10 +12,16 @@ use common::*;
 use pattern::{Matcher, Pat, add, mul, call, any};
 
 per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_match, ignore = {
-    X86:      "BUG-19: x86 IMUL result chain breaks pattern's data-flow walk",
-    X64:      "BUG-19: x86 IMUL result chain breaks pattern's data-flow walk",
-    Mips32le: "BUG-1: MIPS MULT not lowered (same root cause as arithmetic::mul)",
-    Mips32be: "BUG-1: MIPS MULT not lowered (same root cause as arithmetic::mul)",
+    // The pattern `add(mul(_,_), _)` requires direct data-flow without
+    // intervening Truncate/Extend/Cast.  On x86/x64 IMUL writes to RAX:RDX
+    // and the result threads through extension nodes; on MIPS the IntMul
+    // is at U64 width while the surrounding Add is U32, with a Truncate
+    // between.  Both are pattern-matcher limitations rather than analyzer
+    // bugs (BUG-19 covers them generically).
+    X86:      "BUG-19: x86 IMUL result chain has intervening width-cast nodes",
+    X64:      "BUG-19: x86 IMUL result chain has intervening width-cast nodes",
+    Mips32le: "BUG-19: MIPS IntMul is U64 but surrounding Add is U32, Truncate breaks chain",
+    Mips32be: "BUG-19: MIPS IntMul is U64 but surrounding Add is U32, Truncate breaks chain",
 });
 // chained_xor_mask: BUG-20 (ConstantFold collapses the literal constants)
 // is mitigated by relaxing the pattern to match structural shape only.

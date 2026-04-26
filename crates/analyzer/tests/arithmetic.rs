@@ -29,10 +29,11 @@ use ir::{IntBinaryOp, IntUnaryOp};
 
 per_arch_test!("arithmetic", "add",     has_add);
 per_arch_test!("arithmetic", "sub",     has_sub);
-per_arch_test!("arithmetic", "mul",     has_mul, ignore = {
-    Mips32le: "BUG-1: MIPS MULT writes HI/LO unique varnodes that the analyzer never lowers to IntBinaryOp::Mul",
-    Mips32be: "BUG-1: MIPS MULT writes HI/LO unique varnodes that the analyzer never lowers to IntBinaryOp::Mul",
-});
+// mul: BUG-1 (MIPS MULT writes 64-bit unique varnode + Copy reads 32-bit
+// sub-slice into $v0) is fixed by extending the analyzer's UNIQUE-space
+// var filtering and aliasing — see crates/ir/src/builder/mod.rs and
+// crates/analyzer/src/analyzer/{vn_io,register_aliasing}.rs.
+per_arch_test!("arithmetic", "mul",     has_mul);
 // udiv/umod/sdiv/smod: BUG-2 (MIPS DIV CFG fall-through) is fixed; these
 // are the regression coverage that prevents BUG-2 from re-emerging.
 per_arch_test!("arithmetic", "udiv",    has_div);
