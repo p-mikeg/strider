@@ -209,3 +209,79 @@ arch_tests!(
     // 4-byte ARM instructions as 2-byte Thumb halfwords.
     pspec = rsleigh::pspec::PSPEC_ARM_V45
 );
+
+arch_tests!(
+    mod arm_thumb,
+    arch  = "arm_thumb",
+    sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
+    // PSPEC_ARMCORTEX selects Thumb-2 decoding for the `-mthumb` fixtures.
+    pspec = rsleigh::pspec::PSPEC_ARMCORTEX,
+    // The cfg_integration assertions (specific region counts, edge kinds)
+    // were tuned for 4-byte ARM instructions; Thumb's 2-byte / 4-byte mix
+    // produces different CFG shapes (a Thumb conditional cluster is
+    // typically more regions than the ARM IT-block equivalent).  Per-
+    // arch assertion tuning is its own follow-up.
+    ignore = "ARM Thumb fixtures produce different region shapes than the ARM-tuned cfg assertions"
+);
+
+arch_tests!(
+    mod aarch64be,
+    arch  = "aarch64be",
+    sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
+    pspec = rsleigh::pspec::PSPEC_AARCH64
+);
+
+arch_tests!(
+    mod mips64le,
+    arch  = "mips64le",
+    sla   = rsleigh::sla_spec::SLA_SPEC_MIPS64LE,
+    pspec = rsleigh::pspec::PSPEC_MIPS64
+);
+
+arch_tests!(
+    mod mips64be,
+    arch  = "mips64be",
+    sla   = rsleigh::sla_spec::SLA_SPEC_MIPS64BE,
+    pspec = rsleigh::pspec::PSPEC_MIPS64
+);
+
+arch_tests!(
+    mod ppc32be,
+    arch  = "ppc32be",
+    sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
+    pspec = rsleigh::pspec::PSPEC_PPC_32,
+    ignore = "PPC region-count assertions need per-arch tuning (linkage area + epilog adds extra regions)"
+);
+
+arch_tests!(
+    mod ppc32le,
+    arch  = "ppc32le",
+    sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
+    pspec = rsleigh::pspec::PSPEC_PPC_32,
+    // ppc32le fixtures are compile-only object files (`.o` renamed `.elf`)
+    // because Debian's powerpc-linux-gnu libgcc is BE-only — linking LE
+    // freestanding builds fails.  Section-relative addressing surfaces
+    // BadDataError at offset 0 from Sleigh's PPC32_LE constructor.
+    ignore = "ppc32le fixtures are object files (libgcc BE-only); Sleigh PPC32_LE BadDataError at section offset 0"
+);
+
+arch_tests!(
+    mod ppc64be,
+    arch  = "ppc64be",
+    sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_BE,
+    pspec = rsleigh::pspec::PSPEC_PPC_64,
+    // ELFv1 function descriptors: a function symbol resolves to a 3-pointer
+    // descriptor in `.opd` (entry, TOC, env), not the entry directly.  The
+    // CFG builder tries to decode at the descriptor address and hits
+    // MemReadErr.  Fixing this needs descriptor-aware lifting in the cfg
+    // builder (read 8 bytes at descriptor.addr, jump to entry).
+    ignore = "PPC64 ELFv1 function descriptors need descriptor-aware cfg-builder support"
+);
+
+arch_tests!(
+    mod ppc64le,
+    arch  = "ppc64le",
+    sla   = rsleigh::sla_spec::SLA_SPEC_PPC_64_LE,
+    pspec = rsleigh::pspec::PSPEC_PPC_64,
+    ignore = "PPC region-count assertions need per-arch tuning (TOC restore + epilog adds extra regions)"
+);

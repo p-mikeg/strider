@@ -225,6 +225,122 @@ impl CallingConvention {
         }
     }
 
+    /// Returns the MIPS N64 calling convention (used by 64-bit MIPS Linux
+    /// binaries on both LE and BE — `mips64-linux-gnuabi64-gcc`).
+    ///
+    /// The N64 ABI extends O32's 4 register args to 8 register args
+    /// (`$4`–`$11`).  Sleigh's `mips64` spec uses the older naming where
+    /// `$4`–`$7` are `a0`–`a3` and `$8`–`$11` are `t0`–`t3`, so the arg-
+    /// passing list lists the latter under their Sleigh names.
+    ///
+    /// Argument registers: a0–a3 (`$4`–`$7`), t0–t3 (`$8`–`$11`)
+    /// Callee-saved:       s0–s7, s8 (= fp), gp, ra
+    /// Return value:       v0, v1
+    /// Float return:       f0, f2
+    /// Stack args start at offset 0 from SP (no O32-style shadow space).
+    #[must_use]
+    pub fn mips_n64() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "sp",
+            arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
+            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
+            ret_val_regs: &["v0", "v1"],
+            ret_val_regs_float: &["f0", "f2"],
+            stack_arg_offsets: &[0, 8, 16, 24],
+            ret_stack_pop: 0,
+        }
+    }
+
+    /// Returns the PowerPC 32-bit System V ABI calling convention.
+    /// Used by `powerpc-linux-gnu-gcc` (with both `-mbig-endian` and
+    /// `-mlittle-endian` — the ABI is byte-order independent).
+    ///
+    /// Argument registers: r3–r10 (8 GPRs)
+    /// Callee-saved:       r14–r31, LR
+    /// Return value:       r3, r4 (r3:r4 pair for 64-bit returns)
+    /// Float return:       f1
+    /// Stack args start at offset 8 (4-byte back-chain + 4-byte LR save).
+    /// `r1` is the stack pointer in PowerPC convention.
+    #[must_use]
+    pub fn powerpc_sysv32() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "r1",
+            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+            callee_saved_regs: &[
+                "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
+                "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
+                "r30", "r31", "LR",
+            ],
+            ret_val_regs: &["r3", "r4"],
+            ret_val_regs_float: &["f1", "f2"],
+            stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+            ret_stack_pop: 0,
+        }
+    }
+
+    /// Returns the PowerPC 64-bit ELFv1 calling convention (BE — used by
+    /// `powerpc64-linux-gnu-gcc`).
+    ///
+    /// ELFv1 has function descriptors: an external function symbol resolves
+    /// to a 3-pointer descriptor (entry, TOC, env) rather than the entry
+    /// directly.  The analyzer treats indirect calls in ELFv1 binaries as
+    /// pointer-to-descriptor; pattern queries that need the entry address
+    /// must follow the descriptor convention.  For now we register the
+    /// register-level ABI; descriptor-aware lifting is a follow-up.
+    ///
+    /// Argument registers: r3–r10 (8 GPRs)
+    /// Callee-saved:       r2 (TOC), r14–r31
+    /// Return value:       r3
+    /// Float return:       f1
+    /// Stack args start at offset 48 (ELFv1 linkage area is 48 bytes).
+    #[must_use]
+    pub fn powerpc64_elf_v1() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "r1",
+            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+            callee_saved_regs: &[
+                "r2",
+                "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
+                "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
+                "r30", "r31",
+            ],
+            ret_val_regs: &["r3", "r4"],
+            ret_val_regs_float: &["f1", "f2"],
+            stack_arg_offsets: &[48, 56, 64, 72],
+            ret_stack_pop: 0,
+        }
+    }
+
+    /// Returns the PowerPC 64-bit ELFv2 calling convention (LE — used by
+    /// `powerpc64le-linux-gnu-gcc`).
+    ///
+    /// ELFv2 drops function descriptors — symbols point directly to the
+    /// entry point.  Linkage area shrinks from 48 to 32 bytes.  Otherwise
+    /// register usage matches ELFv1.
+    ///
+    /// Argument registers: r3–r10 (8 GPRs)
+    /// Callee-saved:       r2 (TOC), r14–r31
+    /// Return value:       r3
+    /// Float return:       f1
+    /// Stack args start at offset 32 (ELFv2 linkage area is 32 bytes).
+    #[must_use]
+    pub fn powerpc64_elf_v2() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "r1",
+            arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
+            callee_saved_regs: &[
+                "r2",
+                "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
+                "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
+                "r30", "r31",
+            ],
+            ret_val_regs: &["r3", "r4"],
+            ret_val_regs_float: &["f1", "f2"],
+            stack_arg_offsets: &[32, 40, 48, 56],
+            ret_stack_pop: 0,
+        }
+    }
+
     /// Returns the x86 cdecl calling convention.
     ///
     /// Arguments are passed on the stack, so `arg_passing_regs` is empty.
@@ -389,6 +505,102 @@ mod tests {
                 reg_size_bytes: 4,
                 stack_ptr_name: "sp",
                 stack_arg_offsets: &[16, 20, 24, 28],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "MIPS N64 (LE)",
+                cc: CallingConvention::mips_n64,
+                arch: crate::arch::SleighArch::mipsle64,
+                arg_count: 8,
+                callee_saved_count: 11,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 8, 16, 24],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "MIPS N64 (BE)",
+                cc: CallingConvention::mips_n64,
+                arch: crate::arch::SleighArch::mipsbe64,
+                arg_count: 8,
+                callee_saved_count: 11,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 8, 16, 24],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "PowerPC SysV 32 (BE)",
+                cc: CallingConvention::powerpc_sysv32,
+                arch: crate::arch::SleighArch::ppc32be,
+                arg_count: 8,
+                callee_saved_count: 19,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "r1",
+                stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "PowerPC SysV 32 (LE)",
+                cc: CallingConvention::powerpc_sysv32,
+                arch: crate::arch::SleighArch::ppc32le,
+                arg_count: 8,
+                callee_saved_count: 19,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "r1",
+                stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "PowerPC ELFv1 (BE)",
+                cc: CallingConvention::powerpc64_elf_v1,
+                arch: crate::arch::SleighArch::ppc64be,
+                arg_count: 8,
+                callee_saved_count: 19,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "r1",
+                stack_arg_offsets: &[48, 56, 64, 72],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "PowerPC ELFv2 (LE)",
+                cc: CallingConvention::powerpc64_elf_v2,
+                arch: crate::arch::SleighArch::ppc64le,
+                arg_count: 8,
+                callee_saved_count: 19,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "r1",
+                stack_arg_offsets: &[32, 40, 48, 56],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "AArch64 AAPCS64 (BE)",
+                cc: CallingConvention::aarch64_aapcs64,
+                arch: crate::arch::SleighArch::aarch64be,
+                arg_count: 8,
+                callee_saved_count: 12,
+                ret_count: 2,
+                reg_size_bytes: 8,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 8, 16, 24],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "ARM AAPCS (Thumb)",
+                cc: CallingConvention::arm_aapcs,
+                arch: crate::arch::SleighArch::arm_thumb,
+                arg_count: 4,
+                callee_saved_count: 9,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
                 ret_stack_pop: 0,
             },
         ]

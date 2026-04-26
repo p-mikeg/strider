@@ -30,7 +30,22 @@ use std::path::PathBuf;
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Arch { X86, X64, Aarch64, Arm, Mips32le, Mips32be }
+pub enum Arch {
+    X86,
+    X64,
+    Aarch64,
+    Aarch64Be,
+    Arm,
+    ArmThumb,
+    Mips32le,
+    Mips32be,
+    Mips64le,
+    Mips64be,
+    Ppc32be,
+    Ppc32le,
+    Ppc64be,
+    Ppc64le,
+}
 
 impl Arch {
     pub fn name(self) -> &'static str {
@@ -38,9 +53,17 @@ impl Arch {
             Arch::X86 => "x86",
             Arch::X64 => "x64",
             Arch::Aarch64 => "aarch64",
+            Arch::Aarch64Be => "aarch64be",
             Arch::Arm => "arm",
+            Arch::ArmThumb => "arm_thumb",
             Arch::Mips32le => "mips32le",
             Arch::Mips32be => "mips32be",
+            Arch::Mips64le => "mips64le",
+            Arch::Mips64be => "mips64be",
+            Arch::Ppc32be => "ppc32be",
+            Arch::Ppc32le => "ppc32le",
+            Arch::Ppc64be => "ppc64be",
+            Arch::Ppc64le => "ppc64le",
         }
     }
     pub fn sleigh(self) -> analyzer::SleighArch {
@@ -48,19 +71,36 @@ impl Arch {
             Arch::X86 => analyzer::SleighArch::x86(),
             Arch::X64 => analyzer::SleighArch::x86_64(),
             Arch::Aarch64 => analyzer::SleighArch::aarch64(),
+            Arch::Aarch64Be => analyzer::SleighArch::aarch64be(),
             Arch::Arm => analyzer::SleighArch::arm(),
+            Arch::ArmThumb => analyzer::SleighArch::arm_thumb(),
             Arch::Mips32le => analyzer::SleighArch::mipsle32(),
             Arch::Mips32be => analyzer::SleighArch::mipsbe32(),
+            Arch::Mips64le => analyzer::SleighArch::mipsle64(),
+            Arch::Mips64be => analyzer::SleighArch::mipsbe64(),
+            Arch::Ppc32be => analyzer::SleighArch::ppc32be(),
+            Arch::Ppc32le => analyzer::SleighArch::ppc32le(),
+            Arch::Ppc64be => analyzer::SleighArch::ppc64be(),
+            Arch::Ppc64le => analyzer::SleighArch::ppc64le(),
         }
     }
     pub fn cc(self) -> analyzer::CallingConvention {
         match self {
             Arch::X86 => analyzer::CallingConvention::x86_cdecl(),
             Arch::X64 => analyzer::CallingConvention::x86_64_systemv_abi(),
-            Arch::Aarch64 => analyzer::CallingConvention::aarch64_aapcs64(),
-            Arch::Arm => analyzer::CallingConvention::arm_aapcs(),
+            // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
+            Arch::Aarch64 | Arch::Aarch64Be => analyzer::CallingConvention::aarch64_aapcs64(),
+            // AAPCS32 is identical for ARM and Thumb modes — same CC.
+            Arch::Arm | Arch::ArmThumb => analyzer::CallingConvention::arm_aapcs(),
             // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
             Arch::Mips32le | Arch::Mips32be => analyzer::CallingConvention::mips_o32(),
+            // N64 ABI is the same on LE and BE 64-bit MIPS Linux.
+            Arch::Mips64le | Arch::Mips64be => analyzer::CallingConvention::mips_n64(),
+            // PowerPC SysV 32-bit is byte-order independent.
+            Arch::Ppc32be | Arch::Ppc32le => analyzer::CallingConvention::powerpc_sysv32(),
+            // ELFv1 is BE-only (function descriptors); ELFv2 is LE.
+            Arch::Ppc64be => analyzer::CallingConvention::powerpc64_elf_v1(),
+            Arch::Ppc64le => analyzer::CallingConvention::powerpc64_elf_v2(),
         }
     }
 }
@@ -105,10 +145,18 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
         .expect("real sleigh new");
-    let addr = obj
+    let raw_addr = obj
         .symbol_by_name(fn_name)
         .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
         .address();
+    // ARM-Thumb interworking: a Thumb function symbol's address has the LSB
+    // set as a "Thumb mode" marker (the actual instructions live at
+    // `addr & !1` and are 2-byte aligned).  Sleigh expects the aligned
+    // address; mask the marker off for ARM-class targets.
+    let addr = match arch {
+        Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
+        _ => raw_addr,
+    };
     let cfg = cfg::Builder::new(
         sleigh, addr,
         cfg::OptionsBuilder::new().allow_code_before_start_addr().build()
@@ -219,12 +267,20 @@ macro_rules! per_arch_test {
                 // the test function.  The inner `__one_arch_test!` macro
                 // receives the ignore list verbatim and scans it for a
                 // matching entry using dedicated per-arch arms.
-                $crate::__one_arch_test!(X86,      x86,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(X64,      x64,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Aarch64,  aarch64,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Arm,      arm,      $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips32le, mips32le, $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(Mips32be, mips32be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X86,       x86,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X64,       x64,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Aarch64,   aarch64,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Aarch64Be, aarch64be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Arm,       arm,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(ArmThumb,  arm_thumb, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips32le,  mips32le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips32be,  mips32be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips64le,  mips64le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Mips64be,  mips64be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Ppc32be,   ppc32be,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Ppc32le,   ppc32le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Ppc64be,   ppc64be,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(Ppc64le,   ppc64le,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
             }
         }
     };
@@ -259,6 +315,30 @@ macro_rules! __one_arch_test {
     };
     (Mips32be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
         $crate::__scan_ignore_mips32be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Aarch64Be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_aarch64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (ArmThumb, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_arm_thumb!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Mips64le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_mips64le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Mips64be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_mips64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Ppc32be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_ppc32be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Ppc32le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_ppc32le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Ppc64be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_ppc64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (Ppc64le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_ppc64le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
     };
 }
 
@@ -407,6 +487,222 @@ macro_rules! __scan_ignore_mips32be {
         #[test]
         fn $fn() {
             let g = $crate::common::analyze($crate::common::Arch::Mips32be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+// ── New-arch scanners (factored via `__scan_ignore_for!` for brevity) ──────
+//
+// Each scanner needs three arms: match-self / skip-other / empty.  The
+// pattern is identical for every arch — the arch ident and the `Arch::*`
+// variant are the only differences.  Defining a helper macro that takes
+// these as arguments would deepen the macro recursion (and hit the
+// recursion limit on long-chain ignore lists).  Since the per-arch
+// pattern is mechanical, we keep it explicit per arch — same shape as
+// the existing ones.
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_aarch64be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Aarch64Be: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Aarch64Be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_aarch64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Aarch64Be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_arm_thumb {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { ArmThumb: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::ArmThumb, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_arm_thumb!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::ArmThumb, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_mips64le {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Mips64le: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips64le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_mips64le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips64le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_mips64be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Mips64be: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips64be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_mips64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Mips64be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_ppc32be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Ppc32be: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc32be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_ppc32be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc32be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_ppc32le {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Ppc32le: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc32le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_ppc32le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    // Empty list: ppc32le defaults to ignored — Debian's `powerpc-linux-gnu`
+    // cross toolchain ships only big-endian libgcc, so LE fixtures are
+    // built compile-only (`-c`) as relocatable object files.  Sleigh's
+    // PPC32_LE spec then hits "BadDataError: r0x00000000: Unable to
+    // resolve constructor" on the section-relative starting address.
+    // Re-enable per-test by adding `Ppc32le: "..."` to the ignore block —
+    // but the scanner above will still mark the entry ignored.
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        #[ignore = "ppc32le: object-file fixtures + Sleigh BadDataError at section offset 0 (libgcc BE-only)"]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc32le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_ppc64be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Ppc64be: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc64be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_ppc64be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    // Empty list: ppc64be defaults to ignored — ELFv1 function descriptors
+    // mean a function symbol resolves to a 3-pointer descriptor in `.opd`
+    // (entry, TOC, env), not the entry directly.  The CFG builder tries to
+    // decode at the descriptor address and hits MemReadErr.  Fixing this
+    // needs descriptor-aware lifting in the cfg builder.
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        #[ignore = "ppc64be: ELFv1 function descriptors not yet supported by cfg builder"]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc64be, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_ppc64le {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { Ppc64le: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc64le, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_ppc64le!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::Ppc64le, $case, $fn_name);
             $assert(&g);
         }
     };

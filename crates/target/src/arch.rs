@@ -100,4 +100,88 @@ impl SleighArch {
             endianness: Endianness::Big,
         }
     }
+
+    /// Returns the big-endian MIPS-64 architecture descriptor.
+    /// Used by Linux's N64 ABI (`mips64-linux-gnuabi64-gcc`).
+    #[must_use]
+    pub fn mipsbe64() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64BE,
+            pspec: rsleigh::pspec::PSPEC_MIPS64,
+            endianness: Endianness::Big,
+        }
+    }
+
+    /// Returns the little-endian MIPS-64 architecture descriptor.
+    /// Used by Linux's N64 ABI (`mips64el-linux-gnuabi64-gcc`).
+    #[must_use]
+    pub fn mipsle64() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64LE,
+            pspec: rsleigh::pspec::PSPEC_MIPS64,
+            endianness: Endianness::Little,
+        }
+    }
+
+    /// Returns the big-endian PowerPC 32-bit architecture descriptor.
+    /// Used by `powerpc-linux-gnu-gcc` (System V 32-bit ABI).
+    #[must_use]
+    pub fn ppc32be() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
+            pspec: rsleigh::pspec::PSPEC_PPC_32,
+            endianness: Endianness::Big,
+        }
+    }
+
+    /// Returns the little-endian PowerPC 32-bit architecture descriptor.
+    /// Used via `powerpc-linux-gnu-gcc -mlittle-endian` (uncommon Linux
+    /// target, but the Sleigh spec exists and is symmetric with `ppc32be`).
+    #[must_use]
+    pub fn ppc32le() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
+            pspec: rsleigh::pspec::PSPEC_PPC_32,
+            endianness: Endianness::Little,
+        }
+    }
+
+    /// Returns the big-endian PowerPC 64-bit architecture descriptor.
+    /// Used by `powerpc64-linux-gnu-gcc` (ELFv1 ABI with function
+    /// descriptors).
+    #[must_use]
+    pub fn ppc64be() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_BE,
+            pspec: rsleigh::pspec::PSPEC_PPC_64,
+            endianness: Endianness::Big,
+        }
+    }
+
+    /// Returns the little-endian PowerPC 64-bit architecture descriptor.
+    /// Used by `powerpc64le-linux-gnu-gcc` (ELFv2 ABI — no function
+    /// descriptors, dot-prefixed symbols).
+    #[must_use]
+    pub fn ppc64le() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_LE,
+            pspec: rsleigh::pspec::PSPEC_PPC_64,
+            endianness: Endianness::Little,
+        }
+    }
+
+    /// Returns the ARM Thumb-mode descriptor (32-bit ARM Cortex-M
+    /// processors — Thumb-2 only).  Sleigh's `ARM8_le` spec decodes
+    /// both ARM and Thumb instructions; the `ARMCORTEX` pspec selects
+    /// Thumb-only Cortex-M decoding.
+    ///
+    /// Used with `arm-linux-gnueabihf-gcc -mthumb`.
+    #[must_use]
+    pub fn arm_thumb() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
+            pspec: rsleigh::pspec::PSPEC_ARMCORTEX,
+            endianness: Endianness::Little,
+        }
+    }
 }

@@ -55,6 +55,41 @@ fn aarch64be_preset_resolves() {
     assert_preset_resolves("aarch64be", SleighArch::aarch64be());
 }
 
+#[test]
+fn mipsbe64_preset_resolves() {
+    assert_preset_resolves("mipsbe64", SleighArch::mipsbe64());
+}
+
+#[test]
+fn mipsle64_preset_resolves() {
+    assert_preset_resolves("mipsle64", SleighArch::mipsle64());
+}
+
+#[test]
+fn ppc32be_preset_resolves() {
+    assert_preset_resolves("ppc32be", SleighArch::ppc32be());
+}
+
+#[test]
+fn ppc32le_preset_resolves() {
+    assert_preset_resolves("ppc32le", SleighArch::ppc32le());
+}
+
+#[test]
+fn ppc64be_preset_resolves() {
+    assert_preset_resolves("ppc64be", SleighArch::ppc64be());
+}
+
+#[test]
+fn ppc64le_preset_resolves() {
+    assert_preset_resolves("ppc64le", SleighArch::ppc64le());
+}
+
+#[test]
+fn arm_thumb_preset_resolves() {
+    assert_preset_resolves("arm_thumb", SleighArch::arm_thumb());
+}
+
 /// Pins the [`target::Endianness`] field of every `SleighArch` preset.
 ///
 /// `Endianness` is consumed by `analyzer::register_aliasing` to decide the
@@ -70,9 +105,16 @@ fn presets_endianness_matches_arch() {
         ("x86", SleighArch::x86(), Endianness::Little),
         ("mipsbe32", SleighArch::mipsbe32(), Endianness::Big),
         ("mipsle32", SleighArch::mipsle32(), Endianness::Little),
+        ("mipsbe64", SleighArch::mipsbe64(), Endianness::Big),
+        ("mipsle64", SleighArch::mipsle64(), Endianness::Little),
         ("arm", SleighArch::arm(), Endianness::Little),
+        ("arm_thumb", SleighArch::arm_thumb(), Endianness::Little),
         ("aarch64", SleighArch::aarch64(), Endianness::Little),
         ("aarch64be", SleighArch::aarch64be(), Endianness::Big),
+        ("ppc32be", SleighArch::ppc32be(), Endianness::Big),
+        ("ppc32le", SleighArch::ppc32le(), Endianness::Little),
+        ("ppc64be", SleighArch::ppc64be(), Endianness::Big),
+        ("ppc64le", SleighArch::ppc64le(), Endianness::Little),
     ];
     for (label, arch, expected) in cases {
         assert_eq!(

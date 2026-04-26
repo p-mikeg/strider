@@ -15,7 +15,10 @@ per_arch_test!("stack", "escape_via_ptr",        escape_has_stack_store_and_call
 // the IntConst u128 widening.  BUG-14 (ARM optimizer panic) is fixed
 // transitively by BUG-3's coerce-on-write at write_reg_vn (the panic was
 // rooted in the same Bool→AnyInt edge after RedundantPhis).
-per_arch_test!("stack", "large_local_array",     large_local_has_stack_store_and_loop);
+per_arch_test!("stack", "large_local_array",     large_local_has_stack_store_and_loop, ignore = {
+    ArmThumb: "ARM Thumb: large_local_array memcpy lowers without expected StackStore + ControlPhi loop",
+    Ppc64le: "PPC64: large_local_array uses TOC-relative loads + cmpd loop; lowering shape differs",
+});
 per_arch_test!("stack", "inplace_swap",          swap_has_two_loads_and_two_stores);
 // recursive_stack_growth: BUG-6 (tail-call elision) fixed by Makefile flag.
 per_arch_test!("stack", "recursive_stack_growth", rec_stack_has_call_and_stores);
