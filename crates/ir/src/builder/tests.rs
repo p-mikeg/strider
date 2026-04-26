@@ -888,3 +888,88 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     assert!(tracked.contains(&b_vn));
     Ok(())
 }
+
+// ── BUG-3 regression: Bool-to-flag-register write must coerce to int ─────
+//
+// ARM/AArch64 status flags (N, Z, V, C) are 1-byte register varnodes.  The
+// Sleigh lifter for `cmp` writes Bool-producing ops (`IntCmpOp::Sless`,
+// `IntCmpOp::Sborrow`, ...) into those flag registers.  If the write side
+// stores the Bool node directly into the variable, downstream phi-reductions
+// can collapse a chain like `phi(U8) ← Sless@Bool, Sless@Bool` into a direct
+// Sless@Bool feed of a consumer that expects AnyInt — failing the IR
+// validator after the optimizer pipeline.
+//
+// The mitigation that lives at the IR layer is `convert_to_int_if_needed`:
+// when called on a Bool with an integer target type, it must produce a
+// CastToInt-wrapped value of the integer type.  The analyzer's `write_reg_vn`
+// invokes this helper at every variable write; this test pins the helper's
+// contract so future refactors don't silently regress the BUG-3 cycle.
+
+fn flag_reg_byte() -> rsleigh::Vn {
+    // Generic 1-byte REGISTER varnode shaped like ARM N/Z/V/C flags.
+    rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x60, space: rsleigh::VnSpace::REGISTER },
+        size: 1,
+    }
+}
+
+/// `convert_to_int_if_needed` on a Bool with U8 target produces a U8-typed
+/// output, and a CastToInt node sits between the Bool and the result.
+#[test]
+fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
+    let mut b = empty_builder()?;
+    let bool_val = b.build_boolean_const(true);
+    assert_eq!(
+        b.graph().output_kind(bool_val),
+        NodeOutputKind::OutputType(NodeOutputType::Bool),
+        "BoolConst is Bool-typed"
+    );
+    let coerced = b.convert_to_int_if_needed(bool_val, NodeOutputType::U8)?;
+    assert_eq!(
+        b.graph().output_kind(coerced),
+        NodeOutputKind::OutputType(NodeOutputType::U8),
+        "convert_to_int_if_needed must produce the requested int type"
+    );
+    let coerced_node = b.graph().get_node_from_output(coerced);
+    assert_eq!(
+        b.graph().node_kind(coerced_node),
+        &NodeKind::CastToInt,
+        "Bool → int must go through a CastToInt node (BUG-3 root mitigation)"
+    );
+    Ok(())
+}
+
+/// End-to-end: write a Bool to a 1-byte register variable through the
+/// coerce-then-write sequence the analyzer's `write_reg_vn` uses.  Reading
+/// the variable back must return an integer-typed output, never the raw
+/// Bool — that was the BUG-3 root state that fed Bool into AnyInt-expecting
+/// phi consumers post-optimization.
+#[test]
+fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
+    let flag = flag_reg_byte();
+    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // Synthesise a Bool-producing op (compare) — the same shape as
+    // IntCmpOp::Sless that lifts from `cmp r0, #100`.
+    let lhs = b.build_int_const(1u64, NodeOutputType::U32);
+    let rhs = b.build_int_const(2u64, NodeOutputType::U32);
+    let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
+
+    // Mirror the analyzer's write_reg_vn coercion: convert to reg's
+    // declared int type (U8 for a 1-byte flag), then write.
+    let reg_ty: NodeOutputType = flag.size.try_into()?;
+    let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
+    b.write_variable(&flag, coerced)?;
+
+    // Read back — must be U8-typed, never Bool.
+    let read_back = b.read_variable(&flag)?;
+    assert_eq!(
+        b.graph().output_kind(read_back),
+        NodeOutputKind::OutputType(NodeOutputType::U8),
+        "1-byte flag variable must read back as U8 after a coerced Bool write"
+    );
+    Ok(())
+}

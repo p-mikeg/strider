@@ -20,11 +20,10 @@ per_arch_test!("builtins", "clz32",         lzcount_lowers);
 per_arch_test!("builtins", "clz64",         lzcount_lowers);
 per_arch_test!("builtins", "ctz32",         ctz_lowers);
 // expect_branch: BUG-18 fixed by adding asm-volatile barriers around the
-// branch in fixtures/cases/builtins.c.  ARM still hits a separate BUG-3
-// post-opt Bool→AnyInt residue (same as early_return::arm) — left ignored.
-per_arch_test!("builtins", "expect_branch", expect_compiles_normally, ignore = {
-    Arm: "BUG-3 post-opt residue: ARM expect_branch hits Bool→AnyInt validator after opt",
-});
+// branch in fixtures/cases/builtins.c.  BUG-3 post-opt Bool→AnyInt residue
+// fixed by coercing values to reg's declared int type at write_reg_vn and
+// to Bool at handle_cond_branch's read site.
+per_arch_test!("builtins", "expect_branch", expect_compiles_normally);
 
 /// `__builtin_popcount` lowering varies massively across (compiler, arch):
 ///

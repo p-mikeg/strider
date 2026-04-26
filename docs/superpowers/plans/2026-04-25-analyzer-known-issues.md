@@ -10,7 +10,7 @@
 |------|--------|---------|----------|---------|
 | BUG-1  | OPEN | mips32le, mips32be | High | MIPS `MULT`/HI-LO not lowered to `IntBinaryOp::Mul` |
 | BUG-2  | **FIXED** | (was: mips32le, mips32be) | High | CFG fall-through idiom + narrow-CONST sign-extension (commits `fa6a5c1`, `7ad5dfd`) |
-| BUG-3  | mostly fixed | arm post-opt residue | High | Comparison emits Bool to AnyInt; analyzer fix in `f0c2f04` |
+| BUG-3  | **FIXED** | (was: arm post-opt residue) | High | Comparison emits Bool to AnyInt; coerce-on-write at write_reg_vn + coerce-on-read at handle_cond_branch |
 | BUG-4  | OPEN | arm | Medium | ARM conditional select emits non-Bool where Bool expected |
 | BUG-5  | OPEN (intentional skip per user) | a few residual | High | `BranchIndirect` opcode unimplemented |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |

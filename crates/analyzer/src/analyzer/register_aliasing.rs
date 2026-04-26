@@ -131,7 +131,16 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
     pub(super) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ir::Value) -> Result<()> {
         let container_reg = self.find_largest_fitting_register(reg)?;
         if container_reg == *reg {
-            return Ok(self.builder.write_variable(reg, val)?);
+            // Coerce `val` to reg's declared integer type before storing.
+            // Without this, a Bool-producing op (e.g. IntCmpOp::Sless writing
+            // to an ARM N flag) leaves the variable bound to a Bool node,
+            // and downstream phi reductions can promote that Bool into
+            // AnyInt-expecting consumers (e.g. another IntCmpOp's input) —
+            // the BUG-3 post-opt validator failure.  `convert_to_int_if_needed`
+            // is a no-op when `val` is already the right integer type.
+            let reg_ty: ir::ValueType = reg.size.try_into()?;
+            let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
+            return Ok(self.builder.write_variable(reg, coerced)?);
         }
         let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;

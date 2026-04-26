@@ -22,9 +22,13 @@ per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
 per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops, ignore = {
     Arm: "BUG-5: BranchIndirect p-code opcode unimplemented (ARM jump table)",
 });
-per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns, ignore = {
-    Arm: "BUG-3 post-opt residue: optimizer creates a new Bool->AnyInt edge that the analyzer's extend_if_needed fix doesn't cover.  Tracked separately in analyzer-known-issues.",
-});
+// early_return: BUG-3 post-opt residue fixed by:
+//   1. write_reg_vn coercing val to reg's declared int type at the simple
+//      `container == reg` write path (so 1-byte flag registers don't smuggle
+//      Bool through as the variable's bound value), AND
+//   2. handle_cond_branch coercing the read condition back to Bool before
+//      handing it to build_if (which only accepts Bool).
+per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
 
 fn abs_has_one_if(g: &ir::BuiltFunctionGraph) {
     assert!(count_ifs(g) >= 1, "abs_val must have ≥1 If");

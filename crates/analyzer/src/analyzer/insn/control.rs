@@ -23,7 +23,13 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         insn: &rsleigh::Insn,
         region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
     ) -> Result<()> {
-        let cond = self.read_vn(&insn.inputs[1])?;
+        let cond_raw = self.read_vn(&insn.inputs[1])?;
+        // Most archs feed `If` a Bool-typed flag-register or compare result,
+        // but a few lift conditional branches off an integer varnode (e.g.
+        // ARM's status flags are written as integers when the analyzer's
+        // write-side coercion stores them as the variable's declared U8).
+        // `build_if` requires Bool, so coerce here at the read site.
+        let cond = self.builder.convert_to_bool_if_needed(cond_raw)?;
         let res = self.cfg.region_if(region_id)?;
         let if_true_region = res
             .if_true_region
