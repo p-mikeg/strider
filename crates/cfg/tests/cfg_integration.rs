@@ -234,8 +234,7 @@ arch_tests!(
     mod aarch64be,
     arch  = "aarch64be",
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
-    pspec = rsleigh::pspec::PSPEC_AARCH64,
-    ignore_fallthrough = "BUG-25: clang at -O0 emits `b <next-instr>` between adjacent blocks; CFG has Branch edges only, no Fallthrough"
+    pspec = rsleigh::pspec::PSPEC_AARCH64
 );
 
 arch_tests!(
@@ -263,8 +262,7 @@ arch_tests!(
     mod ppc32le,
     arch  = "ppc32le",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
-    pspec = rsleigh::pspec::PSPEC_PPC_32,
-    ignore_fallthrough = "BUG-25: clang at -O0 emits `b <next-instr>` between adjacent blocks; CFG has Branch edges only, no Fallthrough"
+    pspec = rsleigh::pspec::PSPEC_PPC_32
 );
 
 arch_tests!(

@@ -111,7 +111,9 @@ fn node_known_bits(
                     zeros: (l.ones & r.ones) | (l.zeros & r.zeros),
                 },
                 IntBinaryOp::ShiftLeft => {
-                    // Lower bits of a left-shifted value are known zero.
+                    // Lower bits of a left-shifted value are known zero;
+                    // surviving lhs bits move up by `shift` positions and
+                    // carry their `ones`/`zeros` with them.
                     let rhs_mask = fg
                         .graph
                         .output_kind(rhs)
@@ -122,18 +124,22 @@ fn node_known_bits(
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
                         let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
+                        let shifted_ones = (l.ones << shift) & type_mask;
+                        let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
                         return Ok(Some((
                             out,
                             Kb {
-                                ones: 0,
-                                zeros: lower_mask,
+                                ones: shifted_ones,
+                                zeros: shifted_zeros & !shifted_ones,
                             },
                         )));
                     }
                     return Ok(None);
                 }
                 IntBinaryOp::ShiftRight => {
-                    // Logical right-shift: upper bits become 0.
+                    // Logical right-shift: upper bits become 0; lhs bits
+                    // shift down by `shift` positions and bring their
+                    // known-bit information with them.
                     let rhs_mask = fg
                         .graph
                         .output_kind(rhs)
@@ -143,12 +149,14 @@ fn node_known_bits(
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
                         let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
-                        let upper_mask = !((type_mask) >> shift) & type_mask;
+                        let upper_mask = !(type_mask >> shift) & type_mask;
+                        let shifted_ones = (l.ones & type_mask) >> shift;
+                        let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;
                         return Ok(Some((
                             out,
                             Kb {
-                                ones: 0,
-                                zeros: upper_mask,
+                                ones: shifted_ones,
+                                zeros: shifted_zeros & !shifted_ones,
                             },
                         )));
                     }

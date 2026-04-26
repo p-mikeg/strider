@@ -208,6 +208,51 @@ pub fn count_float_cmp(g: &ir::BuiltFunctionGraph, op: ir::FloatCmpOp) -> usize 
 pub fn count_calls (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Call)) }
 pub fn count_ifs   (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::If)) }
 pub fn count_returns(g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Return)) }
+
+/// Counts the distinct control-flow paths converging at any `Return` node.
+///
+/// Some ABIs (PPC, aarch64) share the function epilogue: at `-O0` the compiler
+/// still routes every source-level `return` through a single `blr`/`ret`, so
+/// the IR has one `Return` node fed by a `ControlState` that merges the
+/// individual paths.  `count_returns` reports `1` here even though there are
+/// two source-level return statements.  This helper counts those merged
+/// predecessors instead, giving a compiler-independent lower bound on the
+/// number of source-level return paths.
+///
+/// Algorithm: for each `Return` node, look at its first input (the Control
+/// predecessor — see `node_signature::expected_signature` for `Return`).  If
+/// that producer is a `ControlState`, contribute its *immediate* fan-in;
+/// otherwise contribute 1.  Sum across all reachable Return nodes.  Deeper
+/// joins (a `ControlState` whose own predecessor is another `ControlState`)
+/// are not transitively expanded — the result is therefore a lower bound on
+/// the number of source-level return paths, sufficient for the
+/// "≥ 2 return paths" assertions in this suite.
+pub fn count_return_paths(g: &ir::BuiltFunctionGraph) -> usize {
+    let mut total = 0usize;
+    for nid in g.preorder() {
+        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        // Return inputs: [Control, Memory, ...return values].  Slot 0 is the
+        // Control predecessor.
+        let inputs = g.graph.node_inputs(nid);
+        let Some(ctrl_out) = inputs.get(0).copied() else {
+            // A Return with no inputs is malformed; the validator would catch
+            // it.  Treat as a single path so we don't silently drop it.
+            total += 1;
+            continue;
+        };
+        let pred = g.graph.get_node_from_output(ctrl_out);
+        match g.graph.node_kind(pred) {
+            // ControlState's control inputs form the leading run of its input
+            // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
+            // total input count IS the predecessor count.
+            NodeKind::ControlState => total += g.graph.node_inputs(pred).len(),
+            _ => total += 1,
+        }
+    }
+    total
+}
 pub fn count_loops (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::ControlPhi(_))) }
 pub fn count_loads (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
 pub fn count_stores(g: &ir::BuiltFunctionGraph) -> usize {

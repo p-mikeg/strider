@@ -29,13 +29,12 @@ per_arch_test!("control", "nested_loops",   nested_loops_has_two_loops);
 //      Bool through as the variable's bound value), AND
 //   2. handle_cond_branch coercing the read condition back to Bool before
 //      handing it to build_if (which only accepts Bool).
-per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns, ignore = {
-    Aarch64Be: "BUG-22: aarch64 + PPC ABIs share the function epilogue — single `ret`/`blr` even at -O0",
-    Ppc32be:   "BUG-22: PPC ABI shares epilogue — only 1 Return node",
-    Ppc32le:   "BUG-22: PPC ABI shares epilogue — only 1 Return node",
-    Ppc64be:   "BUG-22: PPC ABI shares epilogue — only 1 Return node",
-    Ppc64le:   "BUG-22: PPC ABI shares epilogue — only 1 Return node",
-});
+// BUG-22 fixed: count *control paths into Return* (sum of ControlState fan-in
+// at each Return) instead of bare Return-node count.  PPC + aarch64be share
+// the function epilogue at `-O0` (one `blr`/`ret` for all source-level returns)
+// so they have a single Return fed by a 2-input ControlState — `count_return_paths`
+// reports 2 there, matching the 2 separate Return nodes on x86/MIPS/ARM.
+per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
 
 fn abs_has_one_if(g: &ir::BuiltFunctionGraph) {
     assert!(count_ifs(g) >= 1, "abs_val must have ≥1 If");
@@ -64,5 +63,6 @@ fn nested_loops_has_two_loops(g: &ir::BuiltFunctionGraph) {
 }
 fn early_return_has_loop_and_two_returns(g: &ir::BuiltFunctionGraph) {
     assert!(count_loops(g) >= 1);
-    assert!(count_returns(g) >= 2, "early_return has 2 return paths; got {}", count_returns(g));
+    assert!(count_return_paths(g) >= 2,
+            "early_return has 2 source-level return paths; got {}", count_return_paths(g));
 }

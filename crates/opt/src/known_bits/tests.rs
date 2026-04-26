@@ -264,3 +264,113 @@ fn merge_preserves_invariant_under_conflict() {
         c.zeros
     );
 }
+
+// ── BUG-24: shifts must propagate the lhs's known bits ───────────────────────
+
+/// Variant of `make_fn` that tracks a single 1-byte variable so the closure
+/// can read it via `read_variable` to obtain a non-constant `InitialVar`
+/// output — used by tests that want to model an unknown source value (such
+/// as a freshly-entered architectural register).
+fn make_fn_with_var<F>(f: F) -> Result<ir::BuiltFunctionGraph>
+where
+    F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<ir::Value>,
+{
+    let v = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x40,
+        },
+        size: 1,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![v], &[], &[], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let val = f(&mut b, v)?;
+    b.build_return(Some(val), &[])?;
+    Ok(b.build()?)
+}
+
+/// `ShiftRight(x | 2, 1) & 1` for U8 must fold to `IntConst(1)`: the literal
+/// `2` has bit 1 known-1, OR with anything keeps bit 1 set, the shift moves
+/// it to bit 0, and the final mask keeps only bit 0 — so the answer is `1`
+/// regardless of `x`.  The previous KnownBits implementation cleared the
+/// lhs bits entirely on shift, losing the propagated known-1.
+#[test]
+fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let two = b.build_int_const(2u64, NodeOutputType::U8);
+        let one = b.build_int_const(1u64, NodeOutputType::U8);
+        let ored = b.build_int_binary_operation(x, two, IntBinaryOp::Or, NodeOutputType::U8)?;
+        let shifted =
+            b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
+        Ok(b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(fg.int_const_val(val), Some(1));
+    Ok(())
+}
+
+/// `ShiftLeft(x | 1, 7) & 0x80` for U8 must fold to `IntConst(0x80)`: bit 0
+/// of `x|1` is known 1; shifting by 7 moves it to bit 7 (known 1) while bits
+/// 0-6 become known 0.  ANDing with `0x80` keeps only bit 7 — so the result
+/// is `0x80` regardless of `x`.
+#[test]
+fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let one = b.build_int_const(1u64, NodeOutputType::U8);
+        let seven = b.build_int_const(7u64, NodeOutputType::U8);
+        let mask80 = b.build_int_const(0x80u64, NodeOutputType::U8);
+        let ored = b.build_int_binary_operation(x, one, IntBinaryOp::Or, NodeOutputType::U8)?;
+        let shifted =
+            b.build_int_binary_operation(ored, seven, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?;
+        Ok(b.build_int_binary_operation(shifted, mask80, IntBinaryOp::And, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(fg.int_const_val(val), Some(0x80));
+    Ok(())
+}
+
+/// PPC CR0-byte extraction chain (BUG-24): an unknown one-byte source value
+/// (the cr0 register) is masked, ORed with a literal that pre-sets the EQ
+/// bit, right-shifted to position the EQ bit at bit 0, and finally ANDed
+/// with 1.  Mathematically, `((cr0 & 1) | 2) >> 1) & 1 == 1` for every
+/// value of `cr0` because bit 1 of the OR is unconditionally set by the
+/// literal `2`.  KnownBits must propagate the literal's known-1 bit through
+/// `Or`, then `ShiftRight`, then `And`.
+#[test]
+fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, cr0_var| {
+        let cr0 = b.read_variable(&cr0_var)?;
+        let one = b.build_int_const(1u64, NodeOutputType::U8);
+        let two = b.build_int_const(2u64, NodeOutputType::U8);
+        let masked = b.build_int_binary_operation(cr0, one, IntBinaryOp::And, NodeOutputType::U8)?;
+        let ored = b.build_int_binary_operation(two, masked, IntBinaryOp::Or, NodeOutputType::U8)?;
+        let shifted =
+            b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
+        Ok(b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg)?.changed();
+    }
+    let val = return_value(&fg)?;
+    let semantic = fg.int_const_val(val);
+    assert_eq!(
+        semantic,
+        Some(1),
+        "((cr0 & 1) | 2) >> 1 & 1 must fold to 1 for every cr0; \
+         got non-constant return value (BUG-24 propagation)"
+    );
+    Ok(())
+}

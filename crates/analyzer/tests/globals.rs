@@ -12,10 +12,7 @@ use common::*;
 
 per_arch_test!("globals", "read_const_byte",        const_byte_folds_to_0x61);
 per_arch_test!("globals", "read_const_int",         const_int_folds_to_value);
-per_arch_test!("globals", "branch_on_const_string", string_branch_folds_one_arm, ignore = {
-    Ppc32be: "BUG-24: gcc lis+addi address chain folds and LoadReadOnly fires, but Sleigh's cmpwi pcode encodes the result as partial CR0-byte update + bne reads CR0 via shift/mask — ConstantFold can't see through to BoolConst, DeadBranchElim doesn't fire",
-    Ppc64le: "BUG-24: same CR0-byte update sequence as ppc32be (gcc)",
-});
+per_arch_test!("globals", "branch_on_const_string", string_branch_folds_one_arm);
 // runtime_const_idx: BUG-3 (extend_if_needed handles Bool input) is fixed;
 // the MIPS bounds-check Bool now flows into integer ops via CastToInt.
 per_arch_test!("globals", "runtime_const_idx",      runtime_idx_keeps_load);

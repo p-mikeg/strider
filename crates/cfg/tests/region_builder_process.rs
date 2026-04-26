@@ -97,6 +97,10 @@ fn branch_indirect_ends_region() {
 #[test]
 fn branch_non_tail_enqueues_target() {
     // `jmp +0` at 0x1000 — target is 0x1002 (absolute, via default code space).
+    // 0x1002 is exactly `pc + insn_len`, i.e. the next instruction, so per
+    // BUG-25 normalisation the edge is classified as `Fallthrough`.  See
+    // `branch_non_fallthrough_target_keeps_branch_edge` below for the
+    // "real" non-fallthrough case.
     let base = 0x1000u64;
     let bytes = jmp_rel8_ret_bytes(0);
     let lift = lift_at(bytes.clone(), base, base);
@@ -110,6 +114,32 @@ fn branch_non_tail_enqueues_target() {
     assert_eq!(test_api::work_queue(&b).len(), 1);
     let (parent, enqueued_addr) = test_api::work_queue(&b)[0];
     assert_eq!(enqueued_addr, addr(0x1002, 0));
+    let (_, kind) = parent.expect("branch must have a parent edge");
+    assert_eq!(kind, RegionEdgeKind::Fallthrough);
+}
+
+/// BUG-25 regression: a non-tail-call `Branch` whose target is *not* the
+/// next instruction must keep the `Branch` edge kind.  Here the branch
+/// goes forward by one byte (target 0x1003 = pc + 3, but the `jmp` itself
+/// is only 2 bytes long, so `pc + insn_len = 0x1002`).  0x1003 != 0x1002
+/// so the edge stays `Branch`.
+#[test]
+fn branch_non_fallthrough_target_keeps_branch_edge() {
+    // `jmp +1` at 0x1000 — target is 0x1003 (the `ret` byte's *next* slot,
+    // not 0x1002 which would be the natural fallthrough).
+    let base = 0x1000u64;
+    let bytes = jmp_rel8_ret_bytes(1);
+    let lift = lift_at(bytes.clone(), base, base);
+    let (pos, branch) = find_pcode(&lift, rsleigh::Opcode::Branch);
+    let mut b = make_builder_with_bytes(bytes, base);
+    let mut rb = make_region_builder(&mut b, addr(base, 0));
+
+    let res = rb.process_new_insn(&branch, addr(base, pos), &lift).unwrap();
+    assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+
+    assert_eq!(test_api::work_queue(&b).len(), 1);
+    let (parent, enqueued_addr) = test_api::work_queue(&b)[0];
+    assert_eq!(enqueued_addr, addr(0x1003, 0));
     let (_, kind) = parent.expect("branch must have a parent edge");
     assert_eq!(kind, RegionEdgeKind::Branch);
 }

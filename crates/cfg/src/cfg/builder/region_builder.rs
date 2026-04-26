@@ -253,12 +253,38 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     .ok_or(ErrorKind::MissingBranchTarget(addr))?;
                 let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
                 let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
+                // BUG-25: clang at -O0 (used for the aarch64be / ppc32le
+                // fixtures, where no Debian gcc cross exists) emits
+                // explicit unconditional `b <next-instr>` between adjacent
+                // basic blocks instead of letting control fall through.
+                // Without normalisation every such transition shows up as
+                // a `Branch` edge and the CFG never has any `Fallthrough`
+                // edges, breaking downstream passes / queries that
+                // distinguish the two.  When the branch target is exactly
+                // the address that decoding would naturally advance to
+                // next (`next_pcode_addr(addr, lift_res)`) AND is the
+                // start of a machine instruction (`insn_index == 0`),
+                // classify the edge as `Fallthrough`.  Restricting to
+                // machine-instruction boundaries avoids reclassifying any
+                // intra-machine-instruction p-code `Branch` whose target
+                // happens to be the next p-code op in the same insn.
+                // This is an edge-classification change only — the target
+                // is still enqueued for exploration the same way.
+                let edge_kind = if !is_tail_call
+                    && branch_target_addr.insn_index == 0
+                    && next_pcode_addr(addr, lift_res)
+                        .is_ok_and(|next| next == branch_target_addr)
+                {
+                    RegionEdgeKind::Fallthrough
+                } else {
+                    RegionEdgeKind::Branch
+                };
                 let region = self.finish_current_region(is_tail_call)?;
                 if !is_tail_call {
                     // Not a tail call — enqueue the target so the builder explores it next.
                     self.builder
                         .work_queue
-                        .push((Some((region, RegionEdgeKind::Branch)), branch_target_addr));
+                        .push((Some((region, edge_kind)), branch_target_addr));
                 }
                 Ok(ProcessInsnRes::FinishedProcessing)
             }

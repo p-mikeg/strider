@@ -45,6 +45,19 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         self.unique_outgoing(region_id, RegionEdgeKind::Branch)
     }
 
+    /// Returns the fallthrough successor of `region_id`, if any.
+    ///
+    /// Used by the analyzer to detect BUG-25-normalised unconditional
+    /// branches: a CFG `Branch` p-code op whose target was reclassified
+    /// as `Fallthrough` because it pointed at `pc + insn_len`.
+    ///
+    /// # Errors
+    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one
+    /// `Fallthrough` edge leaves `region_id`.
+    pub fn region_fallthrough(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
+        self.unique_outgoing(region_id, RegionEdgeKind::Fallthrough)
+    }
+
     /// Returns both conditional-branch successors of `region_id`.
     ///
     /// # Errors

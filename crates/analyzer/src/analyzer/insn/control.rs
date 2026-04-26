@@ -8,13 +8,26 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         region_id: cfg::RegionId,
         region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
     ) -> Result<()> {
-        let branch_region = self
-            .cfg
-            .region_branch(region_id)?
-            .ok_or(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)))?;
-        let dest_block = region_lookup(branch_region)?;
-        self.builder.build_branch(dest_block)?;
-        Ok(())
+        // Most unconditional p-code `Branch` ops correspond to a `Branch`
+        // CFG edge, which we lower into an explicit IR branch.  Per
+        // BUG-25 the cfg builder reclassifies a `Branch` whose target is
+        // the next machine instruction (clang -O0 idiom on aarch64be /
+        // ppc32le — see `crates/cfg/src/cfg/builder/region_builder.rs`)
+        // as a `Fallthrough` edge.  In that case the IR-level fallthrough
+        // linker (`pipeline.rs`, post-loop pass) will wire the edge using
+        // `cur_ctrl` / `cur_memory`, so we must skip emitting an explicit
+        // IR branch here — otherwise we'd either fail to find the
+        // (non-existent) Branch edge, or double-link the successor.
+        if let Some(branch_region) = self.cfg.region_branch(region_id)? {
+            let dest_block = region_lookup(branch_region)?;
+            self.builder.build_branch(dest_block)?;
+            return Ok(());
+        }
+        if self.cfg.region_fallthrough(region_id)?.is_some() {
+            // Fallthrough successor — leave to the post-loop linker.
+            return Ok(());
+        }
+        Err(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)).into())
     }
 
     pub(super) fn handle_cond_branch(
