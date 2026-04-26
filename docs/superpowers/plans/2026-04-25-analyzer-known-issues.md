@@ -12,7 +12,7 @@
 | BUG-2  | **FIXED** | (was: mips32le, mips32be) | High | CFG fall-through idiom + narrow-CONST sign-extension (commits `fa6a5c1`, `7ad5dfd`) |
 | BUG-3  | **FIXED** | (was: arm post-opt residue) | High | Comparison emits Bool to AnyInt; coerce-on-write at write_reg_vn + coerce-on-read at handle_cond_branch |
 | BUG-4  | **FIXED** | (was: arm) | Medium | ARM conditional select non-Bool — fixed transitively by BUG-3 |
-| BUG-5  | **FIXED** | (was: arm BranchIndirect — `bx lr`, jump tables, tail calls) | High | CFG terminates region on BranchIndirect; analyzer dispatches BranchIndirect → handle_return |
+| BUG-5  | **mostly fixed** | tail-call & jump-table residue | High | CFG terminates region on BranchIndirect; analyzer treats BranchIndirect as Return — correct for `bx lr` / `pop {pc}` returns, **incorrect** for real tail calls (loses the Call site) and jump tables (loses successor edges).  Our fixtures avoid both cases (`-fno-optimize-sibling-calls`, no switch-jump-tables).  External binaries needing accurate tail-call / jump-table modelling would need a target-input-classifying refinement. |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |
 | BUG-7  | **FIXED** | (was: x86, x64) | Medium | Indirect call CFG MemReadErr no longer reproducible |
 | BUG-8  | mostly fixed | x86 (x87 only) | High | Float arith chain — fixed on aarch64 by write_reg_vn mask positioning, fixed on mips32 by ret-val-regs upgrade-to-container |

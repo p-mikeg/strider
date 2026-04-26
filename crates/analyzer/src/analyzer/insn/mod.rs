@@ -81,17 +81,30 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             Opcode::Copy => self.handle_copy(insn)?,
             Opcode::Load => self.handle_load(insn)?,
             Opcode::Store => self.handle_store(insn)?,
-            // `Return` and `BranchIndirect` share a handler:
-            //   * Return: explicit p-code return op.
-            //   * BranchIndirect: target is a runtime register/memory value.
-            //     ARM's `bx lr` lifts here (target = link register), which
-            //     is semantically a return.  Jump tables / computed gotos
-            //     also lift here; the CFG builder already terminates the
-            //     region on BranchIndirect, so the analyzer has no
-            //     successor edges to wire up — emit a Return so the IR is
-            //     well-formed.  This may misclassify a true non-tail
-            //     computed-goto as a return, but the Sleigh-level info
-            //     doesn't cleanly distinguish jump-table from return.
+            // `Return` and `BranchIndirect` share a handler.  The
+            // BranchIndirect classification is **only correct for the
+            // function-return case** (target = link register, e.g. ARM
+            // `bx lr` / `pop {pc}`, MIPS `jr ra`).  Other BranchIndirect
+            // sources are misclassified — the analyzer here treats them
+            // all as Returns:
+            //
+            //   * Real tail call (`bx <target>` after computing target):
+            //     should be Call + Return.  Our fixtures suppress real
+            //     tail calls via `-fno-optimize-sibling-calls`, so this
+            //     case doesn't fire here, but external binaries will
+            //     lose the call site information.
+            //   * Jump table (`ldr pc, [tbl + idx*4]`): should produce
+            //     N successor edges, one per case label.  Our fixtures
+            //     don't compile any switch as a jump table, so this
+            //     case doesn't fire either.
+            //   * Computed goto (`goto *ptr`): should be an intra-
+            //     function indirect dispatch.  Not present in fixtures.
+            //
+            // A cleaner future refinement would inspect `insn.inputs[0]`
+            // to detect link-register reads vs other targets, but
+            // distinguishing the four cases requires data-flow analysis
+            // that the per-instruction handler doesn't have.  Left as a
+            // known limitation — see `analyzer-known-issues` BUG-5.
             Opcode::Return | Opcode::BranchIndirect => self.handle_return(insn)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
