@@ -20,7 +20,10 @@ per_arch_test!("floats", "f32_arith",    has_four_float_binops);
 per_arch_test!("floats", "f64_arith",    has_four_float_binops);
 per_arch_test!("floats", "f32_to_f64",   has_float_to_float);
 per_arch_test!("floats", "f64_to_f32",   has_float_to_float);
-per_arch_test!("floats", "int_to_float", has_int_to_float);
+per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
+    Ppc32be: "BUG-23: PPC32 ISA has no single int→float scalar op; gcc emits the magic-number trick (xoris+lfd+fsub+frsp) — IR has FloatBinaryOp(Sub) + FloatToFloat, no IntToFloat",
+    Ppc32le: "BUG-23: same magic-number lowering as ppc32be (clang at -O0)",
+});
 per_arch_test!("floats", "float_to_int", has_float_to_int);
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
     X86: "BUG-10 residue: x86 f32_compare hits x87 ST0 / analyze_cfg failure",

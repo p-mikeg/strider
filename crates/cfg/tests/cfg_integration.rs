@@ -32,6 +32,7 @@ macro_rules! arch_tests {
         sla  = $sla:expr,
         pspec = $pspec:expr
         $(, ignore = $reason:literal)?
+        $(, ignore_fallthrough = $fallthrough_reason:literal)?
     ) => {
         mod $mod_name {
             use super::common::*;
@@ -149,7 +150,12 @@ macro_rules! arch_tests {
             // ── fallthrough edges ─────────────────────────────────────────────
 
             /// Looping functions must produce at least one fallthrough edge.
-            #[test] $(#[ignore = $reason])?
+            /// `ignore_fallthrough` overrides the module-wide `ignore` for
+            /// arches where clang at -O0 emits explicit `b <next-instr>`
+            /// (BUG-25 — `aarch64be`, `ppc32le`).
+            #[test]
+            $(#[ignore = $fallthrough_reason])?
+            $(#[ignore = $reason])?
             fn sum_to_n_has_fallthrough_edges() {
                 let c = cfg_of("sum_to_n");
                 assert!(
@@ -228,7 +234,8 @@ arch_tests!(
     mod aarch64be,
     arch  = "aarch64be",
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
-    pspec = rsleigh::pspec::PSPEC_AARCH64
+    pspec = rsleigh::pspec::PSPEC_AARCH64,
+    ignore_fallthrough = "BUG-25: clang at -O0 emits `b <next-instr>` between adjacent blocks; CFG has Branch edges only, no Fallthrough"
 );
 
 arch_tests!(
@@ -256,7 +263,8 @@ arch_tests!(
     mod ppc32le,
     arch  = "ppc32le",
     sla   = rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
-    pspec = rsleigh::pspec::PSPEC_PPC_32
+    pspec = rsleigh::pspec::PSPEC_PPC_32,
+    ignore_fallthrough = "BUG-25: clang at -O0 emits `b <next-instr>` between adjacent blocks; CFG has Branch edges only, no Fallthrough"
 );
 
 arch_tests!(
