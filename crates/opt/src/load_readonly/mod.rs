@@ -21,8 +21,19 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 ///
 /// Wrap a concrete memory implementation and add this optimizer to the pipeline:
 ///
-/// ```ignore
-/// pipeline.add(LoadReadOnly(my_rom));
+/// ```rust
+/// use opt::{LoadReadOnly, OptimizerPipeline};
+/// use reader::ReadOnlyMemory;
+///
+/// struct MyRom;
+/// impl ReadOnlyMemory for MyRom {
+///     fn read(&self, _space: rsleigh::VnSpace, _addr: u64, _size: usize) -> Option<u64> {
+///         None
+///     }
+/// }
+///
+/// let mut pipeline = OptimizerPipeline::new();
+/// pipeline.add(LoadReadOnly(MyRom));
 /// ```
 pub struct LoadReadOnly<M>(pub M);
 

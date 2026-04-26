@@ -58,10 +58,21 @@
 /// If you need the chain to point at your own site and don't have a
 /// `?` context handy, use `Wrapper::from(kind)` explicitly:
 ///
-/// ```ignore
+/// ```
+/// #[derive(Debug, thiserror::Error)]
+/// pub enum MyKind {
+///     #[error("boom")]
+///     Boom,
+/// }
+///
+/// strider_error::define_error! {
+///     pub struct MyError wraps MyKind;
+/// }
+///
 /// let err = MyError::from(MyKind::Boom);   // caller site captured
 /// // vs.
 /// let err: MyError = MyKind::Boom.into();  // core::convert captured
+/// # let _ = err;
 /// ```
 ///
 /// # Cross-crate bridges

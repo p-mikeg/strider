@@ -15,11 +15,14 @@ pub struct Options {
 /// Builder for [`Options`].
 ///
 /// # Example
-/// ```rust,ignore
+/// ```rust
+/// use cfg::OptionsBuilder;
+///
 /// let opts = OptionsBuilder::new()
 ///     .set_function_max_size(0x1000)
 ///     .allow_code_before_start_addr()
 ///     .build();
+/// # let _ = opts;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OptionsBuilder {

@@ -835,7 +835,7 @@ mod tests {
         );
     }
 #[test]
-#[ignore = "probe"]
+#[ignore = "probe float registers to verify names across architectures — uncomment locally to print results"]
 fn probe_float_regs() {
     fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
         let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);

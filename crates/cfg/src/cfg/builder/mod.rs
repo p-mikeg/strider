@@ -24,9 +24,23 @@ use crate::error::{ErrorKind, Result};
 /// region, that region is split in two.
 ///
 /// # Usage
-/// ```rust,ignore
+/// ```no_run
+/// use cfg::{Builder, OptionsBuilder};
+/// use rsleigh::mem_readers::BufMemReader;
+///
+/// let fn_addr: u64 = 0x1000;
+/// let reader = BufMemReader::new(Vec::<u8>::new(), fn_addr);
+/// let sleigh = rsleigh::Sleigh::new(
+///     rsleigh::sla_spec::SLA_SPEC_X86_64,
+///     rsleigh::pspec::PSPEC_X86_64,
+///     reader,
+/// ).expect("create Sleigh");
+/// let opts = OptionsBuilder::new().build();
 /// let cfg = Builder::new(sleigh, fn_addr, opts).build()?;
+/// # Ok::<(), cfg::Error>(())
 /// ```
+///
+/// See `crates/cfg/tests/build_end_to_end.rs` for runnable end-to-end examples.
 pub struct Builder<R: rsleigh::MemReader> {
     pub(super) sleigh: rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.

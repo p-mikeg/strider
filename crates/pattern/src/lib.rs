@@ -101,10 +101,21 @@
 //! match is always tried first, so strict patterns (e.g. `truncate(x)`
 //! looking for a literal `Truncate`) keep working unchanged.
 //!
-//! ```rust,ignore
+//! ```rust
+//! use ir::FunctionBuilder;
+//! use pattern::Matcher;
+//!
+//! let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+//! let region = fb.create_region().unwrap();
+//! fb.set_entry_region(region).unwrap();
+//! fb.set_region(region);
+//! fb.build_return(None, &[]).unwrap();
+//! let graph = fb.build().unwrap();
+//!
 //! let m = Matcher::new(&graph)
 //!     .ignore_casts()
 //!     .ignore_control_states();
+//! # let _ = m;
 //! ```
 
 pub mod error;

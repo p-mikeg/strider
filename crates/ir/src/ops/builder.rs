@@ -9,9 +9,25 @@ impl BuiltFunctionGraph {
     /// Creates (or retrieves from the dedup cache) a node with a single value
     /// output of `ty` and returns the output id directly. Shortcut for
     ///
-    /// ```ignore
+    /// ```rust
+    /// use ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+    /// use ir::FunctionBuilder;
+    ///
+    /// let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    /// let region = fb.create_region().unwrap();
+    /// fb.set_entry_region(region).unwrap();
+    /// fb.set_region(region);
+    /// fb.build_return(None, &[]).unwrap();
+    /// let mut built = fb.build().unwrap();
+    /// let g = &mut built.graph;
+    ///
+    /// let kind = NodeKind::IntConst(42);
+    /// let inputs: [NodeOutputId; 0] = [];
+    /// let ty = NodeOutputType::U64;
     /// let n = g.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
     /// let [out] = g.node_outputs_exact::<1>(n)?;
+    /// # let _ = out;
+    /// # Ok::<(), ir::Error>(())
     /// ```
     ///
     /// # Errors

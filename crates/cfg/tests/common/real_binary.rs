@@ -41,6 +41,11 @@ pub fn binary(arch: &str, fn_name: &str) -> std::path::PathBuf {
 }
 
 /// Resolves a named symbol's start address from an ELF file on disk.
+///
+/// On ARM Thumb the ELF symbol's low bit is set to mark the function as
+/// Thumb-encoded.  Callers that want the raw decode address should use
+/// [`symbol_decode_addr`], which masks bit 0 when the binary path lives
+/// under `fixtures/out/arm_thumb/`.
 pub fn symbol_addr(binary_path: &str, fn_name: &str) -> u64 {
     let leaked: &'static [u8] = Box::leak(
         std::fs::read(binary_path)
@@ -54,6 +59,21 @@ pub fn symbol_addr(binary_path: &str, fn_name: &str) -> u64 {
         .address()
 }
 
+/// Returns the address Sleigh expects to begin decoding from.
+///
+/// For ARM Thumb fixtures (binaries under `fixtures/out/arm_thumb/...`)
+/// the ELF symbol's low bit is the Thumb-mode marker, not part of the
+/// instruction address.  Sleigh raises "Instruction address not aligned"
+/// if you hand it the raw symbol value, so this helper masks it off.
+pub fn symbol_decode_addr(binary_path: &str, fn_name: &str) -> u64 {
+    let raw = symbol_addr(binary_path, fn_name);
+    if binary_path.contains("/arm_thumb/") {
+        raw & !1
+    } else {
+        raw
+    }
+}
+
 /// Builds a CFG for the named function using `sla_spec`/`pspec` to decode.
 ///
 /// The ELF is loaded from `binary_path`. The returned reader owns its backing
@@ -64,7 +84,7 @@ pub fn build_cfg(
     sla_spec: rsleigh::sla_spec::SlaSpec,
     pspec: rsleigh::pspec::PSpec,
 ) -> Cfg<reader::ElfFileMemReader> {
-    let addr = symbol_addr(binary_path, fn_name);
+    let addr = symbol_decode_addr(binary_path, fn_name);
     let mem_reader =
         reader::ElfFileMemReader::from_path(binary_path).expect("build ElfFileMemReader");
     let sleigh = rsleigh::Sleigh::new(sla_spec, pspec, mem_reader).expect("create Sleigh");

@@ -15,8 +15,11 @@
 //!
 //!   make -C `fixtures`
 //!
-//! ARM 32-bit tests are all `#[ignore]` because `BranchIndirect` is not yet
-//! handled as a region terminator — unignore them once that is fixed.
+//! All 14 architectures (ARM, ARM Thumb, AArch64 LE/BE, x86, x86_64,
+//! MIPS 32/64 LE/BE, PPC 32/64 LE/BE) are exercised; per-test
+//! `#[ignore]`s, where present, document a specific arch behaviour
+//! and reference the BUG-N entry in
+//! `docs/superpowers/plans/2026-04-25-analyzer-known-issues.md`.
 
 mod common;
 
@@ -142,7 +145,9 @@ macro_rules! arch_tests {
             #[test] $(#[ignore = $reason])?
             fn entry_start_addr_matches_symbol() {
                 let b = bin_for("add");
-                let expected = symbol_addr(b.to_str().unwrap(), "add");
+                // `symbol_decode_addr` masks the ARM Thumb low-bit marker
+                // so the comparison works for both ARM and ARM Thumb.
+                let expected = symbol_decode_addr(b.to_str().unwrap(), "add");
                 let c = cfg_of("add");
                 assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
             }
@@ -221,13 +226,7 @@ arch_tests!(
     arch  = "arm_thumb",
     sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
     // PSPEC_ARMCORTEX selects Thumb-2 decoding for the `-mthumb` fixtures.
-    pspec = rsleigh::pspec::PSPEC_ARMCORTEX,
-    // The cfg_integration assertions (specific region counts, edge kinds)
-    // were tuned for 4-byte ARM instructions; Thumb's 2-byte / 4-byte mix
-    // produces different CFG shapes (a Thumb conditional cluster is
-    // typically more regions than the ARM IT-block equivalent).  Per-
-    // arch assertion tuning is its own follow-up.
-    ignore = "ARM Thumb fixtures produce different region shapes than the ARM-tuned cfg assertions"
+    pspec = rsleigh::pspec::PSPEC_ARMCORTEX
 );
 
 arch_tests!(
