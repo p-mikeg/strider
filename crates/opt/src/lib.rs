@@ -57,6 +57,78 @@ pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 
+/// Stable subset of the default pipeline — passes whose rewrites survive
+/// the addition of new phi inputs in a later strider fixed-point
+/// iteration.  Used while the IR `Graph` is still growing under the
+/// indirect-branch resolver's outer loop.
+///
+/// # Correctness
+///
+/// Every pass listed here MUST produce IR that is robust against a
+/// future predecessor arriving at any region — i.e. it rewrites nodes
+/// in place but never *removes* phi / `ControlState` / `If` nodes that
+/// the strider [`RegionIrCache`] pins by `NodeId`.  Adding a pass
+/// here that detaches dependents would invalidate cached body
+/// references in the next iteration.
+///
+/// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
+/// — section "Stable vs destructive optimizer passes" — for the
+/// pass-by-pass rationale.
+///
+/// Note: [`LoadReadOnly`] is also stable per the spec table but takes
+/// a caller-supplied ROM image, so it can't be added with a default
+/// configuration.  Callers that have a ROM (e.g. strider's
+/// `build_optimizer_pipeline`) layer it on top of this subset.
+///
+/// Passes (in order):
+/// 1. [`ConstantFold`] — operand-rewriting; old nodes become dead but
+///    stay alive in the arena.  Phi-input widening doesn't disturb
+///    folded successors.
+/// 2. [`KnownBits`] — annotation-driven; recomputes from current phi
+///    inputs on each run.
+#[must_use]
+pub fn stable_default_pipeline() -> OptimizerPipeline {
+    let mut p = OptimizerPipeline::new();
+    // ConstantFold: rewrite-only.  Old operand nodes become dead but
+    // are not detached — see spec table row.
+    p.add(ConstantFold);
+    // KnownBits: bit-level annotation, recomputes per-iteration.
+    p.add(KnownBits);
+    p
+}
+
+/// Destructive subset of the default pipeline — passes that REMOVE
+/// nodes from the graph and rewire consumers past them.  Safe to run
+/// only after the IR shape is final (i.e. the strider fixed-point
+/// loop has converged).
+///
+/// # Correctness
+///
+/// Running these passes mid-iteration would invalidate the
+/// [`RegionIrCache`] because the cache's pinned phi `NodeId`s and
+/// body-side `NodeOutputId`s could point at detached nodes.  The
+/// orchestrator runs them exactly once at fixed point.
+///
+/// Passes (in order):
+/// 1. [`RedundantPhis`] — eliminates `ControlPhi` / `MemPhi` /
+///    `ControlState` nodes with a single reachable predecessor.
+///    Detaches inputs and rewires consumers — destructive.
+/// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
+///    strips dead control edges.  A later iteration could re-make the
+///    condition phi-dependent, but the branch is already gone.
+/// 3. [`CallOtherElide`] — drops opaque `CallOther`s whose user-op is
+///    a known IR-level no-op (e.g. ARM `setISAMode`).  Treated as
+///    destructive for symmetry with the spec table — every node-
+///    removal pass is deferred to fixed point.
+#[must_use]
+pub fn destructive_default_pipeline() -> OptimizerPipeline {
+    let mut p = OptimizerPipeline::new();
+    p.add(RedundantPhis);
+    p.add(DeadBranchElimination);
+    p.add(CallOtherElide);
+    p
+}
+
 /// Builds the default optimizer pipeline containing all built-in passes.
 ///
 /// The pipeline runs all passes in a single shared fixed-point loop: every
@@ -65,6 +137,10 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 /// folding a condition to `BoolConst(false)`) is immediately visible to later
 /// passes in the same iteration and will be propagated further in subsequent
 /// iterations without any extra configuration.
+///
+/// Equivalent to running [`stable_default_pipeline`] followed by
+/// [`destructive_default_pipeline`] in order — the two halves' passes
+/// are concatenated, preserving the previous default's pass ordering.
 ///
 /// Passes included (in order):
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities

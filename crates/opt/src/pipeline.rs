@@ -65,6 +65,7 @@ pub trait Optimizer {
     /// validation failure or a pattern-rewrite error propagated up through
     /// [`crate::Error`].
     fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult>;
+
 }
 
 /// An ordered list of [`Optimizer`] passes that are run in a shared fixed-point
@@ -75,6 +76,14 @@ pub trait Optimizer {
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 pub struct OptimizerPipeline {
     optimizers: Vec<Box<dyn Optimizer>>,
+    /// Type names of each registered optimizer, captured at
+    /// registration time via `std::any::type_name::<O>()`.  Indexed in
+    /// lock-step with `optimizers`.  Exposed via
+    /// [`OptimizerPipeline::optimizer_names`] so the fixed-point
+    /// orchestrator's pipeline-shape tests can confirm the
+    /// stable-vs-destructive subset partition without inspecting trait
+    /// objects.
+    optimizer_names: Vec<&'static str>,
     post_passes: Vec<Box<dyn Optimizer>>,
 }
 
@@ -90,13 +99,44 @@ impl OptimizerPipeline {
     pub fn new() -> Self {
         Self {
             optimizers: Vec::new(),
+            optimizer_names: Vec::new(),
             post_passes: Vec::new(),
         }
     }
 
     /// Appends `opt` to the end of the pass list.
     pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
+        // Capture the concrete type name BEFORE boxing the value so we
+        // can introspect the pipeline shape (see `optimizer_names`).
+        // `std::any::type_name` returns the fully-qualified type path,
+        // e.g. `"opt::redundant_phis::RedundantPhis"`.  Tests do
+        // substring matches against the leaf type name.
+        self.optimizer_names.push(std::any::type_name::<O>());
         self.optimizers.push(Box::new(opt));
+    }
+
+    /// Number of fixed-point passes registered (excluding post-passes).
+    ///
+    /// Used by the strider fixed-point orchestrator's tests to pin the
+    /// "stable subset + destructive subset == full pipeline" equivalence
+    /// without inspecting each pass's behavioural fingerprint.
+    #[must_use]
+    pub fn optimizer_count(&self) -> usize {
+        self.optimizers.len()
+    }
+
+    /// Concrete-type names of the registered fixed-point passes, in
+    /// registration order (excluding post-passes).
+    ///
+    /// Captured at registration time via `std::any::type_name::<O>()`.
+    /// Used by the pipeline-shape tests to confirm membership of each
+    /// pass in the stable / destructive subset without instantiating
+    /// real IR fixtures.  Type-name strings are
+    /// implementation-defined but stable enough for substring matching
+    /// against pass names like `"RedundantPhis"`.
+    #[must_use]
+    pub fn optimizer_names(&self) -> &[&'static str] {
+        &self.optimizer_names
     }
 
     /// Appends `opt` to the post-pass list.  Post-passes run once, in
