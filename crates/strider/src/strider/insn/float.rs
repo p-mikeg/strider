@@ -3,9 +3,9 @@ use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::error::{ErrorKind, Result};
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     // ── Float helpers ─────────────────────────────────────────────────────────
 
     /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].

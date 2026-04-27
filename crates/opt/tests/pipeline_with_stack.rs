@@ -1,4 +1,4 @@
-//! End-to-end tests for an SP-aware pipeline like the one Analyzer wires:
+//! End-to-end tests for an SP-aware pipeline like the one Strider wires:
 //! default + StackStoreDetect + StackLoadForward + CallStackArgCollect post-pass.
 
 #![allow(

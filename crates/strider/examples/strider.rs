@@ -14,12 +14,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mem_reader = reader::ElfFileMemReader::from_object(&obj)?;
     let rom = reader::ElfFileMemReader::from_object(&obj)?;
 
-    let arch = analyzer::SleighArch::x86();
+    let arch = strider::SleighArch::x86();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
-    let analyzer = analyzer::Analyzer::new(
+    let strider = strider::Strider::new(
         arch,
         sleigh.regs()?,
-        analyzer::CallingConvention::x86_cdecl(),
+        strider::CallingConvention::x86_cdecl(),
     )?;
 
     let cfg_options = cfg::OptionsBuilder::new()
@@ -37,14 +37,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_html("cfg.html")?;
     dot.dump_as_dot("cfg.dot")?;
 
-    let mut function = analyzer.analyze_cfg(&cfg)?;
+    let mut function = strider.analyze_cfg(&cfg)?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&cfg.sleigh), dot::DotStyle::dark());
     println!("dumping IR graph...");
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    let mut pipeline = analyzer.build_optimizer_pipeline();
+    let mut pipeline = strider.build_optimizer_pipeline();
     pipeline.add(opt::LoadReadOnly(rom));
     pipeline.run(&mut function)?;
     println!("dumping opt IR graph...");

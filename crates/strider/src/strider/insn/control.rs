@@ -1,8 +1,8 @@
 use crate::error::Result;
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
         region_id: cfg::RegionId,

@@ -29,9 +29,9 @@ Binary → CFG → IR → Optimizations → Pattern Queries
 ## Architecture
 
 ```
-reader ──→ cfg ──→ analyzer ──→ ir
-                                └──→ opt
-                                └──→ pattern
+reader ──→ cfg ──→ strider ──→ ir
+                               └──→ opt
+                               └──→ pattern
 dot   (visualization)
 ```
 
@@ -40,7 +40,7 @@ dot   (visualization)
 | `reader` | ELF loader, memory reader for rsleigh |
 | `cfg` | Control flow graph construction from p-code |
 | `ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
-| `analyzer` | CFG → IR translation, register aliasing (x86 `rax`/`eax`/`ax`/`al` etc.) |
+| `strider` | CFG → IR translation, register aliasing (x86 `rax`/`eax`/`ax`/`al` etc.) |
 | `opt` | IR optimization passes (see below) |
 | `pattern` | IR graph pattern matching with named captures |
 | `dot` | Renders CFG and IR graphs to `.dot` / `.html` for visualization |
@@ -69,7 +69,7 @@ The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeli
 cargo build --workspace
 
 # Run the example (reads fixtures/binary_test, writes cfg.html + graph.html)
-cargo run --example analyzer
+cargo run --example strider
 
 # Tests
 cargo test --workspace

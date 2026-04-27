@@ -1,8 +1,8 @@
 use crate::error::{ErrorKind, Result};
 
-use super::IrAnalyzer;
+use super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Reads any varnode into an IR value.
     ///
     /// Dispatches based on the varnode's address space:

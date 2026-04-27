@@ -2,9 +2,9 @@ use ir::node::NodeOutputType;
 
 use crate::error::{ErrorKind, Result};
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         if insn.inputs.is_empty() {
             return Err(ErrorKind::TooFewInputs(insn.opcode, 1, 0).into());

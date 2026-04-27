@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build --workspace
 
 # Run the main example (reads fixtures/binary_test, outputs cfg.html, graph.html)
-cargo run --example analyzer
+cargo run --example strider
 
 # Run all tests
 cargo test --workspace
@@ -30,9 +30,9 @@ This is a Rust workspace binary analysis tool that lifts native binaries to an I
 ### Crate Dependency Flow
 
 ```
-reader → cfg → analyzer → ir ← ir-macros (proc-macro)
-                           └→ opt
-                           └→ pattern
+reader → cfg → strider → ir ← ir-macros (proc-macro)
+                          └→ opt
+                          └→ pattern
 dot (visualization, used by cfg and ir)
 rsleigh (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
 ```
@@ -54,7 +54,7 @@ rsleigh (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
     - **Layer C**: graph-level invariants (Entry/InitialMemory uniqueness, ControlState predecessor kinds, phi token ownership & per-predecessor arity for `ControlPhi`/`MemPhi` only — `StackStorePhi` has fixed arity 3).
     - Aggregates all errors into a `ValidationErrors` bundle rather than failing fast.
 - **`ir-macros`** — proc-macro crate exporting `match_value!`, a DSL for ergonomic IR pattern matching. Syntax: `match_value! { if let PATTERN = ctx, val { BODY } }`. `PATTERN` supports `node name` / `val name` bindings, `NodeKind::IntBinaryOp(op)` kind matches, and recursive input matching via `[input0, input1, ...]`. Expands to chained `ctx.get_node_from_output()` / `ctx.node_kind()` / `ctx.node_inputs_exact::<N>()` calls. Used heavily by `opt` passes.
-- **`analyzer`** — Translates a `Cfg` to a `BuiltFunctionGraph`. `IrAnalyzer` handles register aliasing (sub-registers like `al`/`ah` in `rax` are accessed by shifting/masking the container register). `Analyzer::new(arch, sleigh_regs, cc)` takes an arch, sleigh register list, and a `CallingConvention`. `Analyzer::build_optimizer_pipeline()` returns the project's standard optimizer pipeline (default passes + `StackStoreDetect` + `CallStackArgCollect` post-pass) wired to the convention's stack-pointer varnode and stack-arg offsets. Supported calling conventions: `x86_cdecl`, `x86_64_systemv_abi`, `aarch64_aapcs64`, `arm_aapcs`.
+- **`strider`** — Translates a `Cfg` to a `BuiltFunctionGraph`. `IrStrider` handles register aliasing (sub-registers like `al`/`ah` in `rax` are accessed by shifting/masking the container register). `Strider::new(arch, sleigh_regs, cc)` takes an arch, sleigh register list, and a `CallingConvention`. `Strider::build_optimizer_pipeline()` returns the project's standard optimizer pipeline (default passes + `StackStoreDetect` + `CallStackArgCollect` post-pass) wired to the convention's stack-pointer varnode and stack-arg offsets. Supported calling conventions: `x86_cdecl`, `x86_64_systemv_abi`, `aarch64_aapcs64`, `arm_aapcs`.
 - **`opt`** — IR optimization passes. Passes added via `OptimizerPipeline::add` run in a shared fixed-point loop; `add_post_pass` runs once after convergence. `OptimizerPipeline::run` calls `ir::validate::validate` at the very end so any malformed graph is reported as an `opt::Error::IrError(ValidationFailed(...))`. Passes:
   - `ConstantFold` — constant evaluation for all arithmetic, comparisons, booleans, truncation, extension; algebraic identities (`x+0→x`, `x^x→0`, nested AND-mask merging `(a&C1)&C2 → a&(C1&C2)`).
   - `KnownBits` — bit-level propagation of statically known zeros/ones to fold partially-known expressions.
@@ -97,7 +97,7 @@ The IR is a sea-of-nodes graph where each `Node` has typed inputs (`NodeOutputId
 
 ### Register Aliasing
 
-The analyzer handles overlapping registers (e.g., x86 `rax`/`eax`/`ax`/`al`) by always reading/writing the largest containing register and inserting shift/mask operations for sub-registers. The `find_largest_fitting_register` method drives this.
+The strider crate handles overlapping registers (e.g., x86 `rax`/`eax`/`ax`/`al`) by always reading/writing the largest containing register and inserting shift/mask operations for sub-registers. The `find_largest_fitting_register` method drives this.
 
 ### External Dependency: rsleigh
 

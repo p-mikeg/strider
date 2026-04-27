@@ -68,45 +68,45 @@ impl Arch {
             Arch::Ppc64le => "ppc64le",
         }
     }
-    pub fn sleigh(self) -> analyzer::SleighArch {
+    pub fn sleigh(self) -> strider::SleighArch {
         match self {
-            Arch::X86 => analyzer::SleighArch::x86(),
-            Arch::X64 => analyzer::SleighArch::x86_64(),
-            Arch::Aarch64 => analyzer::SleighArch::aarch64(),
-            Arch::Aarch64Be => analyzer::SleighArch::aarch64be(),
-            Arch::Arm => analyzer::SleighArch::arm(),
-            Arch::ArmBe => analyzer::SleighArch::arm_be(),
-            Arch::ArmThumb => analyzer::SleighArch::arm_thumb(),
-            Arch::Mips32le => analyzer::SleighArch::mipsle32(),
-            Arch::Mips32be => analyzer::SleighArch::mipsbe32(),
-            Arch::Mips64le => analyzer::SleighArch::mipsle64(),
-            Arch::Mips64be => analyzer::SleighArch::mipsbe64(),
-            Arch::Ppc32be => analyzer::SleighArch::ppc32be(),
-            Arch::Ppc32le => analyzer::SleighArch::ppc32le(),
-            Arch::Ppc64be => analyzer::SleighArch::ppc64be(),
-            Arch::Ppc64le => analyzer::SleighArch::ppc64le(),
+            Arch::X86 => strider::SleighArch::x86(),
+            Arch::X64 => strider::SleighArch::x86_64(),
+            Arch::Aarch64 => strider::SleighArch::aarch64(),
+            Arch::Aarch64Be => strider::SleighArch::aarch64be(),
+            Arch::Arm => strider::SleighArch::arm(),
+            Arch::ArmBe => strider::SleighArch::arm_be(),
+            Arch::ArmThumb => strider::SleighArch::arm_thumb(),
+            Arch::Mips32le => strider::SleighArch::mipsle32(),
+            Arch::Mips32be => strider::SleighArch::mipsbe32(),
+            Arch::Mips64le => strider::SleighArch::mipsle64(),
+            Arch::Mips64be => strider::SleighArch::mipsbe64(),
+            Arch::Ppc32be => strider::SleighArch::ppc32be(),
+            Arch::Ppc32le => strider::SleighArch::ppc32le(),
+            Arch::Ppc64be => strider::SleighArch::ppc64be(),
+            Arch::Ppc64le => strider::SleighArch::ppc64le(),
         }
     }
-    pub fn cc(self) -> analyzer::CallingConvention {
+    pub fn cc(self) -> strider::CallingConvention {
         match self {
-            Arch::X86 => analyzer::CallingConvention::x86_cdecl(),
-            Arch::X64 => analyzer::CallingConvention::x86_64_systemv_abi(),
+            Arch::X86 => strider::CallingConvention::x86_cdecl(),
+            Arch::X64 => strider::CallingConvention::x86_64_systemv_abi(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
-            Arch::Aarch64 | Arch::Aarch64Be => analyzer::CallingConvention::aarch64_aapcs64(),
+            Arch::Aarch64 | Arch::Aarch64Be => strider::CallingConvention::aarch64_aapcs64(),
             // AAPCS32 is byte-order- and mode-independent — same CC for
             // ARM (LE), ARM-BE, and Thumb.
-            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => analyzer::CallingConvention::arm_aapcs(),
+            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => strider::CallingConvention::arm_aapcs(),
             // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
-            Arch::Mips32le | Arch::Mips32be => analyzer::CallingConvention::mips_o32(),
+            Arch::Mips32le | Arch::Mips32be => strider::CallingConvention::mips_o32(),
             // N64 ABI is the same on LE and BE 64-bit MIPS Linux.
-            Arch::Mips64le | Arch::Mips64be => analyzer::CallingConvention::mips_n64(),
+            Arch::Mips64le | Arch::Mips64be => strider::CallingConvention::mips_n64(),
             // PowerPC SysV 32-bit is byte-order independent.
-            Arch::Ppc32be | Arch::Ppc32le => analyzer::CallingConvention::powerpc_sysv32(),
+            Arch::Ppc32be | Arch::Ppc32le => strider::CallingConvention::powerpc_sysv32(),
             // PPC64: clang+lld defaults to ELFv2 for both BE and LE targets
             // (no function descriptors), so both paths use the v2 CC.  Use
             // the v1 preset only for explicit gcc-built ELFv1 binaries
-            // (function-descriptor handling is a future analyzer feature).
-            Arch::Ppc64be | Arch::Ppc64le => analyzer::CallingConvention::powerpc64_elf_v2(),
+            // (function-descriptor handling is a future strider feature).
+            Arch::Ppc64be | Arch::Ppc64le => strider::CallingConvention::powerpc64_elf_v2(),
         }
     }
 }
@@ -123,7 +123,7 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 // ── Pipeline runner ──────────────────────────────────────────────────────────
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
-/// full analyzer + optimiser pipeline (with `LoadReadOnly` against the same
+/// full strider + optimiser pipeline (with `LoadReadOnly` against the same
 /// ELF) and returns the resulting graph.
 ///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
@@ -146,8 +146,8 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
-    let ana = analyzer::Analyzer::new(sleigh_arch, regs, arch.cc())
-        .expect("Analyzer::new");
+    let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
+        .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
         .expect("real sleigh new");

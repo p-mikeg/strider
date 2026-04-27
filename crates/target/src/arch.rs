@@ -10,8 +10,8 @@ pub enum Endianness {
 /// A collection of Sleigh configuration items that together describe a
 /// specific target architecture.
 ///
-/// Pass a `SleighArch` to `Analyzer::new` (in the `analyzer` crate) along
-/// with the calling convention to build an analyser for that target.  The
+/// Pass a `SleighArch` to `Strider::new` (in the `strider` crate) along
+/// with the calling convention to build a strider for that target.  The
 /// calling convention owns the stack-pointer register name (see
 /// [`crate::CallingConvention::build`]) rather than the arch, so that
 /// `CallingConvention::build` is self-contained and different ABIs on the

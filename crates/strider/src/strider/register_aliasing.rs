@@ -2,9 +2,9 @@ use ir::{ExtendOp, IntBinaryOp};
 
 use crate::error::{ErrorKind, Result};
 
-use super::IrAnalyzer;
+use super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Finds the largest variable in the same space that fully contains `reg`.
     ///
     /// For REGISTER space this is the architectural register containment
@@ -64,7 +64,7 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
         reg: &rsleigh::Vn,
         container_reg: &rsleigh::Vn,
     ) -> u64 {
-        match self.analyzer.arch.endianness {
+        match self.strider.arch.endianness {
             crate::Endianness::Little => 8 * (reg.addr.off - container_reg.addr.off),
             crate::Endianness::Big => {
                 8 * (container_reg.size as u64
@@ -263,7 +263,7 @@ mod shift_formula_tests {
     }
 
     // Free helpers mirroring calculate_reg_shift_from_container's two arms,
-    // unit-testable without spinning up a full IrAnalyzer.
+    // unit-testable without spinning up a full IrStrider.
     fn compute_shift_le(reg: &Vn, container: &Vn) -> u64 {
         8 * (reg.addr.off - container.addr.off)
     }

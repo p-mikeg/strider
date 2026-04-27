@@ -3,9 +3,9 @@ use ir::{BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::error::{ErrorKind, Result};
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
     pub(super) fn process_int_unary_op(

@@ -92,7 +92,7 @@ fn arm_thumb_preset_resolves() {
 
 /// Pins the [`target::Endianness`] field of every `SleighArch` preset.
 ///
-/// `Endianness` is consumed by `analyzer::register_aliasing` to decide the
+/// `Endianness` is consumed by `strider::register_aliasing` to decide the
 /// shift direction when extracting a sub-register from its container; a
 /// mistyped value on a BE preset (or vice-versa) silently produces wrong
 /// shifts at the analyzer layer, with no signal from this crate.  Pin it

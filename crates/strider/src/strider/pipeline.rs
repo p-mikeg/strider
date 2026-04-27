@@ -1,20 +1,20 @@
 use crate::error::{ErrorKind, Result};
 
-use super::IrAnalyzer;
+use super::IrStrider;
 
 /// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
 /// function graph.
 ///
 /// Holds the target architecture description and the resolved calling
-/// convention.  Create one `Analyzer` per architecture/ABI combination and
+/// convention.  Create one `Strider` per architecture/ABI combination and
 /// reuse it to analyse multiple functions.
-pub struct Analyzer {
+pub struct Strider {
     pub(super) calling_convention: crate::BuiltCallingConvention,
     pub(super) arch: crate::SleighArch,
 }
 
-impl Analyzer {
-    /// Creates a new `Analyzer` for `arch` with the given Sleigh register list
+impl Strider {
+    /// Creates a new `Strider` for `arch` with the given Sleigh register list
     /// and calling convention.
     ///
     /// Resolves all register names in `calling_convention` against
@@ -38,7 +38,7 @@ impl Analyzer {
         })
     }
 
-    /// Returns the resolved calling convention this analyzer was built with.
+    /// Returns the resolved calling convention this Strider was built with.
     #[must_use]
     pub fn calling_convention(&self) -> &crate::BuiltCallingConvention {
         &self.calling_convention
@@ -125,9 +125,9 @@ impl Analyzer {
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Result<ir::BuiltFunctionGraph> {
-        let mut ir_analyzer = IrAnalyzer::new(self, cfg)?;
+        let mut ir_strider = IrStrider::new(self, cfg)?;
 
-        ir_analyzer.build_entry()?;
+        ir_strider.build_entry()?;
 
         // Step 1: create the structural clone of the CFG graph with None placeholders.
         // The map closure is infallible; IR region creation happens below.
@@ -135,7 +135,7 @@ impl Analyzer {
 
         // Step 2: fill in IR regions (fallible).
         for region_id in cfg.region_ids() {
-            let ir_region = ir_analyzer.builder.create_region()?;
+            let ir_region = ir_strider.builder.create_region()?;
             *cfg_ir_graph
                 .node_weight_mut(region_id)
                 .ok_or(ErrorKind::CfgNoRegion(region_id))? = Some(ir_region);
@@ -151,20 +151,20 @@ impl Analyzer {
         };
 
         // Set entry region.
-        ir_analyzer
+        ir_strider
             .builder
             .set_entry_region(ir_region_of(cfg.entry)?)?;
 
         // Translate instructions for each region.
         for node_idx in cfg_ir_graph.node_indices() {
             let ir_region = ir_region_of(node_idx)?;
-            ir_analyzer.builder.set_region(ir_region);
+            ir_strider.builder.set_region(ir_region);
             let region = cfg
                 .graph
                 .node_weight(node_idx)
                 .ok_or(ErrorKind::CfgNoRegion(node_idx))?;
             for wrapped_insn in &region.insns {
-                ir_analyzer.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
+                ir_strider.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
             }
         }
 
@@ -179,11 +179,11 @@ impl Analyzer {
             let Some((src, tgt)) = cfg_ir_graph.edge_endpoints(edge_idx) else {
                 continue;
             };
-            ir_analyzer
+            ir_strider
                 .builder
                 .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
 
-        Ok(ir_analyzer.builder.build()?)
+        Ok(ir_strider.builder.build()?)
     }
 }

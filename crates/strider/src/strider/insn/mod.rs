@@ -6,7 +6,7 @@ use rsleigh::Opcode;
 
 use crate::error::{ErrorKind, Result};
 
-use super::IrAnalyzer;
+use super::IrStrider;
 
 mod boolean;
 mod control;
@@ -24,7 +24,7 @@ pub(super) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
         .ok_or_else(|| ErrorKind::MissingOutputVn(insn.opcode).into())
 }
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
     ///

@@ -12,7 +12,7 @@
 //!
 //! Tests panic with a clear message if the binary is absent — matching
 //! the convention used by `cfg::cfg_integration` and
-//! `analyzer::analyze_binary`.
+//! `strider::analyze_binary`.
 
 use object::Object;
 use reader::{ElfFileMemReader, ReadOnlyMemory};

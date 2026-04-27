@@ -2,9 +2,9 @@ use ir::{BoolBinaryOp, BoolUnaryOp};
 
 use crate::error::Result;
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Translates a p-code boolean binary instruction into an IR boolean
     /// operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(

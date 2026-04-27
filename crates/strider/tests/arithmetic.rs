@@ -32,7 +32,7 @@ per_arch_test!("arithmetic", "sub",     has_sub);
 // mul: BUG-1 (MIPS MULT writes 64-bit unique varnode + Copy reads 32-bit
 // sub-slice into $v0) is fixed by extending the analyzer's UNIQUE-space
 // var filtering and aliasing — see crates/ir/src/builder/mod.rs and
-// crates/analyzer/src/analyzer/{vn_io,register_aliasing}.rs.
+// crates/strider/src/strider/{vn_io,register_aliasing}.rs.
 per_arch_test!("arithmetic", "mul",     has_mul);
 // udiv/umod/sdiv/smod: BUG-2 (MIPS DIV CFG fall-through) is fixed; these
 // are the regression coverage that prevents BUG-2 from re-emerging.

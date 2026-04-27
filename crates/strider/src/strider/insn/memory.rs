@@ -1,6 +1,6 @@
 use crate::error::{ErrorKind, Result};
 
-use super::super::IrAnalyzer;
+use super::super::IrStrider;
 
 /// Decodes the target address space of a p-code `LOAD`/`STORE`.
 ///
@@ -23,7 +23,7 @@ fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
 }
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
         let out_vn = super::require_output_vn(insn)?;

@@ -11,7 +11,7 @@
 //! Target description: architecture descriptors and calling conventions.
 //!
 //! This crate owns the pure data that describes the machine and ABI being
-//! analysed.  It sits below `ir`, `opt`, and `analyzer` so every layer that
+//! analysed.  It sits below `ir`, `opt`, and `strider` so every layer that
 //! needs ABI information can name the same types.
 
 pub mod arch;

@@ -28,7 +28,7 @@ pub struct CallingConvention {
     /// The Sleigh register name of the hardware stack pointer.  Stored on
     /// the convention because every built convention needs the stack
     /// pointer's `Vn` resolved, and the `SleighArch` that would otherwise
-    /// own this fact is already passed separately to `Analyzer::new`.
+    /// own this fact is already passed separately to `Strider::new`.
     stack_ptr_reg_name: &'static str,
     /// Sleigh register names for the ABI's argument-passing registers, in
     /// positional order.  Resolved into

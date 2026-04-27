@@ -5,34 +5,34 @@ mod pipeline;
 mod register_aliasing;
 mod vn_io;
 
-pub use pipeline::Analyzer;
+pub use pipeline::Strider;
 
 /// Per-function translation context that converts a [`cfg::Cfg`] into an IR
 /// graph region by region.
 ///
-/// Holds a reference to the shared [`Analyzer`] (register / calling-convention
+/// Holds a reference to the shared [`Strider`] (register / calling-convention
 /// information) and a fresh [`ir::FunctionBuilder`].
-pub struct IrAnalyzer<'a, R: rsleigh::MemReader> {
-    pub(crate) analyzer: &'a Analyzer,
+pub struct IrStrider<'a, R: rsleigh::MemReader> {
+    pub(crate) strider: &'a Strider,
     pub(crate) builder: ir::FunctionBuilder,
     pub(crate) cfg: &'a cfg::Cfg<R>,
 }
 
-impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
-    /// Creates a new `IrAnalyzer` for the given CFG.
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
+    /// Creates a new `IrStrider` for the given CFG.
     ///
     /// Collects all unique varnodes referenced by any instruction in `cfg` and
     /// constructs the IR [`FunctionBuilder`] with calling-convention
-    /// information from `analyzer`.
-    fn new(analyzer: &'a Analyzer, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
+    /// information from `strider`.
+    fn new(strider: &'a Strider, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
         // Find all variables
-        let all_vns = analyzer.find_all_unique_vns(cfg);
+        let all_vns = strider.find_all_unique_vns(cfg);
 
         // Create the builder to create the ir graph
-        let builder = ir::FunctionBuilder::new(all_vns, &analyzer.calling_convention)?;
+        let builder = ir::FunctionBuilder::new(all_vns, &strider.calling_convention)?;
 
         Ok(Self {
-            analyzer,
+            strider,
             builder,
             cfg,
         })
