@@ -106,29 +106,52 @@ The persistent state across the loop is the IR `Graph` itself, plus a `RegionIrC
 
 * the region's entry control / memory `NodeOutputId`s,
 * the region's exit control / memory `NodeOutputId`s,
-* the region's exit `vn_to_value` map (for any consumer that needs to read varnode values at the region boundary),
+* the region's exit `vn_to_value` map (for consumers that read varnode values at the region boundary),
+* the region's entry `ControlPhi` / `MemPhi` `NodeId`s, so new predecessors can be wired by adding inputs to the *existing* phi nodes,
 * a back-pointer to the `RegionId` in the *current* CFG.
+
+**Why reusing the body's IR is correct.**  The body of a region depends on (i) earlier-in-region nodes wired at lift time, and (ii) the region's *entry-boundary* phi nodes for control / memory / per-variable reads.  Adding a new predecessor adds an *input* to those existing phi nodes — it does not move them or create new ones.  The body still reads the same `NodeOutputId`s.  The pcode-to-IR translation is therefore deterministic from the region's pcode and is reusable across iterations.
 
 **Lifting protocol on every iteration:**
 
 1. Build (or rebuild) the CFG with `known_targets`.
 2. For each `Region` in the CFG:
-   * If `RegionIrCache` already has an entry for that region's start address → **reuse** it.  No pcode-to-IR work for this region.
+   * If `RegionIrCache` already has an entry for that region's start address → **reuse** it.  No pcode-to-IR work.
    * Otherwise → lift the region's pcode into the persistent `Graph` via `FunctionBuilder`, populate the cache.
-3. Stitch edges between regions using the cached entry/exit handles.
-4. Run optimizer pipeline.  The optimizer is idempotent — re-running over a partially-folded graph adds only the work needed to fold new constructs.
+3. Stitch edges between regions using the cached entry/exit handles.  When an existing region gains a new predecessor, append a new input to its entry `ControlPhi` / `MemPhi` / per-var phi nodes (which the cache pinned at lift time).
+4. Run the **stable optimizer subset** (see below).
+
+**Stable vs destructive optimizer passes.**  A pass is *stable across iterations* if its rewrites can survive the addition of new phi inputs.  The optimizer pipeline splits into two tiers:
+
+| Pass | Stable? | Reason |
+|---|---|---|
+| `ConstantFold` | ✓ | Rewrites operands; old nodes become dead but stay in the arena; phi inputs widen without disturbing folded successors. |
+| `KnownBits` | ✓ | Annotation-driven rewrites; recomputes from current phi inputs on each run. |
+| `LoadReadOnly` | ✓ | Rewrites a `Load` to an `IntConst`; the new `IntConst` becomes a stable consumer. |
+| `StackStoreDetect`, `StackLoadForward` | ✓ | Rewrite Store/Load nodes in place; no removal of dependents. |
+| `RedundantPhis` | ✗ | Removes phi / ControlState nodes by detaching inputs and rewiring consumers.  When a later iteration adds a new predecessor, the consumers now point past the phi and cannot be restored. |
+| `DeadBranchElimination` | ✗ | Removes If-true/false edges based on a transient `BoolConst` condition.  A later iteration may make the condition Phi-dependent again, but the branch is gone. |
+
+**Pipeline split.**  Intermediate iterations run only the stable subset.  The final iteration — once the fixed point is reached and tier 2 has produced no new resolutions — runs the **full** pipeline including `RedundantPhis` and `DeadBranchElimination`, producing the optimized IR that downstream consumers expect.
+
+Tier 2's classification is robust to whether the destructive subset has run:
+
+* `ValuePhi` whose every input folds to `IntConst(k_i)` → `Multiple([k_i])` (after dedup).
+* If `RedundantPhis` *did* run and folded the phi to `IntConst(k)`, tier 2 sees `IntConst(k)` → `Single(k)`.
+
+Both classifications produce the same induced edge set.  Convergence is unaffected.
 
 **Stale cache invalidation:**
 
-* In-place IR edits (Return → Call+Return) mutate nodes inside a single region's subgraph.  The cached entry's *control* / *memory* boundaries don't change (the placeholder Return becomes a Call+Return; control still exits via a Return-shaped tail), so the cache stays valid.
-* CFG split (`split_region`): when a region splits because a new branch lands in its interior, the cache must be updated.  The first half keeps its cache entry; the second half gets a fresh one.  This is mechanical — splits already exist in cfg, we just add the cache update at split time.
-* Stale predecessor edges: when an existing region gains a new predecessor (because tier 2 resolved a `Multiple` whose targets land at this region's start), the region's `ControlPhi` / `MemPhi` nodes need a new input.  The cached entry boundaries don't move; we add the input to the existing phi node.  Optimizer's `RedundantPhis` will re-evaluate as needed.
+* In-place IR edits (Return → Call+Return) mutate nodes inside a single region's subgraph.  The cached entry's *control* / *memory* boundary handles don't change (the placeholder Return becomes a Call+Return; control still exits via a Return-shaped tail), so the cache stays valid.
+* CFG split (`split_region`): when a region splits because a new branch lands in its interior, the cache must be updated.  The first half keeps its cache entry; the second half gets a fresh one.  This is mechanical — splits already exist in cfg, we add the cache update at split time.
+* Stale predecessor edges: handled in protocol step 3 above.
 
 **Practical guarantee:**
 
 > Each pcode instruction in the function is lifted to IR **at most once** across the entire fixed-point analysis, regardless of how many CFG rebuilds occur.
 
-The cost across N iterations is `O(initial_lift_cost + N * optimizer_cost)`.  The optimizer cost is amortised — it finishes quickly on already-folded subgraphs.
+The cost across N iterations is `O(initial_lift_cost + N * stable_optimizer_cost + final_full_optimizer_cost)`.  The stable optimizer subset is ~70% of today's pipeline by pass count and the bulk of its work is amortised — it finishes quickly on already-folded subgraphs.
 
 ### In-place IR edits vs CFG rebuild
 
@@ -161,12 +184,15 @@ let mut region_ir_cache: HashMap<PcodeInsnAddr, RegionIrEntry> = HashMap::new();
 // First pass — same shape as today's analyze entry.
 let mut cfg = Builder::new(sleigh, start_addr, opts).build()?;
 lift_new_regions_into(&mut function_builder, &mut region_ir_cache, &cfg)?;
-run_optimizer_pipeline(&mut graph)?;
+run_stable_optimizer_subset(&mut graph)?;
 
 // Fast-path: most functions have NO BranchIndirect at all.  In that
 // case there are no UnresolvedIndirectBranch regions, no tier-2 work,
-// no iteration.  We pay zero overhead beyond a one-line check.
+// no iteration.  We pay zero overhead beyond a one-line check, then
+// run the full optimizer (incl. RedundantPhis / DeadBranchElim) and
+// return.
 if !cfg.has_unresolved_indirect_branches() {
+    run_destructive_optimizer_subset(&mut graph)?;
     return Ok(graph);
 }
 
@@ -197,6 +223,10 @@ for _iteration in 0..=2 * pending_at_iter_0 + 4 {
                 first_unresolved_addr(&cfg),
             ).into());
         }
+        // Run the destructive subset only at the fixed point — the
+        // graph shape is now final, so RedundantPhis / DeadBranchElim
+        // can safely remove nodes without violating the cache.
+        run_destructive_optimizer_subset(&mut graph)?;
         return Ok(graph);
     }
 
@@ -214,7 +244,7 @@ for _iteration in 0..=2 * pending_at_iter_0 + 4 {
         lift_new_regions_into(
             &mut function_builder, &mut region_ir_cache, &cfg,
         )?;
-        run_optimizer_pipeline(&mut graph)?;
+        run_stable_optimizer_subset(&mut graph)?;
     }
 }
 return Err(ErrorKind::IndirectResolutionDidNotConverge);
