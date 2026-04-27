@@ -1,5 +1,9 @@
 # Indirect Branch Resolution — Design
 
+> **SUPERSEDED** by [2026-04-27-indirect-branch-fixedpoint-design.md](2026-04-27-indirect-branch-fixedpoint-design.md).
+>
+> The single-region mini-graph resolver this document describes has a soundness gap (cannot resolve `pop pc` or distinguish `push X; pop pc` tail calls from real returns) and a power gap (cannot reach jump tables).  The replacement runs the **full** optimizer on the **constructed** graph and iterates to fixed point — see the new spec.  Phase 1–5 commits on `feature/ai` retain their value as building blocks the new design composes; only Phase 5b was abandoned.
+
 ## Goal
 
 Stop misclassifying every `BranchIndirect` as a return.  When the
