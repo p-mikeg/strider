@@ -21,7 +21,9 @@
 pub use cfg::test_api::ResolvedTargets;
 
 mod classify;
-// `inplace` and `orchestrator` modules land in R3; the jump-table
-// extension lands in R4.
+pub mod inplace;
+// The orchestrator module lands in R3.6; the jump-table extension
+// lands in R4.
 
 pub use classify::classify_anchor;
+pub use inplace::{apply_link_register, apply_tail_call};

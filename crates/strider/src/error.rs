@@ -68,6 +68,37 @@ pub enum ErrorKind {
     /// instead of using `panic!`.
     #[error("assertion failed: {0}")]
     AssertionFailed(String),
+
+    /// Returned by tier-2 in-place editors and orchestrator helpers
+    /// when given a node id that does not have the expected
+    /// [`ir::node::NodeKind`].  Carries the offending node id and a
+    /// human-readable name of the expected kind.
+    #[error("node {node:?} does not have expected kind {expected}")]
+    WrongNodeKind {
+        node: ir::node::NodeId,
+        expected: &'static str,
+    },
+
+    /// A code path that the round-1 indirect-branch fixed-point loop
+    /// has not yet implemented.  Carries a description of the missing
+    /// path so callers can surface a meaningful diagnostic.  Round-2+
+    /// will replace these errors with real implementations.
+    #[error("not yet implemented: {0}")]
+    Unimplemented(String),
+
+    /// Returned by the strider-level outer loop when it iterates more
+    /// than its bounded cap (`2 * pending_at_iter_0 + 4`).  Hitting
+    /// this error indicates a soundness bug in the resolver — every
+    /// legal classification transition strictly grows the induced
+    /// edge set, so the loop must terminate within the cap.  No panic.
+    #[error("indirect-branch resolver did not converge after {0} iterations")]
+    IndirectResolutionDidNotConverge(usize),
+
+    /// Returned at fixed point if any `BranchIndirect` remains
+    /// unresolved.  Carries the offending pcode address so callers
+    /// can correlate with the disassembly.
+    #[error("indirect branch at {0:?} could not be resolved at fixed point")]
+    UnresolvedIndirectBranch(cfg::PcodeInsnAddr),
 }
 
 strider_error::define_error! {
