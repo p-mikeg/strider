@@ -100,6 +100,36 @@ A new strider-level pass that runs **after** the full optimizer pipeline.  For e
 
 Tier 2's value is **power**: it sees the full IR after `StackLoadForward` + `LoadReadOnly` + cross-region phis.  This is where `pop pc` and jump tables resolve.
 
+### IR caching across iterations — every instruction is lifted exactly once
+
+The persistent state across the loop is the IR `Graph` itself, plus a `RegionIrCache: HashMap<PcodeInsnAddr, RegionIrEntry>` keyed by region start address.  The cache holds, for each region:
+
+* the region's entry control / memory `NodeOutputId`s,
+* the region's exit control / memory `NodeOutputId`s,
+* the region's exit `vn_to_value` map (for any consumer that needs to read varnode values at the region boundary),
+* a back-pointer to the `RegionId` in the *current* CFG.
+
+**Lifting protocol on every iteration:**
+
+1. Build (or rebuild) the CFG with `known_targets`.
+2. For each `Region` in the CFG:
+   * If `RegionIrCache` already has an entry for that region's start address → **reuse** it.  No pcode-to-IR work for this region.
+   * Otherwise → lift the region's pcode into the persistent `Graph` via `FunctionBuilder`, populate the cache.
+3. Stitch edges between regions using the cached entry/exit handles.
+4. Run optimizer pipeline.  The optimizer is idempotent — re-running over a partially-folded graph adds only the work needed to fold new constructs.
+
+**Stale cache invalidation:**
+
+* In-place IR edits (Return → Call+Return) mutate nodes inside a single region's subgraph.  The cached entry's *control* / *memory* boundaries don't change (the placeholder Return becomes a Call+Return; control still exits via a Return-shaped tail), so the cache stays valid.
+* CFG split (`split_region`): when a region splits because a new branch lands in its interior, the cache must be updated.  The first half keeps its cache entry; the second half gets a fresh one.  This is mechanical — splits already exist in cfg, we just add the cache update at split time.
+* Stale predecessor edges: when an existing region gains a new predecessor (because tier 2 resolved a `Multiple` whose targets land at this region's start), the region's `ControlPhi` / `MemPhi` nodes need a new input.  The cached entry boundaries don't move; we add the input to the existing phi node.  Optimizer's `RedundantPhis` will re-evaluate as needed.
+
+**Practical guarantee:**
+
+> Each pcode instruction in the function is lifted to IR **at most once** across the entire fixed-point analysis, regardless of how many CFG rebuilds occur.
+
+The cost across N iterations is `O(initial_lift_cost + N * optimizer_cost)`.  The optimizer cost is amortised — it finishes quickly on already-folded subgraphs.
+
 ### In-place IR edits vs CFG rebuild
 
 A tier-2 resolution falls into one of two buckets that determine whether we can edit the IR in place or must rebuild the CFG:
@@ -117,19 +147,27 @@ CFG rebuilds are reserved for the genuinely structural cases: intra-fn `Single` 
 
 ### Outer loop — fixed-point orchestration
 
-Strider's `analyze` entry orchestrates the iteration:
+Strider's `analyze` entry orchestrates the iteration.  Note that
+`graph` and `region_ir_cache` are persistent across iterations —
+they're constructed before the loop and only **extended** thereafter,
+never rebuilt.
 
 ```rust
+// Persistent state — survives every iteration; only ever grows.
+let mut graph = Graph::new();
+let mut function_builder = FunctionBuilder::new(&mut graph, ...);
+let mut region_ir_cache: HashMap<PcodeInsnAddr, RegionIrEntry> = HashMap::new();
+
 // First pass — same shape as today's analyze entry.
 let mut cfg = Builder::new(sleigh, start_addr, opts).build()?;
-let mut ir = lift_cfg_to_ir(&cfg)?;
-run_optimizer_pipeline(&mut ir)?;
+lift_new_regions_into(&mut function_builder, &mut region_ir_cache, &cfg)?;
+run_optimizer_pipeline(&mut graph)?;
 
 // Fast-path: most functions have NO BranchIndirect at all.  In that
 // case there are no UnresolvedIndirectBranch regions, no tier-2 work,
 // no iteration.  We pay zero overhead beyond a one-line check.
 if !cfg.has_unresolved_indirect_branches() {
-    return Ok(ir);
+    return Ok(graph);
 }
 
 // Function has at least one BranchIndirect.  Enter the loop.
@@ -137,16 +175,18 @@ let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
 let pending_at_iter_0 = cfg.unresolved_indirect_branch_count();
 
 for _iteration in 0..=2 * pending_at_iter_0 + 4 {
-    let latest = run_tier_2_resolver(&ir)?;       // full re-classification
+    let latest = run_tier_2_resolver(&graph, &region_ir_cache)?;
 
     // Apply in-place edits for terminal classifications (LinkRegister
-    // and tail-call Single).  These don't add CFG edges; we promote
-    // the placeholder Return / rewrite to Call+Return locally and
-    // remove the entry from the unresolved set.
-    let needs_rebuild = apply_in_place_edits(&mut ir, &latest, &cfg);
+    // and tail-call Single).  These mutate `graph` directly — no
+    // rebuild of the IR or CFG.  The cached region entries' boundary
+    // handles stay valid.
+    let needs_rebuild = apply_in_place_edits(
+        &mut graph, &mut region_ir_cache, &latest, &cfg,
+    );
     // `needs_rebuild` returns the subset of `latest` whose targets
     // require new CFG edges (intra-fn Single, Multiple).  If empty,
-    // we don't rebuild.
+    // we don't touch the CFG.
 
     if needs_rebuild.is_empty()
         && edge_set_of(&latest) == edge_set_of(&known_targets)
@@ -157,18 +197,24 @@ for _iteration in 0..=2 * pending_at_iter_0 + 4 {
                 first_unresolved_addr(&cfg),
             ).into());
         }
-        return Ok(ir);
+        return Ok(graph);
     }
 
     known_targets = latest;
     if !needs_rebuild.is_empty() {
-        // Structural change required — rebuild from scratch with the
-        // new known_targets feeding the cfg builder.
+        // Structural change: rebuild the CFG only.  The IR Graph is
+        // PRESERVED; lift_new_regions_into walks the new CFG and
+        // skips any region already present in `region_ir_cache`,
+        // honouring the "every instruction is lifted exactly once"
+        // contract.  Newly-discovered regions are appended to the
+        // existing graph and stitched in via the cache's edge handles.
         cfg = Builder::new(sleigh, start_addr, opts)
             .with_known_targets(&known_targets)
             .build()?;
-        ir = lift_cfg_to_ir(&cfg)?;
-        run_optimizer_pipeline(&mut ir)?;
+        lift_new_regions_into(
+            &mut function_builder, &mut region_ir_cache, &cfg,
+        )?;
+        run_optimizer_pipeline(&mut graph)?;
     }
 }
 return Err(ErrorKind::IndirectResolutionDidNotConverge);
@@ -243,6 +289,8 @@ The iteration cap (`2 * pending + 4`) is a **soundness guard** for resolver bugs
 |---|---|---|
 | `RegionTerminator::UnresolvedIndirectBranch{vn,addr}` | `cfg` | Placeholder terminator marking deferred regions. |
 | `Builder::with_known_targets` | `cfg` | Threads tier-2 results back into the next CFG build. |
+| `RegionIrCache` | `strider` | Persistent map `RegionStartAddr → RegionIrEntry`.  Guarantees each pcode insn is lifted to IR at most once across all iterations. |
+| `lift_new_regions_into` | `strider` | Walks a CFG; for cached regions it reuses the existing IR subgraph; for new ones it lifts pcode→IR and populates the cache.  Stitches edges via cached boundary handles. |
 | Tier-1 resolver (existing, softened) | `cfg::indirect_resolve` | Mini-graph; failure now returns Unresolved instead of erroring. |
 | `IrStrider` lifting of `UnresolvedIndirectBranch` | `strider` | Emits placeholder `Return(target_vn)`; records `(addr, region, target_value)` for tier 2. |
 | Tier-2 resolver | `strider::indirect_resolve_tier2` (new) | Pattern-match producers in the optimised IR; produce `ResolvedTargets`. |
@@ -261,6 +309,7 @@ Unit tests on every new piece of logic — same hard rule as the prior plan.  Th
 * **`cfg::Builder::with_known_targets`**: round-trip tests asserting the API correctly threads cached resolutions; correct precedence (cached overrides mini-graph).
 * **`strider::indirect_resolve_tier2`**: at least one positive test per `ResolvedTargets` variant; one negative test per "still-unresolved" path.  Specifically: stack-popped-return-via-StackLoadForward, IntConst-via-ConstantFold, InitialVar(lr)-direct, jump-table-bounded (R4 only), no-resolution.
 * **Outer loop**: 0-iteration (no indirect branches), 1-iteration (resolves on first tier-2 pass), 2-iteration (cascading resolution where a new region's branch resolves only after a previous one was wired), unresolved-at-fixed-point (returns error), iteration-cap-exceeded (returns IndirectResolutionDidNotConverge).
+* **Cache**: a "lift each instruction exactly once" assertion test — instrument `lift_new_regions_into` to count pcode→IR conversions, run a function that triggers 2 CFG rebuilds, assert the counter equals the total instruction count of the final CFG (no instruction lifted twice).
 * **Integration**: the 4 ARM tests currently ignored under BUG-5 must un-ignore and pass.  R4 adds a jump-table fixture per `fixtures/cases/`.
 
 ## Out-of-scope confirmations
