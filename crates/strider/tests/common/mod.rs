@@ -27,6 +27,12 @@
 use object::{Object, ObjectSymbol};
 use std::path::PathBuf;
 
+// Sub-module containing fixture builders for the tier-2 classifier
+// integration tests in `tests/tier2_classify.rs`.  Kept as a sub-module
+// so the rest of the per-arch fixture infrastructure above remains
+// unchanged.
+pub mod tier2_helpers;
+
 // ── Architecture enum ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
