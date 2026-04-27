@@ -26,6 +26,13 @@ pub fn category_for_fn(fn_name: &str) -> &'static str {
         "fib_recursive" | "mutual_a" | "mutual_b" | "nested_3deep"
         | "repeat_call_pair" | "pass_through" | "apply_indirect"
         | "leaf" | "mid" | "pair_a" => "calls",
+        // complex.c
+        "read_struct_fields" | "write_struct_fields" | "nested_struct_field"
+        | "bit_test_zero" | "if_bit_clear_call" | "call_with_field_arg"
+        | "dispatch_on_flag" | "multi_arg_call_in_branch" | "complex_dispatch"
+        | "call_uses_call_return"
+        | "cb_zero" | "cb_set" | "invoke" | "ext_three"
+        | "produce" | "consume" => "complex",
         other => panic!("unknown fixture function {other:?} — add it to category_for_fn"),
     }
 }

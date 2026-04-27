@@ -110,12 +110,27 @@ impl Optimizer for FunctionArgDetect {
 /// has live uses, emit one `FunctionArg { Register(reg), i }` and rewire all
 /// those uses to it.  No contiguity check — reading only arg 2 still labels it
 /// arg 2.
+///
+/// **Sub-register fallback.**  The IR builder doesn't always promote a
+/// register read at function entry to the full container register: a `char`
+/// or `int` parameter compiled on x86_64 SysV may surface as
+/// `InitialVar(ECX size=4 at off=8)` rather than `InitialVar(RCX size=8
+/// at off=8)`, and on AArch64-BE a 32-bit `int` parameter may surface as
+/// `InitialVar(W3 size=4 at off=X3.off+4)` (BE places the 32-bit
+/// sub-register in the high half of the 64-bit container).
+///
+/// When the exact-`Vn` lookup misses, fall back to any `InitialVar` whose
+/// `Vn` lies fully within `reg`'s byte range
+/// `[reg.addr.off, reg.addr.off + reg.size)` in the same address space.
+/// If multiple candidates exist, pick the largest (the most specific
+/// reading of `reg`'s state).  The emitted `FunctionArg`'s `source`
+/// records the actual sub-register Vn, so downstream consumers see the
+/// width the function actually reads.
 fn detect_register_args(
     fg: &mut BuiltFunctionGraph,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
-    // Build a Vn → NodeId map in a single graph scan rather than scanning
-    // `all_node_ids()` once per arg register (which made this O(args × nodes)).
+    // Single graph scan collects every InitialVar's Vn → NodeId.
     // `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`),
     // so we still rely on the builder's invariant of at most one InitialVar
     // per varnode.
@@ -127,21 +142,47 @@ fn detect_register_args(
         }
     }
 
+    /// Find the largest `(Vn, NodeId)` whose Vn is fully contained
+    /// in `reg`'s byte range.  Returns `None` if nothing's contained.
+    fn largest_sub_in(
+        initial_vars: &rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
+        reg: rsleigh::Vn,
+    ) -> Option<(rsleigh::Vn, NodeId)> {
+        let lo = reg.addr.off;
+        let hi = reg.addr.off + (reg.size as u64);
+        initial_vars
+            .iter()
+            .filter(|(vn, _)| {
+                vn.addr.space == reg.addr.space
+                    && vn.addr.off >= lo
+                    && vn.addr.off + (vn.size as u64) <= hi
+            })
+            .max_by_key(|(vn, _)| vn.size)
+            .map(|(vn, n)| (*vn, *n))
+    }
+
     let mut result = OptimizationResult::NoChange;
     for (i, reg) in arg_passing_regs.iter().enumerate() {
-        let Some(&initial_var) = initial_vars.get(reg) else {
+        // Exact match → use as-is.  Otherwise the largest sub-register
+        // contained in `reg`'s byte range.
+        let (effective_vn, initial_var) = if let Some(&n) = initial_vars.get(reg) {
+            (*reg, n)
+        } else if let Some((sub_vn, sub_n)) = largest_sub_in(&initial_vars, *reg) {
+            (sub_vn, sub_n)
+        } else {
             continue;
         };
+
         let [old_out] = fg.graph.node_outputs_exact::<1>(initial_var)?;
-        // Skip if `InitialVar(reg)` has no consumers.
+        // Skip if the InitialVar has no consumers.
         if fg.graph.output_use_cursor(old_out).current().is_none() {
             continue;
         }
 
-        let out_type = NodeOutputType::try_from(reg.size)?;
+        let out_type = NodeOutputType::try_from(effective_vn.size)?;
         let new_node = fg.graph.create_node(
             NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(*reg),
+                source: FunctionArgSource::Register(effective_vn),
                 index: i as u32,
             },
             [],
