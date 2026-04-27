@@ -325,11 +325,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             inputs: [CTRL, MEM, TARGET]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
-        NodeKind::PostCallMemState => sig!(inputs: [CTRL], outputs: [MEM]),
-        // PostCallVarState output is AnyValue (not AnyInt): caller-clobbered
-        // flag registers are Bool-typed and routinely re-established by
-        // PostCallVarState. Same rationale as the Call output's CALL_OUT slot.
-        NodeKind::PostCallVarState(_) => sig!(inputs: [CTRL], outputs: [ANY_VAL]),
         // Return: [control, memory, ...return values]. Return values are the
         // calling convention's ret_val_regs when built by the analyzer; synthetic
         // test builds may supply a single explicit value via `build_return`.
@@ -685,8 +680,6 @@ mod tests {
             NodeKind::ValuePhi,
             NodeKind::If,
             NodeKind::Call,
-            NodeKind::PostCallMemState,
-            NodeKind::PostCallVarState(vn),
             NodeKind::Return,
             NodeKind::Load(space),
             NodeKind::Store(space),

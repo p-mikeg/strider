@@ -79,10 +79,6 @@ pub enum NodeKind {
     // ── Calls and returns ──────────────────────────────────────────────────────
     /// Function call.  Clobbers caller-saved registers and the memory token.
     Call,
-    /// Post-call memory state produced by a `Call` node.
-    PostCallMemState,
-    /// Post-call value of caller-saved varnode `Vn` produced by a `Call` node.
-    PostCallVarState(rsleigh::Vn),
     /// Function return.  Consumes the outgoing control edge and any return-value outputs.
     Return,
 

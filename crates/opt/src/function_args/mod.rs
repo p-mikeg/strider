@@ -23,7 +23,7 @@
 //!   nodes: `StackStore { offset: K }`, `StackStorePhi` whose per-predecessor
 //!   offsets contain `K`, and un-decomposed `Store` (may alias —
 //!   conservative).  Non-disqualifying: `InitialMemory`, `Call`,
-//!   `PostCallMemState`, `CallOther`, and stores at other offsets.  After
+//!   `CallOther`, and stores at other offsets.  After
 //!   filtering, emit only those indices that form a gap-free prefix starting
 //!   at `first_stack_arg = arg_passing_regs.len()`; the first gap truncates.
 //!
@@ -341,9 +341,9 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 
 /// DFS through memory predecessors looking for a store that may shadow the
 /// byte range `[offset, offset + load_size)`.  Treats `MemPhi` as a fork
-/// where **every** value predecessor must be clean; `Call` / `PostCallMemState`
-/// / `CallOther` as pass-throughs (a caller cannot alias the callee's
-/// incoming stack-arg area through a nested call).
+/// where **every** value predecessor must be clean; `Call` / `CallOther` as
+/// pass-throughs (a caller cannot alias the callee's incoming stack-arg area
+/// through a nested call).
 ///
 /// Returns `true` if any path through the chain *may* overwrite bytes in the
 /// load's range.  A `StackStore` or `StackStorePhi` whose byte range overlaps
@@ -430,36 +430,6 @@ fn mem_chain_is_dirty(
                 false
             } else {
                 mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen, memo)
-            }
-        }
-        NodeKind::PostCallMemState => {
-            // Inputs: [CTRL] — the CTRL output of the originating Call.
-            // Walk through it to the Call, then recurse on its MEM input.
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.is_empty() {
-                false
-            } else {
-                let call_node = fg.graph.get_node_from_output(inputs[0]);
-                match *fg.graph.node_kind(call_node) {
-                    NodeKind::Call | NodeKind::CallOther { .. } => {
-                        let call_inputs = fg.graph.node_inputs(call_node);
-                        if call_inputs.len() < 2 {
-                            false
-                        } else {
-                            mem_chain_is_dirty(
-                                fg,
-                                call_inputs[1],
-                                offset,
-                                load_size,
-                                seen,
-                                memo,
-                            )
-                        }
-                    }
-                    // Unexpected producer for PostCallMemState's CTRL — be
-                    // conservative.
-                    _ => true,
-                }
             }
         }
         // Any other memory-producing node we don't recognise: be conservative.

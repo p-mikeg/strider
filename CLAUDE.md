@@ -51,7 +51,7 @@ rsleigh (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
   - `validate::validate(&graph, entry) -> Result<(), ValidationErrors>` — whole-graph validator with three layers:
     - **Layer A**: per-node local typing against `expected_signature` (scoped to nodes reachable via `walk_graph`, since optimization passes leave detached zombie nodes in the arena).
     - **Layer B**: bidirectional use-list consistency.
-    - **Layer C**: graph-level invariants (Entry/InitialMemory uniqueness, ControlState predecessor kinds, phi token ownership & per-predecessor arity for `ControlPhi`/`MemPhi` only — `StackStorePhi` has fixed arity 3, PostCall producer & uniqueness).
+    - **Layer C**: graph-level invariants (Entry/InitialMemory uniqueness, ControlState predecessor kinds, phi token ownership & per-predecessor arity for `ControlPhi`/`MemPhi` only — `StackStorePhi` has fixed arity 3).
     - Aggregates all errors into a `ValidationErrors` bundle rather than failing fast.
 - **`ir-macros`** — proc-macro crate exporting `match_value!`, a DSL for ergonomic IR pattern matching. Syntax: `match_value! { if let PATTERN = ctx, val { BODY } }`. `PATTERN` supports `node name` / `val name` bindings, `NodeKind::IntBinaryOp(op)` kind matches, and recursive input matching via `[input0, input1, ...]`. Expands to chained `ctx.get_node_from_output()` / `ctx.node_kind()` / `ctx.node_inputs_exact::<N>()` calls. Used heavily by `opt` passes.
 - **`analyzer`** — Translates a `Cfg` to a `BuiltFunctionGraph`. `IrAnalyzer` handles register aliasing (sub-registers like `al`/`ah` in `rax` are accessed by shifting/masking the container register). `Analyzer::new(arch, sleigh_regs, cc)` takes an arch, sleigh register list, and a `CallingConvention`. `Analyzer::build_optimizer_pipeline()` returns the project's standard optimizer pipeline (default passes + `StackStoreDetect` + `CallStackArgCollect` post-pass) wired to the convention's stack-pointer varnode and stack-arg offsets. Supported calling conventions: `x86_cdecl`, `x86_64_systemv_abi`, `aarch64_aapcs64`, `arm_aapcs`.
@@ -87,7 +87,7 @@ The IR is a sea-of-nodes graph where each `Node` has typed inputs (`NodeOutputId
 - **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`
 - **Region / join:** `ControlState` (variadic Control inputs; outputs `Control` + `ControlPhi` dispatch token), `ControlPhi(Vn)` (SSA φ for varnode `Vn` at a join point), `MemPhi` (φ for the memory token)
 - **Conditional branch:** `If` (outputs true/false `Control` edges), `IfCase(bool)`
-- **Calls / returns:** `Call` (clobbers caller-saved registers and memory; variadic args), `PostCallMemState` and `PostCallVarState(Vn)` (consume the Call's Control output and re-establish memory / specific varnode liveness across the call), `CallOther { user_op_id }`, `Return` (variadic return values)
+- **Calls / returns:** `Call` (clobbers caller-saved registers and memory; variadic args), `CallOther { user_op_id }`, `Return` (variadic return values)
 - **Memory:** `Load(VnSpace)`, `Store(VnSpace)`; after `StackStoreDetect`: `StackStore { space, offset }`, `StackStorePhi { space }` (per-predecessor offsets in `Graph::stack_phi_offsets`)
 - **Integer:** `IntConst(u64)`, `IntUnaryOp`, `IntBinaryOp`, `IntCmpOp`, `Truncate`, `Extend(ExtendOp)`, `Popcount`, `Lzcount`, `Piece`, `Extract { lsb, len }`, `Insert { lsb, len }`, `CastToInt`
 - **Boolean:** `BoolConst(bool)`, `BoolUnaryOp`, `BoolBinaryOp`, `CastToBool`

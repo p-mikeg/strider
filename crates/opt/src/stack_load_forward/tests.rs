@@ -226,8 +226,8 @@ fn bail_on_opaque_store_between() -> Result<()> {
     Ok(())
 }
 
-/// A call between store and load clobbers memory (via `PostCallMemState`);
-/// forwarding across it is unsafe, so the load must remain.  Uses a
+/// A call between store and load clobbers memory; forwarding across it is
+/// unsafe, so the load must remain.  Uses a
 /// link-register-style convention (ret_stack_pop=0) so SP stays stable
 /// through the call, keeping the load's address decomposable.
 #[test]

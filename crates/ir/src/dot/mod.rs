@@ -35,8 +35,6 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::CPoolRef => "folder",
         NodeKind::New => "component",
 
-        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => "invtriangle",
-
         NodeKind::Return => "doublecircle",
 
         NodeKind::IntConst(_) | NodeKind::BoolConst(_) | NodeKind::FloatConst(_) => "ellipse",
@@ -68,8 +66,6 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::SegmentOp { .. } => "\"#10283a\"", // teal — address computation
         NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet — JVM metadata
         NodeKind::New => "\"#103a2a\"",              // dark green — allocation
-
-        NodeKind::PostCallMemState | NodeKind::PostCallVarState(_) => "\"#28102a\"",
 
         NodeKind::Return => "\"#103a10\"",
 

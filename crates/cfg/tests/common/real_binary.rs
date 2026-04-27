@@ -33,6 +33,12 @@ pub fn category_for_fn(fn_name: &str) -> &'static str {
         | "call_uses_call_return"
         | "cb_zero" | "cb_set" | "invoke" | "ext_three"
         | "produce" | "consume" => "complex",
+        // calling_convention.c
+        "forward_1" | "forward_2" | "forward_4" | "forward_8" | "forward_16"
+        | "narrow_widths" | "mixed_4"
+        | "returns_int" | "uses_return"
+        | "sink1" | "sink2" | "sink4" | "sink8" | "sink16"
+        | "sink_narrow" | "sink_mixed" => "calling_convention",
         other => panic!("unknown fixture function {other:?} — add it to category_for_fn"),
     }
 }

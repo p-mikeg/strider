@@ -849,10 +849,9 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 }
 
 /// When `ret_stack_pop == 0` (link-register ISAs) no SP-adjust node is
-/// emitted — SP flows through the `Call` unchanged via the usual
-/// `PostCallVarState` clobber path (or, when SP is excluded from the
-/// clobbered set but ret_stack_pop is 0, remains bound to its pre-call
-/// value).
+/// emitted — SP flows through the `Call` unchanged (or, when SP is
+/// excluded from the clobbered set but ret_stack_pop is 0, remains
+/// bound to its pre-call value).
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();

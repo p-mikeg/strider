@@ -449,25 +449,24 @@ fn call_uses_call_return_assertions(g: &ir::BuiltFunctionGraph) {
     // Source: `consume(produce(x))` — outer Call's arg(0) is the
     // return value of the inner Call.  IR shape (-O0):
     //   call_inner = Call(produce, x)
-    //   ret_or_pcvs = Call_inner output | PostCallVarState(ret_reg)
+    //   ret = Call_inner output (possibly via spill round-trip)
     //   spill chain = Store/StackStore → Load/StackLoad (optional)
-    //   call_outer = Call(consume, …chain to ret_or_pcvs…)
+    //   call_outer = Call(consume, …chain to ret…)
     //
-    // Whether `PostCallVarState` survives, whether the spill round-
-    // trip is collapsed by StackLoadForward, and whether the result
-    // is even loaded back via the calling-convention return register
-    // — all vary per arch.  What's universal: at least one outer
-    // Call's input chain MUST trace back to another Call.  We walk
-    // the IR by hand from each Call's inputs through whatever
-    // intermediate plumbing the optimizer left in place.
+    // Whether the spill round-trip is collapsed by StackLoadForward,
+    // and whether the result is even loaded back via the
+    // calling-convention return register — all vary per arch.  What's
+    // universal: at least one outer Call's input chain MUST trace back
+    // to another Call.  We walk the IR by hand from each Call's inputs
+    // through whatever intermediate plumbing the optimizer left in place.
 
     assert!(count_calls(g) >= 2,
             "call_uses_call_return must have ≥2 Calls; got {}", count_calls(g));
 
     // For each Call, walk every input slot back through any chain of
-    // {PostCallVarState, Store, StackStore, Load, StackLoad,
-    // ControlState, ValuePhi}.  If we hit another Call, the test
-    // passes — that's proof of Call→Call dataflow.
+    // {Store, StackStore, Load, StackLoad, ControlState, ValuePhi}.
+    // If we hit another Call, the test passes — that's proof of
+    // Call→Call dataflow.
     let calls: Vec<NodeId> = g.preorder()
         .filter(|&n| matches!(g.graph.node_kind(n), NodeKind::Call))
         .collect();
@@ -487,8 +486,7 @@ fn call_uses_call_return_assertions(g: &ir::BuiltFunctionGraph) {
                     // input is [mem, sp, data] — slot 2 is the data;
                     // for our purposes we pick the most-likely value
                     // input).
-                    NodeKind::PostCallVarState(_)
-                    | NodeKind::Load(_) => {
+                    NodeKind::Load(_) => {
                         // Load inputs: [memory, addr]; following the
                         // memory edge surfaces the producing store /
                         // call.
@@ -523,6 +521,6 @@ fn call_uses_call_return_assertions(g: &ir::BuiltFunctionGraph) {
     });
     assert!(chained,
             "expected one Call's input to trace back to another Call \
-             (through any chain of PostCallVarState/Load/Store/spill plumbing); \
+             (through any chain of Load/Store/spill plumbing); \
              call_count={}", calls.len());
 }

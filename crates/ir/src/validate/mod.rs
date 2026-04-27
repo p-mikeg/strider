@@ -26,7 +26,7 @@ use layer_a::check_layer_a;
 use layer_b::check_layer_b;
 use layer_c::{
     check_layer_c_control_state, check_layer_c_function_arg_uniqueness, check_layer_c_phis,
-    check_layer_c_postcall_producer, check_layer_c_postcall_uniqueness, check_layer_c_uniqueness,
+    check_layer_c_uniqueness,
 };
 
 /// Validates the structural invariants of `graph` starting from `entry`.
@@ -65,10 +65,6 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_layer_c_control_state(graph, &reachable, &mut errs);
 
     check_layer_c_phis(graph, &mut errs);
-
-    check_layer_c_postcall_producer(graph, &mut errs);
-
-    check_layer_c_postcall_uniqueness(graph, &mut errs);
 
     check_layer_c_function_arg_uniqueness(graph, &mut errs);
 
@@ -211,44 +207,6 @@ pub enum ValidationError {
         owner_control_state: NodeId,
         expected_predecessors: usize,
         actual_values: usize,
-    },
-
-    #[error(
-        "PostCallMemState {node:?} input producer {producer:?} has kind \
-         {producer_kind:?}; expected Control output of a Call"
-    )]
-    PostCallMemStateNotAfterCall {
-        node: NodeId,
-        producer: NodeId,
-        producer_kind: NodeOutputKind,
-    },
-
-    #[error(
-        "PostCallVarState {node:?} input producer {producer:?} has kind \
-         {producer_kind:?}; expected Control output of a Call"
-    )]
-    PostCallVarStateNotAfterCall {
-        node: NodeId,
-        producer: NodeId,
-        producer_kind: NodeOutputKind,
-    },
-
-    #[error("call {call:?} has two PostCallMemState consumers: {first:?} and {second:?}")]
-    DuplicatePostCallMemState {
-        call: NodeId,
-        first: NodeId,
-        second: NodeId,
-    },
-
-    #[error(
-        "call {call:?} has two PostCallVarState({vn:?}) consumers: \
-         {first:?} and {second:?}"
-    )]
-    DuplicatePostCallVarState {
-        call: NodeId,
-        vn: rsleigh::Vn,
-        first: NodeId,
-        second: NodeId,
     },
 
     #[error("duplicate FunctionArg at index {index}: {first:?} and {second:?}")]
