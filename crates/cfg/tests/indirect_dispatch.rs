@@ -18,7 +18,7 @@ use common::{
 };
 
 use cfg::test_api::{self, ProcessInsnRes, Region};
-use cfg::{Builder, ErrorKind, OptionsBuilder, RegionEdgeKind, RegionTerminator};
+use cfg::{Builder, OptionsBuilder, RegionEdgeKind, RegionTerminator};
 use opt::ReadOnlyMemory;
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 use rsleigh::mem_readers::BufMemReader;
@@ -175,23 +175,48 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
     );
 }
 
-/// Synthetic CFG with an unresolvable BranchIndirect (no prior write,
-/// no link-register pluging) → `Builder::build` returns
-/// `Err(UnresolvedIndirectBranch)`.
+/// R1.3: synthetic CFG with an unresolvable BranchIndirect (no prior
+/// write, no link-register plugin).  Pre-R1.3 this errored at
+/// cfg-build time; under the fixed-point design the cfg builder
+/// instead defers the branch via
+/// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
+/// the strider-level outer loop can attempt tier-2 resolution
+/// against the optimised IR.  The test asserts the deferred
+/// terminator AND that no edge was added (the target is unknown).
 #[test]
-fn unresolved_branch_indirect_errors() {
+fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     // bare `jmp rax` at 0x1000 — RAX is a function entry value, not
     // a constant and not a link register (Options has no LR set).
     let base = 0x1000u64;
     let bytes = jmp_rax_bytes();
     let opts = OptionsBuilder::new().build();
-    let err = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
         .build()
-        .expect_err("expected UnresolvedIndirectBranch");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(_) => {}
+        .expect("R1.3 soft contract: cfg build no longer errors on unresolved");
+
+    // Single region; terminator is UnresolvedIndirectBranch with
+    // target_vn naming the offending dispatch register.
+    assert_eq!(cfg.graph.node_count(), 1);
+    let entry = &cfg.graph[cfg.entry];
+    match &entry.terminator {
+        RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+            // The lifted `jmp rax` names the RAX register as inputs[0].
+            // We don't pin its exact Vn shape here — what matters is
+            // that the terminator records *some* register-space VN
+            // and a pcode address inside the function range.
+            assert_eq!(target_vn.addr.space, rsleigh::VnSpace::REGISTER);
+            assert_eq!(addr.machine_addr.addr, base);
+        }
         other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
     }
+    // No outgoing edge — the target is unknown until tier 2 resolves.
+    assert_eq!(
+        cfg.graph
+            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+            .count(),
+        0,
+        "UnresolvedIndirectBranch must have no outgoing edge",
+    );
 }
 
 /// `CallIndirect` (e.g. `call rax`) is OUT OF SCOPE of Phase 5.
@@ -284,6 +309,36 @@ fn options_read_only_memory_round_trips() {
     // Default leaves it as None.
     let default = OptionsBuilder::new().build();
     assert!(test_api::options_read_only_memory(&default).is_none());
+}
+
+/// R1.3: a tier-1-resolvable BranchIndirect must NOT produce
+/// `UnresolvedIndirectBranch`.  This is the negative companion to
+/// `unresolvable_branch_indirect_produces_unresolved_terminator` and
+/// guards against an over-zealous deferral that would defeat the
+/// "tier 1 closes trivial cases inline" speed argument from the
+/// fixed-point design.
+#[test]
+fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
+    // `mov rax, K; jmp rax` with K outside fn range — tier 1 returns
+    // `Single(K)`, which is a tail call.  Terminator must be
+    // `TailCall`, not `UnresolvedIndirectBranch`.
+    let base = 0x1000u64;
+    let target = 0x9000u64;
+    let bytes = mov_rax_jmp_rax_bytes(target);
+    let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+        .build()
+        .expect("Builder::build");
+    let entry = &cfg.graph[cfg.entry];
+    assert!(
+        !matches!(
+            entry.terminator,
+            RegionTerminator::UnresolvedIndirectBranch { .. },
+        ),
+        "tier-1-resolvable target must not produce UnresolvedIndirectBranch, got {:?}",
+        entry.terminator,
+    );
+    assert_eq!(entry.terminator, RegionTerminator::TailCall { target });
 }
 
 /// `mov rax, K; jmp rax` where K lands inside the entry region (a

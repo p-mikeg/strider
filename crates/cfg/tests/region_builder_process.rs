@@ -72,13 +72,15 @@ fn return_ends_region() {
 
 /// BUG-5 regression (post-Phase-5 form): `BranchIndirect` whose target
 /// can't be statically resolved must error with
-/// `UnresolvedIndirectBranch` rather than silently fall through to the
-/// catch-all "didn't finish processing" branch.  Pre-Phase 5, the
-/// builder collapsed BranchIndirect to `Return` unconditionally; that
-/// silently misclassified jump tables and computed gotos.  Phase 5
-/// replaced the blanket mapping with a real resolver.  With no prior
-/// writes to RAX (the dispatch target), the resolver cannot prove the
-/// target and surfaces an error — that's what this test pins.
+/// `BranchIndirect` whose target tier-1 cannot prove must terminate the
+/// region rather than silently fall through to the catch-all "didn't
+/// finish processing" branch.  Pre-R1.3 the builder errored with
+/// `UnresolvedIndirectBranch` at this site; R1.3 softens cfg-build to
+/// instead defer the branch via
+/// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
+/// the strider-level outer loop can attempt tier-2 resolution against
+/// the optimised IR.  This test pins the new contract: no error, and
+/// the freshly-finished region carries the deferred terminator.
 ///
 /// The successful-resolution paths (LinkRegister / in-range Single /
 /// out-of-range Single) are covered in `indirect_dispatch.rs`.
@@ -91,12 +93,27 @@ fn branch_indirect_ends_region() {
     let mut b = make_builder_with_bytes(bytes, base);
     let mut rb = make_region_builder(&mut b, addr(base, 0));
 
-    let err = rb
+    let res = rb
         .process_new_insn(&indirect_insn, addr(base, pos), &lift)
-        .expect_err("unresolvable BranchIndirect must error");
-    match err.kind() {
-        cfg::ErrorKind::UnresolvedIndirectBranch(_) => {}
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+        .expect("R1.3: unresolvable BranchIndirect now defers, not errors");
+    assert_eq!(
+        res,
+        cfg::test_api::ProcessInsnRes::FinishedProcessing,
+        "BranchIndirect must terminate the region",
+    );
+
+    // Inspect the freshly-finished region's terminator.
+    let regions: Vec<&cfg::test_api::Region> =
+        cfg::test_api::graph(&b).node_weights().collect();
+    assert_eq!(regions.len(), 1, "exactly one region must have been added");
+    match &regions[0].terminator {
+        cfg::RegionTerminator::UnresolvedIndirectBranch { addr: deferred_addr, .. } => {
+            assert_eq!(
+                deferred_addr.machine_addr.addr, base,
+                "deferred terminator must record the offending pcode address",
+            );
+        }
+        other => panic!("expected UnresolvedIndirectBranch terminator, got {other:?}"),
     }
 }
 

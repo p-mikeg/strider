@@ -351,16 +351,27 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     addr,
                     self.builder.endianness,
                 )?;
-                // R1.2: tier 1 now returns `Ok(None)` for the
-                // unresolved case.  R1.3 will replace this `None ->
-                // error` arm with a fall-through to
-                // `RegionTerminator::UnresolvedIndirectBranch` so
-                // strider can run tier-2 over the optimised IR.  In
-                // the interim, preserve the existing strict-failure
-                // semantic so the workspace stays green between
-                // R1.2 and R1.3.
+                // R1.3: tier-1 None means "I can't classify this from
+                // the current region's pcode alone" — defer to the
+                // strider-level outer loop.  Stamp `target_vn` and
+                // `addr` onto the new `UnresolvedIndirectBranch`
+                // terminator so the strider lifter can read the
+                // dispatch varnode at region exit and emit a
+                // placeholder `Return(target_value)` that anchors the
+                // value for tier-2 inspection.  No outgoing edge —
+                // the target is unknown at cfg-build time.
+                //
+                // The strict-failure semantic for unresolved indirect
+                // branches has moved to the outer fixed-point loop
+                // (R3): once the optimiser has run on the full graph
+                // and tier 2 has had its chance, any leftover
+                // `UnresolvedIndirectBranch` regions surface as
+                // `ErrorKind::UnresolvedIndirectBranch(addr)`.
                 let Some(resolved) = resolved else {
-                    return Err(ErrorKind::UnresolvedIndirectBranch(addr).into());
+                    self.finish_current_region(
+                        RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
+                    )?;
+                    return Ok(ProcessInsnRes::FinishedProcessing);
                 };
                 match resolved {
                     super::indirect_resolve::ResolvedTargets::LinkRegister => {
