@@ -87,11 +87,20 @@ matching on `region.terminator`.
 
 ### 2. Indirect-target resolver — mini IR graph approach
 
-The resolver builds a **single-block IR graph** for the current
-region's value-producing instructions, runs a stripped-down opt
-pipeline (`ConstantFold` + `KnownBits` + `RedundantPhis` +
-optionally `LoadReadOnly`), and inspects the producer of `target_vn`
-in the resolved graph.
+**Lazily invoked.**  The resolver is called **only** from the
+`BranchIndirect` (and `CallIndirect` for the LR check) opcode arm
+in `RegionBuilder::process_new_insn`.  Regions without an indirect
+branch never trigger the mini-graph build — the cfg layer's normal
+path is unaffected and incurs zero overhead.
+
+Per invocation, the resolver builds a **single-block IR graph** for
+the current region's value-producing instructions, runs a
+stripped-down opt pipeline (`ConstantFold` + `KnownBits` +
+`RedundantPhis` + optionally `LoadReadOnly`), and inspects the
+producer of `target_vn` in the resolved graph.  Cost is
+O(region_size) per encountered indirect branch; indirect branches
+are rare (typically a few per binary), so the workspace-wide cost
+is negligible.
 
 This subsumes the side-table tracker and chase-one-hop sketches from
 earlier drafts.  The benefits:
