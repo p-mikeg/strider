@@ -34,6 +34,11 @@ mod strider;
 pub mod error;
 pub mod indirect_resolve_tier2;
 
-pub use strider::{AnalyzeOutcome, Strider};
+pub use strider::ir_cache;
+pub use strider::{
+    cache_key_for_region, count_uncached_regions, extend_predecessors_into,
+    lift_new_regions_into, predecessor_diffs, AnalyzeOutcome, RegionIrCache, RegionIrEntry,
+    Strider,
+};
 pub use error::{Error, ErrorKind, Result};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

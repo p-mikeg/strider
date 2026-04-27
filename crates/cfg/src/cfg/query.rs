@@ -79,4 +79,15 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     pub fn region_ids(&self) -> impl Iterator<Item = RegionId> {
         self.graph.node_indices()
     }
+
+    /// Returns the number of incoming edges (predecessors) for
+    /// `region_id`.  Used by the strider fixed-point orchestrator's
+    /// `RegionIrCache` to detect when a cached region has gained a
+    /// new predecessor across iterations.
+    #[must_use]
+    pub fn predecessor_count(&self, region_id: RegionId) -> usize {
+        self.graph
+            .neighbors_directed(region_id, petgraph::Incoming)
+            .count()
+    }
 }
