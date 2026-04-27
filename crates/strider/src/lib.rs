@@ -32,6 +32,7 @@
 
 mod strider;
 pub mod error;
+pub mod indirect_resolve_tier2;
 
 pub use strider::{AnalyzeOutcome, Strider};
 pub use error::{Error, ErrorKind, Result};
