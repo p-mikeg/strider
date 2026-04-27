@@ -351,6 +351,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     addr,
                     self.builder.endianness,
                 )?;
+                // R1.2: tier 1 now returns `Ok(None)` for the
+                // unresolved case.  R1.3 will replace this `None ->
+                // error` arm with a fall-through to
+                // `RegionTerminator::UnresolvedIndirectBranch` so
+                // strider can run tier-2 over the optimised IR.  In
+                // the interim, preserve the existing strict-failure
+                // semantic so the workspace stays green between
+                // R1.2 and R1.3.
+                let Some(resolved) = resolved else {
+                    return Err(ErrorKind::UnresolvedIndirectBranch(addr).into());
+                };
                 match resolved {
                     super::indirect_resolve::ResolvedTargets::LinkRegister => {
                         self.finish_current_region(RegionTerminator::Return)?;

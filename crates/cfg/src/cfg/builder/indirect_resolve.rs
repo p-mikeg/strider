@@ -23,7 +23,14 @@
 //!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
 //!    - `InitialVar(vn)` where `vn == cc_link_register_vn` →
 //!      [`ResolvedTargets::LinkRegister`].
-//!    - anything else → [`crate::ErrorKind::UnresolvedIndirectBranch`].
+//!    - anything else → `Ok(None)`.  R1.2 softened the failure
+//!      mode: the resolver no longer raises
+//!      [`crate::ErrorKind::UnresolvedIndirectBranch`] when it
+//!      cannot classify a target.  Callers (region_builder) defer
+//!      the branch via [`crate::RegionTerminator::UnresolvedIndirectBranch`]
+//!      and the strider-level fixed-point loop runs tier-2
+//!      resolution against the optimised IR.  Genuine errors
+//!      (builder/opt failures, malformed graph) still propagate.
 //!
 //! The mini graph never contains calls, branches, or stores — control-flow
 //! opcodes (which make [`pcode_lift::ValueLifter::lift`] return
@@ -41,7 +48,7 @@
 use opt::ReadOnlyMemory;
 
 use crate::cfg::types::{PcodeInsnAddr, RegionInstruction};
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::Result;
 
 /// The set of statically-known targets of a single `BranchIndirect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,17 +91,21 @@ pub enum ResolvedTargets {
 /// optimizer pipeline so that loads from the binary's `.rodata` /
 /// `.text` resolve to constants.  `None` skips the pass.
 ///
-/// `insn_addr` is the pcode address of the offending `BranchIndirect`;
-/// it is woven into [`crate::ErrorKind::UnresolvedIndirectBranch`] so
-/// callers can map the failure back to a machine instruction.
+/// `insn_addr` is the pcode address of the offending `BranchIndirect`.
+/// R1.2 softened the soft-failure semantic: when the mini-graph cannot
+/// classify the target, the resolver returns `Ok(None)` and the caller
+/// stamps `insn_addr` onto a [`crate::RegionTerminator::UnresolvedIndirectBranch`].
+/// The address is still threaded through the signature for symmetry
+/// with future error paths (e.g. malformed-region diagnostics) and
+/// for the test_api forwarder.
 ///
 /// # Errors
 ///
-/// Returns [`crate::ErrorKind::UnresolvedIndirectBranch`] when the
-/// resolver cannot prove the target.  Other variants
+/// Genuine errors from the underlying mini-graph build / opt run
 /// ([`crate::ErrorKind::IrError`], [`crate::ErrorKind::OptError`],
-/// [`crate::ErrorKind::PcodeLiftError`], [`crate::ErrorKind::MissingBranchTarget`])
-/// propagate up from the underlying mini-graph build / opt run.
+/// [`crate::ErrorKind::PcodeLiftError`]) still propagate.  Failure to
+/// classify the target itself is *not* an error and returns
+/// `Ok(None)`.
 //
 // `pub(super)` so [`crate::cfg::builder::region_builder`] (the only
 // in-crate caller) can dispatch into us in Phase 5.  Until then no other
@@ -107,9 +118,16 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    insn_addr: PcodeInsnAddr,
+    // R1.2: the address is no longer used as the payload of an
+    // `UnresolvedIndirectBranch` error inside the resolver — the soft
+    // contract returns `Ok(None)` for that path.  We retain the
+    // argument so the call signature stays stable across the
+    // softening (region_builder still passes it through unchanged) and
+    // so a future strict-failure bypass — should one ever be needed —
+    // has the address available without a signature change.
+    _insn_addr: PcodeInsnAddr,
     endianness: target::Endianness,
-) -> Result<ResolvedTargets> {
+) -> Result<Option<ResolvedTargets>> {
     // ── Step 1: collect every varnode the region touches so the IR
     //    builder can pre-declare them.  Includes target_vn so we can
     //    always read its value, even on regions that don't otherwise
@@ -224,14 +242,30 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     //    Looking at the Return input rather than `target_value` directly
     //    is robust against `replace_all_uses` rewires that orphan the
     //    original NodeOutputId.
-    let return_node = find_unique_return(&fg)?;
+    //
+    // R1.2 soft-contract note: every "cannot classify" branch below
+    // returns `Ok(None)` rather than erroring.  The strider-level
+    // outer loop runs tier-2 against the optimised IR; if even that
+    // fails, the unresolved branch surfaces as
+    // `ErrorKind::UnresolvedIndirectBranch` at fixed point.
+    // R1.2: a missing or duplicate Return is treated as
+    // "unclassifiable" rather than an error — see soft-contract note
+    // above.  Returning Ok(None) lets the strider-level outer loop
+    // try tier-2 against the optimised IR instead.
+    let Some(return_node) = find_unique_return(&fg) else {
+        return Ok(None);
+    };
     let inputs = fg.graph.node_inputs(return_node);
     // Layout: [control, memory, value, ...ret_regs].  `build_return`
     // above passed `Some(value)` and `&[]`, so the value slot is at
-    // index 2 and there are exactly 3 inputs.
-    let value_input = *inputs.get(2).ok_or_else(|| -> Error {
-        ErrorKind::UnresolvedIndirectBranch(insn_addr).into()
-    })?;
+    // index 2 and there are exactly 3 inputs.  A missing value input
+    // signals a graph-construction bug in this module rather than a
+    // runtime classification failure, but under the soft contract we
+    // still surface it as "unresolved" — a later iteration won't
+    // recover, so the strider-level loop will eventually error.
+    let Some(&value_input) = inputs.get(2) else {
+        return Ok(None);
+    };
     let producer = fg.graph.get_node_from_output(value_input);
     let kind = *fg.graph.node_kind(producer);
 
@@ -246,12 +280,14 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
             // perspective.
             #[allow(clippy::cast_possible_truncation)]
             let truncated = k as u64;
-            Ok(ResolvedTargets::Single(truncated))
+            Ok(Some(ResolvedTargets::Single(truncated)))
         }
         ir::node::NodeKind::InitialVar(vn) if Some(vn) == cc_link_register_vn => {
-            Ok(ResolvedTargets::LinkRegister)
+            Ok(Some(ResolvedTargets::LinkRegister))
         }
-        _ => Err(ErrorKind::UnresolvedIndirectBranch(insn_addr).into()),
+        // R1.2: unclassifiable producer is no longer an error — defer
+        // to the strider-level outer loop's tier-2 resolver.
+        _ => Ok(None),
     }
 }
 
@@ -310,32 +346,27 @@ fn resolve_const_loads(
 /// target may be wired to a node that the optimizer detached from the
 /// reachable set; the `Return` itself remains live, so this lookup is
 /// resilient to that.
-fn find_unique_return(fg: &ir::BuiltFunctionGraph) -> Result<ir::node::NodeId> {
+///
+/// R1.2: returns `Ok(None)` when the lookup fails (zero or multiple
+/// Returns) instead of erroring — failure here means the resolver
+/// can't classify the target, which is exactly what the soft
+/// contract treats as "deferred to the outer loop".  No panic, no
+/// `UnresolvedIndirectBranch` error from inside tier 1.
+fn find_unique_return(fg: &ir::BuiltFunctionGraph) -> Option<ir::node::NodeId> {
     let mut found: Option<ir::node::NodeId> = None;
     for node_id in fg.preorder() {
         if matches!(fg.graph.node_kind(node_id), ir::node::NodeKind::Return) {
             if found.is_some() {
                 // The mini-graph builder only emits one Return; finding
                 // two means a graph-construction bug in this module or
-                // in the optimizer.  Treat as unresolved rather than
-                // panicking.
-                return Err(ErrorKind::UnresolvedIndirectBranch(
-                    PcodeInsnAddr {
-                        machine_addr: crate::cfg::types::MachineInsnAddr { addr: 0 },
-                        insn_index: 0,
-                    },
-                ).into());
+                // in the optimizer.  Treat as unresolved (Ok(None) at
+                // the call site) rather than erroring.
+                return None;
             }
             found = Some(node_id);
         }
     }
-    found.ok_or_else(|| {
-        ErrorKind::UnresolvedIndirectBranch(PcodeInsnAddr {
-            machine_addr: crate::cfg::types::MachineInsnAddr { addr: 0 },
-            insn_index: 0,
-        })
-        .into()
-    })
+    found
 }
 
 #[doc(hidden)]
@@ -353,11 +384,15 @@ pub mod test_api {
 
     /// Test-only forwarder for [`super::resolve_indirect_target`].
     ///
+    /// R1.2 soft contract: returns `Ok(None)` when the resolver
+    /// cannot classify the target.  Genuine builder / opt errors
+    /// still propagate via the `Result`.
+    ///
     /// # Errors
-    /// Propagates whatever the underlying resolver returns —
-    /// [`crate::ErrorKind::UnresolvedIndirectBranch`] when the target
-    /// is not statically resolvable, and various builder / opt errors
-    /// for malformed inputs.
+    /// Propagates whatever the underlying resolver returns: builder
+    /// failures, opt failures, malformed pcode-lift inputs.  The
+    /// previous `UnresolvedIndirectBranch` error variant is no
+    /// longer produced — unclassifiable targets surface as `Ok(None)`.
     pub fn resolve_indirect_target_for_test<R: rsleigh::MemReader>(
         region_insns: &[RegionInstruction],
         target_vn: rsleigh::Vn,
@@ -366,7 +401,7 @@ pub mod test_api {
         rom: Option<&dyn ReadOnlyMemory>,
         insn_addr: PcodeInsnAddr,
         endianness: target::Endianness,
-    ) -> Result<ResolvedTargets> {
+    ) -> Result<Option<ResolvedTargets>> {
         resolve_indirect_target(
             region_insns,
             target_vn,

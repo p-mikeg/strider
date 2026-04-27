@@ -19,7 +19,6 @@ use cfg::test_api::{
     MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets,
     resolve_indirect_target_for_test,
 };
-use cfg::ErrorKind;
 use opt::ReadOnlyMemory;
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnAddr, VnSpace};
@@ -135,7 +134,7 @@ fn resolves_direct_const_to_single() {
         target::Endianness::Little,
     )
     .expect("resolver");
-    assert_eq!(res, ResolvedTargets::Single(0xdead_beef));
+    assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
 }
 
 /// `Copy reg, K1; IntAdd reg, reg, K2; BranchIndirect reg` resolves to
@@ -175,7 +174,7 @@ fn resolves_arithmetic_chain_to_single() {
         target::Endianness::Little,
     )
     .expect("resolver");
-    assert_eq!(res, ResolvedTargets::Single(0x133));
+    assert_eq!(res, Some(ResolvedTargets::Single(0x133)));
 }
 
 /// Sub-register aliasing: write a 4-byte `EAX` constant on x86_64, then
@@ -237,7 +236,7 @@ fn resolves_sub_register_aliasing_to_single() {
         target::Endianness::Little,
     )
     .expect("resolver");
-    assert_eq!(res, ResolvedTargets::Single(0xdead_beef));
+    assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
 }
 
 // ── ResolvedTargets::LinkRegister ─────────────────────────────────────
@@ -272,7 +271,7 @@ fn resolves_link_register_to_link_register() {
         target::Endianness::Little,
     )
     .expect("resolver");
-    assert_eq!(res, ResolvedTargets::LinkRegister);
+    assert_eq!(res, Some(ResolvedTargets::LinkRegister));
 }
 
 // ── ResolvedTargets::Single via LoadReadOnly ──────────────────────────
@@ -325,15 +324,16 @@ fn resolves_rodata_load_to_single() {
         target::Endianness::Little,
     )
     .expect("resolver");
-    assert_eq!(res, ResolvedTargets::Single(0xcafe_babe));
+    assert_eq!(res, Some(ResolvedTargets::Single(0xcafe_babe)));
 }
 
-// ── Error paths ───────────────────────────────────────────────────────
+// ── Unresolved paths (post R1.2: `Ok(None)`, no error) ────────────────
 
 /// Same load shape as `resolves_rodata_load_to_single` but no ROM →
-/// `UnresolvedIndirectBranch`.
+/// the resolver cannot fold the load, so target is `Ok(None)` under
+/// the soft contract introduced in R1.2.
 #[test]
-fn unknown_memory_errors_unresolved() {
+fn unknown_memory_returns_ok_none() {
     let bytes: Vec<u8> = vec![0xA1, 0x00, 0x40, 0x00, 0x00, 0xFF, 0xE0];
     let reader = BufMemReader::new(bytes, 0x1000);
     let mut sleigh = rsleigh::Sleigh::new(
@@ -344,7 +344,7 @@ fn unknown_memory_errors_unresolved() {
     .expect("create x86 Sleigh");
     let region = lift_region(&mut sleigh, 0x1000, 7);
     let target = find_branch_indirect_target(&region);
-    let err = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target_for_test(
         &region,
         target,
         &sleigh,
@@ -353,11 +353,8 @@ fn unknown_memory_errors_unresolved() {
         br_addr(),
         target::Endianness::Little,
     )
-    .expect_err("expected unresolved");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(_) => {}
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
-    }
+    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    assert!(res.is_none(), "got {res:?}");
 }
 
 // ── Helpers used by the `Load`-via-real-bytes tests ──────────────────
@@ -404,15 +401,16 @@ fn find_branch_indirect_target(region: &[RegionInstruction]) -> Vn {
 }
 
 /// `BranchIndirect reg` with no prior write to `reg` and no
-/// link-register classification → `UnresolvedIndirectBranch`.  The
-/// producer is `InitialVar(reg)` but `cc_link_register_vn` is `None`,
-/// so the LinkRegister arm doesn't fire.
+/// link-register classification → `Ok(None)` under the R1.2 soft
+/// contract.  The producer is `InitialVar(reg)` but
+/// `cc_link_register_vn` is `None`, so the LinkRegister arm doesn't
+/// fire and tier 1 defers to the strider-level outer loop.
 #[test]
-fn runtime_input_errors_unresolved() {
+fn runtime_input_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
-    let err = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target_for_test(
         &region,
         target,
         &sleigh,
@@ -421,22 +419,19 @@ fn runtime_input_errors_unresolved() {
         br_addr(),
         target::Endianness::Little,
     )
-    .expect_err("expected unresolved");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(_) => {}
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
-    }
+    .expect("soft contract: Ok(None) on unresolved");
+    assert!(res.is_none(), "got {res:?}");
 }
 
 /// Empty region (no instructions before the BranchIndirect) →
-/// `UnresolvedIndirectBranch`.  Equivalent to `runtime_input_errors_unresolved`
+/// `Ok(None)`.  Equivalent to `runtime_input_returns_ok_none`
 /// but pinning the empty-region path explicitly.
 #[test]
-fn empty_region_errors_unresolved() {
+fn empty_region_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region: Vec<RegionInstruction> = Vec::new();
-    let err = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target_for_test(
         &region,
         target,
         &sleigh,
@@ -445,11 +440,8 @@ fn empty_region_errors_unresolved() {
         br_addr(),
         target::Endianness::Little,
     )
-    .expect_err("expected unresolved");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(_) => {}
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
-    }
+    .expect("soft contract: Ok(None) on unresolved");
+    assert!(res.is_none(), "got {res:?}");
 }
 
 /// Malformed BranchIndirect: caller looks up `inputs[0]` ahead of
@@ -459,14 +451,14 @@ fn empty_region_errors_unresolved() {
 /// otherwise-valid `target_vn` together with a region whose only insn
 /// has no inputs/output.  The `BranchIndirect` arm of `ValueLifter::lift`
 /// returns `Ok(false)` so lifting stops; resolution proceeds but the
-/// target VN is never written → `UnresolvedIndirectBranch`.
+/// target VN is never written → `Ok(None)`.
 ///
 /// In production, the [`crate::ErrorKind::MissingBranchTarget`] arm in
 /// `RegionBuilder::process_new_insn` short-circuits before we ever call
 /// the resolver — see Phase 5 wiring at
 /// `crates/cfg/src/cfg/builder/region_builder.rs`.
 #[test]
-fn malformed_branch_indirect_errors() {
+fn malformed_branch_indirect_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(
@@ -478,7 +470,7 @@ fn malformed_branch_indirect_errors() {
             inputs: vec![],
         },
     )];
-    let err = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target_for_test(
         &region,
         target,
         &sleigh,
@@ -487,16 +479,82 @@ fn malformed_branch_indirect_errors() {
         br_addr(),
         target::Endianness::Little,
     )
-    .expect_err("expected unresolved");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(_) => {}
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
-    }
+    .expect("soft contract: Ok(None) on unresolved");
+    assert!(res.is_none(), "got {res:?}");
 }
 
-/// The error variant carries the offending `PcodeInsnAddr`.
+/// R1.2: tier-1 unresolved cases now return `Ok(None)` instead of
+/// erroring.  The fixed-point design moves the strict-failure
+/// semantic from cfg-build time to the strider-level outer loop —
+/// at cfg-build time we *defer* the branch via
+/// `RegionTerminator::UnresolvedIndirectBranch`.
+///
+/// Same input shape as `runtime_input_errors_unresolved` (a bare
+/// `BranchIndirect reg` with no prior write and no link-register
+/// classification): under the soft contract this is `Ok(None)`.
 #[test]
-fn error_carries_pcode_addr() {
+fn tier_1_unresolved_returns_ok_none() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region = vec![ri(0x1000, 0, branch_indirect(target))];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    assert!(
+        res.is_none(),
+        "unresolvable target must produce Ok(None), got {res:?}"
+    );
+}
+
+/// R1.2: tier-1 resolved cases still return `Ok(Some(ResolvedTargets))`.
+/// Same input shape as `resolves_direct_const_to_single` to pin that
+/// the soft contract did not regress the resolved path.
+#[test]
+fn tier_1_resolved_const_returns_ok_some_single() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region = vec![
+        ri(
+            0x1000,
+            0,
+            Insn {
+                opcode: Opcode::Copy,
+                output: Some(target),
+                inputs: vec![const_vn(0xdead_beef, 4)],
+            },
+        ),
+        ri(0x1004, 0, branch_indirect(target)),
+    ];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
+}
+
+/// Pre-R1.2 the resolver returned `Err(UnresolvedIndirectBranch(addr))`
+/// to surface the offending pcode address.  Under the soft contract
+/// the resolver returns `Ok(None)` and the *caller* (region_builder)
+/// is responsible for stamping `addr` onto the deferred terminator.
+/// The resolver no longer threads the address back through its return
+/// value, so this test pins that the call signature still accepts an
+/// `insn_addr` argument and that an unresolvable input produces
+/// `Ok(None)` regardless of the supplied address.
+#[test]
+fn addr_is_threaded_into_resolver_signature() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let bad_addr = PcodeInsnAddr {
@@ -504,7 +562,7 @@ fn error_carries_pcode_addr() {
         insn_index: 7,
     };
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
-    let err = resolve_indirect_target_for_test(
+    let res = resolve_indirect_target_for_test(
         &region,
         target,
         &sleigh,
@@ -513,11 +571,6 @@ fn error_carries_pcode_addr() {
         bad_addr,
         target::Endianness::Little,
     )
-    .expect_err("expected unresolved");
-    match err.kind() {
-        ErrorKind::UnresolvedIndirectBranch(addr) => {
-            assert_eq!(*addr, bad_addr);
-        }
-        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
-    }
+    .expect("soft contract");
+    assert!(res.is_none());
 }
