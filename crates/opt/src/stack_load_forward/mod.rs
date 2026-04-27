@@ -99,7 +99,16 @@ fn try_forward_load(
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
     let mut visited = rustc_hash::FxHashSet::default();
-    let Some(shape) = probe(fg, mem, offset, load_size, load_ty, &mut visited) else {
+    let Some(shape) = probe(
+        fg,
+        mem,
+        offset,
+        load_size,
+        load_ty,
+        sp_vn,
+        memo,
+        &mut visited,
+    ) else {
         return Ok(OptimizationResult::NoChange);
     };
     let forwarded = realize(fg, shape, load_ty, endianness)?;
@@ -144,12 +153,19 @@ enum ResolveShape {
 /// not touch `fg.graph`; on success, returns a [`ResolveShape`] tree that
 /// [`realize`] can turn into IR nodes.  Returns `None` if forwarding
 /// cannot be proven.
+// Eight arguments are the minimum needed to thread cycle-guards, the SP
+// decomposition memo, and the search-target byte range through a recursive
+// memory-chain probe; bundling them into a context struct would just add
+// indirection without clarifying the call sites.
+#[allow(clippy::too_many_arguments)]
 fn probe(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
+    sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
     visited: &mut rustc_hash::FxHashSet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     let node = fg.graph.get_node_from_output(mem);
@@ -179,9 +195,61 @@ fn probe(
                 }
             } else if ranges_disjoint(k, store_size, offset, load_size) {
                 let prev_mem = inputs[0];
-                probe(fg, prev_mem, offset, load_size, load_ty, visited)
+                probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
             } else {
                 None
+            }
+        }
+        // BUG-28 cause #2 also affects this pass: a non-aliasing `Store`
+        // (a write to global / heap memory, which `StackStoreDetect`
+        // didn't rewrite to `StackStore` because its address didn't
+        // resolve to `sp + K`) on the memory chain previously
+        // terminated forwarding.  Mirror `CallStackArgCollect`'s
+        // resilience: probe the address, and if it provably is NOT
+        // `sp + K` aliasing the load's byte range, walk through.
+        NodeKind::Store(_) => {
+            // Store inputs: [MEM, ADDR, DATA].
+            let inputs = fg.graph.node_inputs(node);
+            if inputs.len() < 3 {
+                return None;
+            }
+            let addr = inputs[1];
+            let mut sp_visiting = rustc_hash::FxHashSet::default();
+            match decompose_sp(fg, addr, sp_vn, memo, &mut sp_visiting) {
+                None => {
+                    // Address is not SP-rooted: provably non-aliasing
+                    // with the stack-arg byte range.  Continue.
+                    let prev_mem = inputs[0];
+                    probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
+                }
+                Some(SpExpr::Terminal { base: _, offset: store_off }) => {
+                    // SP-rooted: only continue if the byte ranges are
+                    // provably disjoint.  Store size taken from the
+                    // value's declared NodeOutputType; the fallback
+                    // (`i64::MAX`) is the soundness-preserving answer
+                    // — it forces `ranges_disjoint` to return false
+                    // and we conservatively terminate.  In valid IR
+                    // a Store's DATA slot is value-typed by signature
+                    // so the fallback is unreachable; the branch
+                    // exists only as a defensive guardrail.
+                    let data = inputs[2];
+                    let store_size = fg
+                        .graph
+                        .output_kind(data)
+                        .as_value()
+                        .map_or(i64::MAX, |t| t.byte_size() as i64);
+                    if ranges_disjoint(store_off, store_size, offset, load_size) {
+                        let prev_mem = inputs[0];
+                        probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
+                    } else {
+                        None
+                    }
+                }
+                // SpExpr::Phi (SP-rooted but flowing through a phi
+                // join): conservatively terminate, matching
+                // CallStackArgCollect's posture — handling phi-of-SP
+                // would require per-pred range analysis.
+                Some(SpExpr::Phi { .. }) => None,
             }
         }
         NodeKind::MemPhi => {
@@ -201,7 +269,7 @@ fn probe(
             let phi_token = inputs[0];
             let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs.len() - 1);
             for pred_mem in inputs.into_iter().skip(1) {
-                preds.push(probe(fg, pred_mem, offset, load_size, load_ty, visited)?);
+                preds.push(probe(fg, pred_mem, offset, load_size, load_ty, sp_vn, memo, visited)?);
             }
             Some(ResolveShape::Phi { phi_token, preds })
         }

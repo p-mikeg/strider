@@ -18,6 +18,74 @@ mod vars;
 pub struct VarId(u32);
 entity_impl!(VarId);
 
+/// Returns `true` for varnode spaces whose offsets are addressed as fixed
+/// byte ranges (REGISTER, UNIQUE).  CONST and code-space varnodes don't
+/// behave like fixed-offset registers, so containment-by-offset is
+/// meaningless there.
+fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
+    s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
+}
+
+/// Maps a calling-convention varnode `vn` to a tracked variable in
+/// `variable_to_id`.  Returns the input verbatim if it's already tracked;
+/// otherwise tries two fallbacks in order:
+///
+/// 1. **Cover** — the smallest tracked variable in the same space whose
+///    byte range fully covers `vn`.  Useful when the function uses a
+///    wider view of the same physical register (e.g. MIPS-O32 lists `f0`
+///    as 4-byte but a `double`-returning function writes the 8-byte
+///    combined `f0/f1` view).
+/// 2. **Contained-in sub-register** — when no cover exists, the LARGEST
+///    tracked variable in the same space whose byte range is fully
+///    contained in `vn`'s range.  Useful when the function reads only a
+///    sub-register (e.g. x86_64 SysV passes `int a` in `RDI`, but the
+///    callee only reads `EDI` — the 4-byte sub-register is what the
+///    function actually consumed, so it's safe to use as the
+///    arg-passing-var).  Bigger sub-registers win because they preserve
+///    more information about the value.
+///
+/// Returns `None` for non-aliasable spaces (CONST, code) or when no
+/// tracked variable overlaps `vn` at all.
+fn upgrade_to_tracked_for(
+    variable_to_id: &HashMap<rsleigh::Vn, VarId>,
+    vn: rsleigh::Vn,
+) -> Option<rsleigh::Vn> {
+    if variable_to_id.contains_key(&vn) {
+        return Some(vn);
+    }
+    if !is_aliasable_space(vn.addr.space) {
+        return None;
+    }
+    let vn_end = vn.addr.off + vn.size as u64;
+
+    // Smallest tracked container that COVERS vn (existing behaviour).
+    if let Some(cover) = variable_to_id
+        .keys()
+        .filter(|t| {
+            t.addr.space == vn.addr.space
+                && t.addr.off <= vn.addr.off
+                && t.addr.off + t.size as u64 >= vn_end
+        })
+        .min_by_key(|t| t.size)
+        .copied()
+    {
+        return Some(cover);
+    }
+
+    // Sub-register fallback (BUG-28 cause #1).  Largest tracked variable
+    // CONTAINED IN vn's byte range — the function only reads that
+    // sub-register, so the bytes outside its range are unused.
+    variable_to_id
+        .keys()
+        .filter(|t| {
+            t.addr.space == vn.addr.space
+                && t.addr.off >= vn.addr.off
+                && t.addr.off + t.size as u64 <= vn_end
+        })
+        .max_by_key(|t| t.size)
+        .copied()
+}
+
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -160,9 +228,6 @@ impl FunctionBuilder {
         // CONST and code-space varnodes don't behave like fixed-offset
         // registers — they're addressed by literal value or runtime address,
         // so containment-by-offset is meaningless there.
-        let is_aliasable_space = |s: rsleigh::VnSpace| {
-            s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
-        };
         let all_variables: Vec<_> = all_used_variables
             .iter()
             .filter(|v| {
@@ -205,41 +270,31 @@ impl FunctionBuilder {
             variable_to_id.insert(variable, var_id);
         }
         // For arg-passing and ret-val regs that the overlap filter dropped
-        // (because the function uses a wider view of the same physical
-        // register — e.g. MIPS-O32 lists "f0" as 4-byte but a double-
-        // returning function writes the 8-byte combined f0/f1 view), fall
-        // back to the smallest tracked container.  This keeps the Return /
-        // Call's ret-val slots wired to the actual function's return chain
-        // instead of silently dropping them.
-        let upgrade_to_tracked = |vn: &rsleigh::Vn| -> Option<rsleigh::Vn> {
-            if variable_to_id.contains_key(vn) {
-                return Some(*vn);
-            }
-            if !is_aliasable_space(vn.addr.space) {
-                return None;
-            }
-            // Find the smallest tracked variable in the same space whose
-            // byte-range fully covers `vn`.  "Smallest" wins because we
-            // want the tightest container — useful when multiple wider
-            // views happen to be tracked.
-            let vn_end = vn.addr.off + vn.size as u64;
-            variable_to_id
-                .keys()
-                .filter(|t| {
-                    t.addr.space == vn.addr.space
-                        && t.addr.off <= vn.addr.off
-                        && t.addr.off + t.size as u64 >= vn_end
-                })
-                .min_by_key(|t| t.size)
-                .copied()
-        };
+        // (because the function uses a different-width view of the same
+        // physical register), `upgrade_to_tracked_for` rewires the
+        // convention's varnode to the closest tracked variable in two
+        // directions:
+        //
+        // 1. **Cover** (wider): e.g. MIPS-O32 lists `f0` as 4-byte but a
+        //    double-returning function writes the 8-byte combined f0/f1
+        //    view.  The 4-byte ret-reg upgrades to the 8-byte tracked
+        //    container so the Return node still reads the float chain.
+        //
+        // 2. **Contained-in sub-register** (narrower): BUG-28 cause #1.
+        //    On x86_64 SysV `arg_passing_regs[0] = RDI` (8-byte), but
+        //    `int forward_1(int a)` only reads `EDI` (4-byte sub-reg).
+        //    With no covering tracked variable, the 4-byte sub-register
+        //    is the only data the function actually consumed — using it
+        //    as the arg-passing-var loses no information and keeps the
+        //    Call node's arg(0) slot wired so pattern queries
+        //    `call().arg(0, function_arg(0))` continue to match.
         let arg_passing_vars: Vec<_> = arg_passing_vars
             .iter()
-            .filter_map(upgrade_to_tracked)
+            .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
         let ret_val_vars: Vec<_> = ret_vars
             .iter()
-            .filter_map(upgrade_to_tracked)
+            .filter_map(|vn| upgrade_to_tracked_for(&variable_to_id, *vn))
             .collect();
 
         let mut fb = FunctionBuilder {

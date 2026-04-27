@@ -37,7 +37,7 @@ fn run_with_post_passes_validates() -> opt::Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);
     p.add(StackStoreDetect::new(sp));
-    p.add_post_pass(CallStackArgCollect::new(vec![0]));
+    p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
     p.run(&mut fg)?;
     Ok(())
 }

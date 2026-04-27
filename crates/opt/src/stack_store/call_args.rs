@@ -7,6 +7,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::sp_expr::{SpExprMemo, decompose_sp};
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
 /// positional call arguments *as long as each successive store in chain order
@@ -36,10 +37,22 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// different absolute addresses across different SP versions, so mixing them
 /// would be unsound.  The first base seen pins the chain; a store using a
 /// different base terminates collection.
+///
+/// Plain `Store` nodes (those not rewritten to `StackStore` by
+/// `StackStoreDetect`) require alias analysis: if the store's address is
+/// proven *not* to alias the stack-arg space (e.g. a global write to a
+/// constant `.data` address), the walker continues through it.  This makes
+/// stack-arg collection robust against compiler-emitted volatile global
+/// writes (`volatile int g = …;` barriers commonly inserted by gcc/clang at
+/// `-O2`) interleaved between the actual stack-arg pushes.  Any SP-rooted
+/// `Store` (whether in-arg-range or not) and any `StackStorePhi` is treated
+/// conservatively as chain-terminating.
 fn collect_stack_args_in_chain_order(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
+    stack_ptr_vn: rsleigh::Vn,
+    sp_memo: &mut SpExprMemo,
 ) -> Vec<NodeOutputId> {
     if stack_arg_offsets.is_empty() {
         return Vec::new();
@@ -56,9 +69,37 @@ fn collect_stack_args_in_chain_order(
                 let inputs = fg.graph.node_inputs(node);
                 (offset, space, inputs[1], inputs[2], inputs[0])
             }
-            // Un-decomposed `Store` (may alias), `StackStorePhi` (ambiguous),
-            // `MemPhi` (control-flow join), or anything else (entry memory,
-            // an earlier `Call`) terminates the chain.
+            // A plain `Store` survived `StackStoreDetect` either because
+            // its address didn't decompose to `sp + K` (so it doesn't
+            // alias the stack-arg space) or because it has a different
+            // SP base.  Decompose to decide:
+            //   * `None`: provably non-aliasing — walk through the
+            //     Store's memory predecessor and keep collecting.
+            //   * `Some(_)`: SP-rooted but somehow still a `Store` (rare;
+            //     would mean a different SP version or a non-canonical
+            //     form) — terminate conservatively.
+            NodeKind::Store(_) => {
+                let inputs = fg.graph.node_inputs(node);
+                // Store inputs: [memory, addr, data].  Skip if shape is
+                // unexpected (defensive).
+                if inputs.len() != 3 {
+                    return args;
+                }
+                let addr = inputs[1];
+                let prev = inputs[0];
+                let mut visiting = rustc_hash::FxHashSet::default();
+                match decompose_sp(fg, addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                    None => {
+                        // Non-aliasing — pass through.
+                        cur = prev;
+                        continue;
+                    }
+                    Some(_) => return args,
+                }
+            }
+            // `StackStorePhi` (ambiguous offsets), `MemPhi` (control-flow
+            // join), or anything else (entry memory, an earlier `Call`,
+            // `PostCallMemState`, …) terminates the chain.
             _ => return args,
         };
         match anchor_base {
@@ -112,6 +153,8 @@ fn try_collect_stack_args(
     fg: &mut BuiltFunctionGraph,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
+    stack_ptr_vn: rsleigh::Vn,
+    sp_memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     if !matches!(fg.graph.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
@@ -125,7 +168,8 @@ fn try_collect_stack_args(
     }
     let mem_in = inputs[1];
 
-    let args = collect_stack_args_in_chain_order(fg, mem_in, stack_arg_offsets);
+    let args =
+        collect_stack_args_in_chain_order(fg, mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
@@ -140,24 +184,38 @@ fn try_collect_stack_args(
 /// inputs in positional order.  Intended to run *once*, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
+///
+/// The walker tolerates non-stack-aliasing `Store` nodes interleaved on the
+/// chain (e.g. compiler-emitted volatile global writes that gcc/clang at
+/// `-O2` are free to schedule between stack-arg pushes).  Such stores are
+/// detected via [`crate::sp_expr::decompose_sp`] returning `None` for their
+/// address; SP-rooted stores remain chain-terminating.
 pub struct CallStackArgCollect {
     /// Positional byte offsets of stack-passed arguments from call-time SP.
     /// Entry `i` is the offset of the `i`-th stack arg.
     pub stack_arg_offsets: Vec<i64>,
+    /// Varnode for the stack-pointer register (matches the calling
+    /// convention's `stack_ptr_vn`).  Used by the alias-discrimination
+    /// branch when the walker encounters a plain `Store`.
+    pub stack_ptr_vn: rsleigh::Vn,
 }
 
 impl CallStackArgCollect {
-    /// Creates a new pass for the given positional stack-arg offset table.
+    /// Creates a new pass for the given positional stack-arg offset table
+    /// and stack-pointer varnode.
     #[must_use]
-    pub fn new(stack_arg_offsets: Vec<i64>) -> Self {
-        Self { stack_arg_offsets }
+    pub fn new(stack_arg_offsets: Vec<i64>, stack_ptr_vn: rsleigh::Vn) -> Self {
+        Self {
+            stack_arg_offsets,
+            stack_ptr_vn,
+        }
     }
 
-    /// Creates a new pass whose positional stack-arg offset table is taken
-    /// from the supplied calling convention.
+    /// Creates a new pass whose positional stack-arg offset table and
+    /// stack-pointer varnode are taken from the supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_arg_offsets.clone())
+        Self::new(cc.stack_arg_offsets.clone(), cc.stack_ptr_vn)
     }
 }
 
@@ -167,9 +225,20 @@ impl Optimizer for CallStackArgCollect {
             .preorder()
             .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Call))
             .collect();
+        // Share the SP-decomposition memo across all Call sites in the
+        // function — many stack pushes near each other share the same
+        // intermediate `sp - K` outputs, and decompose_sp is the hot path
+        // when the function has many calls or many stack args.
+        let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         for call_id in calls {
-            result |= try_collect_stack_args(function, call_id, &self.stack_arg_offsets)?;
+            result |= try_collect_stack_args(
+                function,
+                call_id,
+                &self.stack_arg_offsets,
+                self.stack_ptr_vn,
+                &mut sp_memo,
+            )?;
         }
         Ok(result)
     }

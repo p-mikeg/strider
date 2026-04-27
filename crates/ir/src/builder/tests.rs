@@ -1129,3 +1129,157 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     );
     Ok(())
 }
+
+// ── BUG-28 cause #1 regression: upgrade_to_tracked sub-register fallback ─
+//
+// On x86_64 SysV, `arg_passing_regs[0] = RDI` (8-byte).  For
+// `int forward_1(int a) { sink1(a); return a; }`, the function only ever
+// reads `EDI` (4-byte sub-register).  The IR builder's overlap filter
+// keeps `EDI` (since `RDI` is never touched), but the calling
+// convention asks `upgrade_to_tracked` to map `RDI` to a tracked variable.
+// The original implementation only searched for a tracked variable that
+// COVERS `vn` (wider-or-equal byte range fully containing it).  No such
+// tracked variable existed in this case, so the lookup returned `None`
+// and `arg_passing_vars` excluded `RDI` entirely — the `Call` node ended
+// up with no slot for arg index 0, breaking pattern queries like
+// `call().arg(0, function_arg(0))`.
+//
+// The fix adds a sub-register fallback: when no covering tracked
+// variable exists, return the LARGEST tracked variable CONTAINED IN
+// `vn`'s byte range.  The function only reads that sub-register, so
+// the bytes outside its range are unused — using the sub-register as
+// the arg-passing-var loses no information.
+
+/// A `Vn` already tracked must return itself unchanged.
+#[test]
+fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
+    let rdi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let map: HashMap<rsleigh::Vn, VarId> =
+        [(rdi, VarId::from_u32(0))].into_iter().collect();
+    assert_eq!(upgrade_to_tracked_for(&map, rdi), Some(rdi));
+}
+
+/// When `vn` is not tracked but a wider tracked variable covers it, the
+/// covering variable must be returned (existing behaviour).
+#[test]
+fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked() {
+    // RDI 8-byte tracked; we ask for EDI (4-byte sub-register at the same
+    // offset) — must return RDI.
+    let rdi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let edi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let map: HashMap<rsleigh::Vn, VarId> =
+        [(rdi, VarId::from_u32(0))].into_iter().collect();
+    assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
+}
+
+/// BUG-28 cause #1: when no covering tracked variable exists but a
+/// sub-register is tracked, return the largest contained-in tracked
+/// variable.  This is the case for `int forward_1(int a)` on x86_64
+/// SysV where the function only reads `EDI` and the convention asks
+/// to upgrade `RDI`.
+#[test]
+fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
+    let rdi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let edi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    // Only EDI is tracked; ask for RDI.
+    let map: HashMap<rsleigh::Vn, VarId> =
+        [(edi, VarId::from_u32(0))].into_iter().collect();
+    assert_eq!(
+        upgrade_to_tracked_for(&map, rdi),
+        Some(edi),
+        "RDI not tracked but EDI is contained-in RDI's range — fallback \
+         must return EDI so the Call node still has an arg slot"
+    );
+}
+
+/// Sanity check: an unrelated tracked variable (different offset, no
+/// overlap) yields no match.
+#[test]
+fn upgrade_to_tracked_returns_none_when_no_overlap() {
+    let rdi = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let unrelated = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x200, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let map: HashMap<rsleigh::Vn, VarId> =
+        [(unrelated, VarId::from_u32(0))].into_iter().collect();
+    assert_eq!(upgrade_to_tracked_for(&map, rdi), None);
+}
+
+/// When multiple covering tracked variables exist, the SMALLEST one
+/// wins (tightest container).
+#[test]
+fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
+    // Asking for a 1-byte vn at off 56.  Both 4-byte and 8-byte covers
+    // are tracked — the 4-byte one is tighter.
+    let target = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 1,
+    };
+    let cover_4 = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let cover_8 = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let map: HashMap<rsleigh::Vn, VarId> = [
+        (cover_4, VarId::from_u32(0)),
+        (cover_8, VarId::from_u32(1)),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(upgrade_to_tracked_for(&map, target), Some(cover_4));
+}
+
+/// BUG-28 cause #1: when multiple sub-register tracked variables exist
+/// (e.g. RCX covers both CL at off 0 size 1 and ECX at off 0 size 4),
+/// the LARGEST sub-register wins because it preserves the most
+/// information about the value the function actually computed.
+#[test]
+fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
+    // RCX 8-byte: not tracked.
+    let rcx = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        size: 8,
+    };
+    let ecx = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        size: 4,
+    };
+    let cl = rsleigh::Vn {
+        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        size: 1,
+    };
+    let map: HashMap<rsleigh::Vn, VarId> = [
+        (ecx, VarId::from_u32(0)),
+        (cl, VarId::from_u32(1)),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        upgrade_to_tracked_for(&map, rcx),
+        Some(ecx),
+        "ECX (4 bytes) wins over CL (1 byte) — bigger sub-register \
+         preserves more of what the function actually computed"
+    );
+}

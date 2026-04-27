@@ -379,7 +379,10 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
-    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8, 12, 16, 20, 24, 28, 32]));
+    pipeline.add_post_pass(CallStackArgCollect::new(
+        vec![4, 8, 12, 16, 20, 24, 28, 32],
+        sp,
+    ));
     pipeline.run(&mut fg)?;
 
     let call_id = find_call(&fg)?;
@@ -479,7 +482,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12]));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg)?;
 
     let call_id = find_call(&fg)?;
@@ -540,7 +543,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4]));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
     pipeline.run(&mut fg)?;
 
     let call_id = find_call(&fg)?;
@@ -571,7 +574,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
-    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8]));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run(&mut fg)?;
 
     let after_inputs = fg.graph.node_inputs(find_call(&fg)?).into_iter().count();
@@ -660,5 +663,229 @@ fn detect_non_sp_base_skipped() -> Result<()> {
         1,
         "the original Store must remain"
     );
+    Ok(())
+}
+
+// ── Walker: non-aliasing Store passthrough (BUG-28 cause #2) ──────────────
+
+/// Existing-behaviour pin: an in-frame stack-aliasing store (one that lands
+/// at an offset INSIDE the convention's stack-arg range) interleaved between
+/// two stack-arg pushes must NOT silently let both args through to the Call.
+/// The walker must terminate (or the chain-order check must reject the
+/// trash) — after the fix, the walker still recognises SP-rooted stores as
+/// chain-terminating.
+#[test]
+fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
+    let sp = sp_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // push arg1 (= 22) at sp - 4.
+    let sp_v0 = b.read_variable(&sp)?;
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let sp_v1 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v1)?;
+    let arg1 = b.build_int_const(22u64, NodeOutputType::U32);
+    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
+
+    // Trash store at sp + 0 (in stack-arg-offset range for the cdecl
+    // table {0, 4, 8, 12}).  This addresses the same memory class as
+    // arg slots; the walker must not silently pass through it.
+    let trash = b.build_int_const(0xAAAAu64, NodeOutputType::U32);
+    b.build_store(sp_v0, trash, rsleigh::VnSpace::RAM)?;
+
+    // push arg0 (= 11) at sp - 8.
+    let sp_v2 =
+        b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v2)?;
+    let arg0 = b.build_int_const(11u64, NodeOutputType::U32);
+    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
+
+    // call.
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
+    b.build_call(target)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
+    pipeline.run(&mut fg)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let collected_arg_consts: Vec<u128> = inputs[3..]
+        .iter()
+        .filter_map(|&out| {
+            if let NodeKind::IntConst(v) = *fg.graph.node_kind(fg.graph.get_node_from_output(out)) {
+                Some(v)
+            } else {
+                None
+            }
+        })
+        .collect();
+    // The trash 0xAAAA must NOT appear as a collected arg, AND arg1 (=22)
+    // must NOT slip through past the in-arg-range trash store.
+    assert!(
+        !collected_arg_consts.contains(&0xAAAA_u128),
+        "trash store must not be misclassified as an arg, got {collected_arg_consts:?}"
+    );
+    assert!(
+        !collected_arg_consts.contains(&22_u128),
+        "arg1 (=22) must not be collected: walker must stop at the in-frame stack-aliasing store, got args = {collected_arg_consts:?}"
+    );
+    Ok(())
+}
+
+/// NEW behaviour: a `Store` to a constant address (e.g. a `.data` global) on
+/// the memory chain between stack-arg pushes and a `Call` must NOT terminate
+/// the walker.  Such stores cannot alias the stack-arg space, so the walker
+/// should pass through them and continue collecting the upstream stack-args.
+///
+/// Models the `volatile int g_sink_int = …;` barrier-pattern that gcc/clang
+/// at -O2 freely interleave with stack-arg pushes — the BUG-28 cause #2
+/// reproducer.
+#[test]
+fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
+    let sp = sp_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // push arg1 = 22 at sp - 4.
+    let sp_v0 = b.read_variable(&sp)?;
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let sp_v1 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v1)?;
+    let arg1 = b.build_int_const(22u64, NodeOutputType::U32);
+    b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
+
+    // Volatile global write: store to a fixed `.data` address (constant).
+    // `decompose_sp` returns None for a non-SP-rooted address; the new
+    // walker branch must continue past it.
+    let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32);
+    let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32);
+    b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
+
+    // push arg0 = 11 at sp - 8.
+    let sp_v2 =
+        b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    b.write_variable(&sp, sp_v2)?;
+    let arg0 = b.build_int_const(11u64, NodeOutputType::U32);
+    b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
+
+    // call 0x1000.
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
+    b.build_call(target)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    // cdecl-style offsets: ret-addr at 0, args at +4, +8, +12.
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
+    pipeline.run(&mut fg)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    // ctrl + memory + target + 2 stack args = 5.
+    assert_eq!(
+        inputs.len(),
+        5,
+        "walker must pass through the non-aliasing global store and collect both stack args; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[3]));
+    let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[4]));
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "arg0 should be 11, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(22)),
+        "arg1 should be 22, got {arg1_kind:?}"
+    );
+    Ok(())
+}
+
+/// NEW behaviour, multi-store stress: many stack-arg pushes interleaved with
+/// multiple non-aliasing global stores between every push.  Walker must
+/// collect all 4 stack args, mirroring the `forward_16` BUG-28 fixture.
+#[test]
+fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
+    let sp = sp_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let arg_vals: [u64; 4] = [11, 22, 33, 44];
+
+    let mut sp_cur = b.read_variable(&sp)?;
+    let global_data = b.build_int_const(0x1234u64, NodeOutputType::U32);
+    // Push args in reverse order (arg3 first → highest negative offset),
+    // and emit a volatile global store after each push.  Final memory
+    // chain (latest first) is:
+    //   global → push arg0 → global → push arg1 → global → push arg2 →
+    //   global → push arg3 → entry_mem.
+    for (i, base_global_addr) in [0xCAFE0000u64, 0xCAFE0010, 0xCAFE0020, 0xCAFE0030]
+        .into_iter()
+        .enumerate()
+    {
+        let arg_idx = 3 - i; // push arg3 first, arg0 last.
+        sp_cur =
+            b.build_int_binary_operation(sp_cur, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_cur)?;
+        let arg = b.build_int_const(arg_vals[arg_idx], NodeOutputType::U32);
+        b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
+
+        // Non-aliasing global write right after each push.
+        let g_addr = b.build_int_const(base_global_addr, NodeOutputType::U32);
+        b.build_store(g_addr, global_data, rsleigh::VnSpace::RAM)?;
+    }
+
+    // call 0x1000.
+    let target = b.build_int_const(0x1000u64, NodeOutputType::U32);
+    b.build_call(target)?;
+    b.build_return(None, &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    // 4 cdecl-like stack-arg offsets.  arg0 ends up at sp - 4 (anchor),
+    // arg1 at sp - 8 (= anchor + 4), arg2 at sp - 12 (= anchor + 8),
+    // arg3 at sp - 16 (= anchor + 12).  AArch64-style table starting at 0.
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
+    pipeline.run(&mut fg)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + 4 args = 7 inputs.
+    assert_eq!(
+        inputs.len(),
+        7,
+        "walker must collect all 4 stack args across 4 interleaved global writes; got inputs={inputs:?}"
+    );
+    for (slot_idx, expected) in arg_vals.iter().enumerate() {
+        let kind = *fg
+            .graph
+            .node_kind(fg.graph.get_node_from_output(inputs[3 + slot_idx]));
+        let expected_u128: u128 = (*expected).into();
+        assert!(
+            matches!(kind, NodeKind::IntConst(v) if v == expected_u128),
+            "arg{slot_idx} should be {expected}, got {kind:?}"
+        );
+    }
     Ok(())
 }

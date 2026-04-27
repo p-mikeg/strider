@@ -7,43 +7,34 @@
 //!   * Mixed pointer + integer parameters.
 //!   * Call-of-call return-value chaining.
 //!
+//! Originally introduced in the BUG-28-OPEN era — see the BUG-28 entry
+//! in `docs/superpowers/plans/2026-04-25-analyzer-known-issues.md` for
+//! the historical limitation and its two-cause fix.  The suite now
+//! serves as the regression guard for that fix.
+//!
 //! For each fixture, the test verifies:
-//!   (a) at least N/2 (rounded down, but at least 1) `FunctionArg` indices
-//!       are present in the IR — proves `detect_register_args`'s
-//!       sub-register-fallback path (commit `f179c7f`) and stack-arg
-//!       detection are running.
+//!   (a) `FunctionArg` indices are present in the IR for at least
+//!       a documented floor — proves `detect_register_args`'s
+//!       sub-register-fallback path AND the IR builder's
+//!       `upgrade_to_tracked_for` contained-in fallback are running.
 //!   (b) For at least one `i` in `0..N`, the pattern
-//!       `call().arg(i, function_arg(i))` matches — proves the call site's
-//!       arg slot connects to a `FunctionArg` node through the
-//!       `StackLoadForward` + sub-register-fallback chain.
+//!       `call().arg(i, function_arg(i))` matches — proves the call
+//!       site's arg slot threads through to a `FunctionArg` node via
+//!       the `StackLoadForward` + sub-register-fallback chain, including
+//!       the BUG-28 cause-#2 fix that lets the walker pass through
+//!       non-stack-aliasing `Store` nodes.
 //!
-//! The strict "all 0..N indices present + thread-through every i" form
-//! initially specified in `2026-04-25-analyzer-known-issues.md` BUG-28
-//! exposes a real analyzer limitation: at -O2 with C-source `int`
-//! parameters, the optimiser routes parameter values through
-//! sub-registers (e.g. `EDI` instead of `RDI` on x64) without ever
-//! reading the full container, so the IR builder's variable-tracking
-//! list (which `arg_passing_vars` is filtered against) only retains
-//! the narrow view.  `detect_register_args` still emits `FunctionArg`
-//! nodes via its sub-register fallback, but the Call node's positional
-//! arg slot list (`build_call`'s `arg_passing_vars` reads) doesn't
-//! include the dropped containers, so the strict thread-through
-//! assertion fails on every arch where the C source's parameter type
-//! is narrower than the calling-convention's container register.
-//!
-//! Tracked as BUG-28 (analyzer limitation, not a regression of
-//! commit f179c7f).  The relaxed assertion above still catches a
-//! REAL regression of `detect_register_args` (it would emit zero
-//! FunctionArg nodes if the sub-register fallback regressed) and a
-//! regression of the basic call-arg connectivity (`forward_1` is
-//! universally exercised on every arch).
+//! The assertion floors are deliberately under the strict "all 0..N"
+//! form: not every fixture's per-arch lowering routes every parameter
+//! through a stable register slot the analyzer can fully reason about
+//! (e.g. `forward_16`'s 16 spilled args interleaved with prologue
+//! traffic).  The thread-through check (b) is the meaningful
+//! cross-arch invariant.
 //!
 //! Conventions:
 //!   * Every `Matcher` opts into `ignore_casts_mask(EXTEND | TRUNCATE
 //!     | CAST_TO_BOOL | CAST_TO_INT)` and `ignore_control_states()` so
 //!     tests don't break on arch-specific width-cast / region-join noise.
-//!   * Per-arch `ignore = { ArchX: "BUG-NN: …" }` references an entry in
-//!     `docs/superpowers/plans/2026-04-25-analyzer-known-issues.md`.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -116,12 +107,15 @@ fn assert_function_args_present(
 /// Asserts that for at least one `i` in `0..n`, the pattern
 ///   `call().arg(i, function_arg(i))`
 /// matches.  Pins the StackLoadForward + sub-register-fallback chain
-/// that connects Call.arg(i) ↔ FunctionArg(i) at the call site.
+/// that connects Call.arg(i) ↔ FunctionArg(i) at the call site —
+/// the regression guard for BUG-28's two-cause fix.
 ///
 /// Requiring "at least one match" rather than "all 0..N must match"
-/// works around the fact that on some arches the IR builder filters
-/// arg-passing registers whose tracked variables are sub-registers
-/// (smaller than the convention's container).  See BUG-28.
+/// gives headroom for arch-specific lowerings where one or two arg
+/// slots route through a non-`StackStore` chain the walker can't
+/// follow even after BUG-28 cause #2; the universal cross-arch
+/// invariant the test enforces is "at least one slot threads through
+/// cleanly."
 fn assert_some_call_arg_threads_through(
     g: &ir::BuiltFunctionGraph,
     n: u32,
@@ -150,19 +144,11 @@ fn assert_some_call_arg_threads_through(
 per_arch_test!(
     "calling_convention",
     "forward_1",
-    forward_1_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Ppc32be: "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le: "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be: "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le: "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:     "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-        X64:     "BUG-28: sub-register-only read of EDI drops RDI from arg_passing_vars",
-    }
+    forward_1_assertions
 );
 
 fn forward_1_assertions(g: &ir::BuiltFunctionGraph) {
+    // Strict: all 1 indices must be detected (the trivial single-arg case).
     assert_function_args_present(g, 1, 1, "forward_1");
     assert_some_call_arg_threads_through(g, 1, "forward_1");
 }
@@ -174,21 +160,12 @@ fn forward_1_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "forward_2",
-    forward_2_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Mips64be:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64BE",
-        Mips64le:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64LE",
-        Ppc32be:   "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le:   "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be:   "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le:   "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:       "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-    }
+    forward_2_assertions
 );
 
 fn forward_2_assertions(g: &ir::BuiltFunctionGraph) {
-    assert_function_args_present(g, 2, 1, "forward_2");
+    // Strict: BUG-28 fix should now have all 2 args present on every arch.
+    assert_function_args_present(g, 2, 2, "forward_2");
     assert_some_call_arg_threads_through(g, 2, "forward_2");
 }
 
@@ -199,21 +176,12 @@ fn forward_2_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "forward_4",
-    forward_4_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Mips64be:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64BE",
-        Mips64le:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64LE",
-        Ppc32be:   "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le:   "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be:   "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le:   "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:       "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-    }
+    forward_4_assertions
 );
 
 fn forward_4_assertions(g: &ir::BuiltFunctionGraph) {
-    assert_function_args_present(g, 4, 2, "forward_4");
+    // Strict: BUG-28 fix should now have all 4 args present on every arch.
+    assert_function_args_present(g, 4, 4, "forward_4");
     assert_some_call_arg_threads_through(g, 4, "forward_4");
 }
 
@@ -225,20 +193,17 @@ fn forward_4_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "forward_8",
-    forward_8_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Ppc32be:   "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le:   "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be:   "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le:   "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:       "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-        X64:       "BUG-28: x64 SysV with 8 args spills 2; sub-register tracking issue",
-    }
+    forward_8_assertions
 );
 
 fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
-    assert_function_args_present(g, 8, 2, "forward_8");
+    // Floor 6 (not strict 8): on x86 cdecl all 8 args go on the
+    // stack, and after BUG-28 cause #2's chain-walker pass-through
+    // CallStackArgCollect recovers 6 of the 8 — the last two are
+    // pushed across a transition the walker still terminates on.
+    // Most other arches detect all 8 (≥8 arg-passing regs).  The
+    // thread-through check (b) below is the cross-arch invariant.
+    assert_function_args_present(g, 8, 6, "forward_8");
     assert_some_call_arg_threads_through(g, 8, "forward_8");
 }
 
@@ -257,15 +222,7 @@ fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "forward_16",
-    forward_16_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: stack-arg chain walk breaks on volatile interleaving",
-        Ppc32be:   "BUG-28: stack-arg chain walk breaks on volatile interleaving",
-        Ppc32le:   "BUG-28: stack-arg chain walk breaks on volatile interleaving",
-        Ppc64be:   "BUG-28: stack-arg chain walk breaks on volatile interleaving",
-        Ppc64le:   "BUG-28: stack-arg chain walk breaks on volatile interleaving",
-        X86:       "BUG-28: x86 cdecl + 16 stack args; chain walk breaks on volatile interleaving",
-    }
+    forward_16_assertions
 );
 
 fn forward_16_assertions(g: &ir::BuiltFunctionGraph) {
@@ -280,23 +237,16 @@ fn forward_16_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "narrow_widths",
-    narrow_widths_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Mips64be:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64BE",
-        Mips64le:  "BUG-28: Call arg-slot connectivity incomplete on MIPS64LE",
-        Ppc32be:   "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le:   "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be:   "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le:   "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:       "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-    }
+    narrow_widths_assertions
 );
 
 fn narrow_widths_assertions(g: &ir::BuiltFunctionGraph) {
     // (a) at least 2 FunctionArgs exist in 0..4 (loose floor; the strict
     //     0..4 form fails on big-endian / x86-cdecl arches).
-    assert_function_args_present(g, 4, 2, "narrow_widths");
+    // Strict: 4 narrow-width args (signed/unsigned char + short)
+    // fully detected via the contained-in sub-register fallback in
+    // upgrade_to_tracked_for + the detect_register_args fallback.
+    assert_function_args_present(g, 4, 4, "narrow_widths");
     // (b) at least one Call.arg(i) ↔ FunctionArg(i) link exists.
     assert_some_call_arg_threads_through(g, 4, "narrow_widths");
 
@@ -342,19 +292,12 @@ fn narrow_widths_assertions(g: &ir::BuiltFunctionGraph) {
 per_arch_test!(
     "calling_convention",
     "mixed_4",
-    mixed_4_assertions,
-    ignore = {
-        Aarch64Be: "BUG-28: Call arg-slot connectivity incomplete on AArch64BE",
-        Ppc32be:   "BUG-28: Call arg-slot connectivity incomplete on PPC32BE",
-        Ppc32le:   "BUG-28: Call arg-slot connectivity incomplete on PPC32LE",
-        Ppc64be:   "BUG-28: Call arg-slot connectivity incomplete on PPC64BE",
-        Ppc64le:   "BUG-28: Call arg-slot connectivity incomplete on PPC64LE",
-        X86:       "BUG-28: x86 cdecl all-stack chain-walk breaks on volatile interleaving",
-    }
+    mixed_4_assertions
 );
 
 fn mixed_4_assertions(g: &ir::BuiltFunctionGraph) {
-    assert_function_args_present(g, 4, 2, "mixed_4");
+    // Strict: 4 args (int + ptr interleaved) must all be detected.
+    assert_function_args_present(g, 4, 4, "mixed_4");
     assert_some_call_arg_threads_through(g, 4, "mixed_4");
 }
 

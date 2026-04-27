@@ -184,11 +184,17 @@ fn bail_on_type_mismatch() -> Result<()> {
     Ok(())
 }
 
-/// An intervening `Store(_)` whose address is *not* SP-relative cannot be
-/// proven non-aliasing in general — conservatively bail even though in
-/// practice it can't overlap the stack slot.
+/// An intervening `Store(_)` whose address is *not* SP-relative is provably
+/// non-aliasing with any stack slot (different address spaces, or at least
+/// different decomposition: one is `sp + K`, the other isn't).  The walker
+/// passes through it and forwards the load (BUG-28 cause #2).
+///
+/// Was previously `bail_on_opaque_store_between` — pinned the
+/// over-conservative pre-BUG-28-fix behaviour.  Renamed to reflect the new
+/// (correct) behaviour and the original docstring's actual semantic
+/// observation.
 #[test]
-fn bail_on_opaque_store_between() -> Result<()> {
+fn forwards_across_non_sp_store_between() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
@@ -203,7 +209,9 @@ fn bail_on_opaque_store_between() -> Result<()> {
         b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
     let a = b.build_int_const(0xAAu64, NodeOutputType::U32);
     b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-    // Opaque store to a non-SP address (a compile-time constant address).
+    // Opaque store to a non-SP address (a compile-time constant address —
+    // can't be SP-relative because SP is an InitialVar reading the entry
+    // SP, while the address here is a literal IntConst).
     let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32);
     let other = b.build_int_const(0xBBu64, NodeOutputType::U32);
     b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
@@ -220,8 +228,9 @@ fn bail_on_opaque_store_between() -> Result<()> {
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
-        reachable_loads, 1,
-        "opaque intervening Store must prevent forwarding"
+        reachable_loads, 0,
+        "non-SP-relative intervening Store must not block forwarding \
+         (the addresses are provably non-aliasing)"
     );
     Ok(())
 }
