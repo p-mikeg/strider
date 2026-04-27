@@ -2,7 +2,6 @@ use crate::error::Result;
 
 mod insn;
 mod pipeline;
-mod register_aliasing;
 mod vn_io;
 
 pub use pipeline::Strider;

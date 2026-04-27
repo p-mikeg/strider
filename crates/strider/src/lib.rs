@@ -18,10 +18,10 @@
 //! # Register aliasing
 //!
 //! x86 has overlapping sub-registers (`rax`/`eax`/`ax`/`al` etc.).  The
-//! internal `IrStrider` handles these transparently: all reads and writes go
-//! through the largest containing register, with shift/mask operations inserted
-//! for sub-register accesses.  The `find_largest_fitting_register` helper
-//! drives this logic.
+//! internal `IrStrider` handles these transparently via
+//! [`pcode_lift::ValueLifter::read_vn`] / [`pcode_lift::ValueLifter::write_vn`]:
+//! all reads and writes go through the largest containing register, with
+//! shift/mask operations inserted for sub-register accesses.
 //!
 //! # Key types
 //!
@@ -32,7 +32,6 @@
 
 mod strider;
 pub mod error;
-mod utils;
 
 pub use strider::Strider;
 pub use error::{Error, ErrorKind, Result};

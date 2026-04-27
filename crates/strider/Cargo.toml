@@ -12,6 +12,7 @@ ir.workspace = true
 dot.workspace = true
 cfg.workspace = true
 opt.workspace = true
+pcode-lift.workspace = true
 reader.workspace = true
 object.workspace = true
 

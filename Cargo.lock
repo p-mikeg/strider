@@ -1086,6 +1086,7 @@ dependencies = [
  "opt",
  "paste",
  "pattern",
+ "pcode-lift",
  "reader",
  "rsleigh",
  "strider-error",
