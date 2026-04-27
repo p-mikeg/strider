@@ -442,3 +442,60 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let dot = render(&graph, entry);
     assert!(dot.contains("clob0"), "expected synthetic clob0 label, got:\n{dot}");
 }
+
+/// `CallOther` whose user-op name is recorded in `Graph::call_other_names`
+/// must render with both the symbolic name and the numeric id.
+#[test]
+fn call_other_label_includes_resolved_name() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let co = graph.create_node(
+        NodeKind::CallOther { user_op_id: 62 },
+        [entry_ctrl, mem],
+        [NodeOutputKind::Control, NodeOutputKind::Memory],
+    );
+    graph.set_call_other_name(co, "setISAMode".to_string());
+    let co_ctrl = graph.node_outputs(co).into_iter().next().unwrap();
+    let co_mem = graph.node_outputs(co).into_iter().nth(1).unwrap();
+    graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
+
+    let dot = render(&graph, entry);
+    assert!(
+        dot.contains("setISAMode #62"),
+        "label must show resolved name and id together:\n{dot}",
+    );
+}
+
+/// `CallOther` without a recorded name (synthetic test graph) falls back
+/// to the bare numeric id; the label must NOT contain a stray space where
+/// the missing name would have gone.
+#[test]
+fn call_other_label_falls_back_to_id_when_name_missing() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let co = graph.create_node(
+        NodeKind::CallOther { user_op_id: 7 },
+        [entry_ctrl, mem],
+        [NodeOutputKind::Control, NodeOutputKind::Memory],
+    );
+    // Intentionally do NOT call `set_call_other_name`.
+    let co_ctrl = graph.node_outputs(co).into_iter().next().unwrap();
+    let co_mem = graph.node_outputs(co).into_iter().nth(1).unwrap();
+    graph.create_node(NodeKind::Return, [co_ctrl, co_mem], []);
+
+    let dot = render(&graph, entry);
+    assert!(
+        dot.contains("CallOther #7"),
+        "label must show the bare id when no name is recorded:\n{dot}",
+    );
+    assert!(
+        !dot.contains("CallOther  #7"),
+        "no double-space (placeholder for the missing name) should leak:\n{dot}",
+    );
+}

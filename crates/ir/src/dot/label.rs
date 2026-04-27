@@ -263,7 +263,19 @@ impl<'a, R: MemReader> GraphDotDumper<'a, R> {
 
             // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {
-                format!("CallOther #{user_op_id}{}", self.out_type_suffix(node, "\n→ "))
+                // Show the resolved Sleigh user-op name when the analyzer
+                // recorded one (e.g. `setISAMode #62`); fall back to the bare
+                // id for synthetic nodes (tests, third-party graph builders)
+                // that bypass the name side-table.
+                let name_prefix = self
+                    .graph
+                    .call_other_name(node)
+                    .map(|n| format!("{n} "))
+                    .unwrap_or_default();
+                format!(
+                    "CallOther {name_prefix}#{user_op_id}{}",
+                    self.out_type_suffix(node, "\n→ "),
+                )
             }
             NodeKind::SegmentOp { op_id } => {
                 format!("SegmentOp #{op_id}{}", self.out_type_suffix(node, ":"))
