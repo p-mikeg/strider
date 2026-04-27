@@ -576,6 +576,45 @@ resolved (rare; tracker entry).
   table and `idx` has a bounded range from a prior conditional.
   Reads the table contents via the existing `MemReader`.  Outputs N
   resolved addresses → `RegionTerminator::Switch { targets }`.
+
+  **Bounding `idx`.**  Two complementary mechanisms cover real-world
+  `switch` lowerings:
+
+  1. **`KnownBits`-derived bound.**  For `idx & MASK` patterns the
+     existing `KnownBits` pass already proves the upper bits are
+     zero.  Read the resolved bit-mask: `N = MASK + 1`.
+  2. **Predecessor `If` walk.**  For `if (idx < N) ...` patterns the
+     bounding `If` is upstream of the `BranchIndirect`'s region.
+     Walk backward through CFG edges (`Fallthrough` /
+     `IfCaseTrue` / `IfCaseFalse`) along the predecessor chain.  At
+     each `If` we cross, the condition expression bounds some VN
+     and the edge label tells us which side of the bound we're on.
+
+  **CFG-build ordering caveat (Issue A).**  The CFG builder is
+  depth-first via a LIFO work queue.  When the resolver runs at a
+  `BranchIndirect` in region X, the bounding `If`'s OTHER successor
+  (the default / out-of-bounds path) may still be on the work
+  queue, NOT yet a CFG node.  This is fine for the predecessor-`If`
+  walk: we only need (i) the `If`'s condition expression, which
+  lives in the parent region's pcode and is therefore available as
+  soon as the parent region exists, and (ii) the edge label for the
+  edge we entered through, which is in the graph metadata.  We do
+  NOT need the not-taken sibling region's contents.
+
+  **Multi-predecessor join regions (Issue B).**  If the predecessor
+  chain forks at a join region (multiple paths reach `X`, each with
+  its own bound on `idx`), the round-1 jump-table resolver should
+  fail closed with `UnresolvedIndirectBranch`.  Cross-predecessor
+  bound merging (intersection / union) is a later round.  The
+  failure mode stays consistent with this round's strict-failure
+  semantics — no silent fallback to an unbounded `Multiple`.
+
+  **Newly-resolved targets (Issue C).**  Each `Multiple(targets)`
+  result enqueues N new addresses on the cfg builder's work queue
+  via the existing `RegionEdgeKind::Branch` path.  Subsequent
+  exploration creates the target regions; their own `BranchIndirect`s
+  (if any) get an independent resolution pass when they're processed.
+  No special handling required.
 * **IR-side resolution pass.**  An `IndirectBranchResolve` opt pass
   that runs after `ConstantFold` and `LoadReadOnly`, picking up the
   cases the CFG-side resolver couldn't handle (constants merged at
