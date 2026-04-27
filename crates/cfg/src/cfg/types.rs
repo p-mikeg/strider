@@ -106,6 +106,31 @@ pub enum RegionTerminator {
         /// Statically-known dispatch targets.
         targets: Vec<u64>,
     },
+    /// `BranchIndirect` whose target the cfg-time tier-1 resolver
+    /// (`indirect_resolve::resolve_indirect_target`) could not prove.
+    ///
+    /// The region was finalised with this terminator instead of an
+    /// error; the strider-level fixed-point loop runs the full
+    /// optimizer pipeline over the lifted IR and tier-2 resolution
+    /// inspects the producer of `target_vn` in the optimised graph.
+    /// At fixed point any remaining `UnresolvedIndirectBranch` regions
+    /// surface as `ErrorKind::UnresolvedIndirectBranch(addr)`.
+    ///
+    /// This variant has **no outgoing edge**: the target is unknown
+    /// at cfg-build time.  Strider lifts the region by emitting a
+    /// placeholder `Return(target_value)` that anchors `target_vn`
+    /// in the IR for analysis.
+    UnresolvedIndirectBranch {
+        /// The `inputs[0]` varnode of the offending `BranchIndirect`.
+        /// Strider reads this varnode at the region exit to obtain
+        /// the IR `NodeOutputId` that anchors the placeholder Return.
+        target_vn: rsleigh::Vn,
+        /// Pcode address of the offending `BranchIndirect`.  Used
+        /// as the key for the strider-level `known_targets` map and
+        /// for any `ErrorKind::UnresolvedIndirectBranch` raised at
+        /// fixed point.
+        addr: PcodeInsnAddr,
+    },
 }
 
 /// A basic block: a maximal straight-line sequence of pcode instructions

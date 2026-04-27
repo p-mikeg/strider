@@ -227,3 +227,43 @@ fn switch_variant_is_constructible_but_unused() {
         other => panic!("unexpected variant: {other:?}"),
     }
 }
+
+// R1.1: pin the new `UnresolvedIndirectBranch` variant.  Tier 1 will
+// fall through to this terminator when the cfg-time mini-graph
+// resolver cannot prove a `BranchIndirect`'s target.  The fixed-point
+// orchestration in strider then attempts tier-2 resolution against
+// the optimised IR.  Constructing the variant here pins its shape:
+// `(target_vn, addr)` — both fields needed to anchor the placeholder
+// `Return(target_value)` strider emits during lifting.
+#[test]
+fn unresolved_indirect_branch_variant_is_constructible() {
+    use cfg::test_api::{MachineInsnAddr, PcodeInsnAddr};
+
+    let target_vn = rsleigh::Vn {
+        size: 8,
+        addr: rsleigh::VnAddr {
+            off: 0x100,
+            space: rsleigh::VnSpace::REGISTER,
+        },
+    };
+    let pcode_addr = PcodeInsnAddr {
+        machine_addr: MachineInsnAddr { addr: 0x1000 },
+        insn_index: 3,
+    };
+    let term = RegionTerminator::UnresolvedIndirectBranch {
+        target_vn,
+        addr: pcode_addr,
+    };
+    let cloned = term.clone();
+    assert_eq!(term, cloned);
+    match term {
+        RegionTerminator::UnresolvedIndirectBranch {
+            target_vn: got_vn,
+            addr: got_addr,
+        } => {
+            assert_eq!(got_vn, target_vn);
+            assert_eq!(got_addr, pcode_addr);
+        }
+        other => panic!("unexpected variant: {other:?}"),
+    }
+}
