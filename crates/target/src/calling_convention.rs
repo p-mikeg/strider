@@ -173,6 +173,11 @@ impl CallingConvention {
     /// return address in the link register `lr` rather than pushing it on the
     /// stack, so the first stack-passed arg sits at SP + 0 and `ret_stack_pop`
     /// is `0`.
+    ///
+    /// AAPCS register conventions are independent of byte order, so this
+    /// preset pairs equally with [`crate::SleighArch::arm`] (LE),
+    /// [`crate::SleighArch::arm_be`] (BE), and
+    /// [`crate::SleighArch::arm_thumb`] (Thumb-2).
     #[must_use]
     pub fn arm_aapcs() -> CallingConvention {
         CallingConvention {
@@ -595,6 +600,18 @@ mod tests {
                 name: "ARM AAPCS (Thumb)",
                 cc: CallingConvention::arm_aapcs,
                 arch: crate::arch::SleighArch::arm_thumb,
+                arg_count: 4,
+                callee_saved_count: 9,
+                ret_count: 2,
+                reg_size_bytes: 4,
+                stack_ptr_name: "sp",
+                stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+                ret_stack_pop: 0,
+            },
+            Case {
+                name: "ARM AAPCS (BE)",
+                cc: CallingConvention::arm_aapcs,
+                arch: crate::arch::SleighArch::arm_be,
                 arg_count: 4,
                 callee_saved_count: 9,
                 ret_count: 2,

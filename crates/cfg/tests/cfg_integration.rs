@@ -230,6 +230,16 @@ arch_tests!(
 );
 
 arch_tests!(
+    mod arm_be,
+    arch  = "arm_be",
+    // BE-instruction-encoding mirror of the `arm` module above; the
+    // `arm_be` fixtures are built with `clang --target=armeb-linux-gnueabi
+    // -mno-thumb` so 4-byte ARM instructions decode under PSPEC_ARM_V45.
+    sla   = rsleigh::sla_spec::SLA_SPEC_ARM8_BE,
+    pspec = rsleigh::pspec::PSPEC_ARM_V45
+);
+
+arch_tests!(
     mod aarch64be,
     arch  = "aarch64be",
     sla   = rsleigh::sla_spec::SLA_SPEC_AARCH64BE,

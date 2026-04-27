@@ -188,4 +188,24 @@ impl SleighArch {
             endianness: Endianness::Little,
         }
     }
+
+    /// Returns the big-endian ARM 32-bit (ARMv8 A-profile, non-Thumb)
+    /// architecture descriptor.
+    ///
+    /// Uses the `ARM8_be` Sleigh spec with the `ARM_v45` processor spec —
+    /// the BE-instruction-encoding mirror of [`SleighArch::arm`].  ARM
+    /// AAPCS is byte-order independent, so the same `arm_aapcs` calling
+    /// convention pairs with both LE and BE.
+    ///
+    /// Used with `clang --target=armeb-linux-gnueabi` linking via the
+    /// `arm-linux-gnueabihf` GNU `ld` (lld 14 has no `armelfb_linux_eabi`
+    /// emulation; the GNU linker handles `-EB` via the BE BFD target).
+    #[must_use]
+    pub fn arm_be() -> SleighArch {
+        SleighArch {
+            sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_BE,
+            pspec: rsleigh::pspec::PSPEC_ARM_V45,
+            endianness: Endianness::Big,
+        }
+    }
 }

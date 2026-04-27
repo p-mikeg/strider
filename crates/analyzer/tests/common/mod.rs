@@ -36,6 +36,7 @@ pub enum Arch {
     Aarch64,
     Aarch64Be,
     Arm,
+    ArmBe,
     ArmThumb,
     Mips32le,
     Mips32be,
@@ -55,6 +56,7 @@ impl Arch {
             Arch::Aarch64 => "aarch64",
             Arch::Aarch64Be => "aarch64be",
             Arch::Arm => "arm",
+            Arch::ArmBe => "arm_be",
             Arch::ArmThumb => "arm_thumb",
             Arch::Mips32le => "mips32le",
             Arch::Mips32be => "mips32be",
@@ -73,6 +75,7 @@ impl Arch {
             Arch::Aarch64 => analyzer::SleighArch::aarch64(),
             Arch::Aarch64Be => analyzer::SleighArch::aarch64be(),
             Arch::Arm => analyzer::SleighArch::arm(),
+            Arch::ArmBe => analyzer::SleighArch::arm_be(),
             Arch::ArmThumb => analyzer::SleighArch::arm_thumb(),
             Arch::Mips32le => analyzer::SleighArch::mipsle32(),
             Arch::Mips32be => analyzer::SleighArch::mipsbe32(),
@@ -90,8 +93,9 @@ impl Arch {
             Arch::X64 => analyzer::CallingConvention::x86_64_systemv_abi(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
             Arch::Aarch64 | Arch::Aarch64Be => analyzer::CallingConvention::aarch64_aapcs64(),
-            // AAPCS32 is identical for ARM and Thumb modes — same CC.
-            Arch::Arm | Arch::ArmThumb => analyzer::CallingConvention::arm_aapcs(),
+            // AAPCS32 is byte-order- and mode-independent — same CC for
+            // ARM (LE), ARM-BE, and Thumb.
+            Arch::Arm | Arch::ArmBe | Arch::ArmThumb => analyzer::CallingConvention::arm_aapcs(),
             // O32 ABI is the same on LE and BE 32-bit MIPS Linux.
             Arch::Mips32le | Arch::Mips32be => analyzer::CallingConvention::mips_o32(),
             // N64 ABI is the same on LE and BE 64-bit MIPS Linux.
@@ -319,6 +323,7 @@ macro_rules! per_arch_test {
                 $crate::__one_arch_test!(Aarch64,   aarch64,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Aarch64Be, aarch64be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Arm,       arm,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(ArmBe,     arm_be,    $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(ArmThumb,  arm_thumb, $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Mips32le,  mips32le,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Mips32be,  mips32be,  $case, $fn_name, $assert { $($skip_arch: $reason),* });
@@ -356,6 +361,9 @@ macro_rules! __one_arch_test {
     };
     (Arm, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
         $crate::__scan_ignore_arm!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    };
+    (ArmBe, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        $crate::__scan_ignore_arm_be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
     };
     (Mips32le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
         $crate::__scan_ignore_mips32le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
@@ -592,6 +600,30 @@ macro_rules! __scan_ignore_arm_thumb {
         #[test]
         fn $fn() {
             let g = $crate::common::analyze($crate::common::Arch::ArmThumb, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_arm_be {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { ArmBe: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::ArmBe, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_arm_be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::ArmBe, $case, $fn_name);
             $assert(&g);
         }
     };
