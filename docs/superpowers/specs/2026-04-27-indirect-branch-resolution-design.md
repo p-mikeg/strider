@@ -88,10 +88,10 @@ matching on `region.terminator`.
 ### 2. Indirect-target resolver — mini IR graph approach
 
 **Lazily invoked.**  The resolver is called **only** from the
-`BranchIndirect` (and `CallIndirect` for the LR check) opcode arm
-in `RegionBuilder::process_new_insn`.  Regions without an indirect
-branch never trigger the mini-graph build — the cfg layer's normal
-path is unaffected and incurs zero overhead.
+`BranchIndirect` opcode arm in `RegionBuilder::process_new_insn`.
+Regions without a `BranchIndirect` never trigger the mini-graph
+build — the cfg layer's normal path is unaffected and incurs zero
+overhead.  `CallIndirect` is out of scope (see step 4).
 
 Per invocation, the resolver builds a **single-block IR graph** for
 the current region's value-producing instructions, runs a
@@ -245,11 +245,10 @@ pub enum ErrorKind {
 ```
 
 No opt-in flag, no migration safety net.  The user explicitly chose
-fail-loudly.  `CallIndirect` does **not** error when its target is
-unresolved — function-pointer calls are legitimate and lift to
-`Call(unknown_value)` (the existing behaviour).  The only special
-case for `CallIndirect` is `link_register_vn` detection (`blx lr`
-→ `Return`).
+fail-loudly.  `CallIndirect` is **not touched** by this work —
+function-pointer calls (including `blx lr`, where the target is the
+caller's link-register value) lift unchanged to `Call(unknown_value)`.
+The resolver and the new error apply only to `BranchIndirect`.
 
 ### 5. CFG-layer dispatch
 
@@ -286,11 +285,10 @@ rsleigh::Opcode::BranchIndirect => {
 }
 ```
 
-`CallIndirect` similarly gains a `LinkRegister` check that, when it
-fires, terminates the region with `RegionTerminator::Return` instead
-of letting the call instruction's caller emit a Call.  Otherwise
-`CallIndirect` continues into the region (it's not a terminator
-opcode) and the analyzer emits a `Call(unknown_value)` as today.
+`CallIndirect` is **not** touched by this work.  `blx lr` and other
+indirect calls continue to lift via the analyzer's existing
+`handle_call_indirect` to a `Call(unknown_value)` — function-pointer
+call semantics are correct without any LinkRegister special-casing.
 
 ### 6. IR-layer dispatch
 
@@ -462,8 +460,10 @@ on it.
    Exercises the `Piece`/`Insert` aliasing path.
 8. **Resolver positive — `bx lr`:** target VN is the calling
    convention's link register, no prior write → `LinkRegister`.
-9. **Resolver positive — `blx lr`:** CallIndirect with target VN =
-   LR → `LinkRegister`.
+9. **Sanity — `blx lr` is unaffected:** assert that `blx lr` lifts
+   via the analyzer's existing `handle_call_indirect` to a `Call`
+   node (NOT a `Return`).  This pins the contract that the resolver
+   does not bleed into `CallIndirect`.
 10. **Resolver positive — rodata load:** `mov rax, [rodata_addr];
     jmp *rax` with a `ReadOnlyMemory` containing the entry value →
     `Single(K)`.  Exercises `LoadReadOnly` participation.
