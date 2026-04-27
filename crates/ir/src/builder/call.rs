@@ -1,6 +1,6 @@
 use super::FunctionBuilder;
 use crate::error::{ErrorKind, Result};
-use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::IntBinaryOp;
 use smallvec::SmallVec;
 
@@ -91,6 +91,12 @@ impl FunctionBuilder {
     /// and `None` when the intrinsic produces no value (e.g. `syscall` without
     /// an explicit return).  Memory is always treated as clobbered.
     ///
+    /// Returns `(node_id, value_output)` where `value_output` is the
+    /// optional value-typed output of the call (matching `output_ty`), and
+    /// `node_id` is the freshly created [`NodeKind::CallOther`] — useful for
+    /// callers that need to record the user-op name in
+    /// [`crate::Graph::set_call_other_name`].
+    ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
@@ -101,7 +107,7 @@ impl FunctionBuilder {
         user_op_id: u64,
         args: &[NodeOutputId],
         output_ty: Option<NodeOutputType>,
-    ) -> Result<Option<NodeOutputId>> {
+    ) -> Result<(NodeId, Option<NodeOutputId>)> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
@@ -120,6 +126,6 @@ impl FunctionBuilder {
             self.graph().node_outputs(node).into_iter().collect();
         self.advance_cur_region_ctrl(outputs[0])?;
         self.advance_cur_region_memory(outputs[1])?;
-        Ok(outputs.get(2).copied())
+        Ok((node, outputs.get(2).copied()))
     }
 }

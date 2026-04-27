@@ -49,6 +49,17 @@ pub struct Graph {
     /// per-predecessor SP-relative offsets.  Kept external so that
     /// `NodeKind` stays `Copy`.
     pub(crate) stack_phi_offsets: HashMap<NodeId, Vec<i64>>,
+    /// Side-map from [`crate::node::NodeKind::CallOther`] nodes to the user-op
+    /// name resolved from Sleigh.  Kept external so that `NodeKind::CallOther`
+    /// keeps its single-`u64` payload (and stays `Copy`).  `CallOther` is
+    /// non-cacheable, so the dedup-cache concern that motivates the side-map
+    /// shape for cacheable kinds doesn't apply here — the choice is purely to
+    /// keep the kind enum small and `Copy`.
+    ///
+    /// Populated at IR construction time by the analyzer.  Not all `CallOther`
+    /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
+    /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
+    pub(crate) call_other_names: HashMap<NodeId, String>,
 }
 
 impl Default for Graph {
@@ -69,6 +80,7 @@ impl Graph {
             input_pool: ListPool::new(),
             node_to_id: HashMap::new(),
             stack_phi_offsets: HashMap::new(),
+            call_other_names: HashMap::new(),
         }
     }
 }

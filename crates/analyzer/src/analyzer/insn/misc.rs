@@ -22,9 +22,22 @@ impl<'a, R: rsleigh::MemReader> IrAnalyzer<'a, R> {
             Some(out_vn) => Some(out_vn.size.try_into()?),
             None => None,
         };
-        let result = self
+        let (node_id, result) = self
             .builder
             .build_call_other(user_op_id, &args, output_ty)?;
+        // Resolve the user-op id to its Sleigh-defined name (e.g.
+        // `setISAMode`, `LOCK`, `cpuid`) and stash it in the graph's
+        // side-table.  Used by `opt::CallOtherElide` to drop CallOthers
+        // whose effect is a true no-op in the IR's value/memory model.
+        // u32 is sleigh's native id width — anything wider is malformed.
+        if let Ok(id_u32) = u32::try_from(user_op_id)
+            && let Some(name) = self.cfg.sleigh.user_op_name(id_u32)
+        {
+            self.builder
+                .body_mut()
+                .graph
+                .set_call_other_name(node_id, name.to_string());
+        }
         if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), result) {
             self.write_vn(out_vn, val)?;
         }

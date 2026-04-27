@@ -500,7 +500,7 @@ fn build_call_other_without_output_advances_ctrl_and_memory() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let result = b.build_call_other(7, &[], None)?;
+    let (_node_id, result) = b.build_call_other(7, &[], None)?;
     assert!(result.is_none(), "no output varnode → no value output");
 
     // Ctrl and memory tokens must advance (be different outputs).
@@ -522,8 +522,8 @@ fn build_call_other_without_output_advances_ctrl_and_memory() -> Result<()> {
 fn build_call_other_with_output_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
     let arg = b.build_int_const(0x42u64, NodeOutputType::U64);
-    let out = b
-        .build_call_other(3, &[arg], Some(NodeOutputType::U32))?
+    let (_node_id, out) = b.build_call_other(3, &[arg], Some(NodeOutputType::U32))?;
+    let out = out
         .ok_or_else(|| ErrorKind::AssertionFailed("output_ty = Some → value output".into()))?;
     assert_eq!(
         b.graph().output_kind(out),

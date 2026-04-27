@@ -35,6 +35,7 @@ mod pipeline;
 mod sp_expr;
 mod worklist;
 pub use error::{Error, ErrorKind, Result};
+mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
 mod function_args;
@@ -44,6 +45,7 @@ mod redundant_phis;
 mod stack_load_forward;
 mod stack_store;
 
+pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use function_args::FunctionArgDetect;
@@ -69,6 +71,8 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`RedundantPhis`] — `ControlPhi` / `MemPhi` / `ControlState` elimination
 /// 4. [`DeadBranchElimination`] — `If(const)` branch pruning
+/// 5. [`CallOtherElide`] — drops opaque `CallOther`s whose user-op name is a
+///    known no-op in the IR's value/memory model (e.g. ARM `setISAMode`).
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -76,5 +80,6 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(KnownBits);
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
+    p.add(CallOtherElide);
     p
 }

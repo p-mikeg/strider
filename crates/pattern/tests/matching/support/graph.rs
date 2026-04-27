@@ -343,6 +343,7 @@ impl Tb {
         self.fb
             .build_call_other(user_op_id, args, ret_ty)
             .expect("call_other")
+            .1
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────

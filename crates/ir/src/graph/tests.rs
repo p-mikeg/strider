@@ -133,6 +133,42 @@ fn adjacent_calls_with_same_args_are_distinct() {
     );
 }
 
+/// `Graph::call_other_name` round-trip: setting and reading back a name
+/// works, and unset nodes return `None`.  This is the side-table parallel
+/// to `stack_phi_offsets` for `CallOther` nodes — kept external so the
+/// node payload (`user_op_id: u64`) stays `Copy`.
+#[test]
+fn call_other_name_round_trip() {
+    let mut graph = Graph::new();
+    // Two CallOther nodes with the same user_op_id.  CallOther is
+    // non-cacheable (see `is_cacheable`), so they get distinct ids.
+    let outs = [NodeOutputKind::Control, NodeOutputKind::Memory];
+    // We need a control + memory input to construct a CallOther; build a
+    // throwaway Entry and InitialMemory.
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let [init_mem_out] = graph.node_outputs_exact::<1>(init_mem).unwrap();
+    let id_a = graph.create_node(
+        NodeKind::CallOther { user_op_id: 62 },
+        [entry_ctrl, init_mem_out],
+        outs,
+    );
+    let id_b = graph.create_node(
+        NodeKind::CallOther { user_op_id: 62 },
+        [entry_ctrl, init_mem_out],
+        outs,
+    );
+    assert_ne!(id_a, id_b, "CallOther is non-cacheable");
+    assert_eq!(graph.call_other_name(id_a), None);
+    graph.set_call_other_name(id_a, "setISAMode".to_string());
+    assert_eq!(graph.call_other_name(id_a), Some("setISAMode"));
+    assert_eq!(graph.call_other_name(id_b), None);
+    // Replacement
+    graph.set_call_other_name(id_a, "OtherName".to_string());
+    assert_eq!(graph.call_other_name(id_a), Some("OtherName"));
+}
+
 /// `StackStorePhi` is non-cacheable; its offsets live in a side-map and
 /// two distinct phis with the same space and inputs must remain distinct.
 #[test]
