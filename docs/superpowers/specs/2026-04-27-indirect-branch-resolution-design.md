@@ -85,15 +85,39 @@ pub enum RegionTerminator {
 `Region::ends_with_tail_call: bool` is removed; callers migrate to
 matching on `region.terminator`.
 
-### 2. Indirect-target resolver
+### 2. Indirect-target resolver — mini IR graph approach
+
+The resolver builds a **single-block IR graph** for the current
+region's value-producing instructions, runs a stripped-down opt
+pipeline (`ConstantFold` + `KnownBits` + `RedundantPhis` +
+optionally `LoadReadOnly`), and inspects the producer of `target_vn`
+in the resolved graph.
+
+This subsumes the side-table tracker and chase-one-hop sketches from
+earlier drafts.  The benefits:
+
+* **Full constant-fold + KnownBits power** — resolves arithmetic
+  chains and bit-mask sequences (`mov eax, 0x100; add eax, 0x33;
+  jmp *rax`).
+* **Sub-register aliasing handled correctly** — IR encodes overlap
+  via `Piece`/`Insert`/`Extract`; constant-fold simplifies them.
+  No "largest containing register" logic needed at the resolver
+  layer.
+* **`LoadReadOnly` participates** — `mov rax, [rodata_addr]; jmp
+  *rax` resolves when the binary's `.rodata` is in scope.
+* **`InitialVar(LR)` is the natural LinkRegister signal** — no
+  ad-hoc VN comparison; just match on the producer's `NodeKind`.
+* **Jump tables become pattern queries against the resolved graph**
+  in a future round — same machinery.
+
+Resolver return type:
 
 ```rust
-// crates/cfg/src/cfg/builder/indirect_resolve.rs (new module)
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ResolvedTargets {
-    /// Target value is the calling convention's link register, with
-    /// no intervening write inside the current region.  Equivalent
-    /// to `Return`.
+pub enum ResolvedTargets {
+    /// Target value is the function-entry value of the calling
+    /// convention's link register varnode (i.e. an `InitialVar(lr)`
+    /// in the resolved graph).  Equivalent to `Return`.
     LinkRegister,
     /// Target value is the constant `addr`.
     Single(u64),
@@ -103,24 +127,78 @@ pub(super) enum ResolvedTargets {
 }
 ```
 
-Note: there is no `None` variant.  An unresolvable indirect branch is
-a hard error (see step 4) — the resolver returns
-`Result<ResolvedTargets, Error>`.
+There is no `None` variant.  An unresolvable indirect branch is a
+hard error — see step 4.
 
-The same-region resolver recognises:
+#### Mini-graph construction
 
-1. **`LinkRegister`** — `target_vn` is byte-equal to the calling
-   convention's link-register varnode AND no instruction earlier in
-   this region writes to that varnode.
-2. **`Single(K)`** — the most recent write to `target_vn` in this
-   region is one of:
-   - `IntCopy` from a `CONST` varnode → `K = const_value`;
-   - `IntCopy` from another varnode whose own most-recent write is
-     `IntCopy` from `CONST` (chase one hop).  Two-hop is the maximum
-     this round.
+```rust
+// new crate `pcode-lift` (see step 5):
+pub fn lift_value_block<R: MemReader>(
+    builder: &mut FunctionBuilder,
+    insns: &[RegionInstruction],
+    sleigh: &Sleigh<R>,
+) -> Result<HashMap<Vn, NodeOutputId>, Error>;
 
-Anything else is an error.  Multi-region chasing (Fallthrough
-predecessors, phi merges) is **out of scope** for this round.
+// crates/cfg/src/cfg/builder/indirect_resolve.rs (new module):
+pub(super) fn resolve_indirect_target<R: MemReader>(
+    region_insns: &[RegionInstruction],
+    target_vn: rsleigh::Vn,
+    sleigh: &rsleigh::Sleigh<R>,
+    cc_link_register_vn: Option<rsleigh::Vn>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    insn_addr: PcodeInsnAddr,
+) -> Result<ResolvedTargets, Error> {
+    let mut graph = Graph::new();
+    let mut builder = FunctionBuilder::new_for_value_resolution(
+        &mut graph, sleigh.regs()?,
+    )?;
+    let vn_to_value = pcode_lift::lift_value_block(
+        &mut builder, region_insns, sleigh,
+    )?;
+    let target_value = pcode_lift::read_vn(
+        &mut builder, &vn_to_value, &target_vn,
+    )?;
+    builder.build_return(Some(target_value), &[])?;
+
+    let mut fg = builder.build()?;
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(KnownBits);
+    pipeline.add(RedundantPhis);
+    if let Some(rom) = rom { pipeline.add(LoadReadOnly::new(rom)); }
+    pipeline.run(&mut fg)?;
+
+    classify(&fg, target_value, cc_link_register_vn)
+        .ok_or_else(|| ErrorKind::UnresolvedIndirectBranch(insn_addr).into())
+}
+
+fn classify(
+    fg: &BuiltFunctionGraph,
+    target: NodeOutputId,
+    lr: Option<Vn>,
+) -> Option<ResolvedTargets> {
+    let producer = fg.graph.output_producer(target);
+    match fg.graph.node_kind(producer) {
+        NodeKind::IntConst(k) => Some(ResolvedTargets::Single(*k as u64)),
+        NodeKind::InitialVar(vn) if Some(*vn) == lr => Some(ResolvedTargets::LinkRegister),
+        _ => None,
+    }
+}
+```
+
+#### Optimizer passes deliberately omitted
+
+* `StackStoreDetect` / `CallStackArgCollect` / `StackLoadForward` —
+  no calls or stack frames in a stripped value-only mini-graph.
+* `CallOtherElide` — no callother nodes (control-flow is filtered
+  out of the mini-graph).
+* `function_args::FunctionArgDetect` — no calls.
+* `DeadBranchElimination` — no branches.
+
+Multi-region chasing (Fallthrough predecessors, phi merges) is
+**out of scope** for this round.  Future work documented at the end
+of this spec.
 
 ### 3. Calling-convention link-register exposure
 
@@ -238,62 +316,161 @@ up through `Builder::build` → caller (e.g. `Strider::analyze` →
 example binary or test).  The error carries the p-code address so a
 human can map it back to a machine instruction with `objdump`.
 
-## Files touched
+### 8. New crate `pcode-lift`
 
-### CFG
+Per-opcode pcode → IR translation lives today on
+`IrStrider<R>` methods in `crates/strider/src/strider/insn/`.  The
+**value-producing subset** (no Branch / Return / Call / CallIndirect
+/ CallOther / Store / Branch / CondBranch / BranchIndirect) is a
+clean, stateless layer — it depends only on `FunctionBuilder` and a
+`HashMap<Vn, NodeOutputId>`.
 
+This subset moves into a new crate `pcode-lift` with the API:
+
+```rust
+// crates/pcode-lift/src/lib.rs
+pub struct ValueLifter<'a, 'b, R: rsleigh::MemReader> {
+    pub builder: &'a mut FunctionBuilder<'b>,
+    pub vn_to_value: &'a mut HashMap<rsleigh::Vn, NodeOutputId>,
+    pub sleigh: &'a rsleigh::Sleigh<R>,
+}
+
+impl<'a, 'b, R: rsleigh::MemReader> ValueLifter<'a, 'b, R> {
+    /// Lifts a single pcode insn whose opcode is value-producing.
+    /// Returns `Ok(true)` when the insn was lifted, `Ok(false)`
+    /// when the opcode is a control-flow / call / store op that
+    /// the caller is responsible for handling.
+    pub fn lift(&mut self, insn: &rsleigh::Insn) -> Result<bool>;
+
+    pub fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<NodeOutputId>;
+    pub fn write_vn(&mut self, vn: &rsleigh::Vn, value: NodeOutputId) -> Result<()>;
+}
+```
+
+Internal organisation mirrors the strider layout (one file per opcode
+family: `arithmetic`, `integer`, `float`, `boolean`, `cast`, `mem_io`,
+`misc_value`).  Strider's per-opcode handlers for value ops move
+verbatim, with `&mut self` rebound to `&mut self.value_lifter`.
+
+Strider keeps:
+* control-flow handlers (`branch`, `cond_branch`, `return`, `call`,
+  `call_indirect`, `call_other`) — these are strider-specific (they
+  use `region_lookup`, `arg_passing_vars`, calling convention, etc.).
+* `Store` handler — needs strider's memory-chain advancement, not
+  pure value-flow.
+* `IrStrider::process_insn` dispatch loop — first delegates to
+  `ValueLifter::lift`, then handles control-flow ops directly when
+  `lift` returns `false`.
+
+Dependency graph after the refactor:
+
+```
+reader, ir-macros (proc-macro)
+       ↓
+       ir  ←  pcode-lift  ←  cfg  ←  strider
+                   ↑                    ↓
+               (cfg uses for resolver)  ↑
+                                      uses ir, opt, pattern directly
+       ↑
+       opt → pattern (consumers via strider)
+```
+
+No cycles.  `pcode-lift` is below `cfg` and `strider`; both depend
+on it.
+
+### 9. Files touched
+
+#### New crate
+
+* `crates/pcode-lift/Cargo.toml`
+* `crates/pcode-lift/src/lib.rs` — `ValueLifter` definition,
+  module declarations, public API.
+* `crates/pcode-lift/src/value/{arithmetic,integer,float,boolean,cast,mem_io,misc_value}.rs`
+  — moved from strider with minor adaptations.
+
+#### CFG
+
+* `crates/cfg/Cargo.toml` — add `ir`, `opt`, `pcode-lift`,
+  `target` (for the calling-convention link-register varnode) as
+  dependencies.
 * `crates/cfg/src/cfg/types.rs` — `RegionTerminator` enum; remove
   `ends_with_tail_call` from `Region`; add `terminator:
   RegionTerminator`.
-* `crates/cfg/src/cfg/builder/region_builder.rs` — `BranchIndirect` /
-  `CallIndirect` dispatch updated to call the resolver and produce
-  the new terminator.  `finish_current_region` signature changes:
-  `(ends_with_tail_call: bool)` → `(terminator: RegionTerminator)`.
-* `crates/cfg/src/cfg/builder/indirect_resolve.rs` — new module with
-  `ResolvedTargets` and the same-region resolver.
-* `crates/cfg/src/cfg/builder/split.rs` — use `RegionTerminator` when
-  building the second-half region during a split (always
-  `Fallthrough` for the first half, inherited terminator for the
-  second).
-* `crates/cfg/src/error.rs` — `UnresolvedIndirectBranch(PcodeInsnAddr)`
-  variant.
+* `crates/cfg/src/cfg/builder/region_builder.rs` —
+  `BranchIndirect` / `CallIndirect` dispatch updated to call the
+  resolver and produce the new terminator.
+  `finish_current_region` signature: `(ends_with_tail_call: bool)`
+  → `(terminator: RegionTerminator)`.
+* `crates/cfg/src/cfg/builder/indirect_resolve.rs` — new module
+  with `ResolvedTargets` and the mini-graph resolver.
+* `crates/cfg/src/cfg/builder/split.rs` — use `RegionTerminator`
+  when splitting (first half → `Fallthrough`, second half inherits).
+* `crates/cfg/src/error.rs` —
+  `UnresolvedIndirectBranch(PcodeInsnAddr)` variant.
 
-### Target
+#### Target
 
 * `crates/target/src/calling_convention.rs` — add
-  `link_register_reg_name: Option<&'static str>` to `CallingConvention`,
-  add `link_register_vn: Option<rsleigh::Vn>` to
-  `BuiltCallingConvention`, fill it in for every preset, resolve it
-  in `build()`.
+  `link_register_reg_name: Option<&'static str>` to
+  `CallingConvention`, add `link_register_vn: Option<rsleigh::Vn>`
+  to `BuiltCallingConvention`, fill it in for every preset,
+  resolve it in `build()`.
 
-### Strider (analyzer)
+#### Strider
 
-* `crates/strider/src/strider/insn/mod.rs` — split the
-  `Return | BranchIndirect` arm; add terminator-driven dispatch in
-  the per-region post-loop.
+* `crates/strider/Cargo.toml` — add `pcode-lift` dependency.
+* `crates/strider/src/strider/insn/mod.rs` — replace per-opcode
+  arms for value ops with a `ValueLifter::lift` delegate; split
+  the `Return | BranchIndirect` arm; add terminator-driven dispatch
+  in the per-region post-loop.
 * `crates/strider/src/strider/insn/control.rs` — new
   `handle_tail_call(target)`.
+* Remove (now in pcode-lift):
+  `crates/strider/src/strider/insn/{arithmetic,integer,float,boolean,cast,mem_io,...value}.rs`.
 
 ## Test plan
 
-### CFG-level unit tests (new file `crates/cfg/tests/indirect_branch.rs`)
+### `pcode-lift`-level unit tests (new file `crates/pcode-lift/tests/value_lifter.rs`)
 
-1. Resolver positive: `mov reg, K; jmp *reg` → `Single(K)`.
-2. Resolver positive: `mov reg, src; mov src, K; jmp *reg` — the
-   resolver walks `reg → src → K` (two hops, the cap) and returns
-   `Single(K)`.
-3. Resolver positive: `bx lr` (target VN = LR) → `LinkRegister`.
-4. Resolver positive: `blx lr` (CallIndirect, target VN = LR) →
-   `LinkRegister`.
-5. Resolver negative: `mov reg, [mem]; jmp *reg` → `Err(
-   UnresolvedIndirectBranch)`.
-6. Resolver negative: `mov reg, src1; mov reg, src2; jmp *reg` (most
-   recent write is not from CONST) → `Err(...)`.
-7. CFG dispatch: indirect branch to in-range constant produces a
-   `Branch` edge AND a region with `terminator = Branch`.
-8. CFG dispatch: indirect branch to out-of-range constant produces
-   `terminator = TailCall { target }` (no successor edge).
-9. CFG dispatch: indirect branch via LR produces `terminator = Return`.
+1. `ValueLifter` lifts an `IntCopy` of a `CONST` into an
+   `IntConst` IR node.
+2. `ValueLifter` lifts `IntAdd` of two `CONST`s into an
+   `IntBinaryOp(Add)` and `ConstantFold` reduces it.
+3. `ValueLifter::lift` returns `Ok(false)` for control-flow opcodes
+   (`Branch`, `Return`, `Call`, `BranchIndirect`).
+4. Round-trip: a known value-only sequence lifts to the same IR as
+   strider produces.
+
+### CFG-level resolver tests (new file `crates/cfg/tests/indirect_branch.rs`)
+
+5. **Resolver positive — direct const:** `mov reg, K; jmp *reg` →
+   `ResolvedTargets::Single(K)`.
+6. **Resolver positive — arithmetic chain:** `mov reg, K1; add reg,
+   K2; jmp *reg` → `Single(K1 + K2)`.  Exercises the `ConstantFold`
+   step that the side-table tracker couldn't handle.
+7. **Resolver positive — sub-register:** `mov eax, K; jmp *rax`
+   (where `eax` is a sub-register of `rax`) → `Single(K)`.
+   Exercises the `Piece`/`Insert` aliasing path.
+8. **Resolver positive — `bx lr`:** target VN is the calling
+   convention's link register, no prior write → `LinkRegister`.
+9. **Resolver positive — `blx lr`:** CallIndirect with target VN =
+   LR → `LinkRegister`.
+10. **Resolver positive — rodata load:** `mov rax, [rodata_addr];
+    jmp *rax` with a `ReadOnlyMemory` containing the entry value →
+    `Single(K)`.  Exercises `LoadReadOnly` participation.
+11. **Resolver negative — unknown memory:** `mov rax, [mem]; jmp
+    *rax` with no `ReadOnlyMemory` covering the address →
+    `Err(UnresolvedIndirectBranch)`.
+12. **Resolver negative — runtime input:** `jmp *<arg_reg>` with no
+    constant write to `arg_reg` → `Err(...)`.
+
+### CFG-level dispatch tests (same file)
+
+13. Indirect branch to in-range constant produces a `Branch` edge
+    AND a region with `terminator = Branch`.
+14. Indirect branch to out-of-range constant produces `terminator
+    = TailCall { target }` (no successor edge).
+15. Indirect branch via LR produces `terminator = Return`.
 
 ### Strider-level integration tests
 
