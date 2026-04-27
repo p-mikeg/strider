@@ -49,6 +49,13 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
+    /// Byte order of the target architecture.  Threaded into
+    /// [`super::indirect_resolve::resolve_indirect_target`] which
+    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Defaults
+    /// to [`target::Endianness::Little`] when constructed via
+    /// [`Self::new`]; callers that analyse big-endian binaries should
+    /// use [`Self::with_endianness`] instead.
+    pub(super) endianness: target::Endianness,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
@@ -62,12 +69,31 @@ pub struct Builder<R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` that will construct a CFG starting at
     /// `start_addr` using `sleigh` to disassemble instructions.
+    ///
+    /// The endianness defaults to [`target::Endianness::Little`].
+    /// Callers that analyse big-endian binaries should use
+    /// [`Self::with_endianness`] (or equivalently call
+    /// [`Self::set_endianness`] before [`Self::build`]).
     #[must_use]
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
+        Self::with_endianness(sleigh, start_addr, options, target::Endianness::Little)
+    }
+
+    /// Creates a new `Builder` with an explicit endianness — required
+    /// for big-endian targets so the indirect-branch resolver's mini IR
+    /// loads/stores see the right byte order.
+    #[must_use]
+    pub fn with_endianness(
+        sleigh: rsleigh::Sleigh<R>,
+        start_addr: u64,
+        options: Options,
+        endianness: target::Endianness,
+    ) -> Self {
         Self {
             sleigh,
             start_addr: start_addr.into(),
             options,
+            endianness,
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
@@ -186,6 +212,24 @@ pub mod test_api {
 
     pub use crate::cfg::options::Options;
     pub use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+
+    use opt::ReadOnlyMemory;
+    use std::sync::Arc;
+
+    /// Reads back `Options::link_register_vn` so tests can pin the
+    /// `OptionsBuilder::set_link_register` round-trip.
+    #[must_use]
+    pub fn options_link_register_vn(opts: &Options) -> Option<rsleigh::Vn> {
+        opts.link_register_vn
+    }
+
+    /// Reads back `Options::read_only_memory` so tests can pin the
+    /// `OptionsBuilder::set_read_only_memory` round-trip.  Returns the
+    /// stored `Arc` by reference; comparison is by `Arc::ptr_eq`.
+    #[must_use]
+    pub fn options_read_only_memory(opts: &Options) -> Option<&Arc<dyn ReadOnlyMemory>> {
+        opts.read_only_memory.as_ref()
+    }
 
     pub fn add_region<R: rsleigh::MemReader>(
         b: &mut Builder<R>,

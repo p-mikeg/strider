@@ -163,17 +163,31 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let cfg = cfg::Builder::new(
-        sleigh, addr,
-        cfg::OptionsBuilder::new().allow_code_before_start_addr().build()
-    )
-    .build()
-    .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
+    // Phase 5: thread the calling-convention link-register varnode and an
+    // `Arc<dyn ReadOnlyMemory>` view of the ELF into the cfg builder so
+    // the indirect-branch resolver can classify `bx lr` as Return and
+    // fold rodata-stored jump targets.  The optimiser's `LoadReadOnly`
+    // pass takes its own `ElfFileMemReader` (its `M: 'static` bound
+    // requires an owned concrete type) — both readers see the same
+    // ELF, just via separate Arcs.
+    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+    );
+    let mut cfg_opts_b = cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .set_read_only_memory(rom_for_cfg);
+    if let Some(lr) = ana.calling_convention().link_register_vn {
+        cfg_opts_b = cfg_opts_b.set_link_register(lr);
+    }
+    let cfg_opts = cfg_opts_b.build();
+    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+        .build()
+        .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let mut graph = ana.analyze_cfg(&cfg)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
-    let rom = reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
+    let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
-    p.add(opt::LoadReadOnly(rom));
+    p.add(opt::LoadReadOnly(rom_for_opt));
     p.run(&mut graph)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     graph

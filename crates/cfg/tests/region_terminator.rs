@@ -10,7 +10,7 @@
 
 mod common;
 use common::{
-    addr, je_rel8_ret_ret_bytes, jmp_rax_bytes, jmp_rel8_ret_bytes, make_builder_with_bytes,
+    addr, je_rel8_ret_ret_bytes, jmp_rel8_ret_bytes, make_builder_with_bytes,
     make_region, make_region_builder, make_sleigh_with_bytes, ret_bytes,
 };
 
@@ -199,31 +199,17 @@ fn split_first_half_becomes_fallthrough() {
     );
 }
 
-#[test]
-fn branch_indirect_currently_terminates_as_return() {
-    // Phase 3 is a pure refactor — `BranchIndirect` keeps the legacy
-    // `Return` mapping until Phase 5 wires up the resolver.  This pin
-    // catches accidental behaviour shifts in the meantime.
-    let base = 0x1000u64;
-    let bytes = jmp_rax_bytes();
-    let lift = lift_at(bytes.clone(), base, base);
-    let (pos, indirect_insn) = find_pcode(&lift, rsleigh::Opcode::BranchIndirect);
-    let mut b = make_builder_with_bytes(bytes, base);
-    let mut rb = make_region_builder(&mut b, addr(base, 0));
-
-    let res = rb
-        .process_new_insn(&indirect_insn, addr(base, pos), &lift)
-        .unwrap();
-    assert_eq!(res, ProcessInsnRes::FinishedProcessing);
-
-    let regions: Vec<&Region> = test_api::graph(&b).node_weights().collect();
-    assert_eq!(regions.len(), 1);
-    assert_eq!(
-        regions[0].terminator,
-        RegionTerminator::Return,
-        "BranchIndirect maps to Return until Phase 5's resolver lands"
-    );
-}
+// Phase-5 update: the legacy `BranchIndirect -> Return` mapping is
+// gone.  The Phase-5 resolver classifies the target and produces
+// `Branch` / `TailCall` / `Return` based on the resolved value, or
+// errors with `UnresolvedIndirectBranch` when the target can't be
+// proven.  All of those paths are covered in `indirect_dispatch.rs`,
+// so the previous "currently terminates as Return" pin would now
+// double-cover (and contradict) those tests; it has been removed.
+//
+// The `Return` terminator is still produced — see
+// `branch_indirect_to_link_register_produces_return_terminator` in
+// `indirect_dispatch.rs` for the live coverage.
 
 #[test]
 fn switch_variant_is_constructible_but_unused() {

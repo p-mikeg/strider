@@ -322,19 +322,70 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::BranchIndirect => {
-                // ARM's `bx lr` lifts to BranchIndirect (target = register
-                // value) — semantically a return.  Jump tables also lift to
-                // BranchIndirect; we conservatively terminate the region in
-                // both cases.  The analyzer's `BranchIndirect` insn handler
-                // is responsible for emitting a Return-or-equivalent in the
-                // IR.  Without this terminator the CFG builder walks past
-                // the function boundary and absorbs adjacent code.
+                // Phase 5: dispatch into the lazy mini-graph resolver.
+                // The resolver folds the region's value-producing pcode
+                // insns into an isolated IR graph and inspects the
+                // producer of `target_vn` after constant folding.
+                // - `Single(K)` inside the function range → intra-fn
+                //   `Branch` to K (enqueue successor for exploration).
+                // - `Single(K)` outside the function range →
+                //   `TailCall { target: K }` (no successor edge).
+                // - `LinkRegister` → `Return` (no successor edge).
+                // - unresolvable → propagate
+                //   [`ErrorKind::UnresolvedIndirectBranch`].
                 //
-                // Phase 3 keeps the legacy `BranchIndirect -> Return`
-                // mapping; Phase 5 replaces this with a real resolver that
-                // produces `Branch` / `TailCall` / `Return` based on the
-                // target's resolved value.
-                self.finish_current_region(RegionTerminator::Return)?;
+                // `CallIndirect` is intentionally NOT routed here — it
+                // remains a non-terminator opcode handled by the IR
+                // layer.  See plan
+                // `2026-04-27-indirect-branch-resolution.md` Phase 5.
+                let target_vn = *insn
+                    .inputs
+                    .first()
+                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                let resolved = super::indirect_resolve::resolve_indirect_target(
+                    &self.insns,
+                    target_vn,
+                    &self.builder.sleigh,
+                    self.builder.options.link_register_vn,
+                    self.builder.options.read_only_memory.as_deref(),
+                    addr,
+                    self.builder.endianness,
+                )?;
+                match resolved {
+                    super::indirect_resolve::ResolvedTargets::LinkRegister => {
+                        self.finish_current_region(RegionTerminator::Return)?;
+                    }
+                    super::indirect_resolve::ResolvedTargets::Single(target) => {
+                        let target_addr = PcodeInsnAddr {
+                            machine_addr: MachineInsnAddr { addr: target },
+                            insn_index: 0,
+                        };
+                        if self.is_branch_tail_call(target_addr)? {
+                            self.finish_current_region(
+                                RegionTerminator::TailCall { target },
+                            )?;
+                        } else {
+                            // Intra-fn target — finish region with
+                            // `Branch` and enqueue the successor for
+                            // exploration.
+                            let region = self
+                                .finish_current_region(RegionTerminator::Branch)?;
+                            self.builder.work_queue.push((
+                                Some((region, RegionEdgeKind::Branch)),
+                                target_addr,
+                            ));
+                        }
+                    }
+                    super::indirect_resolve::ResolvedTargets::Multiple(_) => {
+                        // Reserved for the future jump-table resolver;
+                        // not produced this round.  Surface as
+                        // unresolved so callers see a real error rather
+                        // than a silent miscompilation.
+                        return Err(
+                            ErrorKind::UnresolvedIndirectBranch(addr).into()
+                        );
+                    }
+                }
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),

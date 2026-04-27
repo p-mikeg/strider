@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Tests for `RegionBuilder::process_new_insn`, `RegionBuilder::process_insn`,
 //! and `RegionBuilder::finish_current_region`.
@@ -70,10 +70,18 @@ fn return_ends_region() {
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 }
 
-/// BUG-5 regression: `BranchIndirect` (e.g. ARM `bx lr` return, x86 `jmp rax`)
-/// must terminate the region.  Pre-fix, BranchIndirect fell into the catch-
-/// all "didn't finish processing" branch and the CFG builder kept walking
-/// past the function boundary, absorbing adjacent code.
+/// BUG-5 regression (post-Phase-5 form): `BranchIndirect` whose target
+/// can't be statically resolved must error with
+/// `UnresolvedIndirectBranch` rather than silently fall through to the
+/// catch-all "didn't finish processing" branch.  Pre-Phase 5, the
+/// builder collapsed BranchIndirect to `Return` unconditionally; that
+/// silently misclassified jump tables and computed gotos.  Phase 5
+/// replaced the blanket mapping with a real resolver.  With no prior
+/// writes to RAX (the dispatch target), the resolver cannot prove the
+/// target and surfaces an error — that's what this test pins.
+///
+/// The successful-resolution paths (LinkRegister / in-range Single /
+/// out-of-range Single) are covered in `indirect_dispatch.rs`.
 #[test]
 fn branch_indirect_ends_region() {
     let base = 0x1000u64;
@@ -83,15 +91,13 @@ fn branch_indirect_ends_region() {
     let mut b = make_builder_with_bytes(bytes, base);
     let mut rb = make_region_builder(&mut b, addr(base, 0));
 
-    let res = rb
+    let err = rb
         .process_new_insn(&indirect_insn, addr(base, pos), &lift)
-        .unwrap();
-    assert_eq!(
-        res,
-        ProcessInsnRes::FinishedProcessing,
-        "BranchIndirect must terminate the region — without this the CFG \
-         builder walks past the function boundary"
-    );
+        .expect_err("unresolvable BranchIndirect must error");
+    match err.kind() {
+        cfg::ErrorKind::UnresolvedIndirectBranch(_) => {}
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
 }
 
 #[test]

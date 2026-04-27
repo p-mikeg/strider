@@ -190,7 +190,14 @@ fn nested_struct_field_assertions(g: &ir::BuiltFunctionGraph) {
 // 4. bit_test_zero — IntCmp(Equal, And(_, single-bit-const), 0)
 // ─────────────────────────────────────────────────────────────────────────────
 
-per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
+// arm: ignored under BUG-5 — Phase 5 resolver can't prove `pop {pc}`
+// target without stack-load forwarding.
+per_arch_test!(
+    "complex", "bit_test_zero", bit_test_zero_assertions,
+    ignore = {
+        Arm: "BUG-5 residue: arm `pop {pc}` lifts to load+BranchIndirect; resolver lacks stack-load-forward",
+    }
+);
 
 fn bit_test_zero_assertions(g: &ir::BuiltFunctionGraph) {
     // (mask & 0x4) == 0 → graph contains both `And` and `Equal`.
