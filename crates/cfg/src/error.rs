@@ -47,11 +47,38 @@ pub enum ErrorKind {
 
     #[error("unsupported varnode space for display: {0:?}")]
     UnsupportedVnSpaceDisplay(rsleigh::VnSpace),
+
+    /// `BranchIndirect` whose target the same-region resolver could not
+    /// prove statically.  The resolver folds the value-producing
+    /// instructions of the region into a mini IR graph and inspects the
+    /// producer of `target_vn` after running `ConstantFold + KnownBits +
+    /// RedundantPhis` (and optionally `LoadReadOnly`).  If the producer
+    /// is not an `IntConst` (constant target) or an `InitialVar(LR)`
+    /// (link-register / `bx lr`), the branch is unresolvable and this
+    /// error is returned.  Carries the offending instruction's
+    /// [`PcodeInsnAddr`] for diagnostics.
+    #[error("branch-indirect at {0:?} could not be statically resolved")]
+    UnresolvedIndirectBranch(PcodeInsnAddr),
+
+    #[error(transparent)]
+    IrError(#[from] ir::Error),
+
+    #[error(transparent)]
+    OptError(#[from] opt::Error),
+
+    #[error(transparent)]
+    PcodeLiftError(#[from] pcode_lift::Error),
 }
 
 strider_error::define_error! {
     pub struct Error wraps ErrorKind;
-    sources: [rsleigh::error::BaseError, core::fmt::Error];
+    sources: [
+        rsleigh::error::BaseError,
+        core::fmt::Error,
+        ir::Error,
+        opt::Error,
+        pcode_lift::Error,
+    ];
 }
 
 /// Result type alias for fallible cfg operations, parameterised over the

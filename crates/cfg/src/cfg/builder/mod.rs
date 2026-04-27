@@ -1,6 +1,9 @@
+mod indirect_resolve;
 mod region_builder;
 mod split;
 
+#[doc(hidden)]
+pub use indirect_resolve::test_api as indirect_resolve_test_api;
 #[doc(hidden)]
 pub use region_builder::test_api as region_builder_test_api;
 

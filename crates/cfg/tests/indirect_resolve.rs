@@ -1,0 +1,523 @@
+//! Tests for [`cfg::indirect_resolve_test_api::resolve_indirect_target_for_test`] —
+//! the lazy mini-IR resolver added in Phase 4.
+//!
+//! Each test:
+//!   1. Builds a hand-crafted sequence of `RegionInstruction`s.  No machine
+//!      code is decoded — pcode is typed by hand to keep the failure
+//!      modes attributable to the resolver, not to the lifter.
+//!   2. Calls the resolver and asserts on the returned [`ResolvedTargets`]
+//!      or the error variant.
+//!
+//! The resolver lives at
+//! `crates/cfg/src/cfg/builder/indirect_resolve.rs`.  It is unused by
+//! cfg's main code paths in Phase 4 — these tests are the only callers
+//! until Phase 5 wires it into `RegionBuilder::process_new_insn`.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use cfg::test_api::{
+    MachineInsnAddr, PcodeInsnAddr, RegionInstruction, ResolvedTargets,
+    resolve_indirect_target_for_test,
+};
+use cfg::ErrorKind;
+use opt::ReadOnlyMemory;
+use rsleigh::mem_readers::BufMemReader;
+use rsleigh::{Insn, Opcode, Vn, VnAddr, VnSpace};
+
+type TestReader = BufMemReader<Vec<u8>>;
+
+/// x86 (32-bit) Sleigh, sufficient for register-aliasing tests
+/// (`eax`/`ax`/`al` overlap inside `eax`'s 4-byte container) without
+/// the full x86_64 machinery.
+fn make_x86_sleigh() -> rsleigh::Sleigh<TestReader> {
+    let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
+    rsleigh::Sleigh::new(
+        rsleigh::sla_spec::SLA_SPEC_X86,
+        rsleigh::pspec::PSPEC_X86,
+        reader,
+    )
+    .expect("create x86 Sleigh")
+}
+
+/// Build an `x86-64` Sleigh — needed for sub-register aliasing tests
+/// where we want to write a 4-byte sub-register (`eax`) and read an
+/// 8-byte container (`rax`) so the resolver exercises pcode-lift's
+/// `Piece`/`Insert` aliasing logic.
+fn make_x86_64_sleigh() -> rsleigh::Sleigh<TestReader> {
+    let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
+    rsleigh::Sleigh::new(
+        rsleigh::sla_spec::SLA_SPEC_X86_64,
+        rsleigh::pspec::PSPEC_X86_64,
+        reader,
+    )
+    .expect("create x86-64 Sleigh")
+}
+
+/// 4-byte REGISTER varnode at the given Sleigh register-space offset.
+fn reg4(off: u64) -> Vn {
+    Vn { size: 4, addr: VnAddr { off, space: VnSpace::REGISTER } }
+}
+
+/// Look up an x86 / x86-64 Sleigh register by name; panics if the name
+/// is unknown — every name used in these tests is guaranteed by the
+/// Sleigh registry.
+fn vn_for_name<R: rsleigh::MemReader>(sleigh: &rsleigh::Sleigh<R>, name: &str) -> Vn {
+    sleigh
+        .regs()
+        .expect("regs")
+        .name_to_vn(name)
+        .unwrap_or_else(|| panic!("unknown reg: {name}"))
+}
+
+/// A short way to construct a CONST varnode of declared `size` carrying
+/// integer `val`.
+fn const_vn(val: u64, size: u32) -> Vn {
+    Vn { size, addr: VnAddr { off: val, space: VnSpace::CONST } }
+}
+
+/// Wrap an [`rsleigh::Insn`] into a [`RegionInstruction`] at the given
+/// pcode address.
+fn ri(machine: u64, insn_index: u64, insn: Insn) -> RegionInstruction {
+    RegionInstruction {
+        addr: PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: machine },
+            insn_index,
+        },
+        insn,
+    }
+}
+
+/// Trailing `BranchIndirect target_vn` so the resolver naturally stops
+/// lifting at this op (the lifter returns `Ok(false)` for control-flow
+/// opcodes).
+fn branch_indirect(target_vn: Vn) -> Insn {
+    Insn {
+        opcode: Opcode::BranchIndirect,
+        output: None,
+        inputs: vec![target_vn],
+    }
+}
+
+/// Convenience PcodeInsnAddr for the tests' branch-indirect site.
+fn br_addr() -> PcodeInsnAddr {
+    PcodeInsnAddr {
+        machine_addr: MachineInsnAddr { addr: 0x2000 },
+        insn_index: 0,
+    }
+}
+
+// ── ResolvedTargets::Single ───────────────────────────────────────────
+
+/// `Copy reg, K; BranchIndirect reg` resolves to `Single(K)`.
+#[test]
+fn resolves_direct_const_to_single() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0); // EAX in x86 sleigh — actual offset doesn't matter
+    let region = vec![
+        ri(
+            0x1000,
+            0,
+            Insn {
+                opcode: Opcode::Copy,
+                output: Some(target),
+                inputs: vec![const_vn(0xdead_beef, 4)],
+            },
+        ),
+        ri(0x1004, 0, branch_indirect(target)),
+    ];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, ResolvedTargets::Single(0xdead_beef));
+}
+
+/// `Copy reg, K1; IntAdd reg, reg, K2; BranchIndirect reg` resolves to
+/// `Single(K1+K2)` after `ConstantFold`.
+#[test]
+fn resolves_arithmetic_chain_to_single() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region = vec![
+        ri(
+            0x1000,
+            0,
+            Insn {
+                opcode: Opcode::Copy,
+                output: Some(target),
+                inputs: vec![const_vn(0x100, 4)],
+            },
+        ),
+        ri(
+            0x1004,
+            0,
+            Insn {
+                opcode: Opcode::IntAdd,
+                output: Some(target),
+                inputs: vec![target, const_vn(0x33, 4)],
+            },
+        ),
+        ri(0x1008, 0, branch_indirect(target)),
+    ];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, ResolvedTargets::Single(0x133));
+}
+
+/// Sub-register aliasing: write a 4-byte `EAX` constant on x86_64, then
+/// branch through the 8-byte container `RAX`.  After
+/// `KnownBits` simplifies the `Piece`/`Insert` chain, the target should
+/// resolve to `Single(K)`.  The upper 4 bytes of `RAX` are
+/// `InitialVar(rax) >> 32` masked; `KnownBits` does NOT prove those
+/// bits are zero (an `InitialVar` carries no static knowledge), so a
+/// real upper-half write would block resolution.  Here the test
+/// expresses the canonical `mov eax, K` shape via `Subpiece(rax, 0)` /
+/// `Insert` — which on x86_64 represents the architectural "writes to
+/// 32-bit register zero-extend to 64 bits" semantics.  `KnownBits` then
+/// proves the upper 32 bits zero, leaving the constant.
+///
+/// Implementation detail: x86_64 SLEIGH lowers `mov eax, imm32` to a
+/// `Copy eax, imm32` followed by an implicit zero-extension into RAX.
+/// The cleanest way to model that here is with two pcode ops.  We
+/// hand-roll the Copy + the `IntZext rax, eax` follow-up so we don't
+/// depend on the SLEIGH lifter.
+#[test]
+fn resolves_sub_register_aliasing_to_single() {
+    let sleigh = make_x86_64_sleigh();
+    let eax = vn_for_name(&sleigh, "EAX");
+    let rax = vn_for_name(&sleigh, "RAX");
+    // The branch target is RAX (8-byte).
+    let region = vec![
+        // Copy eax, K  — pcode-lift's write_reg_vn handles the
+        // sub-register insert into rax.
+        ri(
+            0x1000,
+            0,
+            Insn {
+                opcode: Opcode::Copy,
+                output: Some(eax),
+                inputs: vec![const_vn(0xdead_beef, 4)],
+            },
+        ),
+        // mov eax, K on x86-64 zero-extends into rax — model that
+        // explicitly with IntZext so KnownBits doesn't have to lean on
+        // architectural-semantics that the mini-graph doesn't know.
+        ri(
+            0x1004,
+            0,
+            Insn {
+                opcode: Opcode::IntZext,
+                output: Some(rax),
+                inputs: vec![eax],
+            },
+        ),
+        ri(0x1008, 0, branch_indirect(rax)),
+    ];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        rax,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, ResolvedTargets::Single(0xdead_beef));
+}
+
+// ── ResolvedTargets::LinkRegister ─────────────────────────────────────
+
+/// `BranchIndirect lr` with no prior write to `lr` resolves to
+/// `LinkRegister`.  `cc_link_register_vn` is set to the same varnode
+/// the BranchIndirect names — i.e. the canonical ARM AAPCS link
+/// register.  Modelled here against an x86 Sleigh by reusing a
+/// dedicated `lr_like` varnode at a non-overlapping register offset:
+/// the resolver's classification only cares about
+/// `NodeKind::InitialVar(vn) == cc_link_register_vn`, not whether the
+/// architecture has a real link register.
+#[test]
+fn resolves_link_register_to_link_register() {
+    let sleigh = make_x86_sleigh();
+    // Pick a synthetic varnode for the link register — any unique
+    // REGISTER offset works because the resolver only matches by Vn
+    // equality, not by name.  Use offset 0x100 so it doesn't overlap
+    // any real x86 register the empty region might inadvertently touch.
+    let lr_like = Vn {
+        size: 4,
+        addr: VnAddr { off: 0x100, space: VnSpace::REGISTER },
+    };
+    let region = vec![ri(0x2000, 0, branch_indirect(lr_like))];
+    let res = resolve_indirect_target_for_test(
+        &region,
+        lr_like,
+        &sleigh,
+        Some(lr_like),
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, ResolvedTargets::LinkRegister);
+}
+
+// ── ResolvedTargets::Single via LoadReadOnly ──────────────────────────
+
+/// `Load reg, [const_addr]; BranchIndirect reg` with a `ReadOnlyMemory`
+/// covering `const_addr` resolves to `Single(K)` where `K` is the
+/// loaded value.
+///
+/// We can't synthesise a `Load` pcode insn by hand — its `inputs[0]`
+/// encodes the target address space as a raw FFI pointer, which only
+/// the SLEIGH lifter can produce safely (see comment in
+/// `crates/pcode-lift/tests/value_lifter.rs` for the full reasoning).
+/// So we lift real x86 bytes for `mov eax, [0x4000]; jmp eax` and pull
+/// the resulting pcode insns out as our `RegionInstruction` slice.
+#[test]
+fn resolves_rodata_load_to_single() {
+    /// Tiny ROM: covers a single 4-byte read at addr 0x4000 returning
+    /// 0xcafe_babe; everything else is None.
+    struct OneEntryRom;
+    impl ReadOnlyMemory for OneEntryRom {
+        fn read(&self, _space: VnSpace, addr: u64, size: usize) -> Option<u64> {
+            if addr == 0x4000 && size == 4 {
+                Some(0xcafe_babe)
+            } else {
+                None
+            }
+        }
+    }
+
+    // 0xA1 imm32       — `mov eax, [imm32]` (absolute load into EAX)
+    // 0xFF 0xE0        — `jmp eax`
+    let bytes: Vec<u8> = vec![0xA1, 0x00, 0x40, 0x00, 0x00, 0xFF, 0xE0];
+    let reader = BufMemReader::new(bytes, 0x1000);
+    let mut sleigh = rsleigh::Sleigh::new(
+        rsleigh::sla_spec::SLA_SPEC_X86,
+        rsleigh::pspec::PSPEC_X86,
+        reader,
+    )
+    .expect("create x86 Sleigh");
+    let region = lift_region(&mut sleigh, 0x1000, 7);
+    let target = find_branch_indirect_target(&region);
+    let rom = OneEntryRom;
+    let res = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        Some(&rom),
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect("resolver");
+    assert_eq!(res, ResolvedTargets::Single(0xcafe_babe));
+}
+
+// ── Error paths ───────────────────────────────────────────────────────
+
+/// Same load shape as `resolves_rodata_load_to_single` but no ROM →
+/// `UnresolvedIndirectBranch`.
+#[test]
+fn unknown_memory_errors_unresolved() {
+    let bytes: Vec<u8> = vec![0xA1, 0x00, 0x40, 0x00, 0x00, 0xFF, 0xE0];
+    let reader = BufMemReader::new(bytes, 0x1000);
+    let mut sleigh = rsleigh::Sleigh::new(
+        rsleigh::sla_spec::SLA_SPEC_X86,
+        rsleigh::pspec::PSPEC_X86,
+        reader,
+    )
+    .expect("create x86 Sleigh");
+    let region = lift_region(&mut sleigh, 0x1000, 7);
+    let target = find_branch_indirect_target(&region);
+    let err = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect_err("expected unresolved");
+    match err.kind() {
+        ErrorKind::UnresolvedIndirectBranch(_) => {}
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
+}
+
+// ── Helpers used by the `Load`-via-real-bytes tests ──────────────────
+
+/// Lift every machine instruction in the byte buffer between
+/// `[start, start + total_len)` and concatenate every produced pcode
+/// op into a single `Vec<RegionInstruction>` in program order.
+fn lift_region<R: rsleigh::MemReader>(
+    sleigh: &mut rsleigh::Sleigh<R>,
+    start: u64,
+    total_len: u64,
+) -> Vec<RegionInstruction> {
+    let mut out = Vec::new();
+    let mut cur = start;
+    while cur < start + total_len {
+        let lift = sleigh.lift_one(cur).expect("lift_one");
+        for (i, insn) in lift.insns.iter().enumerate() {
+            out.push(RegionInstruction {
+                addr: PcodeInsnAddr {
+                    machine_addr: MachineInsnAddr { addr: cur },
+                    insn_index: i as u64,
+                },
+                insn: insn.clone(),
+            });
+        }
+        cur += lift.machine_insn_len as u64;
+    }
+    out
+}
+
+/// Locate the first `BranchIndirect` in `region` and return its
+/// `inputs[0]` (the dispatch-target varnode).  Panics if absent.
+fn find_branch_indirect_target(region: &[RegionInstruction]) -> Vn {
+    region
+        .iter()
+        .find_map(|ri| {
+            if ri.insn.opcode == Opcode::BranchIndirect {
+                Some(ri.insn.inputs[0])
+            } else {
+                None
+            }
+        })
+        .expect("region has no BranchIndirect")
+}
+
+/// `BranchIndirect reg` with no prior write to `reg` and no
+/// link-register classification → `UnresolvedIndirectBranch`.  The
+/// producer is `InitialVar(reg)` but `cc_link_register_vn` is `None`,
+/// so the LinkRegister arm doesn't fire.
+#[test]
+fn runtime_input_errors_unresolved() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region = vec![ri(0x1000, 0, branch_indirect(target))];
+    let err = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect_err("expected unresolved");
+    match err.kind() {
+        ErrorKind::UnresolvedIndirectBranch(_) => {}
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
+}
+
+/// Empty region (no instructions before the BranchIndirect) →
+/// `UnresolvedIndirectBranch`.  Equivalent to `runtime_input_errors_unresolved`
+/// but pinning the empty-region path explicitly.
+#[test]
+fn empty_region_errors_unresolved() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region: Vec<RegionInstruction> = Vec::new();
+    let err = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect_err("expected unresolved");
+    match err.kind() {
+        ErrorKind::UnresolvedIndirectBranch(_) => {}
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
+}
+
+/// Malformed BranchIndirect: caller looks up `inputs[0]` ahead of
+/// passing the target VN to the resolver, so an empty-input
+/// BranchIndirect cannot reach the resolver.  This test pins that the
+/// resolver itself does NOT panic on malformed shapes by passing an
+/// otherwise-valid `target_vn` together with a region whose only insn
+/// has no inputs/output.  The `BranchIndirect` arm of `ValueLifter::lift`
+/// returns `Ok(false)` so lifting stops; resolution proceeds but the
+/// target VN is never written → `UnresolvedIndirectBranch`.
+///
+/// In production, the [`crate::ErrorKind::MissingBranchTarget`] arm in
+/// `RegionBuilder::process_new_insn` short-circuits before we ever call
+/// the resolver — see Phase 5 wiring at
+/// `crates/cfg/src/cfg/builder/region_builder.rs`.
+#[test]
+fn malformed_branch_indirect_errors() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let region = vec![ri(
+        0x1000,
+        0,
+        Insn {
+            opcode: Opcode::BranchIndirect,
+            output: None,
+            inputs: vec![],
+        },
+    )];
+    let err = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        br_addr(),
+        target::Endianness::Little,
+    )
+    .expect_err("expected unresolved");
+    match err.kind() {
+        ErrorKind::UnresolvedIndirectBranch(_) => {}
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
+}
+
+/// The error variant carries the offending `PcodeInsnAddr`.
+#[test]
+fn error_carries_pcode_addr() {
+    let sleigh = make_x86_sleigh();
+    let target = reg4(0);
+    let bad_addr = PcodeInsnAddr {
+        machine_addr: MachineInsnAddr { addr: 0xFEED_BEEF },
+        insn_index: 7,
+    };
+    let region = vec![ri(0x1000, 0, branch_indirect(target))];
+    let err = resolve_indirect_target_for_test(
+        &region,
+        target,
+        &sleigh,
+        None,
+        None,
+        bad_addr,
+        target::Endianness::Little,
+    )
+    .expect_err("expected unresolved");
+    match err.kind() {
+        ErrorKind::UnresolvedIndirectBranch(addr) => {
+            assert_eq!(*addr, bad_addr);
+        }
+        other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
+    }
+}

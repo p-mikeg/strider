@@ -9,6 +9,10 @@ petgraph.workspace = true
 rsleigh.workspace = true
 strider-error.workspace = true
 dot.workspace = true
+ir.workspace = true
+opt.workspace = true
+pcode-lift.workspace = true
+target.workspace = true
 
 [lints]
 workspace = true

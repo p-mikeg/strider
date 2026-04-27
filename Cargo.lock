@@ -85,11 +85,15 @@ name = "cfg"
 version = "0.1.0"
 dependencies = [
  "dot",
+ "ir",
  "object",
+ "opt",
+ "pcode-lift",
  "petgraph",
  "reader",
  "rsleigh",
  "strider-error",
+ "target",
  "thiserror",
 ]
 

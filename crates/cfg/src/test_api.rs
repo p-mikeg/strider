@@ -13,4 +13,9 @@ pub use crate::cfg::region_builder_test_api::{
 };
 
 #[doc(hidden)]
+pub use crate::cfg::indirect_resolve_test_api::{
+    ResolvedTargets, resolve_indirect_target_for_test,
+};
+
+#[doc(hidden)]
 pub use crate::cfg::dot_test_api::vn_to_name;
