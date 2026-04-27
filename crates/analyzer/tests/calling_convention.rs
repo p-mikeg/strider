@@ -197,13 +197,12 @@ per_arch_test!(
 );
 
 fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
-    // Floor 6 (not strict 8): on x86 cdecl all 8 args go on the
-    // stack, and after BUG-28 cause #2's chain-walker pass-through
-    // CallStackArgCollect recovers 6 of the 8 — the last two are
-    // pushed across a transition the walker still terminates on.
-    // Most other arches detect all 8 (≥8 arg-passing regs).  The
-    // thread-through check (b) below is the cross-arch invariant.
-    assert_function_args_present(g, 8, 6, "forward_8");
+    // Strict: BUG-28 cause #2's third-instance fix (the
+    // `function_args::mem_chain_is_dirty` `Store(_)` arm) lets all 8
+    // stack-passed args be detected on x86 cdecl, mirroring the prior
+    // resilience added to `CallStackArgCollect` and
+    // `stack_load_forward::probe`.  Every arch detects all 8.
+    assert_function_args_present(g, 8, 8, "forward_8");
     assert_some_call_arg_threads_through(g, 8, "forward_8");
 }
 

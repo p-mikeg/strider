@@ -248,7 +248,16 @@ fn detect_stack_args(
             continue;
         }
         let mut seen: rustc_hash::FxHashSet<NodeOutputId> = Default::default();
-        if mem_chain_is_dirty(fg, memory, offset, load_size, &mut seen, &mut shadow_memo) {
+        if mem_chain_is_dirty(
+            fg,
+            memory,
+            offset,
+            load_size,
+            sp_vn,
+            &mut memo,
+            &mut seen,
+            &mut shadow_memo,
+        ) {
             disqualified.insert(j);
             groups.remove(&j);
             continue;
@@ -350,14 +359,33 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// the load's is treated as a shadow; one whose range is strictly disjoint is
 /// walked past.
 ///
+/// Plain `Store` nodes (those `StackStoreDetect` did not rewrite to
+/// `StackStore` because their address didn't decompose to `sp + K`) are
+/// alias-discriminated via [`crate::sp_expr::decompose_sp`]: a non-SP-rooted
+/// address is provably non-aliasing with the stack-arg space and the walker
+/// passes through; an SP-rooted `Terminal` address uses the same byte-range
+/// disjointness check as `StackStore`; an SP-rooted `Phi` address conservatively
+/// terminates (matches `stack_load_forward::probe`'s posture).  This is the
+/// `mem_chain_is_dirty` arm of BUG-28 cause #2 — gcc/clang at -O2 routinely
+/// interleave volatile global writes between function-entry stack-arg loads
+/// and the first uses, and without this branch they would all hit `_ => true`.
+///
 /// `StackStorePhi` offsets are per-predecessor and stored in
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
 /// construction (the only place that populates them is `StackStoreDetect`).
+//
+// Eight arguments are the minimum needed to thread cycle-guards, the
+// SP-decomposition memo and the shadow-walk memo through a recursive
+// memory-chain DFS; bundling them into a context struct would just add
+// indirection without clarifying call sites.
+#[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
+    sp_vn: rsleigh::Vn,
+    sp_memo: &mut SpExprMemo,
     seen: &mut rustc_hash::FxHashSet<NodeOutputId>,
     memo: &mut ShadowMemo,
 ) -> bool {
@@ -388,7 +416,16 @@ fn mem_chain_is_dirty(
                 if !ranges_disjoint(k, store_size, offset, load_size) {
                     true
                 } else {
-                    mem_chain_is_dirty(fg, inputs[0], offset, load_size, seen, memo)
+                    mem_chain_is_dirty(
+                        fg,
+                        inputs[0],
+                        offset,
+                        load_size,
+                        sp_vn,
+                        sp_memo,
+                        seen,
+                        memo,
+                    )
                 }
             } else {
                 true
@@ -408,20 +445,93 @@ fn mem_chain_is_dirty(
                 if any_overlap {
                     true
                 } else {
-                    mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen, memo)
+                    mem_chain_is_dirty(
+                        fg,
+                        inputs[1],
+                        offset,
+                        load_size,
+                        sp_vn,
+                        sp_memo,
+                        seen,
+                        memo,
+                    )
                 }
             } else {
                 true
+            }
+        }
+        // BUG-28 cause #2 (third instance): a plain `Store` (one
+        // `StackStoreDetect` did not rewrite, because its address did not
+        // decompose to `sp + K`) used to fall through to `_ => true` and
+        // mark the chain dirty unconditionally.  Mirror the resolution
+        // already in `CallStackArgCollect` and `stack_load_forward::probe`:
+        // decompose the Store's address and discriminate by aliasability.
+        NodeKind::Store(_) => {
+            // Store inputs: [MEM, ADDR, DATA].
+            let inputs = fg.graph.node_inputs(node);
+            if inputs.len() < 3 {
+                // Malformed Store; conservative.
+                true
+            } else {
+                let addr = inputs[1];
+                let mut sp_visiting = rustc_hash::FxHashSet::default();
+                match decompose_sp(fg, addr, sp_vn, sp_memo, &mut sp_visiting) {
+                    None => {
+                        // Address is not SP-rooted: provably non-aliasing
+                        // with the stack-arg byte range.  Walk through.
+                        mem_chain_is_dirty(
+                            fg,
+                            inputs[0],
+                            offset,
+                            load_size,
+                            sp_vn,
+                            sp_memo,
+                            seen,
+                            memo,
+                        )
+                    }
+                    Some(SpExpr::Terminal { base: _, offset: store_off }) => {
+                        // SP-rooted: same byte-range disjointness check
+                        // as the StackStore arm.  Store size taken from
+                        // the value's declared NodeOutputType; the
+                        // fallback (`i64::MAX`) is the soundness-preserving
+                        // answer — it forces `ranges_disjoint` to return
+                        // false and we conservatively terminate.  In
+                        // valid IR a Store's DATA slot is value-typed by
+                        // signature, so the fallback is unreachable; the
+                        // branch exists only as a defensive guardrail.
+                        let store_size =
+                            value_byte_size(fg, inputs[2]).unwrap_or(i64::MAX);
+                        if ranges_disjoint(store_off, store_size, offset, load_size) {
+                            mem_chain_is_dirty(
+                                fg,
+                                inputs[0],
+                                offset,
+                                load_size,
+                                sp_vn,
+                                sp_memo,
+                                seen,
+                                memo,
+                            )
+                        } else {
+                            true
+                        }
+                    }
+                    // SpExpr::Phi (SP-rooted but flowing through a phi
+                    // join): conservatively terminate, matching
+                    // `stack_load_forward::probe`'s posture — handling
+                    // phi-of-SP would require per-pred range analysis.
+                    Some(SpExpr::Phi { .. }) => true,
+                }
             }
         }
         NodeKind::MemPhi => {
             // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
             // clean for the phi to be clean.
             let inputs = fg.graph.node_inputs(node);
-            inputs
-                .into_iter()
-                .skip(1)
-                .any(|pred| mem_chain_is_dirty(fg, pred, offset, load_size, seen, memo))
+            inputs.into_iter().skip(1).any(|pred| {
+                mem_chain_is_dirty(fg, pred, offset, load_size, sp_vn, sp_memo, seen, memo)
+            })
         }
         NodeKind::Call | NodeKind::CallOther { .. } => {
             // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
@@ -429,7 +539,16 @@ fn mem_chain_is_dirty(
             if inputs.len() < 2 {
                 false
             } else {
-                mem_chain_is_dirty(fg, inputs[1], offset, load_size, seen, memo)
+                mem_chain_is_dirty(
+                    fg,
+                    inputs[1],
+                    offset,
+                    load_size,
+                    sp_vn,
+                    sp_memo,
+                    seen,
+                    memo,
+                )
             }
         }
         // Any other memory-producing node we don't recognise: be conservative.
