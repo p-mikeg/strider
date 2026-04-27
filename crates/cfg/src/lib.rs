@@ -16,8 +16,8 @@
 mod cfg;
 pub mod error;
 pub use cfg::{
-    Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, Region, RegionEdgeKind,
-    RegionId, RegionInstruction, RegionTerminator,
+    Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region,
+    RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator,
 };
 pub use error::{Error, ErrorKind, Result};
 

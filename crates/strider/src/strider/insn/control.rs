@@ -88,4 +88,46 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         self.builder.build_call(call_address)?;
         Ok(())
     }
+
+    /// Lifts a region whose CFG terminator is
+    /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] by emitting
+    /// a synthetic single-input `Return(target_value)` that anchors
+    /// `target_vn`'s lifted value in the IR.  This is the placeholder
+    /// the strider-level outer loop's tier-2 resolver inspects after
+    /// the optimiser has run on the full graph.
+    ///
+    /// We deliberately use a *single-input* Return (no
+    /// calling-convention `ret_val_regs` appended) so tier 2 has a
+    /// stable anchor for `target_value` at slot 2.  When tier 2
+    /// resolves to `LinkRegister`, the in-place edit (lands in R3)
+    /// promotes the placeholder into the convention's full ABI
+    /// Return; for `Single` tail-call targets it splices a Call+Return
+    /// pair.  For both rewrites the placeholder shape is the
+    /// canonical "before" state.
+    ///
+    /// The `(addr, target_value)` pair is recorded on
+    /// `IrStrider::unresolved_branches` so tier 2 can walk the table
+    /// and correlate each placeholder with the offending pcode
+    /// address.  No-op if the table is later consumed (R2/R3); R1.4
+    /// just populates it.
+    pub(crate) fn handle_unresolved_indirect_branch(
+        &mut self,
+        target_vn: &rsleigh::Vn,
+        addr: cfg::PcodeInsnAddr,
+    ) -> Result<()> {
+        // Read target_vn through pcode-lift's register-aliasing path
+        // so sub-register dispatches (e.g. `jmp *eax` on x86-64) fold
+        // correctly via the same Piece/Insert chain the rest of the
+        // lifter uses.
+        let target_value = self.read_vn(target_vn)?;
+        // SINGLE-input Return — no `ret_val_regs`.  Tier 2 reads the
+        // value at slot 2 of this Return and inspects its producer.
+        self.builder.build_return(Some(target_value), &[])?;
+        // Track for tier 2.  Pushing here (rather than at the
+        // call-site in pipeline.rs) keeps the side-table population
+        // local to the lifting step and avoids leaking the lifter's
+        // ir::Value out into the orchestrator.
+        self.unresolved_branches.push((addr, target_value));
+        Ok(())
+    }
 }

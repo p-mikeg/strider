@@ -2,6 +2,25 @@ use crate::error::{ErrorKind, Result};
 
 use super::IrStrider;
 
+/// The full result of a strider lift, exposing both the lifted IR and
+/// the placeholder-anchor side-table the strider-level fixed-point
+/// loop's tier-2 resolver consumes.
+///
+/// Returned by [`Strider::analyze_cfg_with_unresolved`].  Callers that
+/// don't need the deferred-branch table can use the simpler
+/// [`Strider::analyze_cfg`] entry point.
+pub struct AnalyzeOutcome {
+    /// The lifted IR ready for the optimiser pipeline.
+    pub graph: ir::BuiltFunctionGraph,
+    /// One entry per region whose CFG terminator was
+    /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
+    /// time.  Each entry maps the offending `BranchIndirect`'s pcode
+    /// address to the IR `NodeOutputId` that anchors its dispatch
+    /// varnode (`target_vn`) in the placeholder Return.  Empty in
+    /// the common case (no deferred branches).
+    pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
+}
+
 /// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
 /// function graph.
 ///
@@ -125,6 +144,30 @@ impl Strider {
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Result<ir::BuiltFunctionGraph> {
+        // Discard the unresolved-branch side-table — callers that
+        // need it use `analyze_cfg_with_unresolved` directly.  This
+        // shim preserves the pre-R1.4 entry-point shape so existing
+        // callers (the per-arch test suite, examples) compile
+        // unchanged.
+        Ok(self.analyze_cfg_with_unresolved(cfg)?.graph)
+    }
+
+    /// Variant of [`Self::analyze_cfg`] that also returns the
+    /// placeholder-anchor side-table populated when the CFG contains
+    /// `RegionTerminator::UnresolvedIndirectBranch` regions.
+    ///
+    /// Used by the strider-level fixed-point loop's tier-2 resolver
+    /// (R2 onward).  Callers that do not need tier-2 information
+    /// should prefer [`Self::analyze_cfg`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::analyze_cfg`] — propagates IR builder
+    /// failures, per-opcode lifting failures, and CFG inconsistencies.
+    pub fn analyze_cfg_with_unresolved<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+    ) -> Result<AnalyzeOutcome> {
         let mut ir_strider = IrStrider::new(self, cfg)?;
 
         ir_strider.build_entry()?;
@@ -163,8 +206,46 @@ impl Strider {
                 .graph
                 .node_weight(node_idx)
                 .ok_or(ErrorKind::CfgNoRegion(node_idx))?;
+            // R1.4: regions whose terminator is
+            // `UnresolvedIndirectBranch` need their final
+            // `BranchIndirect` insn lifted via the placeholder path
+            // — `handle_unresolved_indirect_branch` emits
+            // `Return(target_value)` instead of an ABI Return.  We
+            // detect this case once per region (cheap match on the
+            // terminator) and skip the BranchIndirect insn in the
+            // per-instruction loop, then lift it via the dedicated
+            // handler post-loop.  Other terminators use the existing
+            // per-instruction dispatch path unchanged.
+            let unresolved_terminator =
+                if let cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } =
+                    &region.terminator
+                {
+                    Some((*target_vn, *addr))
+                } else {
+                    None
+                };
             for wrapped_insn in &region.insns {
+                // Skip the offending BranchIndirect — it will be
+                // lifted as a placeholder Return below.  Every other
+                // pcode op in the region (incl. the load + sp_adjust
+                // a `pop pc` lifts to) still goes through the normal
+                // per-instruction dispatch so the optimiser sees the
+                // full computation graph.
+                if unresolved_terminator.is_some()
+                    && wrapped_insn.insn.opcode == rsleigh::Opcode::BranchIndirect
+                {
+                    continue;
+                }
                 ir_strider.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
+            }
+            if let Some((target_vn, addr)) = unresolved_terminator {
+                // Tier-2 anchor: lifts to `Return(target_value)` and
+                // pushes (addr, target_value) onto
+                // `unresolved_branches`.  Per the soft contract this
+                // is *not* an error; the strider-level outer loop
+                // raises `UnresolvedIndirectBranch` only at fixed
+                // point if tier 2 still can't classify.
+                ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
             }
         }
 
@@ -184,6 +265,11 @@ impl Strider {
                 .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
 
-        Ok(ir_strider.builder.build()?)
+        let unresolved_branches = ir_strider.unresolved_branches.clone();
+        let graph = ir_strider.builder.build()?;
+        Ok(AnalyzeOutcome {
+            graph,
+            unresolved_branches,
+        })
     }
 }

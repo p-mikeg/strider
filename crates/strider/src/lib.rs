@@ -33,6 +33,6 @@
 mod strider;
 pub mod error;
 
-pub use strider::Strider;
+pub use strider::{AnalyzeOutcome, Strider};
 pub use error::{Error, ErrorKind, Result};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};
