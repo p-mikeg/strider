@@ -659,6 +659,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcode-lift"
+version = "0.1.0"
+dependencies = [
+ "ir",
+ "rsleigh",
+ "strider-error",
+ "target",
+ "thiserror",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
