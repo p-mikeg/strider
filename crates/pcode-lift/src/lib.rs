@@ -88,7 +88,6 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
 /// Common boilerplate: require the instruction to have an output varnode and
 /// return a borrowed reference to it.
-#[allow(dead_code)] // Used by per-opcode handlers added in subsequent steps.
 pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
     insn.output
         .as_ref()

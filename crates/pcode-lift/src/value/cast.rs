@@ -1,99 +1,31 @@
+//! Bit-positioning, slicing, and pointer-arithmetic opcodes:
+//! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
+//! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
+
 use ir::node::NodeOutputType;
-use ir::{BoolUnaryOp, ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::IntBinaryOp;
 
 use crate::error::{ErrorKind, Result};
+use crate::ValueLifter;
 
-use super::super::IrStrider;
-
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
-    /// Translates a p-code integer unary instruction into an IR unary node and
-    /// writes the result to the output varnode.
-    pub(super) fn process_int_unary_op(
-        &mut self,
-        insn: &rsleigh::Insn,
-        op: IntUnaryOp,
-    ) -> Result<()> {
+impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
+    /// Translates a no-op `Cast` instruction.
+    ///
+    /// GHIDRA docs: "semantically equivalent to a COPY operation".
+    pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .build_int_unary_operation(input, op, out_vn.size.try_into()?)?;
-        self.write_vn(out_vn, out)
+        let out_vn = crate::require_output_vn(insn)?;
+        self.write_vn(out_vn, input)
     }
 
-    /// Translates a p-code integer binary instruction into an IR binary node
-    /// and writes the result to the output varnode.
-    pub(super) fn process_int_binary_op(
-        &mut self,
-        insn: &rsleigh::Insn,
-        op: IntBinaryOp,
-    ) -> Result<()> {
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .build_int_binary_operation(lhs, rhs, op, out_vn.size.try_into()?)?;
-        self.write_vn(out_vn, out)
-    }
-
-    /// Translates a p-code integer comparison instruction into an IR
-    /// comparison node and writes the boolean result to the output varnode.
-    pub(super) fn process_int_cmp_op(
-        &mut self,
-        insn: &rsleigh::Insn,
-        op: IntCmpOp,
-    ) -> Result<()> {
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out =
-            self.builder
-                .build_int_cmp_operation(lhs, rhs, op, insn.inputs[0].size.try_into()?)?;
-        self.write_vn(out_vn, out)
-    }
-
-    /// Translates a p-code zero-extend or sign-extend instruction into an IR
-    /// extend node and writes the result to the output varnode.
-    pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
-        let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .extend_if_needed(input, out_vn.size.try_into()?, op)?;
-        self.write_vn(out_vn, out)
-    }
-
-    pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // P-code IntNotEqual is lowered to BoolNeg(IntEqual) for deterministic
-        // canonical form (one IntCmpOp, one BoolUnaryOp instead of an
-        // IntCmpOp::NotEqual variant — keeps the cmp-op enum smaller).
-        //
-        // The cmp's operand width is the *input* width, NOT the output width:
-        // the output is a 1-byte bool, the inputs may be any integer width.
-        let lhs = self.read_vn(&insn.inputs[0])?;
-        let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let eq = self.builder.build_int_cmp_operation(
-            lhs,
-            rhs,
-            IntCmpOp::Equal,
-            insn.inputs[0].size.try_into()?,
-        )?;
-        let neq = self
-            .builder
-            .build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
-        self.write_vn(out_vn, neq)
-    }
-
+    /// `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
+    /// starting at byte `byte_offset` from `value`.
+    ///
+    /// Implemented as: right-shift by `byte_offset * 8` bits, then truncate.
+    /// P-code Subpiece's contract requires `byte_offset < value_size`; any
+    /// larger value would wrap on the multiply or produce a useless shift,
+    /// so we reject it explicitly.
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        // `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
-        // starting at byte `byte_offset` from `value`.
-        // Implemented as: right-shift by (byte_offset * 8) bits, then truncate.
-        //
-        // P-code Subpiece's contract requires byte_offset < value_size; any
-        // larger value would wrap on the multiply or produce a useless shift,
-        // so we reject it explicitly.
         let input_vn = &insn.inputs[0];
         let byte_offset = insn.inputs[1].addr.off;
         if byte_offset >= u64::from(input_vn.size) {
@@ -105,7 +37,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             .into());
         }
         let input = self.read_vn(input_vn)?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let shifted = if byte_offset == 0 {
             input
         } else {
@@ -129,7 +61,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out = self
             .builder
             .build_popcount(input, out_vn.size.try_into()?)?;
@@ -138,7 +70,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out = self.builder.build_lzcount(input, out_vn.size.try_into()?)?;
         self.write_vn(out_vn, out)
     }
@@ -148,7 +80,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Lowered to: Or(ShiftLeft(ZeroExtend(hi), lo_bits), ZeroExtend(lo)).
         let hi = self.read_vn(&insn.inputs[0])?;
         let lo = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
         let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
@@ -180,7 +112,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let input = self.read_vn(&insn.inputs[0])?;
         let lsb = insn.inputs[1].addr.off as u8;
         let len = insn.inputs[2].addr.off as u8;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
         let x_int = self.builder.convert_to_int_if_needed(input, x_nat_ty)?;
@@ -222,7 +154,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let src = self.read_vn(&insn.inputs[1])?;
         let lsb = insn.inputs[2].addr.off as u8;
         let len = insn.inputs[3].addr.off as u8;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
 
         let dest_ty = self.builder.get_output_type(dest)?.to_natural_int_type();
@@ -282,7 +214,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
         let elem_size = insn.inputs[2].addr.off;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out_ty: ir::ValueType = out_vn.size.try_into()?;
         let elem_const = self.builder.build_int_const(elem_size, out_ty);
         let scaled = self.builder.build_int_binary_operation(
@@ -303,7 +235,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     pub(super) fn handle_ptr_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out = self.builder.build_int_binary_operation(
             base,
             index,

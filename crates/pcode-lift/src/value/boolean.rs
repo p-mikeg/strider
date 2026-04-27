@@ -1,10 +1,12 @@
+//! Boolean value-producing pcode opcodes: `BoolNeg`, `BoolAnd`, `BoolOr`,
+//! `BoolXor`.
+
 use ir::{BoolBinaryOp, BoolUnaryOp};
 
 use crate::error::Result;
+use crate::ValueLifter;
 
-use super::super::IrStrider;
-
-impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
+impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code boolean binary instruction into an IR boolean
     /// operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(
@@ -14,7 +16,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     ) -> Result<()> {
         let lhs = self.read_vn(&insn.inputs[0])?;
         let rhs = self.read_vn(&insn.inputs[1])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out = self.builder.build_boolean_operation(lhs, rhs, op)?;
         self.write_vn(out_vn, out)
     }
@@ -27,7 +29,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         op: BoolUnaryOp,
     ) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
-        let out_vn = super::require_output_vn(insn)?;
+        let out_vn = crate::require_output_vn(insn)?;
         let out = self.builder.build_boolean_unary_operation(input, op)?;
         self.write_vn(out_vn, out)
     }

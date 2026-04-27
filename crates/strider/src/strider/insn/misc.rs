@@ -43,49 +43,4 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         }
         Ok(())
     }
-
-    pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        if insn.inputs.len() < 3 {
-            return Err(ErrorKind::TooFewInputs(insn.opcode, 3, insn.inputs.len()).into());
-        }
-        let id_vn = &insn.inputs[0];
-        if id_vn.addr.space != rsleigh::VnSpace::CONST {
-            return Err(ErrorKind::ExpectedConstInput(insn.opcode, 0).into());
-        }
-        let op_id = id_vn.addr.off;
-        let segment = self.read_vn(&insn.inputs[1])?;
-        let offset = self.read_vn(&insn.inputs[2])?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self.builder.build_segment_op(
-            op_id,
-            segment,
-            offset,
-            out_vn.size.try_into()?,
-        )?;
-        self.write_vn(out_vn, out)
-    }
-
-    pub(super) fn handle_cpool_ref(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let refs: Vec<ir::Value> = insn
-            .inputs
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self
-            .builder
-            .build_cpool_ref(&refs, out_vn.size.try_into()?)?;
-        self.write_vn(out_vn, out)
-    }
-
-    pub(super) fn handle_new(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let args: Vec<ir::Value> = insn
-            .inputs
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
-        let out_vn = super::require_output_vn(insn)?;
-        let out = self.builder.build_new(&args, out_vn.size.try_into()?)?;
-        self.write_vn(out_vn, out)
-    }
 }
