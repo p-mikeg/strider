@@ -347,6 +347,197 @@ pub fn build_value_phi_target_scenario(
     (fg, anchor)
 }
 
+/// Build a `BuiltFunctionGraph` modelling gcc-ARM's standard
+/// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
+/// directly (not through cfg + analyze_cfg_with_unresolved).
+///
+/// Steps in the IR:
+///   1. Single region.  Tracked vars: `sp`, `lr`.
+///   2. Store `InitialVar(lr)` at `sp - 4` — this is the "push lr".
+///   3. Load `*(sp - 4)` — this is the "pop into pc".
+///   4. Placeholder `Return(loaded)` — anchors the dispatch value.
+///
+/// `StackStoreDetect + StackLoadForward` then collapse the load
+/// directly to `InitialVar(lr)` (same offset, no aliasing stores
+/// in between).  The classifier's LinkRegister arm matches the
+/// resulting shape.
+///
+/// This is the headline soundness test — it pins the design's
+/// claim that the natural pop-pc shape resolves to LinkRegister
+/// via StackLoadForward without any special-cased heuristic.
+pub fn build_pop_pc_via_stack_load_forward_scenario(
+) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use target::Endianness;
+
+    let sp = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x20,
+        },
+        size: 4,
+    };
+    let lr = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x4c,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
+        .expect("new_raw");
+    let region = b.create_region().expect("region");
+    b.set_entry_region(region).expect("set_entry_region");
+    b.set_region(region);
+
+    // Compute `sp - 4` — the slot we'll push lr to.
+    let sp_v = b.read_variable(&sp).expect("read sp");
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let store_addr = b
+        .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
+        .expect("sp - 4");
+    // Store the function-entry lr value there.
+    let lr_v = b.read_variable(&lr).expect("read lr");
+    b.build_store(store_addr, lr_v, rsleigh::VnSpace::RAM)
+        .expect("store lr");
+
+    // Load from the same slot and use as the placeholder anchor.
+    // The address is structurally identical (sp - 4), so
+    // StackLoadForward will fold the load directly to lr_v after
+    // StackStoreDetect rewrites the store.
+    let sp_v2 = b.read_variable(&sp).expect("read sp again");
+    let four2 = b.build_int_const(4u64, NodeOutputType::U32);
+    let load_addr = b
+        .build_int_binary_operation(sp_v2, four2, IntBinaryOp::Sub, NodeOutputType::U32)
+        .expect("sp - 4 (load)");
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    // Include `RedundantPhis` so the trivial single-input
+    // ControlPhi(lr) at the entry region collapses back to
+    // `InitialVar(lr)` — that's the shape tier 2's LinkRegister
+    // arm classifies, and it's what the production strider
+    // pipeline (`default_pipeline()` includes RedundantPhis)
+    // produces in real-binary integration tests.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(opt::RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    // RedundantPhis again post-StackLoadForward to collapse any
+    // single-input ControlPhi the forward inserts (e.g. wrapping
+    // the loaded InitialVar(lr) in a phi at the merge region).
+    pipeline.add(opt::RedundantPhis);
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let mut found: Option<ir::Value> = None;
+    for nid in fg.preorder() {
+        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() != 3 {
+            continue;
+        }
+        assert!(found.is_none(), "multiple 3-input Returns");
+        found = Some(inputs[2]);
+    }
+    let anchor = found.expect("no placeholder Return");
+    (fg, anchor, lr)
+}
+
+/// Build a `BuiltFunctionGraph` modelling the soundness-critical
+/// `push 0xK; pop pc` tail-call shape.  Same SP slot manipulation
+/// as `build_pop_pc_via_stack_load_forward_scenario`, but the
+/// stored value is an IntConst rather than `InitialVar(lr)`.
+///
+/// Distinguishing this case from a real pop-pc is the soundness
+/// gate that killed the prior in-place heuristic: a naïve
+/// "Load(InitialVar(sp)+K) means return" classifier would mark
+/// this as LinkRegister, sending the analyser down the
+/// wrong-edge-set path.  Tier 2 dodges that trap because
+/// StackLoadForward folds the load to the **stored constant** K,
+/// not to InitialVar(lr); the IntConst arm then classifies as
+/// Single(K).
+///
+/// Also returns the `lr` VN we added to the tracked-vars set so
+/// callers can pass it to `classify_anchor` and verify the
+/// LinkRegister arm doesn't false-positive.
+pub fn build_push_target_pop_pc_scenario(
+    k: u64,
+) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use target::Endianness;
+
+    let sp = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x20,
+        },
+        size: 4,
+    };
+    let lr = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x4c,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
+        .expect("new_raw");
+    let region = b.create_region().expect("region");
+    b.set_entry_region(region).expect("set_entry_region");
+    b.set_region(region);
+
+    let sp_v = b.read_variable(&sp).expect("read sp");
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let store_addr = b
+        .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
+        .expect("sp - 4");
+    let stored_const = b.build_int_const(k, NodeOutputType::U32);
+    b.build_store(store_addr, stored_const, rsleigh::VnSpace::RAM)
+        .expect("store K");
+
+    let sp_v2 = b.read_variable(&sp).expect("read sp again");
+    let four2 = b.build_int_const(4u64, NodeOutputType::U32);
+    let load_addr = b
+        .build_int_binary_operation(sp_v2, four2, IntBinaryOp::Sub, NodeOutputType::U32)
+        .expect("sp - 4 (load)");
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let mut found: Option<ir::Value> = None;
+    for nid in fg.preorder() {
+        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() != 3 {
+            continue;
+        }
+        assert!(found.is_none(), "multiple 3-input Returns");
+        found = Some(inputs[2]);
+    }
+    let anchor = found.expect("no placeholder Return");
+    (fg, anchor, lr)
+}
+
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can
