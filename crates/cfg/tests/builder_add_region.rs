@@ -7,7 +7,7 @@ mod common;
 use common::{addr, make_builder, make_region};
 
 use cfg::test_api::Region;
-use cfg::{test_api, ErrorKind};
+use cfg::{test_api, ErrorKind, RegionTerminator};
 
 #[test]
 fn inserts_into_graph_and_map() {
@@ -28,7 +28,7 @@ fn empty_region_returns_error() {
     let empty = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
-        ends_with_tail_call: false,
+        terminator: RegionTerminator::Fallthrough,
     };
     let err = test_api::add_region(&mut b, empty).unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));

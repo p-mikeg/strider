@@ -8,7 +8,7 @@
 mod common;
 use common::{make_sleigh_with_bytes, TestReader};
 
-use cfg::{Builder, OptionsBuilder, RegionEdgeKind};
+use cfg::{Builder, OptionsBuilder, RegionEdgeKind, RegionTerminator};
 use cfg::test_api::Options;
 use petgraph::visit::IntoEdgeReferences;
 
@@ -37,7 +37,7 @@ fn single_ret_produces_one_region_without_tail_call_flag() {
     // `ret` at 0x1000 — single-region, non-tail-call function.
     let cfg = build_from_bytes(vec![0xc3], 0x1000);
     assert_eq!(cfg.graph.node_count(), 1);
-    assert!(!cfg.graph[cfg.entry].ends_with_tail_call);
+    assert_eq!(cfg.graph[cfg.entry].terminator, RegionTerminator::Return);
 }
 
 #[test]
@@ -81,9 +81,10 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     let opts = OptionsBuilder::new().set_function_max_size(0x10).build();
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
     assert_eq!(cfg.graph.node_count(), 1);
-    assert!(
-        cfg.graph[cfg.entry].ends_with_tail_call,
-        "entry region must be flagged as ending in a tail call"
+    assert_eq!(
+        cfg.graph[cfg.entry].terminator,
+        RegionTerminator::TailCall { target: 0x1012 },
+        "entry region must end as a TailCall to 0x1012"
     );
 }
 
@@ -110,7 +111,11 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     let cfg = Builder::new(sleigh, 0x1000, opts).build().unwrap();
 
     // Entry region must NOT be flagged as ending in a tail call.
-    assert!(!cfg.graph[cfg.entry].ends_with_tail_call);
+    assert_ne!(
+        cfg.graph[cfg.entry].terminator,
+        RegionTerminator::TailCall { target: 0x0ff2 },
+        "entry region must NOT be a TailCall when allow_code_before_start_addr is set"
+    );
 
     // At least one Branch edge must exist, since the target is now followed.
     assert!(

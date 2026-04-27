@@ -2,7 +2,7 @@ use petgraph::graph::NodeIndex;
 
 use super::Builder;
 use crate::cfg::types::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction,
+    MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction, RegionTerminator,
 };
 use crate::error::{ErrorKind, Result};
 
@@ -279,7 +279,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 } else {
                     RegionEdgeKind::Branch
                 };
-                let region = self.finish_current_region(is_tail_call)?;
+                let terminator = if is_tail_call {
+                    RegionTerminator::TailCall {
+                        target: branch_target_addr.machine_addr.addr,
+                    }
+                } else {
+                    RegionTerminator::Branch
+                };
+                let region = self.finish_current_region(terminator)?;
                 if !is_tail_call {
                     // Not a tail call — enqueue the target so the builder explores it next.
                     self.builder
@@ -296,7 +303,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
 
                 // We reached the end of the current region
-                let region = self.finish_current_region(false)?;
+                let region = self.finish_current_region(RegionTerminator::CondBranch)?;
 
                 // Add the true case
                 self.builder
@@ -311,7 +318,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::Return => {
-                self.finish_current_region(false)?;
+                self.finish_current_region(RegionTerminator::Return)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::BranchIndirect => {
@@ -322,7 +329,12 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // is responsible for emitting a Return-or-equivalent in the
                 // IR.  Without this terminator the CFG builder walks past
                 // the function boundary and absorbs adjacent code.
-                self.finish_current_region(false)?;
+                //
+                // Phase 3 keeps the legacy `BranchIndirect -> Return`
+                // mapping; Phase 5 replaces this with a real resolver that
+                // produces `Branch` / `TailCall` / `Return` based on the
+                // target's resolved value.
+                self.finish_current_region(RegionTerminator::Return)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),
@@ -334,11 +346,11 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// Calls `Builder::add_region` (which enforces non-emptiness via
     /// [`ErrorKind::EmptyRegion`]) and, if there is a parent edge, adds that
     /// edge to the graph. Returns the new region's [`NodeIndex`].
-    fn finish_current_region(&mut self, ends_with_tail_call: bool) -> Result<NodeIndex> {
+    fn finish_current_region(&mut self, terminator: RegionTerminator) -> Result<NodeIndex> {
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
             insns: std::mem::take(&mut self.insns),
-            ends_with_tail_call,
+            terminator,
         })?;
         if let Some((parent_id, edge_kind)) = self.parent_edge {
             self.builder.graph.add_edge(parent_id, region, edge_kind);
@@ -362,7 +374,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         // If `addr` is the start of an already-explored region, the current region
         // fell through to it: finalise the current region and add a Fallthrough edge.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
-            let region = self.finish_current_region(false)?;
+            let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
                 .graph
                 .add_edge(region, existing_region_id, RegionEdgeKind::Fallthrough);
@@ -422,7 +434,7 @@ pub mod test_api {
     //! its private methods directly.
 
     use super::RegionBuilder;
-    use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction};
+    use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction, RegionTerminator};
     use crate::cfg::Builder;
     use crate::error::Result;
     use petgraph::graph::NodeIndex;
@@ -534,12 +546,13 @@ pub mod test_api {
         }
 
         /// # Errors
-        /// Returns [`ErrorKind::EmptyRegion`] if the region has no instructions.
+        /// Returns [`crate::ErrorKind::EmptyRegion`] if the region has no
+        /// instructions.
         pub fn finish_current_region(
             &mut self,
-            ends_with_tail_call: bool,
+            terminator: RegionTerminator,
         ) -> Result<NodeIndex> {
-            self.inner.finish_current_region(ends_with_tail_call)
+            self.inner.finish_current_region(terminator)
         }
     }
 }

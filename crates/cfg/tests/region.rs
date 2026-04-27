@@ -7,6 +7,7 @@ mod common;
 use common::{addr, make_region};
 
 use cfg::test_api::Region;
+use cfg::RegionTerminator;
 
 #[test]
 fn contains_addr_at_start() {
@@ -51,7 +52,7 @@ fn contains_addr_returns_false_for_empty_region() {
     let r = Region {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
-        ends_with_tail_call: false,
+        terminator: RegionTerminator::Fallthrough,
     };
     assert!(!r.contains_addr(addr(0x1000, 0)));
 }

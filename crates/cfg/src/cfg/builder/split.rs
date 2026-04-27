@@ -2,7 +2,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
 use super::Builder;
-use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind};
+use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind, RegionTerminator};
 use crate::error::{ErrorKind, Result};
 
 impl<R: rsleigh::MemReader> Builder<R> {
@@ -54,10 +54,14 @@ impl<R: rsleigh::MemReader> Builder<R> {
         // Re-index the (now-second) region under its new start address.
         self.start_addr_to_region_id.insert(addr, region_id);
 
+        // The first half always falls through into the second half — the
+        // original region's terminator stays put on the second half (which
+        // retains `region_id` and therefore the in-place `Region` value the
+        // builder originally wrote there).
         let first_region = self.add_region(Region {
             start_addr: first_region_start_addr,
             insns: first_region_insns,
-            ends_with_tail_call: false,
+            terminator: RegionTerminator::Fallthrough,
         })?;
 
         // second region inherits all parents of the original region

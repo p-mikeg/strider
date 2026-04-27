@@ -10,7 +10,7 @@ use common::{
 };
 
 use cfg::test_api::{self, ProcessInsnRes, RegionInstruction};
-use cfg::{ErrorKind, RegionEdgeKind};
+use cfg::{ErrorKind, RegionEdgeKind, RegionTerminator};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 /// Lift one x86-64 machine instruction at `at` from `bytes` starting at `base`.
@@ -146,7 +146,10 @@ fn branch_non_fallthrough_target_keeps_branch_edge() {
 
 #[test]
 fn branch_tail_call_sets_ends_with_tail_call_flag_and_does_not_enqueue() {
-    // `jmp -10` from 0x1000 → target 0x0ff2 (below start → tail call).
+    // `jmp -10` from 0x1000 — the rel8 displacement is relative to the
+    // *next* instruction (pc + insn_len = 0x1002), so the resolved target
+    // is 0x0ff8, which lies below the function start at 0x1000 and is
+    // therefore classified as a tail call.
     let base = 0x1000u64;
     let bytes = jmp_rel8_ret_bytes(-10);
     let lift = lift_at(bytes.clone(), base, base);
@@ -159,10 +162,13 @@ fn branch_tail_call_sets_ends_with_tail_call_flag_and_does_not_enqueue() {
 
     // Queue untouched — tail call doesn't enqueue the target.
     assert_eq!(test_api::work_queue(&b).len(), 0);
-    // Exactly one region was added with ends_with_tail_call = true.
+    // Exactly one region was added with terminator = TailCall { target }.
     let regions: Vec<_> = test_api::graph(&b).node_weights().collect();
     assert_eq!(regions.len(), 1);
-    assert!(regions[0].ends_with_tail_call);
+    assert_eq!(
+        regions[0].terminator,
+        RegionTerminator::TailCall { target: 0x0ff8 }
+    );
 }
 
 #[test]
@@ -235,7 +241,9 @@ fn process_insn_falls_through_into_existing_region_start() {
 fn finish_current_region_empty_insns_returns_error() {
     let mut b = make_builder(0x1000);
     let mut rb = make_region_builder(&mut b, addr(0x1000, 0));
-    let err = rb.finish_current_region(false).unwrap_err();
+    let err = rb
+        .finish_current_region(RegionTerminator::Return)
+        .unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));
 }
 

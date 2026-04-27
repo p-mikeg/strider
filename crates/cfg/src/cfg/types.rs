@@ -63,6 +63,51 @@ pub struct RegionInstruction {
     pub insn: rsleigh::Insn,
 }
 
+/// Classifies how a [`Region`] ends.
+///
+/// One terminator per region; the value is set when the region is
+/// finalised by [`crate::Builder`].  The variants line up with the
+/// outgoing edges in the [`RegionGraph`] but also record cases that have
+/// no outgoing edge (e.g. `Return`, `TailCall`).
+///
+/// `Switch` is **reserved** for the future jump-table resolver and is
+/// not constructed by the cfg builder today — it is part of the API so
+/// that adding jump-table support is a purely additive change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegionTerminator {
+    /// No terminator opcode; control falls into the next region.  This
+    /// covers the case where decoding hits the start of an
+    /// already-discovered region and the current region is closed out
+    /// with a [`RegionEdgeKind::Fallthrough`] edge, as well as the
+    /// first half of a split region.
+    Fallthrough,
+    /// Direct unconditional branch, intra-function.  Successor lives on
+    /// the [`RegionEdgeKind::Branch`] edge.
+    Branch,
+    /// Direct conditional branch.  Successors live on the
+    /// [`RegionEdgeKind::IfCaseTrue`] / [`RegionEdgeKind::IfCaseFalse`]
+    /// edges.
+    CondBranch,
+    /// `Return` opcode (or, in the legacy mapping retained until the
+    /// indirect-branch resolver lands, a `BranchIndirect`).  No
+    /// outgoing edge.
+    Return,
+    /// Direct branch whose target lies outside the function range.
+    /// The IR layer is expected to lower this as
+    /// `Call(IntConst(target)) + Return`.  No outgoing edge.
+    TailCall {
+        /// Resolved tail-call target machine address.
+        target: u64,
+    },
+    /// FUTURE.  Jump table with N statically-known targets.  Reserved
+    /// in the API now so a later resolver upgrade is purely additive.
+    /// Not constructed by the current builder.
+    Switch {
+        /// Statically-known dispatch targets.
+        targets: Vec<u64>,
+    },
+}
+
 /// A basic block: a maximal straight-line sequence of pcode instructions
 /// with a single entry point and (at most) one exit point.
 ///
@@ -75,10 +120,8 @@ pub struct Region {
     pub start_addr: PcodeInsnAddr,
     /// All pcode instructions, in program order.  Never empty.
     pub insns: Vec<RegionInstruction>,
-    /// `true` when the region ends with an unconditional branch that the
-    /// builder classified as a tail call (i.e. a jump to code outside the
-    /// current function).
-    pub ends_with_tail_call: bool,
+    /// How this region ends — see [`RegionTerminator`].
+    pub terminator: RegionTerminator,
 }
 
 impl Region {

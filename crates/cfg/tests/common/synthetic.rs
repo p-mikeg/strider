@@ -6,7 +6,7 @@
 use cfg::test_api::{
     MachineInsnAddr, Options, PcodeInsnAddr, Region, RegionInstruction, TestRegionBuilder,
 };
-use cfg::{Builder, OptionsBuilder};
+use cfg::{Builder, OptionsBuilder, RegionTerminator};
 use rsleigh::mem_readers::BufMemReader;
 
 pub type TestReader = BufMemReader<Vec<u8>>;
@@ -112,7 +112,7 @@ pub fn make_region(addrs: &[(u64, u64)]) -> Region {
     Region {
         start_addr: start,
         insns,
-        ends_with_tail_call: false,
+        terminator: RegionTerminator::Fallthrough,
     }
 }
 
