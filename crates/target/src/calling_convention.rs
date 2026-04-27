@@ -61,6 +61,14 @@ pub struct CallingConvention {
     /// ISAs (ARM, AArch64, MIPS, PowerPC) the call does not touch SP, so
     /// this is 0.
     ret_stack_pop: i64,
+    /// The Sleigh register name of the calling convention's link register
+    /// (the register that holds the return address across a call), or
+    /// `None` on stack-push ISAs (x86, x86_64) where the return address
+    /// lives on the stack instead.  Resolved into
+    /// [`BuiltCallingConvention::link_register_vn`] by [`Self::build`].
+    /// Used by the indirect-branch resolver to recognise `bx lr` /
+    /// `pop {pc}` / `jr ra` shapes as `Return`.
+    link_register_reg_name: Option<&'static str>,
 }
 
 /// A calling convention whose register names have been resolved to concrete
@@ -101,6 +109,15 @@ pub struct BuiltCallingConvention {
     /// ISAs (ARM, AArch64, MIPS, PowerPC) the call does not touch SP, so
     /// this is 0.
     pub ret_stack_pop: i64,
+    /// The varnode that holds the return address across a call on
+    /// link-register ISAs (ARM, AArch64, MIPS, PowerPC), or `None` on
+    /// stack-push ISAs (x86, x86_64) where the return address lives on
+    /// the stack.  Resolved from
+    /// [`CallingConvention::link_register_reg_name`] by
+    /// [`CallingConvention::build`].  Consumed by the indirect-branch
+    /// resolver to classify `BranchIndirect` whose target is the
+    /// function-entry value of this varnode as a `Return`.
+    pub link_register_vn: Option<rsleigh::Vn>,
 }
 
 impl CallingConvention {
@@ -127,6 +144,9 @@ impl CallingConvention {
             // the first stack-passed arg (arg 7) lives one slot above it.
             stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
             ret_stack_pop: 8,
+            // x86-64 `call` pushes the return address on the stack; there
+            // is no architectural link register.
+            link_register_reg_name: None,
         }
     }
 
@@ -159,6 +179,9 @@ impl CallingConvention {
             ret_val_regs_float: &["q0", "q1"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
+            // AArch64's `lr` is an alias for `x30`; Sleigh's aarch64
+            // register table only registers `x30`.
+            link_register_reg_name: Some("x30"),
         }
     }
 
@@ -192,6 +215,9 @@ impl CallingConvention {
             ret_val_regs_float: &["d0", "d1"],
             stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
             ret_stack_pop: 0,
+            // ARM's `bl` writes the return address to `lr` (= `r14`);
+            // Sleigh registers it under the lowercase `lr` name.
+            link_register_reg_name: Some("lr"),
         }
     }
 
@@ -227,6 +253,9 @@ impl CallingConvention {
             ret_val_regs_float: &["f0", "f2"],
             stack_arg_offsets: &[16, 20, 24, 28],
             ret_stack_pop: 0,
+            // MIPS `jal`/`jalr` writes the return address to `$ra`
+            // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
+            link_register_reg_name: Some("ra"),
         }
     }
 
@@ -253,6 +282,8 @@ impl CallingConvention {
             ret_val_regs_float: &["f0", "f2"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,
+            // Same as O32: the return address lives in `$ra`.
+            link_register_reg_name: Some("ra"),
         }
     }
 
@@ -280,6 +311,9 @@ impl CallingConvention {
             ret_val_regs_float: &["f1", "f2"],
             stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
             ret_stack_pop: 0,
+            // PowerPC `bl` writes the return address to the `LR` SPR;
+            // Sleigh's PPC register table uses uppercase `LR`.
+            link_register_reg_name: Some("LR"),
         }
     }
 
@@ -313,6 +347,8 @@ impl CallingConvention {
             ret_val_regs_float: &["f1", "f2"],
             stack_arg_offsets: &[48, 56, 64, 72],
             ret_stack_pop: 0,
+            // Same as 32-bit PPC SysV: the return address lives in `LR`.
+            link_register_reg_name: Some("LR"),
         }
     }
 
@@ -343,6 +379,8 @@ impl CallingConvention {
             ret_val_regs_float: &["f1", "f2"],
             stack_arg_offsets: &[32, 40, 48, 56],
             ret_stack_pop: 0,
+            // Same as ELFv1: the return address lives in `LR`.
+            link_register_reg_name: Some("LR"),
         }
     }
 
@@ -378,6 +416,9 @@ impl CallingConvention {
             // arg 0 lives one slot above it.
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
             ret_stack_pop: 4,
+            // x86 `call` pushes the return address on the stack; there
+            // is no architectural link register.
+            link_register_reg_name: None,
         }
     }
 
@@ -398,6 +439,14 @@ impl CallingConvention {
         let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
         let ret_val_regs_float = regs_to_vns(sleigh_regs, self.ret_val_regs_float)?;
         let stack_ptr_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
+        // Resolve the link-register name when one is declared; propagate
+        // any `UnknownRegName` from `vn_for_name` so a typo in the preset
+        // surfaces at build time rather than later in the indirect-branch
+        // resolver.
+        let link_register_vn = match self.link_register_reg_name {
+            Some(name) => Some(vn_for_name(sleigh_regs, name)?),
+            None => None,
+        };
         Ok(BuiltCallingConvention {
             arg_passing_regs,
             callee_saved_regs,
@@ -406,6 +455,7 @@ impl CallingConvention {
             stack_ptr_vn,
             stack_arg_offsets: self.stack_arg_offsets.to_vec(),
             ret_stack_pop: self.ret_stack_pop,
+            link_register_vn,
         })
     }
 }
@@ -779,6 +829,7 @@ mod tests {
                 ret_val_regs_float: &[],
                 stack_arg_offsets: &[],
                 ret_stack_pop: 0,
+                link_register_reg_name: None,
             };
             let result = cc.build(&regs);
             assert!(
@@ -804,6 +855,7 @@ mod tests {
             ret_val_regs_float: &[],
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
+            link_register_reg_name: None,
         };
         assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
     }
@@ -826,6 +878,188 @@ mod tests {
         }
     }
 
+    /// One row per calling-convention preset, recording the expected
+    /// link-register Sleigh name (or `None` for stack-push ISAs that hold
+    /// the return address on the stack).  Drives every link-register
+    /// invariant test below; adding a new preset means adding one row here
+    /// and every test picks it up.
+    struct LinkRegCase {
+        name: &'static str,
+        cc: fn() -> CallingConvention,
+        arch: fn() -> crate::arch::SleighArch,
+        expected_lr_name: Option<&'static str>,
+    }
+
+    fn link_reg_cases() -> Vec<LinkRegCase> {
+        vec![
+            LinkRegCase {
+                name: "ARM AAPCS",
+                cc: CallingConvention::arm_aapcs,
+                arch: crate::arch::SleighArch::arm,
+                expected_lr_name: Some("lr"),
+            },
+            LinkRegCase {
+                name: "ARM AAPCS (Thumb)",
+                cc: CallingConvention::arm_aapcs,
+                arch: crate::arch::SleighArch::arm_thumb,
+                expected_lr_name: Some("lr"),
+            },
+            LinkRegCase {
+                name: "ARM AAPCS (BE)",
+                cc: CallingConvention::arm_aapcs,
+                arch: crate::arch::SleighArch::arm_be,
+                expected_lr_name: Some("lr"),
+            },
+            LinkRegCase {
+                name: "AArch64 AAPCS64",
+                cc: CallingConvention::aarch64_aapcs64,
+                arch: crate::arch::SleighArch::aarch64,
+                expected_lr_name: Some("x30"),
+            },
+            LinkRegCase {
+                name: "AArch64 AAPCS64 (BE)",
+                cc: CallingConvention::aarch64_aapcs64,
+                arch: crate::arch::SleighArch::aarch64be,
+                expected_lr_name: Some("x30"),
+            },
+            LinkRegCase {
+                name: "MIPS O32 (LE)",
+                cc: CallingConvention::mips_o32,
+                arch: crate::arch::SleighArch::mipsle32,
+                expected_lr_name: Some("ra"),
+            },
+            LinkRegCase {
+                name: "MIPS O32 (BE)",
+                cc: CallingConvention::mips_o32,
+                arch: crate::arch::SleighArch::mipsbe32,
+                expected_lr_name: Some("ra"),
+            },
+            LinkRegCase {
+                name: "MIPS N64 (LE)",
+                cc: CallingConvention::mips_n64,
+                arch: crate::arch::SleighArch::mipsle64,
+                expected_lr_name: Some("ra"),
+            },
+            LinkRegCase {
+                name: "MIPS N64 (BE)",
+                cc: CallingConvention::mips_n64,
+                arch: crate::arch::SleighArch::mipsbe64,
+                expected_lr_name: Some("ra"),
+            },
+            LinkRegCase {
+                name: "PowerPC SysV 32 (BE)",
+                cc: CallingConvention::powerpc_sysv32,
+                arch: crate::arch::SleighArch::ppc32be,
+                expected_lr_name: Some("LR"),
+            },
+            LinkRegCase {
+                name: "PowerPC SysV 32 (LE)",
+                cc: CallingConvention::powerpc_sysv32,
+                arch: crate::arch::SleighArch::ppc32le,
+                expected_lr_name: Some("LR"),
+            },
+            LinkRegCase {
+                name: "PowerPC ELFv1 (BE)",
+                cc: CallingConvention::powerpc64_elf_v1,
+                arch: crate::arch::SleighArch::ppc64be,
+                expected_lr_name: Some("LR"),
+            },
+            LinkRegCase {
+                name: "PowerPC ELFv2 (LE)",
+                cc: CallingConvention::powerpc64_elf_v2,
+                arch: crate::arch::SleighArch::ppc64le,
+                expected_lr_name: Some("LR"),
+            },
+            LinkRegCase {
+                name: "x86-64 SysV",
+                cc: CallingConvention::x86_64_systemv_abi,
+                arch: crate::arch::SleighArch::x86_64,
+                expected_lr_name: None,
+            },
+            LinkRegCase {
+                name: "x86 cdecl",
+                cc: CallingConvention::x86_cdecl,
+                arch: crate::arch::SleighArch::x86,
+                expected_lr_name: None,
+            },
+        ]
+    }
+
+    /// Every link-register ISA preset must resolve `link_register_vn` to
+    /// `Some(...)`, and the resolved varnode must match the architecture's
+    /// LR register under the documented Sleigh name.  Pinning every preset
+    /// here catches a typo or rename in any single convention's
+    /// `link_register_reg_name` field.
+    #[test]
+    fn link_register_vn_set_for_link_register_presets() {
+        for c in link_reg_cases() {
+            let Some(expected_name) = c.expected_lr_name else {
+                continue;
+            };
+            let regs = regs_for((c.arch)());
+            let built = (c.cc)()
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
+            let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
+                panic!(
+                    "{}: expected LR name {:?} must resolve in arch's Sleigh regs",
+                    c.name, expected_name,
+                )
+            });
+            assert_eq!(
+                built.link_register_vn,
+                Some(expected_vn),
+                "{}: link_register_vn must be the {:?} varnode",
+                c.name,
+                expected_name,
+            );
+        }
+    }
+
+    /// Stack-push ISA presets (x86, x86_64) must have `link_register_vn`
+    /// resolve to `None`.  Their return address lives on the stack, not in
+    /// a register, so there is no LR to expose.
+    #[test]
+    fn link_register_vn_none_for_stack_push_presets() {
+        for c in link_reg_cases() {
+            if c.expected_lr_name.is_some() {
+                continue;
+            }
+            let regs = regs_for((c.arch)());
+            let built = (c.cc)()
+                .build(&regs)
+                .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
+            assert!(
+                built.link_register_vn.is_none(),
+                "{}: link_register_vn must be None on stack-push ISAs, got {:?}",
+                c.name,
+                built.link_register_vn,
+            );
+        }
+    }
+
+    /// On ARM AAPCS the link register is callee-saved.  Pin that the
+    /// resolved `link_register_vn` is the same varnode as the `lr` entry in
+    /// `callee_saved_regs` — guards against the two lookup paths (the new
+    /// `link_register_reg_name` and the existing `callee_saved_regs` list)
+    /// diverging silently if one preset drops the `lr` entry.
+    #[test]
+    fn link_register_vn_resolves_to_callee_saved_lr() {
+        let regs = regs_for(crate::arch::SleighArch::arm());
+        let built = CallingConvention::arm_aapcs()
+            .build(&regs)
+            .unwrap_or_else(|e| panic!("ARM AAPCS build failed: {e:?}"));
+        let lr_vn = regs
+            .name_to_vn("lr")
+            .unwrap_or_else(|| panic!("ARM AAPCS: 'lr' must resolve"));
+        assert_eq!(built.link_register_vn, Some(lr_vn));
+        assert!(
+            built.callee_saved_regs.contains(&lr_vn),
+            "ARM AAPCS: 'lr' must also be present in callee_saved_regs, got {:?}",
+            built.callee_saved_regs,
+        );
+    }
+
     /// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
     /// same way an unknown entry in any of the three register lists does.
     /// Guards the open-coded `ok_or_else` in `build()` — the SP name has its
@@ -841,6 +1075,7 @@ mod tests {
             ret_val_regs_float: &[],
             stack_arg_offsets: &[],
             ret_stack_pop: 0,
+            link_register_reg_name: None,
         };
         let result = cc.build(&regs);
         assert!(
