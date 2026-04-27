@@ -332,14 +332,83 @@ Each unit has a clear API surface: tier 1 takes `(insns, target_vn, sleigh, …)
 
 ## Test strategy
 
-Unit tests on every new piece of logic — same hard rule as the prior plan.  The test pyramid:
+> **The caching layer is fragile.**  A bug in cache-reuse, phi-extension, or pipeline-tier-selection produces silently-wrong IR — wrong constants, wrong reachability, wrong call semantics — that downstream consumers won't notice until pattern queries return wrong answers.  Every fragile invariant gets multiple tests, and every implementation site gets an inline comment explaining *why* the operation is correct.
 
-* **`pcode-lift`**: existing tests, no changes.
-* **`cfg::indirect_resolve` (tier 1)**: existing tests stay; one new test asserts that unresolved cases now produce `RegionTerminator::UnresolvedIndirectBranch` instead of erroring.
-* **`cfg::Builder::with_known_targets`**: round-trip tests asserting the API correctly threads cached resolutions; correct precedence (cached overrides mini-graph).
-* **`strider::indirect_resolve_tier2`**: at least one positive test per `ResolvedTargets` variant; one negative test per "still-unresolved" path.  Specifically: stack-popped-return-via-StackLoadForward, IntConst-via-ConstantFold, InitialVar(lr)-direct, jump-table-bounded (R4 only), no-resolution.
-* **Outer loop**: 0-iteration (no indirect branches), 1-iteration (resolves on first tier-2 pass), 2-iteration (cascading resolution where a new region's branch resolves only after a previous one was wired), unresolved-at-fixed-point (returns error), iteration-cap-exceeded (returns IndirectResolutionDidNotConverge).
-* **Cache**: a "lift each instruction exactly once" assertion test — instrument `lift_new_regions_into` to count pcode→IR conversions, run a function that triggers 2 CFG rebuilds, assert the counter equals the total instruction count of the final CFG (no instruction lifted twice).
+### Unit tests by concern
+
+#### Tier 1 (existing, semantics softened)
+
+1. `tier_1_unresolved_now_produces_placeholder_terminator` — what previously errored now produces `RegionTerminator::UnresolvedIndirectBranch{vn,addr}`.
+2. `tier_1_resolved_cases_unchanged` — `LinkRegister` / `Single(K)` paths still work as in Phase 5.
+
+#### `cfg::Builder::with_known_targets`
+
+3. `known_target_overrides_tier_1_mini_graph` — when `known_targets` has an entry for a `BranchIndirect`, the cached classification is used and tier 1 is not invoked.
+4. `unknown_branch_falls_through_to_tier_1` — entries not in `known_targets` get tier 1 treatment.
+5. `multiple_targets_produces_multiple_edges` — `Multiple([K1,K2,K3])` produces 3 successor edges.
+6. `tail_call_target_produces_no_edge` — `TailCall { target }` is terminal; no successor edge.
+
+#### Tier 2 resolver — one positive per variant + negatives
+
+7. `tier_2_int_const_to_single` — target VN's producer is `IntConst(k)` after `ConstantFold` → `Single(k)`.
+8. `tier_2_initial_var_lr_to_link_register` — producer is `InitialVar(lr_vn)` → `LinkRegister`.
+9. `tier_2_pop_pc_resolves_via_stack_load_forward` — pcode-level `tmp = load[sp]; sp += 4; bx tmp` after the stable optimizer subset (incl. `StackLoadForward`) produces `InitialVar(lr_vn)` for the target → `LinkRegister`.  This is the test that proves the design closes the 4 ARM regressions.
+10. `tier_2_push_target_pop_pc_does_not_resolve_to_link_register` — `push 0x1000; pop pc` produces `Load(IntSub(InitialVar(sp),4))`-shaped target after the stable subset → NOT classified as LinkRegister.  Negative test for the soundness gap that killed the prior heuristic.
+11. `tier_2_phi_of_int_consts_to_multiple` — `ValuePhi(IntConst(K1), IntConst(K2))` → `Multiple([K1,K2])`.
+12. `tier_2_phi_with_non_const_input_unresolved` — `ValuePhi(IntConst(K), InitialVar(r0))` → still unresolved.
+13. `tier_2_jump_table_with_known_bits_bound` (R4) — pattern `Load(IntAdd(IntConst(base), IntMul(idx, IntConst(stride))))` with `KnownBits.max(idx) = N-1` → `Multiple([table[0], …, table[N-1]])`.
+14. `tier_2_jump_table_with_predecessor_if_bound` (R4) — same shape with bound from a predecessor `If(idx < N)`.
+15. `tier_2_no_classification_returns_unresolved` — opaque target produces `None`/Unresolved (no error inside tier 2).
+
+#### Outer loop and convergence
+
+16. `outer_loop_zero_iter_when_no_branch_indirect` — function without `BranchIndirect` skips the loop entirely; full pipeline runs once; returns IR.
+17. `outer_loop_one_iter_for_link_register_only` — function with one `bx lr` resolves in iteration 0 via in-place edit; no rebuild; one full-pipeline run at the end.
+18. `outer_loop_one_iter_for_tail_call_only` — same shape, target-const resolution, in-place edit.
+19. `outer_loop_rebuilds_for_intra_fn_single` — intra-fn `Single(K)` triggers a CFG rebuild; second iteration converges.
+20. `outer_loop_rebuilds_for_jump_table` (R4) — `Multiple` triggers a rebuild; second iteration converges.
+21. `outer_loop_cascading_resolution` — `Multiple([A,B])` resolves; the freshly-explored A's region contains another `BranchIndirect` that resolves only after A is built.  Verifies multi-iteration convergence.
+22. `outer_loop_fixed_point_with_unresolved_returns_error` — fixed point reached with one branch still unresolved → `Err(UnresolvedIndirectBranch(addr))`.
+23. `outer_loop_iteration_cap_returns_typed_error` — synthetic resolver that violates monotonicity; loop hits cap; returns `Err(IndirectResolutionDidNotConverge)`.  No panic.
+
+#### Cache invariants — the fragile core
+
+24. `cache_lifts_each_instruction_exactly_once` — instrument `lift_new_regions_into` with a counter; run a 2-rebuild scenario; assert counter equals the function's total pcode insn count.
+25. `cache_reuse_preserves_body_node_outputs` — snapshot the `NodeOutputId`s of a region's body nodes after iter 0; run iter 1 with a CFG rebuild that doesn't touch this region; assert the same `NodeOutputId`s point to byte-identical node kinds + inputs.
+26. `cache_phi_extension_adds_input_not_node` — region X has 1 predecessor in iter 0; iter 1 wires a 2nd predecessor for X; assert (a) X's `ControlPhi` for each var is the SAME `NodeId` as iter 0, (b) it has 2 inputs after iter 1, (c) body nodes still reference the same phi `NodeOutputId`.
+27. `cache_split_updates_correctly` — region Y splits because a new branch lands in its interior; the first half retains its cache entry; second half gets a fresh entry; no re-lift of either half's pcode.
+28. `cache_in_place_edit_does_not_invalidate_cache` — apply an in-place Return-to-Call+Return edit; verify the cache entry for that region is still considered valid for the next iteration; no re-lift.
+29. `cache_key_stability_across_rebuilds` — PcodeInsnAddr keys map to the same cache entries across multiple CFG rebuilds.
+
+#### Optimizer-tier separation — the other fragile core
+
+30. `intermediate_iter_does_not_run_redundant_phis` — inspect graph after a single intermediate iteration; assert no `ControlPhi` / `MemPhi` was eliminated (every phi node from lift time is still alive in the arena, with an alive output id).
+31. `intermediate_iter_does_not_run_dead_branch_elim` — similarly for `If` nodes with constant-folded conditions: the dead branch is still wired (its successor `ControlState` still has the dead predecessor as an input).
+32. `final_iter_runs_destructive_subset` — at fixed point, assert `RedundantPhis` and `DeadBranchElim` HAVE run (single-input phis are gone; constant-condition Ifs are gone).
+33. `tier_2_classification_robust_to_redundant_phis` — same input function with destructive subset enabled vs disabled; tier 2's induced edge set is identical.
+34. `stable_subset_is_idempotent` — run stable subset twice in a row; second run produces zero diff.
+
+#### In-place IR edit semantics
+
+35. `in_place_link_register_promotes_placeholder_to_return` — placeholder `Return(target_vn)` stays a Return; the side-table marks it resolved; control / memory exits are unchanged.
+36. `in_place_single_tail_call_rewrites_to_call_then_return` — placeholder `Return(target_vn)` is replaced with `Call(IntConst(target)) → Return(ret_vars)`.  Verify control chain: pre-call control feeds the Call's control input; Call's control output feeds the Return's control input.
+37. `in_place_edits_preserve_use_lists` — after both edit types, IR `validate` passes (use-lists are consistent, no zombie inputs).
+
+#### Regression: the four ARM tests
+
+38–41. The 4 currently-ignored ARM tests (`test_tail_caller`, `test_nested_loops`, `test_escape_via_ptr`, `test_bit_test_zero`) un-ignore and pass after R2 lands, via the natural `pop pc` → `InitialVar(lr)` resolution path.
+
+### Comment discipline at implementation time
+
+Every site that mutates the cache, extends a phi, applies an in-place edit, or branches on the optimizer tier MUST carry an inline comment explaining the correctness invariant.  The reviewer's question "why is this safe across the next iteration?" must have its answer in the line above the operation, not in a separate doc.  Specifically:
+
+* `lift_new_regions_into` — comment at the cache-hit branch explaining why reuse is correct (body refs are stable; predecessor adds touch only entry phis).
+* `apply_in_place_edits` — comment at each variant explaining why the edit doesn't invalidate the cached boundary handles.
+* `run_stable_optimizer_subset` — comment explaining the omitted passes and *why each one* is destructive across iterations.
+* `run_destructive_optimizer_subset` — comment explaining why this is only safe at fixed point.
+* Phi-extension call site — comment explaining that we're adding to an existing node, not creating one, and why this matches the cached body refs.
+
+Reviewers should reject any commit in this area lacking these comments.
 * **Integration**: the 4 ARM tests currently ignored under BUG-5 must un-ignore and pass.  R4 adds a jump-table fixture per `fixtures/cases/`.
 
 ## Out-of-scope confirmations
