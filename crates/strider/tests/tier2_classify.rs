@@ -18,7 +18,7 @@ use strider::indirect_resolve_tier2::{ResolvedTargets, classify_anchor};
 
 use common::tier2_helpers::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
-    build_int_const_target_scenario_via_stack,
+    build_int_const_target_scenario_via_stack, build_value_phi_target_scenario,
 };
 
 /// Spec test #7: target VN's producer folds to `IntConst(k)` after
@@ -63,4 +63,42 @@ fn tier_2_initial_var_non_lr_returns_none() {
     // `InitialVar(rax)` as LinkRegister.
     let result = classify_anchor(&graph, anchor, /* link_register */ None);
     assert_eq!(result, None);
+}
+
+/// Spec test #11: `ValuePhi(IntConst(K1), IntConst(K2))` →
+/// `Multiple([K1, K2])` after sort + dedup.
+///
+/// The fixture uses an if/else diamond where each arm stores a
+/// distinct constant at the same SP-relative slot, then loads
+/// from that slot at the merge.  `StackStoreDetect +
+/// StackLoadForward` collapse the merge's `Load` into a synthesised
+/// `ValuePhi` whose value inputs are exactly the two stored
+/// constants — the producer-shape this arm classifies.
+#[test]
+fn tier_2_phi_of_int_consts_to_multiple() {
+    let (graph, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
+    let result = classify_anchor(&graph, anchor, None);
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            // Output is sort + dedup'd by the classifier; assert the
+            // canonical order so a regression that shuffles the
+            // result fails the test rather than silently mismatching
+            // the orchestrator's edge-set comparison (R3).
+            assert_eq!(ts, vec![0x1000, 0x2000]);
+        }
+        other => panic!("expected Multiple([0x1000, 0x2000]); got {other:?}"),
+    }
+}
+
+/// Spec test #11 (3-pred companion): same as above but with 3
+/// distinct constants.  Verifies the `Multiple` arm doesn't truncate
+/// or duplicate at higher arity.
+#[test]
+fn tier_2_phi_of_three_int_consts_to_multiple() {
+    let (graph, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
+    let result = classify_anchor(&graph, anchor, None);
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![0x1000, 0x2000, 0x3000]),
+        other => panic!("expected Multiple([0x1000, 0x2000, 0x3000]); got {other:?}"),
+    }
 }

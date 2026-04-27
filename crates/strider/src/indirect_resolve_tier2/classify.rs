@@ -68,11 +68,61 @@ pub fn classify_anchor(
         NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
             Some(ResolvedTargets::LinkRegister)
         }
-        // R2.1 / R2.2: every other producer shape is "still
+        // SOUND: `ValuePhi`'s output is the merge of one
+        // per-predecessor value input (slot 0 is the phi token,
+        // slots 1.. are the values — see `node_signature::expected_signature`
+        // for ValuePhi).  When *every* value input folds to
+        // `IntConst(k_i)`, the runtime target set is exactly
+        // `{k_i}` for the predecessors that ever reach this branch
+        // — sound because adding more predecessors to a phi can
+        // only widen the set (each new predecessor brings its own
+        // constant via the same `IntConst` rule), never invalidate
+        // the existing entries.  Mixed-input phis (any non-const
+        // slot) are NOT sound: a runtime value could resolve to
+        // any address, so we must defer to the orchestrator (R3).
+        //
+        // This arm matters even after `RedundantPhis` runs: that
+        // pass only collapses phis whose inputs are *identical*,
+        // so a phi of distinct constants stays a phi.  When
+        // RedundantPhis happens to collapse the phi to a single
+        // IntConst, the IntConst arm above handles it.  Both
+        // shapes produce the same induced edge set after dedup.
+        NodeKind::ValuePhi => {
+            // Skip slot 0 (the ControlPhi-token); slots 1.. are
+            // the per-predecessor values.
+            let inputs: Vec<NodeOutputId> =
+                graph.graph.node_inputs(producer_id).into_iter().collect();
+            let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
+            for &val in inputs.iter().skip(1) {
+                let val_producer = graph.graph.get_node_from_output(val);
+                match graph.graph.node_kind(val_producer) {
+                    NodeKind::IntConst(k) => {
+                        // Same u128→u64 truncation as the IntConst
+                        // arm: virtual-address space is 64-bit;
+                        // higher bits are noise.
+                        #[allow(clippy::cast_possible_truncation)]
+                        targets.push(*k as u64);
+                    }
+                    // Any non-IntConst input means the runtime
+                    // target is unbounded — we cannot soundly
+                    // enumerate.  Defer.
+                    _ => return None,
+                }
+            }
+            // Sort + dedup so the resulting Multiple is canonical.
+            // The orchestrator's edge-set convergence test compares
+            // induced edge sets across iterations; a stable order
+            // makes the comparison cheap and avoids spurious
+            // "different" results from per-iteration phi-input
+            // ordering noise.
+            targets.sort_unstable();
+            targets.dedup();
+            Some(ResolvedTargets::Multiple(targets))
+        }
+        // R2.1 / R2.2 / R2.3: every other producer shape is "still
         // unresolved" — the orchestrator will try again on a later
         // iteration or surface `UnresolvedIndirectBranch` at fixed
-        // point.  R2.3 adds the `ValuePhi-of-IntConsts` arm; R4
-        // adds the jump-table arm.
+        // point.  R4 adds the jump-table arm.
         _ => None,
     }
 }
@@ -298,6 +348,168 @@ mod tests {
 
         let result = classify_anchor(&graph, producer_output, None);
         assert_eq!(result, None);
+    }
+
+    /// Helper for the ValuePhi tests: build a minimal graph
+    /// containing a ControlState (to provide the phi token), a set
+    /// of value-producing nodes (each one fed in as a per-pred
+    /// input), and a `ValuePhi` whose first input is the phi token
+    /// and whose remaining inputs are the per-pred values.
+    /// Returns the graph and the value-phi's output id.
+    ///
+    /// Synthesises the ValuePhi via `graph.create_node` directly
+    /// after `build()` has returned — bypassing the validator's
+    /// per-predecessor-arity check (Layer C requires phi inputs
+    /// to match `ControlState`'s predecessor count, which we don't
+    /// satisfy here).  This is intentional: the unit tests
+    /// exercise `classify_anchor` against fully synthetic shapes
+    /// that the validator would reject in production.  The
+    /// integration tests in `tests/tier2_classify.rs` cover the
+    /// validation-passing path end-to-end.
+    fn build_value_phi_graph(
+        per_pred_consts: &[u64],
+    ) -> (BuiltFunctionGraph, NodeOutputId) {
+        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+            .expect("FunctionBuilder::new_raw");
+        let region = builder.create_region().expect("create_region");
+        builder.set_entry_region(region).expect("set_entry_region");
+        builder.set_region(region);
+
+        // Build all per-predecessor IntConst nodes; remember their
+        // output ids so we can wire them into the ValuePhi below.
+        let const_outputs: Vec<NodeOutputId> = per_pred_consts
+            .iter()
+            .map(|k| builder.build_int_const(*k, NodeOutputType::U64))
+            .collect();
+
+        // Use a dummy IntConst as the synthetic placeholder anchor
+        // so `build_return` succeeds and `build()` validates.  The
+        // ValuePhi we synthesise after build is unreachable from
+        // entry, so it can have any shape we want.
+        let dummy = builder.build_int_const(0u64, NodeOutputType::U64);
+        builder.build_return(Some(dummy), &[]).expect("build_return");
+        let mut graph = builder.build().expect("build");
+
+        // Synthesise a fake phi-token node.  ControlPhi nodes
+        // produce ControlPhi outputs, but the dedup cache keys
+        // them by (NodeKind, inputs, outputs), so we can hand-
+        // construct one with no inputs.  We need the phi-token
+        // output kind for the ValuePhi's first input slot to
+        // typecheck against `expected_signature`'s `PHI` slot.
+        let fake_token_node = graph.graph.create_node(
+            NodeKind::ControlPhi(rsleigh::Vn {
+                addr: rsleigh::VnAddr {
+                    space: rsleigh::VnSpace::REGISTER,
+                    off: 0xdead,
+                },
+                size: 8,
+            }),
+            [],
+            [NodeOutputKind::ControlPhi],
+        );
+        let [token_out] = graph
+            .graph
+            .node_outputs_exact::<1>(fake_token_node)
+            .expect("token output");
+
+        // Build the ValuePhi: inputs = [phi_token, ...vals]; output
+        // is a single value (U64 for definiteness).
+        let vp_node = graph.graph.create_node(
+            NodeKind::ValuePhi,
+            std::iter::once(token_out).chain(const_outputs.iter().copied()),
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [vp_out] = graph
+            .graph
+            .node_outputs_exact::<1>(vp_node)
+            .expect("value-phi output");
+        (graph, vp_out)
+    }
+
+    #[test]
+    fn classify_value_phi_of_consts_returns_multiple_dedup_sorted() {
+        // Phi(IntConst(7), IntConst(3), IntConst(7)) →
+        //   Multiple(sorted, deduped) = Multiple([3, 7]).
+        let (graph, anchor) = build_value_phi_graph(&[7, 3, 7]);
+        let result = classify_anchor(&graph, anchor, None);
+        match result {
+            Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
+            other => panic!("expected Multiple([3, 7]); got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_value_phi_of_one_const_returns_multiple_singleton() {
+        // Single-input ValuePhi (degenerate, but the classifier
+        // must still produce a Multiple([K]) — we don't second-
+        // guess by collapsing to Single, since the orchestrator
+        // treats Multiple-of-len-1 identically).
+        let (graph, anchor) = build_value_phi_graph(&[42]);
+        let result = classify_anchor(&graph, anchor, None);
+        assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
+    }
+
+    #[test]
+    fn classify_value_phi_with_one_non_const_returns_none() {
+        // Build a ValuePhi with mixed inputs: one IntConst and
+        // one InitialVar.  The arm must return None — we cannot
+        // soundly enumerate the target set when any input is a
+        // runtime value.
+        let other_vn = fake_reg_vn(0x10, 8);
+        let mut builder = FunctionBuilder::new_raw(vec![other_vn], &[], &[], &[], None, 0)
+            .expect("FunctionBuilder::new_raw");
+        let region = builder.create_region().expect("create_region");
+        builder.set_entry_region(region).expect("set_entry_region");
+        builder.set_region(region);
+        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64);
+        let var_out = builder.read_variable(&other_vn).expect("read_variable");
+        let dummy = builder.build_int_const(0u64, NodeOutputType::U64);
+        builder.build_return(Some(dummy), &[]).expect("build_return");
+        let mut graph = builder.build().expect("build");
+        let fake_token_node = graph.graph.create_node(
+            NodeKind::ControlPhi(rsleigh::Vn {
+                addr: rsleigh::VnAddr {
+                    space: rsleigh::VnSpace::REGISTER,
+                    off: 0xdead,
+                },
+                size: 8,
+            }),
+            [],
+            [NodeOutputKind::ControlPhi],
+        );
+        let [token_out] = graph
+            .graph
+            .node_outputs_exact::<1>(fake_token_node)
+            .expect("token output");
+        let vp_node = graph.graph.create_node(
+            NodeKind::ValuePhi,
+            [token_out, const_out, var_out],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [vp_out] = graph
+            .graph
+            .node_outputs_exact::<1>(vp_node)
+            .expect("value-phi output");
+
+        // No lr supplied: the InitialVar arm doesn't accidentally
+        // classify as LinkRegister either.
+        assert_eq!(classify_anchor(&graph, vp_out, None), None);
+    }
+
+    #[test]
+    fn classify_value_phi_empty_returns_multiple_empty() {
+        // Defensive: a ValuePhi with no value inputs (only the
+        // phi-token slot).  Arity-wise this is malformed in
+        // production, but the classifier must not panic — it
+        // should return `Multiple(vec![])`, since every input
+        // (vacuously) folded to IntConst.  The orchestrator will
+        // see an empty edge set and treat the branch as still
+        // unresolved at fixed point (no targets to wire).  This
+        // pins the empty case so a future refactor can't silently
+        // change it to `None`.
+        let (graph, anchor) = build_value_phi_graph(&[]);
+        let result = classify_anchor(&graph, anchor, None);
+        assert_eq!(result, Some(ResolvedTargets::Multiple(vec![])));
     }
 
     #[test]

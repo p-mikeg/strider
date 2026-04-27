@@ -202,6 +202,151 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Va
     (graph, anchor)
 }
 
+/// Build a `BuiltFunctionGraph` whose placeholder Return's
+/// value-input is a `ValuePhi` whose every value slot folds to an
+/// `IntConst(k_i)` taken from `per_pred`.
+///
+/// The fixture mirrors `crates/opt/src/stack_load_forward/tests.rs::
+/// phi_both_branches_store_same_offset` — an if/else diamond where
+/// each arm stores a distinct constant at `sp + 4`, and the merge
+/// loads from that slot.  After the strider optimiser runs the
+/// merge's `Load` is replaced by a synthesised `ValuePhi` whose
+/// per-pred value inputs are the per-pred IntConsts.  We anchor
+/// the load via a single-input `Return(target_value)` — exactly
+/// the shape strider's R1.4 placeholder lift produces.
+///
+/// Bypasses the cfg builder + `Strider::analyze_cfg_with_unresolved`
+/// because the only x86_64 byte sequence that compresses to this
+/// shape requires a `mov [rsp+K], imm; ...; jmp *[rsp+K]` flow with
+/// a real conditional branch — that's a 25+-byte fixture that adds
+/// nothing the FunctionBuilder path doesn't already exercise more
+/// directly.  The optimiser's `StackLoadForward` is the same code
+/// path either way.
+///
+/// `RedundantPhis` is **deliberately omitted** from the inline
+/// pipeline below — with it included, a single-target path
+/// (per_pred.len() == 1) would collapse the synthesised ValuePhi
+/// to its sole IntConst input via the trivial-phi rule, defeating
+/// the test's purpose.  Leaving it out preserves the ValuePhi
+/// shape across all `per_pred` lengths.
+pub fn build_value_phi_target_scenario(
+    per_pred: &[u64],
+) -> (BuiltFunctionGraph, ir::Value) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
+    use target::Endianness;
+
+    assert!(
+        !per_pred.is_empty(),
+        "ValuePhi fixture needs at least one predecessor",
+    );
+
+    // 4-byte stack pointer VN — register space, offset 0x20, size 4.
+    // Doesn't have to match a real arch's SP; StackStoreDetect /
+    // StackLoadForward only care that it's the SP register passed
+    // into the pass constructors.
+    let sp = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x20,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)
+        .expect("new_raw");
+    let entry = b.create_region().expect("create entry");
+    // One arm region per predecessor + a merge region.
+    let arm_regions: Vec<_> = (0..per_pred.len())
+        .map(|_| b.create_region().expect("create arm"))
+        .collect();
+    let merge = b.create_region().expect("create merge");
+    b.set_entry_region(entry).expect("set_entry_region");
+
+    // Entry: chain through nested if(true)s to dispatch to one arm
+    // each.  For per_pred.len() == 1 we simply branch unconditionally
+    // to the only arm.  For >1 we build a left-leaning chain of
+    // if(true)/else; each else feeds the next predicate.  This
+    // keeps the fixture topology arbitrary-arity friendly.
+    b.set_region(entry);
+    if per_pred.len() == 1 {
+        b.build_branch(arm_regions[0]).expect("entry branch");
+    } else {
+        // First arm via if(true); else falls through to the next
+        // dispatcher region we synthesize on the fly.
+        let mut prev_region = entry;
+        for (idx, arm) in arm_regions.iter().enumerate() {
+            let last = idx == per_pred.len() - 1;
+            b.set_region(prev_region);
+            if last {
+                b.build_branch(*arm).expect("final branch");
+            } else {
+                let cond = b.build_boolean_const(true);
+                let dispatcher = b.create_region().expect("create dispatcher");
+                b.build_if(cond, *arm, dispatcher).expect("if dispatcher");
+                prev_region = dispatcher;
+            }
+        }
+    }
+
+    // Each arm stores its IntConst at `sp + 4` and branches to merge.
+    for (arm, k) in arm_regions.iter().zip(per_pred.iter().copied()) {
+        b.set_region(*arm);
+        let sp_v = b.read_variable(&sp).expect("read sp in arm");
+        let four = b.build_int_const(4u64, NodeOutputType::U32);
+        let addr = b
+            .build_int_binary_operation(sp_v, four, IntBinaryOp::Add, NodeOutputType::U32)
+            .expect("addr");
+        let v = b.build_int_const(k, NodeOutputType::U32);
+        b.build_store(addr, v, rsleigh::VnSpace::RAM).expect("store");
+        b.build_branch(merge).expect("branch to merge");
+    }
+
+    // Merge: load `*(sp+4)` and Return it as the placeholder anchor.
+    b.set_region(merge);
+    let sp_m = b.read_variable(&sp).expect("read sp in merge");
+    let four_m = b.build_int_const(4u64, NodeOutputType::U32);
+    let addr_m = b
+        .build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)
+        .expect("merge addr");
+    let loaded = b
+        .build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    // The placeholder Return: single-input, slot 2 = anchor.  R1.4
+    // contract-shape.
+    b.build_return(Some(loaded), &[])
+        .expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    // Run the stable subset that produces the ValuePhi.  We omit
+    // RedundantPhis here so a single-pred fixture preserves the
+    // ValuePhi shape (otherwise the trivial-phi rule collapses it).
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    // Resolve the placeholder anchor by walking the unique 3-input
+    // Return.  Same contract as `current_anchor_after_opt`, copied
+    // inline because that helper hard-codes the
+    // analyze_cfg_with_unresolved-driven path.
+    let mut found: Option<ir::Value> = None;
+    for nid in fg.preorder() {
+        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() != 3 {
+            continue;
+        }
+        assert!(found.is_none(), "multiple 3-input Returns");
+        found = Some(inputs[2]);
+    }
+    let anchor = found.expect("no placeholder Return");
+    (fg, anchor)
+}
+
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can
