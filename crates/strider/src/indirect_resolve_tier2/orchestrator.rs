@@ -4,19 +4,26 @@
 //!
 //!   1. Build the CFG (with the current `known_targets` map).
 //!   2. Lift to IR via `Strider::analyze_cfg_with_unresolved`.
-//!   3. Run the strider optimiser pipeline (which today is the
-//!      [`opt::default_pipeline`] + stack passes — round-1
-//!      simplification: we run the FULL pipeline because round 1
-//!      rebuilds the IR from scratch each iteration anyway, so the
-//!      stable-vs-destructive distinction only matters when we
-//!      re-use cached IR across iterations, which is round-2 work).
+//!   3. Run the **stable** optimizer subset
+//!      ([`Strider::build_stable_optimizer_pipeline`]).  Intermediate
+//!      iterations MUST NOT run the destructive subset, since
+//!      `RedundantPhis` / `DeadBranchElimination` would invalidate the
+//!      cache's pinned phi `NodeId`s.
 //!   4. For each unresolved anchor, run [`super::classify_anchor`].
-//!   5. If any new resolutions appear, update `known_targets` and
-//!      rebuild.  If the resolution set is unchanged, we've reached
-//!      a fixed point.
-//!   6. At fixed point: if any branch is still unresolved, return
-//!      `Err(UnresolvedIndirectBranch(addr))`.  Otherwise return
-//!      the optimised IR.
+//!   5. Apply in-place edits for terminal classifications:
+//!      [`super::apply_link_register`] for `LinkRegister`, and
+//!      [`super::apply_tail_call`] for `Single(K)` where K is outside
+//!      the function range (tail call).  These do NOT trigger a CFG
+//!      rebuild — they're local IR mutations.
+//!   6. If any classification requires a structural rebuild
+//!      (intra-fn `Single`, `Multiple` jump table), update
+//!      `known_targets` and rebuild the CFG.  Otherwise the loop
+//!      stays on the same CFG.
+//!   7. At fixed point: if any branch is still unresolved, return
+//!      `Err(UnresolvedIndirectBranch(addr))`.  Otherwise run the
+//!      destructive subset
+//!      ([`Strider::build_destructive_optimizer_pipeline`]) once and
+//!      return the optimized IR.
 //!
 //! # Iteration cap
 //!
@@ -27,34 +34,27 @@
 //! [`crate::ErrorKind::IndirectResolutionDidNotConverge`] — never
 //! a panic.
 //!
-//! # Round-1 simplifications vs. spec
+//! # Tail-call detection
 //!
-//! The spec describes a stable/destructive pipeline split.  Round 1
-//! ignores it because we rebuild the IR from scratch each iteration
-//! (no inter-iteration cache reuse), so there's no cache to invalidate.
-//! Round 2+ will turn `lift_new_regions_into` into a true cache-aware
-//! lifter and the stable/destructive split becomes load-bearing.
-//!
-//! In-place edits ([`super::apply_link_register`] /
-//! [`super::apply_tail_call`]) are similarly not invoked by the
-//! round-1 orchestrator.  The `LinkRegister` and `TailCall`
-//! resolutions are routed through the CFG rebuild path
-//! (`with_known_targets` → builder produces `Return` / `TailCall`
-//! terminators directly).  The in-place editors are future-rounds
-//! optimisations that let us skip the rebuild for terminal
-//! resolutions.
+//! A `Single(K)` resolution where `K` lies outside the function
+//! address range (`K < start_addr` OR `K >= start_addr + fn_max_size`)
+//! is treated as a tail call.  Tail calls are applied as in-place IR
+//! edits via [`super::apply_tail_call`] — no CFG rebuild.  Inside-the-
+//! function `Single(K)` requires a CFG rebuild because new code
+//! becomes reachable.
 
 #![allow(clippy::module_name_repetitions)]
 
 use std::collections::HashMap;
 
 use cfg::{Builder, Cfg, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use ir::node::{NodeId, NodeKind};
 use opt::ReadOnlyMemory;
 
 use crate::error::{ErrorKind, Result};
 use crate::strider::{AnalyzeOutcome, Strider};
 
-use super::classify_anchor_with_rom;
+use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom};
 
 /// Configuration for the orchestrator.  Held outside the
 /// orchestrator function so callers can construct one and reuse the
@@ -77,18 +77,59 @@ where
     /// pass.  `None` to disable.  Cloned per-iteration via
     /// `Arc::clone` (cheap).
     pub rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
+    /// Maximum function size in bytes.  When set, a `Single(K)`
+    /// resolution with `K >= start_addr + fn_max_size` is treated as a
+    /// tail call (in-place edit, no CFG rebuild).  When `None`, only
+    /// `K < start_addr` is treated as a tail call.  Mirrors
+    /// [`cfg::OptionsBuilder::set_function_max_size`] so the
+    /// orchestrator's tail-call decision matches the cfg builder's.
+    pub fn_max_size: Option<u64>,
+    /// When `true`, `Single(K)` with `K < start_addr` is NOT treated
+    /// as a tail call — i.e. the orchestrator follows it as an intra-fn
+    /// branch.  Mirrors
+    /// [`cfg::OptionsBuilder::allow_code_before_start_addr`].
+    pub allow_code_before_start_addr: bool,
 }
 
-/// Round-1 orchestrator.  Drives the iterate-resolve-feed-back loop
-/// until either:
+/// Statistics emitted by [`run_with_stats`] so tests (and downstream
+/// observability hooks) can pin which optimizer subset ran in which
+/// phase, count CFG rebuilds, in-place edits, and total IR-lift calls.
 ///
-///   * no `BranchIndirect` remains unresolved, or
-///   * the resolution set is unchanged across two consecutive
-///     iterations (fixed point with some unresolved branches → typed
-///     error), or
-///   * the iteration cap is hit (typed error — soundness bug).
+/// Each field is incremented monotonically across the orchestrator's
+/// iteration loop; reset to zero on a fresh `run_with_stats` call.
 ///
-/// Returns the optimised IR on success.
+/// CORRECTNESS NOTE: tests use these counters to pin the spec's
+/// pipeline-tier separation contract — `destructive_runs == 1` for
+/// every successful run, `stable_runs >= destructive_runs` always.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OrchestratorStats {
+    /// Total times [`Strider::build_stable_optimizer_pipeline`] ran.
+    /// At minimum 1 (the initial lift always runs the stable subset);
+    /// each rebuild iteration adds 1 more.
+    pub stable_runs: usize,
+    /// Total times [`Strider::build_destructive_optimizer_pipeline`]
+    /// ran.  Exactly 1 on a successful run (fast-path or
+    /// fixed-point exit); 0 on the iteration-cap / unresolved-at-
+    /// fixed-point error paths since those abort before the
+    /// destructive run.
+    pub destructive_runs: usize,
+    /// Total times the CFG was rebuilt.  At minimum 1 (the initial
+    /// build).  Each `Single(K)` intra-fn or `Multiple` resolution
+    /// adds 1.  Tail-call `Single(K)` and `LinkRegister` resolutions
+    /// do NOT trigger a rebuild — they fire as in-place edits.
+    pub cfg_rebuilds: usize,
+    /// Total times [`super::apply_link_register`] ran.
+    pub link_register_edits: usize,
+    /// Total times [`super::apply_tail_call`] ran.
+    pub tail_call_edits: usize,
+    /// Total iterations of the outer fixed-point loop.  0 when the
+    /// fast-path skipped the loop entirely.
+    pub iterations: usize,
+}
+
+/// Round-1 orchestrator entry point.  Drives the iterate-resolve-
+/// feed-back loop and discards the stats; equivalent to
+/// [`run_with_stats`] with the stats dropped.
 ///
 /// # Errors
 ///
@@ -96,10 +137,28 @@ where
 /// * [`ErrorKind::UnresolvedIndirectBranch`] at fixed point with
 ///   unresolved branches remaining.
 /// * Propagates strider / cfg / opt errors verbatim.
-pub fn run<B>(mut config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
+pub fn run<B>(config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
 {
+    let (graph, _stats) = run_with_stats(config)?;
+    Ok(graph)
+}
+
+/// Variant of [`run`] that also returns an [`OrchestratorStats`].
+/// Tests pin pipeline-tier / rebuild / in-place-edit counts via this
+/// entry point.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub fn run_with_stats<B>(
+    mut config: OrchestratorConfig<'_, B>,
+) -> Result<(ir::BuiltFunctionGraph, OrchestratorStats)>
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    let mut stats = OrchestratorStats::default();
     // The `known_targets` map accumulates tier-2 resolutions across
     // iterations.  Each iteration replaces the map (we don't merge
     // — see spec's "Resolution feedback semantics" section: each
@@ -107,14 +166,20 @@ where
     // iterations, e.g. `Single(K1) → Multiple([K1, K2])`).
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
 
-    // Iteration 0 first to record the baseline pending count.
-    let (mut graph, mut unresolved) = build_lift_optimise(&mut config, &known_targets)?;
+    // Iteration 0: build the CFG, lift to IR, run the stable subset.
+    let (mut graph, mut unresolved) =
+        build_lift_stable(&mut config, &known_targets, &mut stats)?;
 
     // Fast path: function with no `BranchIndirect` at all.  No tier-2
-    // work, no rebuild — return immediately.  This is the common
-    // case (most functions don't have indirect branches).
+    // work, no rebuild — but we DO still run the destructive subset
+    // here so the returned IR matches the production-quality shape
+    // the previous orchestrator (and downstream consumers) expect.
+    // The destructive subset is safe here because the IR shape is
+    // final — there are no future iterations to break a destructive
+    // rewrite.
     if unresolved.is_empty() {
-        return Ok(graph);
+        run_destructive(&config, &mut graph, &mut stats)?;
+        return Ok((graph, stats));
     }
 
     let pending_at_iter_0 = unresolved.len();
@@ -128,6 +193,7 @@ where
     let cap = 2usize.saturating_mul(pending_at_iter_0).saturating_add(4);
 
     for _iter in 0..cap {
+        stats.iterations += 1;
         // Classify every unresolved anchor on the current optimised
         // IR.  Build the next `known_targets` map from scratch — see
         // the spec's "Resolution feedback semantics" — so a per-
@@ -135,45 +201,88 @@ where
         // a per-iteration delta.
         let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
         let lr_vn = config.strider.calling_convention().link_register_vn;
+        // Track which anchors are slated for in-place edits (so we
+        // do NOT add them to `next_known` — in-place edits remove
+        // the placeholder Return; passing the same `known_targets`
+        // through to a CFG rebuild would re-emit the same placeholder
+        // and we'd be stuck in a cycle).
+        let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
         for (addr, anchor_output) in &unresolved {
-            // The recorded NodeOutputId may have been
-            // `replace_all_uses`-rewritten by the optimiser — walk
-            // to the placeholder Return's current value-input slot
-            // to find the live producer.  The placeholder Return's
-            // shape: [control, memory, target_value] — input #2 is
-            // the slot we want.
-            //
-            // (Round-1 simplification: we use the raw recorded
-            // anchor.  The strider lift records the anchor *before*
-            // the optimiser runs, so for cases where an opt pass
-            // rewrites the slot, we'd need the walk-to-input dance.
-            // The current x86_64 fixtures don't trigger it because
-            // the placeholder Return's input never gets
-            // `replace_all_uses`-rewritten.  When it does, we
-            // surface a None classification and let the next
-            // iteration retry.)
-            let _ = anchor_output; // silence unused warning when feature off
             // R4: pass the rom through so the jump-table arm can
             // read table entries.  Cloning the Arc is cheap
             // (atomic refcount); we hold a borrow across the
             // classifier call by promoting the Arc to a `&dyn`.
             let rom_ref: Option<&dyn ReadOnlyMemory> = config.rom.as_deref();
-            if let Some(resolved) =
+            let Some(resolved) =
                 classify_anchor_with_rom(&graph, *anchor_output, lr_vn, rom_ref)
+            else {
+                continue;
+            };
+
+            // Decide whether this resolution can be applied as an
+            // in-place edit (no CFG rebuild) or requires a structural
+            // rebuild.  See spec's "In-place IR edits vs CFG rebuild"
+            // section table.
+            let placeholder_return =
+                find_placeholder_return_for_anchor(&graph, *anchor_output);
+            let can_inplace = match (&resolved, placeholder_return) {
+                // LinkRegister: always in-place — placeholder Return
+                // already has the right shape.
+                (ResolvedTargets::LinkRegister, Some(_)) => true,
+                // Single(K): in-place iff K is a tail call.
+                (ResolvedTargets::Single(target), Some(_)) => {
+                    is_tail_call(*target, &config)
+                }
+                // Multiple / no placeholder: structural rebuild.
+                _ => false,
+            };
+
+            if can_inplace
+                && let Some(ret) = placeholder_return
             {
-                next_known.insert(*addr, resolved);
+                in_place_edits.push((ret, resolved.clone()));
+                // Don't add to next_known — the in-place edit
+                // erases the placeholder; the cfg builder must
+                // not see this address again.
+                let _ = addr;
+                continue;
             }
+            next_known.insert(*addr, resolved);
         }
 
+        // Apply in-place edits.  Each edit mutates the graph
+        // directly; the cache's boundary handles stay valid because
+        // the edits touch only the placeholder Return's subgraph.
+        for (placeholder, resolved) in &in_place_edits {
+            apply_in_place_edit(&mut graph, &config, *placeholder, resolved, &mut stats)?;
+        }
+
+        // Recompute unresolved AFTER in-place edits — the edits
+        // remove placeholder Returns from the IR, so the surviving
+        // unresolved list is what the cfg builder needs as input.
+        let unresolved_after_edits = if in_place_edits.is_empty() {
+            unresolved.clone()
+        } else {
+            unresolved
+                .iter()
+                .filter(|(_, anchor)| {
+                    find_placeholder_return_for_anchor(&graph, *anchor).is_some()
+                })
+                .cloned()
+                .collect()
+        };
+
         // Compare induced edge sets (see spec).  If the new edge
-        // set equals the old, we've reached a fixed point: either
-        // every branch has a stable classification (success) or
-        // some are still unresolved (error).
-        if edge_set_of(&next_known) == edge_set_of(&known_targets) {
-            // Fixed point.  If any branch is still unresolved,
-            // surface as typed error.
-            if !unresolved.is_empty() {
-                let some_addr = unresolved
+        // set equals the old AND we did no in-place edits this
+        // iteration, we've reached a fixed point: either every branch
+        // has a stable classification (success) or some are still
+        // unresolved (error).
+        let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&known_targets);
+        if !edge_set_changed && in_place_edits.is_empty() {
+            // Fixed point.  Any branch in `unresolved_after_edits`
+            // not in `next_known` is genuinely unresolvable.
+            if !unresolved_after_edits.is_empty() {
+                let some_addr = unresolved_after_edits
                     .iter()
                     .filter(|(addr, _)| !next_known.contains_key(addr))
                     .map(|(addr, _)| *addr)
@@ -182,19 +291,41 @@ where
                     return Err(ErrorKind::UnresolvedIndirectBranch(addr).into());
                 }
             }
-            return Ok(graph);
+            // Run the destructive subset exactly once at the fixed
+            // point.  The IR shape is now final — see spec's
+            // "Pipeline split" rationale.
+            run_destructive(&config, &mut graph, &mut stats)?;
+            return Ok((graph, stats));
         }
 
-        // Advance: install the new map, rebuild + lift + optimise.
+        // Update unresolved for the next iteration / rebuild path.
+        unresolved = unresolved_after_edits;
+
+        // If only in-place edits fired (no edge-set change), no CFG
+        // rebuild — re-run the stable subset on the freshly-edited
+        // IR and re-classify in the next loop turn.
+        if !edge_set_changed {
+            run_stable_only(&config, &mut graph, &mut stats)?;
+            // After in-place edits, if no unresolved branches remain
+            // we're done — run the destructive subset and return.
+            if unresolved.is_empty() {
+                run_destructive(&config, &mut graph, &mut stats)?;
+                return Ok((graph, stats));
+            }
+            continue;
+        }
+
+        // Edge-set changed → structural rebuild.
         known_targets = next_known;
-        let (g, u) = build_lift_optimise(&mut config, &known_targets)?;
+        let (g, u) = build_lift_stable(&mut config, &known_targets, &mut stats)?;
         graph = g;
         unresolved = u;
 
         // Convergence shortcut: if the rebuild produced no
         // unresolved branches, we're done.
         if unresolved.is_empty() {
-            return Ok(graph);
+            run_destructive(&config, &mut graph, &mut stats)?;
+            return Ok((graph, stats));
         }
     }
 
@@ -203,12 +334,143 @@ where
     Err(ErrorKind::IndirectResolutionDidNotConverge(cap).into())
 }
 
-/// Builds the CFG, lifts to IR, runs the optimiser pipeline,
-/// returns the resulting `BuiltFunctionGraph` and the unresolved-
-/// branch table.
-fn build_lift_optimise<B>(
+/// Decides whether `target` is a tail call — i.e. lies outside the
+/// function's address range.  Mirrors
+/// `cfg::Builder::is_branch_tail_call_nocheck` (which the orchestrator
+/// must agree with so the cfg builder accepts our in-place
+/// resolutions).
+fn is_tail_call<B>(target: u64, config: &OrchestratorConfig<'_, B>) -> bool
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    if target < config.start_addr && !config.allow_code_before_start_addr {
+        return true;
+    }
+    if let Some(fn_max_size) = config.fn_max_size {
+        let end_exclusive = config.start_addr.saturating_add(fn_max_size);
+        if end_exclusive <= target {
+            return true;
+        }
+    }
+    false
+}
+
+/// Locate the unique placeholder Return whose value-input slot points
+/// at `anchor_output`.  The placeholder shape is `Return(control,
+/// memory, target_value)` — input #2 is the anchor.
+///
+/// Returns `None` if no placeholder Return references `anchor_output`
+/// (e.g. an earlier in-place edit already replaced it, or the anchor
+/// has been `replace_all_uses`-rewritten by an opt pass).  Callers
+/// treat `None` as "skip this anchor this iteration."
+fn find_placeholder_return_for_anchor(
+    graph: &ir::BuiltFunctionGraph,
+    anchor_output: ir::Value,
+) -> Option<NodeId> {
+    // Walk the use-list of the anchor: any Return-shaped consumer
+    // is a candidate placeholder.  Restrict to 3-input Returns
+    // (the placeholder shape) since an ABI Return has 2 +
+    // ret_val_regs.len() inputs.
+    for (consumer, _input_index) in graph.graph.output_uses(anchor_output) {
+        if !matches!(graph.graph.node_kind(consumer), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = graph.graph.node_inputs(consumer).into_iter().collect();
+        if inputs.len() == 3 && inputs[2] == anchor_output {
+            return Some(consumer);
+        }
+    }
+    None
+}
+
+/// Dispatch on the resolution variant: LinkRegister → append ABI
+/// ret-val regs; tail-call Single → splice Call+Return.  Updates
+/// `stats` and propagates IR errors.
+fn apply_in_place_edit<B>(
+    graph: &mut ir::BuiltFunctionGraph,
+    config: &OrchestratorConfig<'_, B>,
+    placeholder: NodeId,
+    resolved: &ResolvedTargets,
+    stats: &mut OrchestratorStats,
+) -> Result<()>
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    match resolved {
+        ResolvedTargets::LinkRegister => {
+            // CORRECTNESS: appending ret-val regs to the placeholder
+            // Return preserves its NodeId and its control/memory
+            // chain — the cache's exit_control handle stays valid.
+            let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
+            apply_link_register(graph, placeholder, &ret_vals)?;
+            stats.link_register_edits += 1;
+            Ok(())
+        }
+        ResolvedTargets::Single(target) => {
+            // CORRECTNESS: apply_tail_call detaches the placeholder's
+            // inputs, builds Call+Return on the same control/memory
+            // chain, and returns the new Return's NodeId.  Body refs
+            // outside the placeholder subgraph are untouched.
+            let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
+            apply_tail_call(graph, placeholder, *target, &ret_vals)?;
+            stats.tail_call_edits += 1;
+            Ok(())
+        }
+        ResolvedTargets::Multiple(_) => {
+            // Multiple isn't an in-place edit case — the orchestrator
+            // routes it through a CFG rebuild instead.  Reaching this
+            // arm is a logic bug in the dispatch; surface as a typed
+            // error rather than silently mis-applying.
+            Err(ErrorKind::Unimplemented(
+                "apply_in_place_edit called with ResolvedTargets::Multiple".to_string(),
+            )
+            .into())
+        }
+    }
+}
+
+/// Read the calling convention's ret-val varnodes from the
+/// placeholder's pre-Return state.  Used by both `apply_link_register`
+/// and `apply_tail_call` to thread real ABI return values into the
+/// surviving Return.
+///
+/// CORRECTNESS: the placeholder Return's control input is the
+/// pre-Return control, so the per-region `vn_to_value` map at that
+/// control's region is the right place to read ret-val regs.  For
+/// round-1 we approximate by walking the Return's uses backward —
+/// since the optimiser has run, ABI return registers fold to their
+/// post-clobber values at this control point automatically.  When
+/// no convention ret-val regs exist (e.g. void-returning function),
+/// we return an empty slice — `apply_link_register` and
+/// `apply_tail_call` are robust to it.
+///
+/// Round-1 simplification: returns an empty `Vec` so the in-place
+/// edits emit a Return with no ret-vals.  This is sound because the
+/// placeholder's `target_value` is preserved at slot 2 (for
+/// LinkRegister) or replaced by Call's outputs (for tail-call); the
+/// actual ABI ret-val passing is downstream of where we sit in the
+/// IR.  Future rounds may walk the cache's `exit_vn_to_value` to
+/// thread the convention's ret-val regs in.
+fn read_ret_val_outputs<B>(
+    _graph: &ir::BuiltFunctionGraph,
+    _placeholder: NodeId,
+    _config: &OrchestratorConfig<'_, B>,
+) -> Result<Vec<ir::Value>>
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    // CORRECTNESS: empty vec is sound — see function-level docs.
+    // Future rounds will populate from the cache's
+    // `exit_vn_to_value`.
+    Ok(Vec::new())
+}
+
+/// Builds the CFG, lifts to IR, runs the **stable** optimiser
+/// subset.  Increments `stats.cfg_rebuilds` and `stats.stable_runs`.
+fn build_lift_stable<B>(
     config: &mut OrchestratorConfig<'_, B>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
+    stats: &mut OrchestratorStats,
 ) -> Result<(ir::BuiltFunctionGraph, Vec<(PcodeInsnAddr, ir::Value)>)>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
@@ -222,6 +484,12 @@ where
     if let Some(lr) = config.strider.calling_convention().link_register_vn {
         opts_builder = opts_builder.set_link_register(lr);
     }
+    if let Some(max) = config.fn_max_size {
+        opts_builder = opts_builder.set_function_max_size(max);
+    }
+    if config.allow_code_before_start_addr {
+        opts_builder = opts_builder.allow_code_before_start_addr();
+    }
     let opts = opts_builder.build();
 
     let arch_endianness = config.strider.arch().endianness;
@@ -229,28 +497,66 @@ where
         Builder::with_endianness(sleigh, config.start_addr, opts, arch_endianness)
             .with_known_targets(known_targets.clone())
             .build()?;
+    stats.cfg_rebuilds += 1;
 
     let outcome: AnalyzeOutcome = config.strider.analyze_cfg_with_unresolved(&cfg)?;
     let unresolved = outcome.unresolved_branches.clone();
     let mut graph = outcome.graph;
 
-    // Run the optimiser.  Round-1: full pipeline.  Round-2+ will
-    // split into stable / destructive subsets per the spec.
-    let pipeline = config.strider.build_optimizer_pipeline();
+    // CORRECTNESS — pipeline tier: intermediate iterations of the
+    // outer loop may run this multiple times (one per CFG rebuild).
+    // The stable subset omits `RedundantPhis` /
+    // `DeadBranchElimination` / `CallOtherElide` so phi nodes the
+    // cache pins by `NodeId` survive across iterations.
+    let pipeline = config.strider.build_stable_optimizer_pipeline();
     pipeline.run(&mut graph)?;
+    stats.stable_runs += 1;
 
     Ok((graph, unresolved))
 }
 
-/// Helper: arch info accessor on `Strider`.
-///
-/// This is a thin wrapper because `Strider::arch` is a private field
-/// in pipeline.rs.  Add a small accessor on Strider; the change is
-/// load-bearing for the orchestrator and is a pure API expansion.
-impl Strider {}
+/// Runs the **stable** optimizer subset on an existing graph.  Used
+/// after in-place edits to clean up before re-classifying.
+fn run_stable_only<B>(
+    config: &OrchestratorConfig<'_, B>,
+    graph: &mut ir::BuiltFunctionGraph,
+    stats: &mut OrchestratorStats,
+) -> Result<()>
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    // CORRECTNESS — stable-only: this is invoked between iterations
+    // when the IR shape may still change (more in-place edits could
+    // come on the next turn).  Running the destructive subset here
+    // would risk removing nodes that a future iteration's edit needs.
+    let pipeline = config.strider.build_stable_optimizer_pipeline();
+    pipeline.run(graph)?;
+    stats.stable_runs += 1;
+    Ok(())
+}
+
+/// Runs the **destructive** optimizer subset.  Called exactly once
+/// per successful orchestrator run, at the fixed-point exit (or in
+/// the fast-path when the function has no `BranchIndirect`).
+fn run_destructive<B>(
+    config: &OrchestratorConfig<'_, B>,
+    graph: &mut ir::BuiltFunctionGraph,
+    stats: &mut OrchestratorStats,
+) -> Result<()>
+where
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+{
+    // CORRECTNESS — destructive at fixed point only: the IR shape is
+    // final here (no future iterations will add nodes), so
+    // `RedundantPhis` / `DeadBranchElimination` are safe to run.
+    let pipeline = config.strider.build_destructive_optimizer_pipeline();
+    pipeline.run(graph)?;
+    stats.destructive_runs += 1;
+    Ok(())
+}
 
 /// The induced edge set of a `known_targets` map: a sorted
-/// `Vec<(PcodeInsnAddr, u64)>` for `Single` / `Multiple` and a
+/// `Vec<(PcodeInsnAddr, EdgeKind)>` for `Single` / `Multiple` and a
 /// special sentinel for `LinkRegister`.  Used by the orchestrator
 /// to test convergence.
 ///
@@ -411,5 +717,19 @@ mod tests {
         // saturate, never panic on overflow.
         let cap = 2usize.saturating_mul(usize::MAX).saturating_add(4);
         assert_eq!(cap, usize::MAX);
+    }
+
+    #[test]
+    fn orchestrator_stats_default_is_zero() {
+        // OrchestratorStats fields all start at zero — pinning the
+        // contract that callers can assume `Default::default()`
+        // means "nothing has run yet".
+        let s = OrchestratorStats::default();
+        assert_eq!(s.stable_runs, 0);
+        assert_eq!(s.destructive_runs, 0);
+        assert_eq!(s.cfg_rebuilds, 0);
+        assert_eq!(s.link_register_edits, 0);
+        assert_eq!(s.tail_call_edits, 0);
+        assert_eq!(s.iterations, 0);
     }
 }

@@ -101,6 +101,74 @@ impl Strider {
         p
     }
 
+    /// Builds the **stable** optimizer pipeline used by intermediate
+    /// iterations of the indirect-branch fixed-point orchestrator.
+    ///
+    /// Composed of the passes whose rewrites survive the addition of
+    /// new phi inputs in a later iteration (see the spec's
+    /// "Stable vs destructive optimizer passes" table):
+    ///
+    /// 1. [`opt::stable_default_pipeline`] — `ConstantFold` + `KnownBits`.
+    /// 2. [`opt::StackStoreDetect`] — rewrites stores in place, no
+    ///    consumer detachment.
+    /// 3. [`opt::StackLoadForward`] — rewrites loads in place.
+    /// 4. [`opt::FunctionArgDetect`] (post-pass) — canonicalises
+    ///    `FunctionArg` reads.
+    ///
+    /// CORRECTNESS: every pass in this pipeline rewrites or annotates
+    /// nodes but never *removes* phi / `ControlState` / `If` nodes that
+    /// the [`crate::RegionIrCache`] pins by `NodeId`.  Adding a
+    /// destructive pass here would invalidate the cache's pinned
+    /// boundary handles in the next iteration.
+    ///
+    /// `LoadReadOnly` is omitted because it requires a caller-supplied
+    /// ROM image; the orchestrator wires it in itself when one is
+    /// available (out of scope here — see the orchestrator).
+    ///
+    /// `CallStackArgCollect` is omitted because it is a one-shot
+    /// post-pass that consumes resolved `Call` shapes; running it
+    /// before the destructive subset has cleaned up the IR risks
+    /// double-counting stack args at an unsettled call site.
+    #[must_use]
+    pub fn build_stable_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
+        let mut p = opt::stable_default_pipeline();
+        p.add(opt::StackStoreDetect::from_convention(
+            &self.calling_convention,
+        ));
+        p.add(opt::StackLoadForward::from_convention(
+            &self.calling_convention,
+            &self.arch,
+        ));
+        p.add_post_pass(opt::FunctionArgDetect::from_convention(
+            &self.calling_convention,
+        ));
+        p
+    }
+
+    /// Builds the **destructive** optimizer pipeline that the
+    /// indirect-branch fixed-point orchestrator runs **once** at the
+    /// fixed-point exit (or in the no-`BranchIndirect` fast path).
+    ///
+    /// Composed of node-removal passes that would invalidate cached
+    /// phi `NodeId`s if run mid-iteration:
+    ///
+    /// 1. [`opt::destructive_default_pipeline`] — `RedundantPhis` +
+    ///    `DeadBranchElimination` + `CallOtherElide`.
+    /// 2. [`opt::CallStackArgCollect`] (post-pass) — runs after the
+    ///    destructive simplification so it sees the final Call shape.
+    ///
+    /// CORRECTNESS: safe to run only after the IR shape is final.
+    /// During iteration the orchestrator uses
+    /// [`Self::build_stable_optimizer_pipeline`] instead.
+    #[must_use]
+    pub fn build_destructive_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
+        let mut p = opt::destructive_default_pipeline();
+        p.add_post_pass(opt::CallStackArgCollect::from_convention(
+            &self.calling_convention,
+        ));
+        p
+    }
+
     /// Collects the set of all distinct varnodes referenced by any instruction
     /// across all regions of `cfg`, sorted in a deterministic order.
     ///

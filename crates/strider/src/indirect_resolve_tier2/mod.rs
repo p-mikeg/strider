@@ -28,4 +28,7 @@ pub mod orchestrator;
 pub use classify::{classify_anchor, classify_anchor_with_rom};
 pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
-pub use orchestrator::{run as run_orchestrator, OrchestratorConfig};
+pub use orchestrator::{
+    run as run_orchestrator, run_with_stats as run_orchestrator_with_stats, OrchestratorConfig,
+    OrchestratorStats,
+};
