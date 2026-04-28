@@ -37,7 +37,8 @@ pub mod indirect_resolve_tier2;
 pub use strider::ir_cache;
 pub use strider::{
     cache_key_for_region, count_uncached_regions, extend_predecessors_into,
-    extend_predecessors_with_handle, lift_new_regions_into, predecessor_diffs, AnalyzeOutcome,
+    extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
+    lift_new_regions_into_with_stats, predecessor_diffs, AnalyzeOutcome, LiftStats,
     PredecessorHandles, RegionIrCache, RegionIrEntry, RegionLiftHandles, Strider,
 };
 pub use error::{Error, ErrorKind, Result};

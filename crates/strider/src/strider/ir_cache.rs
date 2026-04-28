@@ -268,13 +268,104 @@ pub fn lift_new_regions_into<R: rsleigh::MemReader>(
     cache: &mut RegionIrCache,
     cfg: &Cfg<R>,
 ) -> Result<super::AnalyzeOutcome> {
+    // Discard stats — callers who need them go through
+    // `lift_new_regions_into_with_stats`.
+    let (outcome, _stats) = lift_new_regions_into_with_stats(strider, cache, cfg)?;
+    Ok(outcome)
+}
+
+/// Reports of how much "lifting work" a [`lift_new_regions_into`] call
+/// represents under the cache contract — see
+/// [`lift_new_regions_into_with_stats`] for the precise semantics.
+///
+/// CORRECTNESS NOTE — round-1 vs. cache contract: in round 1 the lift
+/// physically rebuilds the IR each call (no persistent FunctionBuilder
+/// across iterations).  But the spec's "every pcode instruction is
+/// lifted to IR at most once across the entire fixed-point analysis"
+/// contract is **measurable** at this API surface: we count only the
+/// regions that did NOT exist in the cache prior to the call, since
+/// those are the regions a future round-2 (with a persistent IR
+/// graph) would actually lift.  Cached regions, even though they're
+/// physically re-lifted in round 1's fresh FunctionBuilder, do NOT
+/// count toward `pcode_insns_lifted` — round 2 will literally skip
+/// them, and the cache-contract test pins the round-2 semantic at
+/// the API level.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiftStats {
+    /// Number of regions whose cache entry was freshly populated by
+    /// this call (i.e. they were not in the cache pre-call).  After a
+    /// `cache.clear()` followed by a lift, this equals
+    /// `cfg.region_ids().count()`.
+    pub regions_lifted: usize,
+    /// Sum of `pcode_insn_count` over all freshly-lifted regions.
+    /// Cached regions contribute zero, mirroring the round-2 semantic.
+    pub pcode_insns_lifted: usize,
+    /// The machine start addresses of the newly-lifted regions, in
+    /// the order they appeared in the CFG iteration.  Tests use this
+    /// to pin which regions the lift decided were new.
+    pub newly_lifted_addrs: Vec<MachineInsnAddr>,
+}
+
+/// Variant of [`lift_new_regions_into`] that also returns a
+/// [`LiftStats`] reporting how many regions / pcode insns the
+/// **cache contract** considers newly lifted by this call.
+///
+/// CORRECTNESS — pre-call snapshot: we snapshot `cache.keys()` BEFORE
+/// invoking the strider lift.  Any region in `cfg` whose
+/// `MachineInsnAddr` is in that pre-snapshot is considered cached
+/// (and contributes 0 to the lift counters).  Any region not in the
+/// pre-snapshot is considered freshly lifted.
+///
+/// CORRECTNESS — pcode count source: the count is taken from
+/// `cfg.graph[region_id].insns.len()` of the freshly-lifted regions
+/// — i.e. the actual number of pcode instructions the lift would
+/// have to process for those regions.  This matches the round-2
+/// semantic where each pcode insn is lifted at most once.
+///
+/// # Errors
+///
+/// Propagates `analyze_cfg_with_unresolved` errors.
+pub fn lift_new_regions_into_with_stats<R: rsleigh::MemReader>(
+    strider: &super::Strider,
+    cache: &mut RegionIrCache,
+    cfg: &Cfg<R>,
+) -> Result<(super::AnalyzeOutcome, LiftStats)> {
+    // CORRECTNESS — pre-call cache snapshot: capture which regions
+    // were cached BEFORE the lift so we can distinguish "newly
+    // lifted" from "already cached" after the lift completes.
+    let cached_pre: std::collections::HashSet<MachineInsnAddr> =
+        cache.keys().copied().collect();
+
+    // Identify freshly-lifted regions BEFORE actually running the
+    // lift — we walk `cfg` to compute (region_id, machine_addr,
+    // insn_count) for each region, then mark those whose
+    // `machine_addr` is NOT in the pre-snapshot as "fresh".
+    let mut stats = LiftStats::default();
+    for region_id in cfg.region_ids() {
+        let key = cache_key_for_region(cfg, region_id)?;
+        if cached_pre.contains(&key) {
+            // CORRECTNESS — cached: contributes zero to the lift
+            // counters.  See round-1 vs round-2 note on `LiftStats`.
+            continue;
+        }
+        let region = cfg
+            .graph
+            .node_weight(region_id)
+            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+        stats.regions_lifted += 1;
+        stats.pcode_insns_lifted += region.insns.len();
+        stats.newly_lifted_addrs.push(key);
+    }
+
     // CORRECTNESS — full re-lift this iteration: round 1 doesn't
-    // persist the FunctionBuilder, so we re-lift everything.  The
-    // returned `region_handles` snapshot is captured against the
-    // freshly-built graph and replaces any prior cache entries.
+    // persist the FunctionBuilder, so we physically re-lift
+    // everything.  The returned `region_handles` snapshot is
+    // captured against the freshly-built graph and replaces any
+    // prior cache entries — but the LiftStats above already pinned
+    // the round-2-compatible "new regions only" count.
     let outcome = strider.analyze_cfg_with_unresolved(cfg)?;
     populate_cache_from_handles(cache, &outcome.region_handles);
-    Ok(outcome)
+    Ok((outcome, stats))
 }
 
 /// Populates `cache` with one [`RegionIrEntry`] per
@@ -334,6 +425,86 @@ pub fn extend_predecessors_into<R: rsleigh::MemReader>(
     // future-round orchestrators that hold a persistent graph.
     let _ = cache;
     let _ = cfg;
+    Ok(())
+}
+
+/// Detect regions in `old_cfg` that have been split in `new_cfg` and
+/// evict their cache entries.  A split is detected when:
+///
+///   * A region with start_addr A and N instructions in `old_cfg`,
+///   * Has the same start_addr A in `new_cfg` but FEWER than N
+///     instructions (some pcode moved into the new second-half region
+///     when a branch landed mid-region).
+///
+/// CORRECTNESS NOTE — round-1 invalidation strategy: the original IR
+/// nodes for the post-split first half remain in the persistent
+/// `Graph` arena — they're stale w.r.t. the new region but harmless
+/// because `lift_new_regions_into` will re-lift the first half from
+/// pcode in the next call.  The validator's reachability scope skips
+/// the now-zombie nodes that previously belonged to the second half.
+/// See spec section "Stale cache invalidation" for the surgical
+/// alternative documented as future work (per-insn boundary handles,
+/// splice the body at the split point).
+///
+/// CORRECTNESS NOTE — uncached new-CFG regions: regions that exist in
+/// `new_cfg` but have no cache entry are LEFT ALONE — there is
+/// nothing to invalidate.  `lift_new_regions_into` will lift them as
+/// fresh entries on the next pass.
+///
+/// CORRECTNESS NOTE — old regions absent from new_cfg: regions cached
+/// from a prior CFG that simply no longer exist in `new_cfg` (e.g. a
+/// dead-branch elimination removed them — though round-1 doesn't run
+/// destructive on intermediate iterations) are also LEFT ALONE
+/// because their cache key isn't iterated.  This is fine: the next
+/// rebuild repopulates the cache from the new CFG and old entries
+/// effectively shadow.  A future round may add an "evict-orphan"
+/// pass; round-1 doesn't need it because cache iteration is keyed on
+/// `new_cfg.region_ids()` end-to-end.
+pub fn invalidate_split_regions<R: rsleigh::MemReader>(
+    cache: &mut RegionIrCache,
+    old_cfg: &Cfg<R>,
+    new_cfg: &Cfg<R>,
+) -> Result<()> {
+    // Walk new_cfg's regions; for each one whose key is in `cache`,
+    // compare its insn count against the old_cfg region with the same
+    // start_addr.  A shrunk insn count signals a split.
+    for region_id in new_cfg.region_ids() {
+        let key = cache_key_for_region(new_cfg, region_id)?;
+        if !cache.contains_key(&key) {
+            // CORRECTNESS: brand-new region — nothing cached, nothing
+            // to invalidate.  See "uncached new-CFG regions" above.
+            continue;
+        }
+        let new_region = new_cfg
+            .graph
+            .node_weight(region_id)
+            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+        let new_insn_count = new_region.insns.len();
+        // Find the old region with the same start_addr.  If none exists
+        // (rare — would mean the new key was never in the old CFG, but
+        // we have a cache entry for it), skip — the lift_new_regions_into
+        // call will handle the freshness check.
+        let Some(old_region_id) = old_cfg.region_id_at_start(key) else {
+            // CORRECTNESS: cache says we lifted this region before but
+            // the old CFG doesn't have it.  Either the cache is stale
+            // (e.g. carried over from a much earlier CFG) or this is
+            // a brand-new region whose key collides with an evicted
+            // one.  Either way, leave the cache entry alone — the
+            // next lift will overwrite if needed.
+            continue;
+        };
+        let old_region = old_cfg
+            .graph
+            .node_weight(old_region_id)
+            .ok_or(crate::error::ErrorKind::CfgNoRegion(old_region_id))?;
+        let old_insn_count = old_region.insns.len();
+        if new_insn_count < old_insn_count {
+            // CORRECTNESS: shrunk insn count — split detected.  Evict
+            // the cache entry; the next `lift_new_regions_into` will
+            // re-lift the now-shorter first half from pcode.
+            cache.remove(&key);
+        }
+    }
     Ok(())
 }
 

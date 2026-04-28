@@ -7,8 +7,9 @@ mod vn_io;
 
 pub use ir_cache::{
     cache_key_for_region, count_uncached_regions, extend_predecessors_into,
-    extend_predecessors_with_handle, lift_new_regions_into, predecessor_diffs,
-    PredecessorHandles, RegionIrCache, RegionIrEntry,
+    extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
+    lift_new_regions_into_with_stats, predecessor_diffs, LiftStats, PredecessorHandles,
+    RegionIrCache, RegionIrEntry,
 };
 pub use pipeline::{AnalyzeOutcome, RegionLiftHandles, Strider};
 

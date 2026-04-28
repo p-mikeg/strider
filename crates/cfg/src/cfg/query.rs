@@ -90,4 +90,33 @@ impl<R: rsleigh::MemReader> Cfg<R> {
             .neighbors_directed(region_id, petgraph::Incoming)
             .count()
     }
+
+    /// Returns the `RegionId` of the region whose **start machine
+    /// address** equals `addr`, or `None` if no such region exists.
+    ///
+    /// Used by the strider fixed-point orchestrator's
+    /// `invalidate_split_regions` primitive to correlate cache entries
+    /// (keyed by `MachineInsnAddr`) with regions in a freshly rebuilt
+    /// CFG.  Distinct from [`Self::predecessor_count`] / region lookup
+    /// by id: this is a content-keyed lookup that is stable across CFG
+    /// rebuilds (same machine address always produces the same key).
+    ///
+    /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
+    /// equals `addr` exactly.  Mid-region matches return `None` — the
+    /// caller is interested in the canonical region whose lift would
+    /// populate the cache entry, which is the region that *starts* at
+    /// `addr`.  After a `split_region` event, the second-half region's
+    /// start is a different machine address (the split point), so this
+    /// lookup transparently distinguishes pre- and post-split halves.
+    #[must_use]
+    pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
+        for rid in self.graph.node_indices() {
+            if let Some(region) = self.graph.node_weight(rid) {
+                if region.start_addr.machine_addr == addr {
+                    return Some(rid);
+                }
+            }
+        }
+        None
+    }
 }

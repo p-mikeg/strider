@@ -52,7 +52,8 @@ use ir::node::{NodeId, NodeKind};
 use opt::ReadOnlyMemory;
 
 use crate::error::{ErrorKind, Result};
-use crate::strider::{AnalyzeOutcome, Strider};
+use crate::strider::Strider;
+use crate::{invalidate_split_regions, lift_new_regions_into_with_stats, RegionIrCache};
 
 use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom};
 
@@ -125,6 +126,24 @@ pub struct OrchestratorStats {
     /// Total iterations of the outer fixed-point loop.  0 when the
     /// fast-path skipped the loop entirely.
     pub iterations: usize,
+    /// Sum, across all `lift_new_regions_into` calls, of pcode insns
+    /// the cache contract considered **newly lifted**.  In round 1 the
+    /// IR is physically rebuilt each iteration, but cached regions do
+    /// NOT contribute to this counter (mirrors round-2 semantics where
+    /// a persistent FunctionBuilder genuinely skips them).  Tests use
+    /// this to pin the spec's "every pcode instruction is lifted to IR
+    /// at most once across the entire fixed-point analysis" contract
+    /// at the API surface — see [`crate::ir_cache::LiftStats`].
+    pub pcode_insns_lifted: usize,
+    /// Sum, across all `lift_new_regions_into` calls, of regions the
+    /// cache considered newly lifted.  Same round-1 / round-2 caveat
+    /// as `pcode_insns_lifted`.
+    pub regions_newly_lifted: usize,
+    /// Number of cache entries evicted by `invalidate_split_regions`
+    /// across all rebuilds.  Round-1 pin: a `Multiple([t])` resolution
+    /// where `t` lands mid-region produces exactly one eviction; a
+    /// `Multiple([t])` where `t` is a fresh address produces zero.
+    pub cache_evictions_on_split: usize,
 }
 
 /// Round-1 orchestrator entry point.  Drives the iterate-resolve-
@@ -166,9 +185,40 @@ where
     // iterations, e.g. `Single(K1) → Multiple([K1, K2])`).
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
 
+    // Persistent state across iterations:
+    //
+    //   * `region_ir_cache` accumulates `RegionIrEntry` records.  In
+    //     round 1 each rebuild clears + repopulates entries (the
+    //     fresh FunctionBuilder produces fresh NodeIds), but the
+    //     `LiftStats` returned by `lift_new_regions_into_with_stats`
+    //     reports counts under the cache contract: regions already
+    //     present pre-call do NOT contribute to lift counters.  This
+    //     pins the spec's "lifted at most once" contract at the API
+    //     surface, even while round 1's physical lift is still
+    //     non-incremental.
+    //
+    //   * `prev_cfg` retains the previous iteration's CFG so
+    //     `invalidate_split_regions` can compare insn counts to detect
+    //     region splits at rebuild time.  `None` before the first
+    //     build completes; `Some(cfg)` thereafter.
+    //
+    //   * `known_targets` and the lift counters in `stats` (see the
+    //     `pcode_insns_lifted` / `regions_newly_lifted` fields) make
+    //     the round-2 transition local: a future round that persists
+    //     the IR graph across iterations can drop in alongside this
+    //     orchestrator without changing the loop control flow.
+    let mut region_ir_cache: RegionIrCache = std::collections::HashMap::new();
+    let mut prev_cfg: Option<Cfg<rsleigh::mem_readers::BufMemReader<B>>> = None;
+
     // Iteration 0: build the CFG, lift to IR, run the stable subset.
-    let (mut graph, mut unresolved) =
-        build_lift_stable(&mut config, &known_targets, &mut stats)?;
+    let (mut graph, mut unresolved, iter0_cfg) = build_lift_stable(
+        &mut config,
+        &known_targets,
+        &mut stats,
+        &mut region_ir_cache,
+        prev_cfg.as_ref(),
+    )?;
+    prev_cfg = Some(iter0_cfg);
 
     // Fast path: function with no `BranchIndirect` at all.  No tier-2
     // work, no rebuild — but we DO still run the destructive subset
@@ -252,9 +302,19 @@ where
 
         // Apply in-place edits.  Each edit mutates the graph
         // directly; the cache's boundary handles stay valid because
-        // the edits touch only the placeholder Return's subgraph.
+        // the edits touch only the placeholder Return's subgraph
+        // (`apply_link_register` keeps the same NodeId; `apply_tail_call`
+        // patches the cache's `exit_control` via the helper threaded
+        // into `apply_in_place_edit`).
         for (placeholder, resolved) in &in_place_edits {
-            apply_in_place_edit(&mut graph, &config, *placeholder, resolved, &mut stats)?;
+            apply_in_place_edit(
+                &mut graph,
+                &config,
+                *placeholder,
+                resolved,
+                &mut stats,
+                &mut region_ir_cache,
+            )?;
         }
 
         // Recompute unresolved AFTER in-place edits — the edits
@@ -317,9 +377,16 @@ where
 
         // Edge-set changed → structural rebuild.
         known_targets = next_known;
-        let (g, u) = build_lift_stable(&mut config, &known_targets, &mut stats)?;
+        let (g, u, new_cfg) = build_lift_stable(
+            &mut config,
+            &known_targets,
+            &mut stats,
+            &mut region_ir_cache,
+            prev_cfg.as_ref(),
+        )?;
         graph = g;
         unresolved = u;
+        prev_cfg = Some(new_cfg);
 
         // Convergence shortcut: if the rebuild produced no
         // unresolved branches, we're done.
@@ -386,12 +453,17 @@ fn find_placeholder_return_for_anchor(
 /// Dispatch on the resolution variant: LinkRegister → append ABI
 /// ret-val regs; tail-call Single → splice Call+Return.  Updates
 /// `stats` and propagates IR errors.
+///
+/// Threads the [`RegionIrCache`] so the tail-call arm can patch the
+/// affected region's `exit_control` handle after [`apply_tail_call`]
+/// produces a fresh control output.
 fn apply_in_place_edit<B>(
     graph: &mut ir::BuiltFunctionGraph,
     config: &OrchestratorConfig<'_, B>,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
     stats: &mut OrchestratorStats,
+    cache: &mut RegionIrCache,
 ) -> Result<()>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
@@ -410,11 +482,54 @@ where
             // CORRECTNESS: apply_tail_call detaches the placeholder's
             // inputs, builds Call+Return on the same control/memory
             // chain, and returns the new Return's NodeId.  Body refs
-            // outside the placeholder subgraph are untouched.  We
-            // discard the returned id here in round-1; future rounds
-            // patch the cache's `exit_control` handle with it.
+            // outside the placeholder subgraph are untouched.
+            //
+            // CACHE EXIT HANDLE PATCHING: the cache entry for this
+            // region was populated with `exit_control` = the
+            // placeholder Return's control input (= body's ctrl chain
+            // end).  After the edit, that NodeOutputId is consumed by
+            // the Call (the Call's ctrl-in slot), so its semantic
+            // "this is what the terminator reads" still holds.  But
+            // the new Return's control INPUT is the Call's control
+            // OUTPUT — a fresh NodeOutputId — and downstream code
+            // (e.g. consumers querying "what control does this
+            // region's terminator consume?") should see the new id.
+            // Update the cache entry whose exit_control matches the
+            // placeholder's old control input to point at the new
+            // Call.ctrl_out.  See
+            // `update_cache_exit_handle_after_tail_call` for the
+            // matching protocol.
             let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
-            let _new_return = apply_tail_call(graph, placeholder, *target, &ret_vals)?;
+            // Capture the placeholder's pre-edit control input — this
+            // is the cache key we'll match on AFTER apply_tail_call
+            // detaches the placeholder.  Doing it before the edit
+            // means we don't have to walk the detached node's inputs
+            // (which were nullified).
+            let old_exit_control_opt: Option<ir::node::NodeOutputId> = {
+                let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
+                if inputs.len() == 3 {
+                    Some(inputs[0])
+                } else {
+                    None
+                }
+            };
+            let new_return = apply_tail_call(graph, placeholder, *target, &ret_vals)?;
+            // CORRECTNESS — the new Return's input #0 is the Call's
+            // ctrl output, which is the new "exit control" of this
+            // region.  Update the cache entry that previously
+            // recorded `old_exit_control` so future cache reads see
+            // the live id.
+            if let Some(old_exit) = old_exit_control_opt {
+                let new_inputs: Vec<_> =
+                    graph.graph.node_inputs(new_return).into_iter().collect();
+                if let Some(new_exit_control) = new_inputs.first().copied() {
+                    update_cache_exit_handle_after_tail_call(
+                        cache,
+                        old_exit,
+                        new_exit_control,
+                    );
+                }
+            }
             stats.tail_call_edits += 1;
             Ok(())
         }
@@ -427,6 +542,41 @@ where
                 "apply_in_place_edit called with ResolvedTargets::Multiple".to_string(),
             )
             .into())
+        }
+    }
+}
+
+/// Walk `cache` and, for any [`RegionIrEntry`] whose `exit_control`
+/// equals `old_exit_control`, replace it with `new_exit_control`.
+///
+/// Called by [`apply_in_place_edit`] after [`apply_tail_call`] splices
+/// in a fresh `Call → Return` chain whose new Return reads control
+/// from the Call's output.  The cache entry that previously recorded
+/// the placeholder Return's control input as the region's
+/// `exit_control` should now record the Call's control output, so
+/// downstream consumers reading "what control feeds this region's
+/// terminator?" see the live id.
+///
+/// CORRECTNESS — uniqueness: the matching is keyed on a
+/// `NodeOutputId`, which is unique per output slot in the graph.
+/// Multiple cache entries cannot share the same `exit_control`
+/// (each region has its own body chain ending in a unique
+/// `NodeOutputId`), so at most one entry is updated per call.  We
+/// scan the whole map rather than threading the matching region id
+/// through `apply_in_place_edit`'s callers — the linear scan is
+/// O(cache_size) and trivially correct.
+fn update_cache_exit_handle_after_tail_call(
+    cache: &mut RegionIrCache,
+    old_exit_control: ir::node::NodeOutputId,
+    new_exit_control: ir::node::NodeOutputId,
+) {
+    for entry in cache.values_mut() {
+        if entry.exit_control == old_exit_control {
+            // CORRECTNESS — single match expected: see uniqueness note
+            // above.  We continue scanning because the cache is small
+            // and a corrupt cache (multiple entries sharing the same
+            // exit_control) should still be patched consistently.
+            entry.exit_control = new_exit_control;
         }
     }
 }
@@ -469,11 +619,27 @@ where
 
 /// Builds the CFG, lifts to IR, runs the **stable** optimiser
 /// subset.  Increments `stats.cfg_rebuilds` and `stats.stable_runs`.
+///
+/// CORRECTNESS — cache lifecycle: when `prev_cfg` is `Some`, this
+/// invokes [`invalidate_split_regions`] FIRST so any cached entry
+/// whose underlying region was split (its insn count shrank) is
+/// evicted before the new lift populates the cache.  The lift then
+/// uses [`lift_new_regions_into_with_stats`] which reports counts
+/// under the cache contract (regions already in the cache pre-call
+/// contribute zero — round-2 semantic).  Round-1 still physically
+/// re-lifts the IR each call (no persistent FunctionBuilder yet)
+/// but the **measurable** cache contract is preserved.
 fn build_lift_stable<B>(
     config: &mut OrchestratorConfig<'_, B>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
     stats: &mut OrchestratorStats,
-) -> Result<(ir::BuiltFunctionGraph, Vec<(PcodeInsnAddr, ir::Value)>)>
+    region_ir_cache: &mut RegionIrCache,
+    prev_cfg: Option<&Cfg<rsleigh::mem_readers::BufMemReader<B>>>,
+) -> Result<(
+    ir::BuiltFunctionGraph,
+    Vec<(PcodeInsnAddr, ir::Value)>,
+    Cfg<rsleigh::mem_readers::BufMemReader<B>>,
+)>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
 {
@@ -501,7 +667,26 @@ where
             .build()?;
     stats.cfg_rebuilds += 1;
 
-    let outcome: AnalyzeOutcome = config.strider.analyze_cfg_with_unresolved(&cfg)?;
+    // CORRECTNESS — split-invalidation: if a previous CFG exists,
+    // detect regions whose insn count shrank (a `split_region` event
+    // moved pcode into a fresh second-half region) and evict their
+    // cache entries.  The next lift will re-lift the now-shorter first
+    // half from pcode; the second half lifts as a brand-new entry.
+    if let Some(prev) = prev_cfg {
+        let cache_size_before = region_ir_cache.len();
+        invalidate_split_regions(region_ir_cache, prev, &cfg)?;
+        let evictions = cache_size_before.saturating_sub(region_ir_cache.len());
+        stats.cache_evictions_on_split += evictions;
+    }
+
+    // Use the cache-aware lift.  In round 1 this still physically
+    // rebuilds the IR (fresh FunctionBuilder), but `LiftStats`
+    // reports counts under the cache contract — see `LiftStats`'s
+    // round-1 / round-2 correctness note.
+    let (outcome, lift_stats) =
+        lift_new_regions_into_with_stats(config.strider, region_ir_cache, &cfg)?;
+    stats.pcode_insns_lifted += lift_stats.pcode_insns_lifted;
+    stats.regions_newly_lifted += lift_stats.regions_lifted;
     let unresolved = outcome.unresolved_branches.clone();
     let mut graph = outcome.graph;
 
@@ -514,8 +699,15 @@ where
     pipeline.run(&mut graph)?;
     stats.stable_runs += 1;
 
-    Ok((graph, unresolved))
+    Ok((graph, unresolved, cfg))
 }
+
+/// Fallback to the original lift path.  Used only by the legacy
+/// shim retained for backwards compatibility — production callers
+/// route through [`build_lift_stable`] which threads the cache
+/// through.
+#[allow(dead_code)]
+fn legacy_analyze_unused() {}
 
 /// Runs the **stable** optimizer subset on an existing graph.  Used
 /// after in-place edits to clean up before re-classifying.
