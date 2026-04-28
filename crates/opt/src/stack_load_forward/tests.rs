@@ -850,3 +850,356 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     );
     Ok(())
 }
+
+// ── F3 / BUG-30: public helper for the indirect-branch classifier ─────────
+//
+// `find_stack_stored_value_at_offset` walks the memory chain backward from
+// a given `mem` looking for a `StackStore { offset == requested }` whose
+// value type matches the caller's expectation.  Used by the tier-2
+// indirect-branch classifier to look up entries of a stack-array of label
+// addresses one offset at a time (BUG-30 — computed-goto via local stack
+// array).  These tests pin the helper's contract in isolation, before the
+// classifier wires it in.
+
+/// One stack store at the requested offset, value type matches: helper
+/// returns the stored value's output id.
+#[test]
+fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    let twentyfour = b.build_int_const(24u64, NodeOutputType::U64);
+    let addr =
+        b.build_int_binary_operation(sp_val, twentyfour, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64);
+    b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
+    // Touch the stored memory token so it survives DCE: emit a load of the
+    // same slot and return the loaded value.
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    // Run StackStoreDetect so the raw Store becomes a StackStore (the helper
+    // matches StackStore, not raw Store, mirroring probe's primary arm).
+    // Run only StackStoreDetect (not StackLoadForward) so the load + its
+    // memory input survive for inspection.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    // Reach the surviving Load and use its memory-input as the chain root.
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives without StackLoadForward");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    let result = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -24,
+        NodeOutputType::U64,
+        sp,
+        &mut memo,
+    );
+    let value = result.expect("helper should find StackStore at offset -24");
+    // The found value must be the stored constant 0xCAFE.
+    assert_eq!(fg.int_const_val(value), Some(0xCAFE));
+    Ok(())
+}
+
+/// Walks past a non-aliasing intermediate StackStore (different offset)
+/// and finds the requested-offset store.
+#[test]
+fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    // Two stores at distinct offsets that both belong to the chain reaching
+    // a final load — mimics the BUG-30 array-of-labels prologue.
+    let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+    let off16 = b.build_int_const(16u64, NodeOutputType::U64);
+    let addr_24 =
+        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let addr_16 =
+        b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64);
+    let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::U64);
+    b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
+    b.build_store(addr_16, v_16, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    // Look up offset -16: the chain has the latest store at -16 and an
+    // earlier store at -24 (non-aliasing).  Helper must find -16's value.
+    let v16 = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -16,
+        NodeOutputType::U64,
+        sp,
+        &mut memo,
+    );
+    assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
+
+    // Look up offset -24: must walk through the -16 store (non-aliasing) and
+    // find -24's value.
+    let v24 = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -24,
+        NodeOutputType::U64,
+        sp,
+        &mut memo,
+    );
+    assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
+    Ok(())
+}
+
+/// No store at the requested offset: helper returns None (chain bottoms out
+/// at InitialMemory without producing a value).
+#[test]
+fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+    let addr_24 =
+        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64);
+    b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    let result = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -8,  // No store at -8.
+        NodeOutputType::U64,
+        sp,
+        &mut memo,
+    );
+    assert!(result.is_none(), "no store at -8 → helper returns None");
+    Ok(())
+}
+
+/// Aliasing intermediate StackStore (overlaps the requested offset) is the
+/// LIVE value at that slot — the helper returns the live store's value, not
+/// the older one.
+#[test]
+fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+    let addr_24 =
+        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let first = b.build_int_const(0xAAAAu64, NodeOutputType::U64);
+    let second = b.build_int_const(0xBBBBu64, NodeOutputType::U64);
+    // Two stores at the SAME offset; the second alias-overwrites the first.
+    b.build_store(addr_24, first, rsleigh::VnSpace::RAM)?;
+    b.build_store(addr_24, second, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    let result = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -24,
+        NodeOutputType::U64,
+        sp,
+        &mut memo,
+    );
+    // The helper must return the *live* (latest) value: the second store.
+    let v = result.expect("must find live store");
+    assert_eq!(fg.int_const_val(v), Some(0xBBBB));
+    Ok(())
+}
+
+/// Type mismatch (store width != requested width at the matching offset)
+/// returns None — the helper is strict about types because the classifier
+/// needs an exact-typed match to safely treat the value as a target address.
+#[test]
+fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+    let addr_24 =
+        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    // Store U32, then load U64 — overlapping byte ranges intersect.
+    let stored = b.build_int_const(0xAAAAu64, NodeOutputType::U32);
+    b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    let result = find_stack_stored_value_at_offset(
+        &fg.graph,
+        mem,
+        -24,
+        NodeOutputType::U64, // request U64 from a U32 store
+        sp,
+        &mut memo,
+    );
+    assert!(result.is_none(), "type mismatch at offset -24 → None");
+    Ok(())
+}
+
+/// End-to-end recipe: the classifier loop calls the helper once per i to
+/// enumerate a stack-array of label addresses.  Mirrors the x64 BUG-30
+/// fixture's prologue (sp-24 → L0, sp-16 → L1).  Asserts the helper
+/// produces N IntConst values that the classifier can then return as
+/// `ResolvedTargets::Multiple`.
+#[test]
+fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let sp = sp64_vn();
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let sp_val = b.read_variable(&sp)?;
+    // Mirror the x64 BUG-30 prologue: store target0 at sp-24, target1 at sp-16.
+    let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+    let off16 = b.build_int_const(16u64, NodeOutputType::U64);
+    let addr_24 =
+        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let addr_16 =
+        b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
+    let target0 = b.build_int_const(0x401190u64, NodeOutputType::U64);
+    let target1 = b.build_int_const(0x401180u64, NodeOutputType::U64);
+    b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
+    b.build_store(addr_16, target1, rsleigh::VnSpace::RAM)?;
+    // The actual load uses a symbolic address, but for THIS helper test we
+    // only exercise the "look up by concrete offset" API — the symbolic
+    // shape match lives in the classifier (tested separately in
+    // `tier2_classify`).
+    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+    b.build_return(Some(loaded), &[])?;
+    let mut fg = b.build()?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let load = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .expect("Load survives");
+    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+
+    let mut memo = SpExprMemo::default();
+    // The classifier loop: for each i in 0..2, look up base + i*stride.
+    let base = -24i64;
+    let stride = 8i64;
+    let mut targets = Vec::new();
+    for i in 0..2 {
+        let off = base + i * stride;
+        let v = find_stack_stored_value_at_offset(
+            &fg.graph,
+            mem,
+            off,
+            NodeOutputType::U64,
+            sp,
+            &mut memo,
+        )
+        .unwrap_or_else(|| panic!("must find store at offset {off}"));
+        let c = fg.int_const_val(v).expect("stored value is IntConst");
+        targets.push(c as u64);
+    }
+    assert_eq!(targets, vec![0x401190u64, 0x401180u64]);
+    Ok(())
+}

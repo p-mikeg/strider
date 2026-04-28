@@ -9,7 +9,7 @@
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use target::Endianness;
 
 use crate::error::Result;
@@ -366,6 +366,154 @@ fn realize(
     }
 }
 
+
+// ── Public helper for the tier-2 indirect-branch classifier (BUG-30) ──────
+//
+// `try_forward_load` rewrites the load by bottoming-out the memory chain at
+// a `StackStore` and re-using its data slot.  When the load address has a
+// concrete SP-relative offset, that's straightforward.  But the BUG-30
+// computed-goto-via-stack-array shape has a *symbolic* offset
+// (`sp + base + idx*stride`) — the per-i target lives at offset
+// `base + i*stride` for i in [0, N), bounded by KnownBits.
+//
+// The tier-2 classifier needs to enumerate per-i values without rewriting
+// the load (no IR primitive expresses "value depends on idx" without a
+// `ControlState` for ValuePhi to bind to).  This helper exposes the
+// `StackStore`-chain walk as a pub function: given a memory chain root
+// and a concrete offset, return the `NodeOutputId` of the value stored
+// there (or `None` when the chain has no matching store, has an aliasing
+// intermediate, or terminates at `InitialMemory`).
+//
+// SOUNDNESS — same algorithm as [`probe`]'s `StackStore` / `Store`
+// arms, restricted to the no-MemPhi case (the classifier asks one
+// concrete offset at a time):
+//   * `StackStore { offset == requested }` with matching value type:
+//     return the stored `data` output.  This is sound because no later
+//     write can have aliased the slot — we walked here from the load's
+//     memory input through strictly-earlier stores, and the offset
+//     equality check is exact (StackStoreDetect tagged it).
+//   * `StackStore` at a different offset: skip iff the byte ranges are
+//     provably disjoint (`ranges_disjoint`); recurse on the prior
+//     memory.
+//   * `Store(_)` (raw, non-StackStore): probe its address.  If it's
+//     not SP-rooted (`decompose_sp` returns `None`), it cannot alias
+//     a stack slot; recurse.  If it IS SP-rooted (`Terminal`), recurse
+//     iff disjoint.  `SpExpr::Phi` (SP through a phi) is conservatively
+//     treated as aliasing → bail.
+//   * `MemPhi`: cross-region join.  This helper does NOT recurse
+//     across MemPhi (returns `None`) — the BUG-30 case is single-
+//     region (the prologue stores and the dispatch load live in the
+//     same region) and the classifier asks one offset at a time, so
+//     the "all preds agree" reasoning the existing `probe` does for
+//     ValuePhi synthesis is unnecessary here.  Future extension:
+//     handle MemPhi by recursing into preds and requiring all to
+//     return the same `NodeOutputId`.
+//   * `InitialMemory` / anything else: return `None`.
+//
+// Type strictness: the helper returns `None` if the StackStore's value
+// type doesn't equal `value_type` exactly.  Narrow-load-from-wider-store
+// (which `probe` handles via `ResolveShape::Narrow`) is intentionally
+// NOT implemented here — the classifier only consumes IntConst targets,
+// and a Truncate(IntConst) folds to IntConst via ConstantFold, so the
+// narrow case shows up as a wide-typed IntConst-valued store that the
+// classifier can read directly.
+
+/// Walks the memory chain backward from `mem` looking for a
+/// [`NodeKind::StackStore`] at SP-relative offset `offset` whose stored
+/// value has type `value_type`.  Returns the stored value's output id
+/// on success, or `None` when no matching store dominates the chain.
+///
+/// See the module-level "Public helper for the tier-2 indirect-branch
+/// classifier (BUG-30)" notes for the soundness rules.
+///
+/// # Parameters
+///
+/// - `graph` — the IR graph to walk (read-only).
+/// - `mem` — the chain root (typically a Load's memory-input slot).
+/// - `offset` — the SP-relative offset of the requested slot.
+/// - `value_type` — the expected stored value's type.  Mismatched
+///   types return `None` (no Truncate / ShiftRight synthesis here).
+/// - `sp_vn` — the calling convention's stack-pointer varnode (used
+///   to interpret raw `Store(_)` addresses; matches the pass's
+///   [`StackLoadForward::stack_ptr_vn`] field).
+/// - `memo` — a per-call SP-decomposition memo.  Reuse the same memo
+///   across multiple calls for the same graph to amortise the cost
+///   of decomposing repeated SP expressions.
+pub fn find_stack_stored_value_at_offset(
+    graph: &ir::Graph,
+    mem: NodeOutputId,
+    offset: i64,
+    value_type: NodeOutputType,
+    sp_vn: rsleigh::Vn,
+    memo: &mut SpExprMemo,
+) -> Option<NodeOutputId> {
+    let load_size = value_type.byte_size() as i64;
+    let node = graph.get_node_from_output(mem);
+    match *graph.node_kind(node) {
+        NodeKind::StackStore { offset: k, space: _ } => {
+            // StackStore inputs: [MEM, SP, DATA].  The signature pins
+            // input arity; the < 3 guard is a defensive belt-and-braces
+            // against malformed IR slipping past the validator.
+            let inputs = graph.node_inputs(node);
+            if inputs.len() < 3 {
+                return None;
+            }
+            let data = inputs[2];
+            let data_ty = graph.output_kind(data).as_value()?;
+            let store_size = data_ty.byte_size() as i64;
+            if k == offset {
+                // Exact-type match → return the stored value.  Mismatched
+                // types are a deliberate non-match here (see module notes).
+                if data_ty == value_type {
+                    Some(data)
+                } else {
+                    None
+                }
+            } else if ranges_disjoint(k, store_size, offset, load_size) {
+                // Non-aliasing intermediate store: skip past it.
+                find_stack_stored_value_at_offset(
+                    graph, inputs[0], offset, value_type, sp_vn, memo,
+                )
+            } else {
+                // Aliasing range with different offset → can't resolve.
+                None
+            }
+        }
+        NodeKind::Store(_) => {
+            // Raw Store — same disjoint-or-bail rule as probe's Store
+            // arm.  See that arm for the rationale.
+            let inputs = graph.node_inputs(node);
+            if inputs.len() < 3 {
+                return None;
+            }
+            let addr = inputs[1];
+            let mut sp_visiting = rustc_hash::FxHashSet::default();
+            match decompose_sp(graph, addr, sp_vn, memo, &mut sp_visiting) {
+                None => find_stack_stored_value_at_offset(
+                    graph, inputs[0], offset, value_type, sp_vn, memo,
+                ),
+                Some(SpExpr::Terminal { base: _, offset: store_off }) => {
+                    let data = inputs[2];
+                    let store_size = graph
+                        .output_kind(data)
+                        .as_value()
+                        .map_or(i64::MAX, |t| t.byte_size() as i64);
+                    if ranges_disjoint(store_off, store_size, offset, load_size) {
+                        find_stack_stored_value_at_offset(
+                            graph, inputs[0], offset, value_type, sp_vn, memo,
+                        )
+                    } else {
+                        None
+                    }
+                }
+                Some(SpExpr::Phi { .. }) => None,
+            }
+        }
+        // MemPhi / InitialMemory / anything else: bail.  See module notes
+        // for why MemPhi handling is intentionally future work.
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests;

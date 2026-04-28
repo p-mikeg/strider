@@ -21,8 +21,12 @@ use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression.
+///
+/// `pub` so out-of-crate callers (e.g. the tier-2 indirect-branch classifier
+/// in `crates/strider`) can drive [`decompose_sp`] when matching the BUG-30
+/// `Load[sp + base + idx*stride]` shape.
 #[derive(Clone, Debug)]
-pub(crate) enum SpExpr {
+pub enum SpExpr {
     /// `base + offset`, where `base` is an SP-rooted node.
     Terminal { base: NodeOutputId, offset: i64 },
     /// `ControlPhi(stack_ptr)` where every predecessor resolves to
@@ -31,7 +35,7 @@ pub(crate) enum SpExpr {
 }
 
 impl SpExpr {
-    pub(crate) fn shifted(self, delta: i64) -> Self {
+    pub fn shifted(self, delta: i64) -> Self {
         match self {
             SpExpr::Terminal { base, offset } => SpExpr::Terminal {
                 base,
@@ -55,7 +59,7 @@ impl SpExpr {
 /// — i.e. an unknown-extent range is treated as effectively infinite in both
 /// directions, matching the conservative verdict callers expect.
 #[inline]
-pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
+pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
     let a_end = a_off.saturating_add(a_size);
     let b_end = b_off.saturating_add(b_size);
     // If either endpoint saturated, treat the corresponding range as
@@ -68,19 +72,19 @@ pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) 
 
 /// Reads an integer-constant output as signed, sign-extended from its declared
 /// bit width. Returns `None` for non-integer-constant or for U128/U256.
-pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
+pub fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     let c = g.int_const_val(out)?;
     g.output_kind(out).as_value()?.get_signed_int(c)
 }
 
 /// Per-pass-call memo for `decompose_sp`.
-pub(crate) type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
+pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 
 /// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`. The `visiting` set guards against
 /// cycles through `ControlPhi` back-edges; cycle-broken results are NOT
 /// memoized (so a different call path can still resolve the same output).
-pub(crate) fn decompose_sp(
+pub fn decompose_sp(
     g: &Graph,
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,

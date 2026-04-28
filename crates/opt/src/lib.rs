@@ -32,7 +32,7 @@ extern crate self as opt;
 
 pub mod error;
 mod pipeline;
-mod sp_expr;
+pub mod sp_expr;
 mod worklist;
 pub use error::{Error, ErrorKind, Result};
 mod call_other_elide;
