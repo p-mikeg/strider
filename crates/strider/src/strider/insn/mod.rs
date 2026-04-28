@@ -20,6 +20,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         &mut self,
         region_id: cfg::RegionId,
         insn: &rsleigh::Insn,
+        addr: cfg::PcodeInsnAddr,
         region_lookup: F,
     ) -> Result<()>
     where
@@ -28,11 +29,25 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Coerce the generic closure to a trait object so control-flow helpers
         // in sibling modules don't need to be generic on `F`.
         let region_lookup_dyn: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
+        // F1: convert cfg's PcodeInsnAddr into ir's; the two are
+        // structurally identical but live in separate crates to avoid the
+        // ir → cfg dependency cycle.
+        let ir_addr = ir::PcodeInsnAddr::new(addr.machine_addr.addr, addr.insn_index);
+        // F1: snapshot the node-arena length before dispatch so we can seed
+        // every node freshly created by this pcode insn's lift with `ir_addr`.
+        // Covers both the value-lifter path (lift_with_addr below — its own
+        // seeding is then a no-op merge) and the control-flow / call / store
+        // arms whose handlers don't go through the value lifter.
+        let pre_count = self.builder.body().graph.node_count();
         // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
         // value-producing opcodes (and is responsible for the IR-builder
         // calls); `Ok(false)` for control-flow / call / store ops which the
         // match arm below handles.
-        if self.value_lifter().lift(insn)? {
+        //
+        // F1: lift_with_addr seeds every newly-created node's fingerprint
+        // with this pcode insn's address, so pattern matches downstream can
+        // trace back to the originating disassembly.
+        if self.value_lifter().lift_with_addr(insn, ir_addr)? {
             return Ok(());
         }
         match insn.opcode {
@@ -85,6 +100,24 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             Opcode::CallOther => self.handle_call_other(insn)?,
 
             _ => return Err(ErrorKind::UnimplementedOpcode(insn.opcode).into()),
+        }
+        // F1: seed every node created by the control-flow / call / store
+        // handlers (the value lifter's own path returns early above so we
+        // only reach this for non-value-producing opcodes).  Merge instead
+        // of overwrite so a node whose fingerprint was already populated by
+        // an inner create_node auto-merge keeps that provenance.
+        let post_count = self.builder.body().graph.node_count();
+        let seed = ir::Fingerprint::from_single(ir_addr);
+        for raw in pre_count..post_count {
+            let node_id = ir::node::NodeId::from_u32(raw as u32);
+            let merged = ir::Fingerprint::merge(
+                self.builder.body().graph.fingerprint_of(node_id),
+                &seed,
+            );
+            self.builder
+                .body_mut()
+                .graph
+                .set_fingerprint(node_id, merged);
         }
         Ok(())
     }

@@ -385,7 +385,12 @@ impl Strider {
                 {
                     continue;
                 }
-                ir_strider.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
+                ir_strider.process_insn(
+                    node_idx,
+                    &wrapped_insn.insn,
+                    wrapped_insn.addr,
+                    ir_region_of,
+                )?;
             }
             match special_terminator {
                 Some(SpecialTerm::Unresolved(target_vn, addr)) => {

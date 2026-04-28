@@ -113,4 +113,17 @@ impl Graph {
     pub fn all_node_ids(&self) -> impl Iterator<Item = crate::node::NodeId> + '_ {
         self.nodes.keys()
     }
+
+    /// Returns the total number of nodes ever allocated in the graph.
+    ///
+    /// F1 lift-site fingerprint plumbing snapshots this before a lift call
+    /// and uses the post-lift delta to enumerate the freshly created nodes
+    /// that need their pcode address seeded.  Stable across `Clone` —
+    /// detached zombies count toward the total because the entity arena
+    /// never reclaims slots.
+    #[inline]
+    #[must_use]
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
 }

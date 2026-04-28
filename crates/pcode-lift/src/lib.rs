@@ -84,6 +84,54 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub fn lift(&mut self, insn: &rsleigh::Insn) -> Result<bool> {
         value::lift(self, insn)
     }
+
+    /// Lifts a single pcode instruction AND seeds every newly-created node's
+    /// [`ir::Fingerprint`] with `addr`.
+    ///
+    /// Implementation: snapshot the node-arena length before the lift, run
+    /// the value lifter, then for every node created by the lift call merge
+    /// `Fingerprint::from_single(addr)` into its existing (auto-merged from
+    /// inputs) fingerprint.  Cache hits in `create_node` return existing
+    /// nodes that ALREADY carry the addrs of every prior pcode insn that
+    /// caused them — so the merge correctly accumulates provenance over the
+    /// lifetime of the graph.
+    ///
+    /// CORRECTNESS — semantic for control-flow opcodes: when `lift` returns
+    /// `Ok(false)` (the caller's responsibility to handle), the snapshot
+    /// range may still include nodes the value lifter created before
+    /// returning false (rare, but possible for malformed dispatch).  Seeding
+    /// runs unconditionally — every node in the post-lift range belongs to
+    /// this pcode insn either way.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`ValueLifter::lift`].
+    pub fn lift_with_addr(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: ir::PcodeInsnAddr,
+    ) -> Result<bool> {
+        let pre_count = self.builder.body().graph.node_count();
+        let lifted = value::lift(self, insn)?;
+        // Seed every node created during this lift call with the addr.
+        // Nodes returned via dedup-cache hit are not in the new range, but
+        // their fingerprints ALREADY carry the relevant addrs from the
+        // original construction call(s) — so the contract holds.
+        let post_count = self.builder.body().graph.node_count();
+        let seed = ir::Fingerprint::from_single(addr);
+        for raw in pre_count..post_count {
+            let node_id = ir::node::NodeId::from_u32(raw as u32);
+            let merged = ir::Fingerprint::merge(
+                self.builder.body().graph.fingerprint_of(node_id),
+                &seed,
+            );
+            self.builder
+                .body_mut()
+                .graph
+                .set_fingerprint(node_id, merged);
+        }
+        Ok(lifted)
+    }
 }
 
 /// Common boilerplate: require the instruction to have an output varnode and
