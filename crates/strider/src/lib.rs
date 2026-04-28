@@ -33,6 +33,7 @@
 mod strider;
 pub mod error;
 pub mod indirect_resolve_tier2;
+pub mod rewrite;
 
 pub use strider::ir_cache;
 pub use strider::{
@@ -41,5 +42,6 @@ pub use strider::{
     lift_new_regions_into_with_stats, predecessor_diffs, AnalyzeOutcome, LiftStats,
     PredecessorHandles, RegionIrCache, RegionIrEntry, RegionLiftHandles, Strider,
 };
+pub use rewrite::GraphRewriter;
 pub use error::{Error, ErrorKind, Result};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

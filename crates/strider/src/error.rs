@@ -24,6 +24,9 @@ pub enum ErrorKind {
     #[error(transparent)]
     PcodeLiftError(pcode_lift::ErrorKind),
 
+    #[error(transparent)]
+    PatternError(pattern::ErrorKind),
+
     #[error("register {0:?} has no enclosing container in variable set")]
     NoRegisterContainer(rsleigh::Vn),
 
@@ -130,6 +133,7 @@ strider_error::bridge_error!(ir::Error         => Error, ErrorKind::IrError);
 strider_error::bridge_error!(opt::Error        => Error, ErrorKind::OptError);
 strider_error::bridge_error!(target::Error     => Error, ErrorKind::TargetError);
 strider_error::bridge_error!(pcode_lift::Error => Error, ErrorKind::PcodeLiftError);
+strider_error::bridge_error!(pattern::Error    => Error, ErrorKind::PatternError);
 
 /// the result type using our error.
 pub type Result<T> = std::result::Result<T, Error>;

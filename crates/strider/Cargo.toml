@@ -13,6 +13,7 @@ dot.workspace = true
 cfg.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true
+pattern.workspace = true
 rustc-hash = { workspace = true }
 reader.workspace = true
 object.workspace = true
@@ -21,6 +22,5 @@ object.workspace = true
 workspace = true
 
 [dev-dependencies]
-pattern.workspace = true
 expect-test.workspace = true
 paste.workspace = true
