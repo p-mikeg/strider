@@ -12,6 +12,25 @@
 - No `panic!` / `unwrap` / `expect` / `debug_assert!` / `unreachable!` in production code.
 - Workspace stays GREEN at every commit.
 - Every commit message: lowercase imperative + Why-body + `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer.
+- **Reuse before write.** Every subagent must check the "Consolidation with recent work" table below and EXTEND the named existing types/files instead of introducing parallel structures.
+
+## Consolidation with recent work — REQUIRED reading for every subagent
+
+The R1–R5 + R3-FIXUP + G1-COMPLETE + sleigh-persistence work has already shipped infrastructure that several of these features should EXTEND rather than duplicate.  Keeping the codebase maintainable means using the named hooks rather than building parallels.
+
+| Recent code | Where | New feature | Required action |
+|---|---|---|---|
+| `OrchestratorStats` | `crates/strider/src/indirect_resolve_tier2/orchestrator.rs:174` | **F4** | ADD `trace: Option<Vec<IterationSnapshot>>` field to the existing struct.  Do NOT introduce a parallel `OrchestratorTrace` top-level type.  Trace is `None` by default → zero overhead. |
+| `apply_link_register` + `apply_tail_call` | `crates/strider/src/indirect_resolve_tier2/inplace.rs:79,148` | **F5** | MOVE these functions VERBATIM into the new opt pass module.  Re-export shims in strider preserve back-compat for tests.  The orchestrator's `apply_in_place_edits` shrinks to a one-line pass-invoke or disappears. |
+| `classify_anchor` + jump-table classifier | `crates/strider/src/indirect_resolve_tier2/classify.rs`, `jump_table.rs` | **F5** | MOVE into the opt pass module.  Re-export shims for back-compat. |
+| `LiftStats { pcode_insns_lifted, regions_newly_lifted }` | `crates/strider/src/strider/ir_cache.rs:294` | **F1** | DEFER reformulation.  `pcode_insns_lifted` counts insns; fingerprints track WHICH ones.  Both APIs coexist; F1 doesn't break LiftStats's contract.  A future refactor can derive `pcode_insns_lifted` from `unique addresses in any fingerprint` to consolidate, but that's not in scope. |
+| `AnalyzeOutcome { graph, unresolved_branches }` | `crates/strider/src/strider/pipeline.rs` (re-exported via `strider/mod.rs`) | **F2** | KEEP as the user-facing return type.  After F2's `Optimizer` trait refactor, `AnalyzeOutcome::graph` may need to wrap a `Graph` directly (rather than a `BuiltFunctionGraph`) — decide based on whether downstream consumers need the wrapper.  Don't introduce a new return type. |
+| `tier2_helpers.rs` (879 lines) | `crates/strider/tests/common/tier2_helpers.rs` | **F2/F4/F5/F6/F7** test fixtures | EXTEND this file with any new fixture builders.  Do NOT create per-feature `tier2_*_helpers.rs` siblings. |
+| `RegionTerminator::Switch { targets }` | `crates/cfg/src/cfg/types.rs` | **F7** | EXTEND the variant to `{ target_vn: rsleigh::Vn, targets: Vec<u64> }`.  Cfg builder already produces the variant; F7 only adds the `target_vn` field + downstream consumers. |
+| Existing `StackLoadForward::probe` MemPhi walk | `crates/opt/src/stack_load_forward/mod.rs:255` | **F3** | EXTEND the existing matcher's arms to recognize the BUG-30 shape.  Do NOT write a new walking algorithm. |
+| `pattern::rewrite_rule` + `pattern::apply_rules_in_order` | `crates/pattern/src/rewrite.rs:38,98` | **F6** | LAYER F6's `GraphRewriter` ON TOP of these existing functions.  Do NOT reimplement substitution logic. |
+| `FunctionBuilder::build_if` + `build_int_const` + `build_int_binary_op` | `crates/ir/src/builder/nodes.rs` | **F7** | COMPOSE these to emit the If-ladder.  No new builder primitives needed. |
+| `FunctionBuilder::body_mut().graph` accessor (already public via `body_mut`) | `crates/ir/src/builder/mod.rs:132` | **F2** | EXTEND with a `graph_mut() -> &mut Graph` shortcut + `entry() -> NodeId`.  The infrastructure to expose Graph is already there via `body_mut().graph`; F2 just adds ergonomic shortcuts. |
 
 ---
 
@@ -129,21 +148,37 @@ The trait change ripples through every `impl Optimizer for X`.  Roughly 10 impls
 
 ---
 
-# F3 — BUG-30 — Cross-region `StackLoadForward`
+# F3 — BUG-30 — Extend existing `StackLoadForward::probe` for the computed-goto shape
 
-**Phase 2** (parallel with F4).
+**Phase 2** (parallel with F4 + F7).
 
-## Current state
+## Current state — `StackLoadForward` already does cross-region walking
 
-15 per-arch tests in `crates/strider/tests/indirect_branch.rs` ignored under BUG-30. Cause: gcc/clang at -O0 lower `goto *targets[i]` to:
-1. Function-entry region: store label addresses to a stack-local array.
-2. Some later region: load from that array, jump to loaded value.
+[`crates/opt/src/stack_load_forward/mod.rs:255-275`](crates/opt/src/stack_load_forward/mod.rs#L255-L275) — the `probe` function **already walks across MemPhi boundaries** with cycle detection (`visited: HashSet`) and recurses through multi-pred predecessors via `ResolveShape::Phi`.  The "cross-region forwarding" infrastructure exists.
 
-`StackLoadForward` currently only forwards within the same memory chain in the same region — it doesn't follow the chain across CFG edges.
+So why does BUG-30 fail?  Some specific feature of the computed-goto-via-stack-array shape that the existing matcher returns `None` on.  Possible causes (to be confirmed by debugging):
+- The function-entry stores aren't classified as `StackStore` because the index varies (`targets[i]` writes through `IntAdd(InitialVar(sp) + frame_offset, IntMul(idx, stride))`, which `StackStoreDetect` may not recognize as SP-relative).
+- The MemPhi walk reaches a load whose offset is symbolic (depends on `idx`), and `probe` only handles loads with concrete SP-relative offsets.
+- An aliasing-store filter is too aggressive and bails on a benign intermediate store.
 
-## Target state
+## Target state — debug-driven extension
 
-Extend the pass to chase the memory chain backward through **dominator-path predecessors** until it finds the matching `StackStore` or proves no aliasing store could intervene.
+The work is **diagnose then extend**, not "implement from scratch":
+
+1. Run a BUG-30 ignored test with `cargo test ... -- --ignored --nocapture`.
+2. Inspect the lifted IR shape at the failing load site (use the dot dumper or print the `NodeKind` / inputs).
+3. Identify which arm of `probe` / `realize` returns `None` instead of recognizing the pattern.
+4. Extend that specific arm.
+
+The dominator-path soundness reasoning (visited set, multi-pred best-of-all-paths agreement, no artificial depth cap) is **already encoded** in the existing walk — we just need to make sure it covers the BUG-30 shape.
+
+## Files
+
+- Modify: `crates/opt/src/stack_load_forward/mod.rs` — extend `probe` (or `realize`) with the BUG-30 shape arm.  Likely a small (~50 line) addition once the gap is identified.
+- Modify: `crates/opt/src/stack_load_forward/tests.rs` — extend with the synthetic test case for the new shape.
+- Possibly modify: `crates/opt/src/stack_store_detect/mod.rs` if the gap turns out to be on the store side (entry-region writes not classified as StackStore).
+- Modify: `crates/strider/tests/indirect_branch.rs` — un-ignore the 15 BUG-30 tests.
+- Modify: `docs/superpowers/plans/2026-04-25-analyzer-known-issues.md` — close BUG-30.
 
 ## Soundness rules — dominator-path forwarding (CRITICAL)
 
@@ -232,25 +267,32 @@ The walk has no `Options::stack_load_forward_max_depth` knob.  The implementer s
 
 `OrchestratorStats` exposes counters (iterations, stable_runs, destructive_runs, cfg_rebuilds, etc.) but no per-iteration trace. When something goes wrong, you only see the final state.
 
-## Target state
+## Target state — extend `OrchestratorStats`, don't introduce a parallel struct
+
+The existing `OrchestratorStats` ([orchestrator.rs:174](crates/strider/src/indirect_resolve_tier2/orchestrator.rs#L174)) already has counters for everything F4 might want to trace.  F4 ADDS one new optional field for the per-iteration trace:
 
 ```rust
-pub struct OrchestratorConfig<...> {
+// crates/strider/src/indirect_resolve_tier2/orchestrator.rs
+pub struct OrchestratorStats {
+    // existing counters: iterations, stable_runs, destructive_runs,
+    // cfg_rebuilds, link_register_edits, tail_call_edits,
+    // pcode_insns_lifted, regions_newly_lifted,
+    // cache_evictions_on_split.
+
+    /// New (F4): per-iteration trace captured when
+    /// `OrchestratorConfig::debug` requests it.  `None` by default
+    /// (zero overhead — no captures happen).
+    pub trace: Option<Vec<IterationSnapshot>>,
+}
+
+pub struct OrchestratorConfig<'a, B> {
     // existing fields ...
     pub debug: Option<OrchestratorDebugConfig>,
 }
 
 pub struct OrchestratorDebugConfig {
-    /// Capture per-iteration snapshots into the returned trace.
-    pub capture_iteration_snapshots: bool,
-    /// Capture each tier-2 classification result with its anchor.
     pub capture_classifications: bool,
-    /// Trace each in-place edit application.
     pub capture_edits: bool,
-}
-
-pub struct OrchestratorTrace {
-    pub iterations: Vec<IterationSnapshot>,
 }
 
 pub struct IterationSnapshot {
@@ -273,13 +315,14 @@ pub enum EditEvent {
 }
 ```
 
-The trace is OPT-IN via `OrchestratorDebugConfig`. When the config is `None`, no capture happens (zero overhead).
+The trace is OPT-IN via `OrchestratorDebugConfig`.  When the config is `None`, no capture happens — the existing counter-increment sites in `run_with_stats` get a `if let Some(trace) = stats.trace.as_mut()` wrapper that's compiled-away cheap when the trace is absent.
 
 ## Files
 
-- Modify: `crates/strider/src/indirect_resolve_tier2/orchestrator.rs` — add `OrchestratorDebugConfig`, `OrchestratorTrace`, capture sites.
-- Create: `crates/strider/src/indirect_resolve_tier2/debug.rs` — types + helpers.
+- Modify: `crates/strider/src/indirect_resolve_tier2/orchestrator.rs` — add `trace` field to `OrchestratorStats`; add `OrchestratorDebugConfig`, `IterationSnapshot`, `ClassificationOutcome`, `EditEvent`; instrument capture sites.
 - Create: `crates/strider/tests/tier2_debug_trace.rs` — tests.
+
+No new module file.  Everything F4 adds belongs in `orchestrator.rs` alongside the existing `OrchestratorStats` definition for cohesion.
 
 ## Tests
 
@@ -393,12 +436,49 @@ From the spec's existing future-work section:
 
 - **`NodeKind::Switch { cases: Vec<u64> }` migration.**  Replace the If-ladder with a dedicated IR node that takes (control, memory, index) → N control outputs.  Add validator entries (Layer A signature + Layer C arity), a ConstantFold rule (constant index → propagate the matching control output, leave others dead), pattern-crate builders + matcher arms, and dot-label code.  Migration path: keep the If-ladder lowering as a fallback while a feature flag controls which lowering strider uses; flip the default once the new node kind is fully supported; remove the ladder lowering.
 
+## Implementation — pure composition over existing builder primitives
+
+`handle_switch` is mechanical loop over targets calling existing `FunctionBuilder::build_if` ([crates/ir/src/builder/nodes.rs:508](crates/ir/src/builder/nodes.rs#L508)) + `build_int_const` + `build_int_binary_op` (`IntCmpOp::Equal`).  No new builder primitives.
+
+```rust
+// crates/strider/src/strider/insn/control.rs (add)
+impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
+    pub(super) fn handle_switch(
+        &mut self,
+        target_vn: &rsleigh::Vn,
+        targets: &[u64],
+        region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
+    ) -> Result<()> {
+        let idx = self.read_vn(target_vn)?;
+        let idx_ty = self.builder.graph().output_kind(idx).as_value_or_err()?;
+        // Walk targets in order, chaining each If's false-branch
+        // into the next case's region.  The last case's false-branch
+        // is the fallthrough (default / unreachable).
+        let mut current_else: ir::RegionId = synthesize_unreachable_or_pass_through_to_caller();
+        for &target in targets.iter().rev() {
+            let target_region = region_lookup(target_to_region_lookup(target)?)?;
+            let target_const = self.builder.build_int_const(target, idx_ty);
+            let cond = self.builder.build_int_binary_operation(
+                idx, target_const, IntCmpOp::Equal, NodeOutputType::Bool,
+            )?;
+            let if_block_for_this_case = self.builder.create_region()?;
+            self.builder.set_region(if_block_for_this_case);
+            self.builder.build_if(cond, target_region, current_else)?;
+            current_else = if_block_for_this_case;
+        }
+        Ok(())
+    }
+}
+```
+
+The exact block-management details (where the chain anchors, how the final default-branch is wired) follow the patterns already used by `handle_cond_branch`.
+
 ## Files
 
-- Modify: `crates/strider/src/strider/insn/control.rs` — add `handle_switch(targets: &[u64], idx_value: NodeOutputId, region_lookup: ...)` that emits the If-ladder, threading control through each comparison and wiring true-branches to the per-target region.
-- Modify: `crates/strider/src/strider/pipeline.rs` (or wherever the terminator dispatch lives) — replace the placeholder for `RegionTerminator::Switch` with a call to `handle_switch`.
-- Modify: `crates/strider/src/strider/insn/control.rs` — read `target_vn` from the Switch terminator's saved state (cfg already has the targets; strider needs the original target VN for the comparisons — this likely means `RegionTerminator::Switch` carries `{ target_vn, targets }`, OR the orchestrator records it in a side-table).
-- Possibly modify: `crates/cfg/src/cfg/types.rs` — `RegionTerminator::Switch { target_vn: rsleigh::Vn, targets: Vec<u64> }` (carry the index VN, not just the targets, so strider knows what to compare).
+- Modify: `crates/cfg/src/cfg/types.rs` — extend `RegionTerminator::Switch { targets: Vec<u64> }` to `{ target_vn: rsleigh::Vn, targets: Vec<u64> }`.  Cfg builder already produces this variant; only the new field needs propagation.
+- Modify: `crates/cfg/src/cfg/builder/region_builder.rs` — propagate `target_vn` from the original BranchIndirect into the Switch variant when tier-1 produces it (or when the orchestrator's `with_known_targets` feeds back a `Multiple` resolution).
+- Modify: `crates/strider/src/strider/insn/control.rs` — add `handle_switch` (composition over existing builders, see snippet above).
+- Modify: `crates/strider/src/strider/pipeline.rs` — terminator dispatch arm for `RegionTerminator::Switch` calls `handle_switch`.
 
 ## Subtle: where does `target_vn` for the Switch's comparisons come from?
 
@@ -579,38 +659,82 @@ Why `SecondaryMap` rather than `HashMap`:
 
 The existing sparse side-tables (`stack_phi_offsets`, `call_other_names`) keep their `HashMap` — they're keyed by `NodeId` but only specific kinds of nodes (StackStorePhi, CallOther) have entries.  Different access patterns warrant different storage primitives.
 
-## Lift-site population
+## Two-tier API: auto-merge default, explicit override for inputless folds
 
-Every `create_node` call inside `pcode-lift::ValueLifter` needs to attribute the new node to the source pcode insn. The cleanest way: thread a `current_pcode_addr: Option<PcodeInsnAddr>` through `ValueLifter`'s state, and `create_node` consults it.
+The naïve approach ("every `create_node` site explicitly threads a fingerprint") would touch ~50 call sites across `pcode-lift`, `opt`, and `strider`.  **Most of those are wrong to touch**: a node like `IntAdd(x, y)` should inherit the union of `x`'s and `y`'s fingerprints automatically.  Only nodes with NO inputs (or whose new fingerprint should differ from the input merge) need explicit handling.
+
+### Default: `create_node` auto-merges from inputs
+
+```rust
+// crates/ir/src/graph/store.rs
+impl Graph {
+    pub fn create_node(
+        &mut self,
+        kind: NodeKind,
+        inputs: impl IntoIterator<Item = NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+    ) -> NodeId {
+        let inputs: Vec<NodeOutputId> = inputs.into_iter().collect();
+        let merged_fingerprint = Fingerprint::merge_many(
+            inputs.iter().map(|out| {
+                let producer = self.get_node_from_output(*out);
+                self.fingerprint_of(producer)
+            })
+        );
+        let id = self.create_node_inner(kind, inputs, output_kinds);
+        self.fingerprints[id] = merged_fingerprint;  // SecondaryMap insert
+        id
+    }
+}
+```
+
+**Every existing `create_node` call site gets a correct fingerprint with ZERO source changes** — folds like `IntAnd(x, IntConst(MASK))` whose new node has inputs `[x, IntConst]` automatically inherit the merge of x's and IntConst's fingerprints.
+
+### Override: `set_fingerprint` for inputless replacement folds
+
+Folds that produce inputless nodes (typically `IntConst(K)` replacements for constant-fold) need to inherit the OLD node's fingerprint, not the empty merge of zero inputs:
+
+```rust
+// In ConstantFold's `IntAdd(IntConst(a), IntConst(b))` → `IntConst(a+b)` rule:
+let old_fp = graph.fingerprint_of(int_add_node).clone();
+let new_const = graph.create_node(NodeKind::IntConst(a + b), [], [...]);
+graph.set_fingerprint(new_const, old_fp);  // explicit override
+```
+
+This is a ONE-line addition per affected fold rule.
+
+### Lift-site population
+
+Lift sites in `pcode-lift::ValueLifter` need to seed the per-pcode-insn provenance.  Thread `current_pcode_addr: Option<PcodeInsnAddr>` through the lifter and ALSO call `set_fingerprint` after each top-level `create_node`:
 
 ```rust
 impl<'a, 'b, R: rsleigh::MemReader> ValueLifter<'a, 'b, R> {
     pub fn lift(&mut self, region_insn: &RegionInstruction) -> Result<bool> {
         self.current_pcode_addr = Some(region_insn.addr);
         let result = self.lift_inner(&region_insn.insn)?;
-        self.current_pcode_addr = None;
+        // After lift, set fingerprint on every node created during this insn:
+        if let Some(addr) = self.current_pcode_addr.take() {
+            for node in self.builder.graph().nodes_created_since(self.lift_start_marker) {
+                self.builder.graph_mut()
+                    .set_fingerprint(node, Fingerprint::from_single(addr));
+            }
+        }
         Ok(result)
     }
 }
 ```
 
-`Graph::create_node_with_fingerprint` is the new entry point. The plain `create_node` becomes a thin wrapper that uses an empty fingerprint (used by tests / synthetic constructors).
+Or — simpler — pre-record `current_pcode_addr` in the builder, modify `create_node` to also seed the per-insn addr (in addition to the input merge): `merged + Fingerprint::from_single(current_pcode_addr)`. Then lift sites need NO change beyond setting the `current_pcode_addr` on entry.
 
-## Optimizer-fold population
+### Net work
 
-Every fold rule in `opt` that creates a replacement node MUST union the input fingerprints. Example for ConstantFold's `IntAdd(IntConst(a), IntConst(b))` → `IntConst(a+b)`:
+- `Graph::create_node` — modified once.
+- `Graph::set_fingerprint` — new (~10 lines).
+- `Graph::fingerprint_of` — new (~5 lines, just `&fingerprints[id]`).
+- `pcode-lift::ValueLifter` — set `current_pcode_addr` on lift entry.
+- ~5 fold rules in `opt` with inputless replacement nodes — one-line `set_fingerprint` each.
 
-```rust
-let new_fp = Fingerprint::merge(
-    graph.fingerprint_of(left_input_node),
-    graph.fingerprint_of(right_input_node),
-);
-let new_const = graph.create_node_with_fingerprint(
-    NodeKind::IntConst(a + b), [], [...], new_fp,
-);
-```
-
-This is mechanical but touches every fold rule. Worth a sweep.
+Total: ~30-50 lines of production-code change to plumb the contract end-to-end.  **Most fold rules need NO modification** because their new nodes carry inputs whose fingerprints auto-propagate.  Original plan ("touches every fold rule") significantly overstated the work.
 
 ## Use cases enabled
 
