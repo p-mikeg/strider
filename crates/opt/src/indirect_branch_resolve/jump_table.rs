@@ -585,17 +585,22 @@ fn bound_from_if_condition(
     // taken-true we have `N < idx`, which is a *lower* bound on
     // idx — no upper bound.  We therefore return None on swapped
     // for asymmetric ops.
+    // NOTE — `IntCmpOp::Equal` is deliberately NOT handled here.
+    // The taken-true arm of `idx == N` constrains `idx` to the
+    // single value `{N}`, NOT `[0, N]`.  The `0..bound` enumeration
+    // shape this function feeds into would over-read entries
+    // `0..N-1` that `idx == N` never selects, or — if the table has
+    // exactly N entries indexed `0..N-1` — read past the table end
+    // and fail resolution.  Falling through to the catch-all `None`
+    // surfaces the case as `UnresolvedIndirectBranch` instead of
+    // mis-resolving.  A future improvement can add a
+    // `Single(table[N])` path that bypasses table enumeration for
+    // this degenerate case.  Code-review H2.
     match op {
         // idx < N (true) → bound = N.
         IntCmpOp::Less | IntCmpOp::Sless if !swapped => Some(n),
         // idx <= N (true) → bound = N + 1.
         IntCmpOp::LessEqual | IntCmpOp::SlessEqual if !swapped => n.checked_add(1),
-        // Equality is symmetric: `idx == N` taken-true means `idx == N`
-        // exactly — bound is `N + 1` (idx is one of {0, …, N}, but we
-        // overapproximate to N+1 as the count of distinct values up
-        // through and including N; a tighter Single(table[N]) is
-        // possible but not produced here to keep arms uniform).
-        IntCmpOp::Equal => n.checked_add(1),
         _ => None,
     }
 }

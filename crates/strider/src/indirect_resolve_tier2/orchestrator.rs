@@ -48,7 +48,7 @@
 use std::collections::HashMap;
 
 use cfg::{Builder, Cfg, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
-use ir::node::{NodeId, NodeKind};
+use ir::node::NodeId;
 use opt::ReadOnlyMemory;
 
 use crate::error::{ErrorKind, Result};
@@ -742,20 +742,14 @@ fn find_placeholder_return_for_anchor(
     graph: &ir::BuiltFunctionGraph,
     anchor_output: ir::Value,
 ) -> Option<NodeId> {
-    // Walk the use-list of the anchor: any Return-shaped consumer
-    // is a candidate placeholder.  Restrict to 3-input Returns
-    // (the placeholder shape) since an ABI Return has 2 +
-    // ret_val_regs.len() inputs.
-    for (consumer, _input_index) in graph.graph.output_uses(anchor_output) {
-        if !matches!(graph.graph.node_kind(consumer), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = graph.graph.node_inputs(consumer).into_iter().collect();
-        if inputs.len() == 3 && inputs[2] == anchor_output {
-            return Some(consumer);
-        }
-    }
-    None
+    // Delegate to the opt-side single source of truth — same use-list
+    // walk + 3-input-Return shape filter, takes `&Graph` instead of
+    // `&BuiltFunctionGraph`.  Code-review M1: deletes a duplicated
+    // private copy that drifted from the public opt-side version.
+    opt::indirect_branch_resolve::find_placeholder_return_for_anchor(
+        &graph.graph,
+        anchor_output,
+    )
 }
 
 /// Dispatch on the resolution variant: LinkRegister → append ABI
@@ -1019,13 +1013,6 @@ where
 
     Ok((graph, unresolved, cfg))
 }
-
-/// Fallback to the original lift path.  Used only by the legacy
-/// shim retained for backwards compatibility — production callers
-/// route through [`build_lift_stable`] which threads the cache
-/// through.
-#[allow(dead_code)]
-fn legacy_analyze_unused() {}
 
 /// Runs the **stable** optimizer subset on an existing graph.  Used
 /// after in-place edits to clean up before re-classifying.

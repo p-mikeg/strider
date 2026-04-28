@@ -216,6 +216,16 @@ impl Optimizer for IndirectBranchResolve {
             };
             match resolved {
                 BranchResolution::LinkRegister => {
+                    // Round-1 stub for `ret_val_outputs` mirrors the
+                    // strider orchestrator's documented limitation
+                    // (see orchestrator.rs::read_ret_val_outputs):
+                    // the cache's `exit_vn_to_value` isn't yet wired
+                    // to populate ABI return-value inputs.  Future
+                    // rounds: thread the calling-convention's
+                    // ret_val_regs through this pass via a new field
+                    // on `IndirectBranchResolve` and supply them
+                    // here.  Code-review H1: keeps the opt-pass and
+                    // orchestrator paths aligned on this stub.
                     inplace::apply_link_register(graph, placeholder, &[])?;
                     changed = true;
                 }
@@ -225,6 +235,8 @@ impl Optimizer for IndirectBranchResolve {
                         // it via CFG rebuild.
                         continue;
                     }
+                    // Same Round-1 stub for ret_val_outputs as
+                    // LinkRegister above.
                     let _new_return =
                         inplace::apply_tail_call(graph, placeholder, target, &[])?;
                     changed = true;

@@ -155,6 +155,18 @@ impl<'a> GraphRewriter<'a> {
     /// Propagates the rule closure's first non-skip error, wrapped in
     /// [`crate::ErrorKind::PatternError`] via the `pattern::Error` →
     /// `crate::Error` bridge.
+    ///
+    /// # Validation
+    ///
+    /// `apply_rule` does **NOT** call [`ir::validate::validate`] after
+    /// the rule fires.  The rule's substitution mechanics
+    /// ([`pattern::rewrite_rule`]) preserve use-list integrity by
+    /// construction (`replace_all_uses` + bookkeeping), so common
+    /// cases produce a valid graph.  But callers building unusual
+    /// rules should run `re_optimize` (which validates as the last
+    /// step of the optimizer pipeline) or call
+    /// [`ir::validate::validate`] explicitly before relying on the
+    /// graph being well-formed.  Code-review M2.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
         F: Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>,
