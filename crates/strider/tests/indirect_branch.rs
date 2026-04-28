@@ -82,33 +82,77 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader"),
+    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
     );
+    let mut cfg_opts_b = cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .set_read_only_memory(rom_for_cfg);
+    if let Some(lr) = ana.calling_convention().link_register_vn {
+        cfg_opts_b = cfg_opts_b.set_link_register(lr);
+    }
+    let cfg_opts = cfg_opts_b.build();
+    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+        .build()
+        .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 
-    // F3: the BUG-30 stack-array shape resolves only at TIER 2 — the
-    // CFG-only path (`cfg::Builder::build()`) sees just tier 1's
-    // single-region mini-graph and cannot prove the loaded target is
-    // one of the pushed label addresses.  Drive the full tier-2
-    // fixed-point via `run_orchestrator_with_stats` and assert that
-    // (a) it converges (returns Ok), and (b) every region in the
-    // final harvested CFG has a non-Unresolved terminator.
-    let config = strider::indirect_resolve_tier2::OrchestratorConfig {
-        strider: &ana,
-        start_addr: addr,
-        sleigh: Some(sleigh),
-        rom: Some(rom),
-        fn_max_size: None,
-        allow_code_before_start_addr: true,
-        debug: None,
-    };
-    let (_graph, _stats) =
-        strider::indirect_resolve_tier2::run_orchestrator_with_stats(config)
-            .unwrap_or_else(|e| panic!(
-                "indirect_branch_resolved on {} did not converge: {e:?} \
-                 (see BUG-30)",
+    // F3: the BUG-30 stack-array shape resolves only at TIER 2 (post-IR
+    // optimisation, on the optimised graph).  The CFG already contains
+    // `UnresolvedIndirectBranch` terminators; we lift to IR, run the
+    // optimiser pipeline (with rom for `LoadReadOnly`), then call the
+    // tier-2 classifier directly on each unresolved anchor.  Asserting
+    // that EVERY anchor classifies into `ResolvedTargets::Multiple`
+    // (or any non-`None` resolution) is the F3 contract — failing on
+    // any anchor surfaces the gap.
+    let mut graph = ana.analyze_cfg(&cfg)
+        .unwrap_or_else(|e| panic!("analyze_cfg for indirect_branch_resolved on {}: {e:?}", arch.name()));
+    let unresolved = graph.unresolved_branches.clone();
+    if unresolved.is_empty() {
+        // Tier 1 already resolved this fixture (e.g. -O? collapse).
+        // The test's promise is "no UnresolvedIndirectBranch survives";
+        // that promise holds vacuously.  Mirror common::analyze's
+        // post-lift sanity by running the optimiser pipeline so any
+        // pipeline regression on the placeholder code-path is caught.
+        let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+        let mut p = ana.build_optimizer_pipeline();
+        p.add(opt::LoadReadOnly(rom_for_opt));
+        p.run(&mut graph.graph.graph, graph.graph.entry)
+            .unwrap_or_else(|e| panic!("optimizer pipeline (no unresolved) on {}: {e:?}", arch.name()));
+        return;
+    }
+    // Run the stable optimizer subset + LoadReadOnly so the stack-store
+    // detect, KnownBits, and rodata-load resolutions run before
+    // classification — same shape as the orchestrator's per-iteration
+    // pre-classify pass.
+    let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let mut p = ana.build_optimizer_pipeline();
+    p.add(opt::LoadReadOnly(rom_for_opt));
+    p.run(&mut graph.graph.graph, graph.graph.entry)
+        .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
+
+    let lr_vn = ana.calling_convention().link_register_vn;
+    let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
+    let rom_for_classify: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
+    );
+    for (anchor_addr, anchor_output) in &unresolved {
+        let resolved = strider::indirect_resolve_tier2::classify_anchor_with_rom_and_sp(
+            &graph.graph,
+            *anchor_output,
+            lr_vn,
+            Some(rom_for_classify.as_ref()),
+            sp_vn,
+        );
+        if resolved.is_none() {
+            panic!(
+                "indirect_branch_resolved on {} has unresolved indirect \
+                 branch at {anchor_addr:?} after optimisation — neither \
+                 tier-1 nor tier-2 (incl. F3 stack-array arm) classified \
+                 the dispatch (see BUG-30)",
                 arch.name(),
-            ));
+            );
+        }
+    }
 }
 
 // One #[test] per architecture.  All arches are #[ignore = "BUG-30"]
