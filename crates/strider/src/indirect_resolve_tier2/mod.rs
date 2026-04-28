@@ -33,6 +33,7 @@ pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;
 pub use orchestrator::{
-    run as run_orchestrator, run_with_stats as run_orchestrator_with_stats, OrchestratorConfig,
-    OrchestratorStats,
+    run as run_orchestrator, run_with_stats as run_orchestrator_with_stats,
+    ClassificationOutcome, EditEvent, IterationSnapshot, OrchestratorConfig,
+    OrchestratorDebugConfig, OrchestratorStats,
 };

@@ -60,6 +60,7 @@ fn make_config<'a>(
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     }
 }
 
@@ -449,6 +450,7 @@ fn orchestrator_w5_owned_sleigh_contract() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let _ = run_orchestrator(config).expect("orchestrator with owned Sleigh");
 
@@ -460,6 +462,7 @@ fn orchestrator_w5_owned_sleigh_contract() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let result = run_orchestrator(config);
     assert!(
@@ -481,6 +484,7 @@ fn orchestrator_w5_none_sleigh_returns_typed_error_not_panic() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let result = run_orchestrator(config);
     let err = match result {
@@ -506,6 +510,7 @@ fn orchestrator_w5_owned_sleigh_succeeds_in_fast_path() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let graph = run_orchestrator(config).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
@@ -533,6 +538,7 @@ fn orchestrator_w5_owned_sleigh_succeeds_in_error_path() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let result = run_orchestrator(config);
     // Either Ok or Err — both consume the Sleigh exactly once via
@@ -556,6 +562,7 @@ fn orchestrator_w5_run_with_stats_propagates_none_sleigh_error() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     let result = run_orchestrator_with_stats(config);
     assert!(result.is_err(), "run_with_stats must error on sleigh = None");

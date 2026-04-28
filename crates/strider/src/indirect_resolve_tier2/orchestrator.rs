@@ -170,6 +170,87 @@ where
     /// branch.  Mirrors
     /// [`cfg::OptionsBuilder::allow_code_before_start_addr`].
     pub allow_code_before_start_addr: bool,
+    /// F4 — opt-in per-iteration debug-trace configuration.  When
+    /// `Some(_)`, [`run_with_stats`] populates
+    /// [`OrchestratorStats::trace`] with one [`IterationSnapshot`]
+    /// per outer-loop iteration.  When `None` (the default), the
+    /// orchestrator's trace-capture sites short-circuit — no `Vec`
+    /// is allocated, no [`IterationSnapshot`] is constructed.  This
+    /// is the F4 zero-overhead-when-disabled contract.
+    pub debug: Option<OrchestratorDebugConfig>,
+}
+
+/// F4 — opt-in capture knobs for the orchestrator's debug trace.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OrchestratorDebugConfig {
+    /// Capture per-anchor classifications into
+    /// [`IterationSnapshot::classifications`] each iteration.
+    pub capture_classifications: bool,
+    /// Capture in-place edits into [`IterationSnapshot::edits_applied`]
+    /// each iteration.
+    pub capture_edits: bool,
+}
+
+/// F4 — single-iteration record produced when
+/// [`OrchestratorConfig::debug`] enables tracing.  One entry per
+/// iteration of the orchestrator's outer fixed-point loop, in order;
+/// see [`OrchestratorStats::trace`] for the per-run accumulator.
+///
+/// NOTE — intentionally NOT marked `#[non_exhaustive]`: tests
+/// destructure instances exhaustively to pin the trace shape per
+/// iteration; adding `#[non_exhaustive]` would force a `_ => ...` arm
+/// that defeats the point of those exhaustive matches.  Future field
+/// additions follow the same explicit-update protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IterationSnapshot {
+    /// Zero-based index of this iteration in the orchestrator's outer loop.
+    pub iteration_index: usize,
+    /// Number of unresolved anchors at the START of this iteration.
+    pub unresolved_count_at_entry: usize,
+    /// Per-anchor classification outcomes captured this iteration when
+    /// [`OrchestratorDebugConfig::capture_classifications`] is true.
+    pub classifications: Vec<(PcodeInsnAddr, ClassificationOutcome)>,
+    /// In-place edits applied this iteration when
+    /// [`OrchestratorDebugConfig::capture_edits`] is true.
+    pub edits_applied: Vec<EditEvent>,
+    /// `true` iff this iteration triggered a structural CFG rebuild.
+    /// In-place edits do NOT set this flag.
+    pub cfg_rebuild_triggered: bool,
+}
+
+/// F4 — the result of classifying one placeholder anchor in one iteration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClassificationOutcome {
+    /// Classifier returned `Some(_)` — the orchestrator either
+    /// applied an in-place edit or queued a structural rebuild.
+    Resolved(ResolvedTargets),
+    /// Classifier returned `None` — the orchestrator left this
+    /// anchor for a later iteration.
+    StillUnresolved,
+}
+
+/// F4 — the kind of in-place IR edit the orchestrator applied this iteration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditEvent {
+    /// [`super::apply_link_register`] fired on the placeholder at `addr`.
+    LinkRegister {
+        /// Pcode address of the placeholder's `BranchIndirect`.
+        addr: PcodeInsnAddr,
+    },
+    /// [`super::apply_tail_call`] fired with target `target`.
+    TailCall {
+        /// Pcode address of the placeholder's `BranchIndirect`.
+        addr: PcodeInsnAddr,
+        /// Tail-call target address (out-of-range for the function).
+        target: u64,
+    },
+    /// A structural rebuild's `known_targets` map gained an entry.
+    KnownTargetUpdate {
+        /// Pcode address of the placeholder's `BranchIndirect`.
+        addr: PcodeInsnAddr,
+        /// The resolution that fed `with_known_targets` for the rebuild.
+        kind: ResolvedTargets,
+    },
 }
 
 /// Statistics emitted by [`run_with_stats`] so tests (and downstream
@@ -182,7 +263,8 @@ where
 /// CORRECTNESS NOTE: tests use these counters to pin the spec's
 /// pipeline-tier separation contract — `destructive_runs == 1` for
 /// every successful run, `stable_runs >= destructive_runs` always.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct OrchestratorStats {
     /// Total times [`Strider::build_stable_optimizer_pipeline`] ran.
     /// At minimum 1 (the initial lift always runs the stable subset);
@@ -224,6 +306,11 @@ pub struct OrchestratorStats {
     /// where `t` lands mid-region produces exactly one eviction; a
     /// `Multiple([t])` where `t` is a fresh address produces zero.
     pub cache_evictions_on_split: usize,
+    /// F4 — opt-in per-iteration trace.  `None` by default (zero
+    /// overhead — capture sites short-circuit on the `None` arm).
+    /// `Some(Vec<IterationSnapshot>)` when the caller passed
+    /// [`OrchestratorConfig::debug`] = `Some(_)`.
+    pub trace: Option<Vec<IterationSnapshot>>,
 }
 
 /// Round-1 orchestrator entry point.  Drives the iterate-resolve-
@@ -258,6 +345,24 @@ where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     let mut stats = OrchestratorStats::default();
+    // F4 — opt-in trace allocation.  When `config.debug` is `Some`,
+    // allocate the accumulator up-front so capture sites just push
+    // to it.  When `None`, `stats.trace` stays `None` and capture
+    // sites short-circuit on `is_some()` / `as_mut()` checks (zero
+    // allocations, no `IterationSnapshot` construction).
+    if config.debug.is_some() {
+        stats.trace = Some(Vec::new());
+    }
+    // F4 capture toggles, hoisted once.  When `config.debug` is
+    // `None` both bools fold to `false` constants and the per-anchor
+    // capture sites' `if capture_X` guards collapse to dead code in
+    // the hot loop.  `is_some_and` is the clippy-preferred form for
+    // `Option<T>::map(...).unwrap_or(false)`.
+    let capture_classifications = config
+        .debug
+        .as_ref()
+        .is_some_and(|d| d.capture_classifications);
+    let capture_edits = config.debug.as_ref().is_some_and(|d| d.capture_edits);
     // The `known_targets` map accumulates tier-2 resolutions across
     // iterations.  Each iteration replaces the map (we don't merge
     // — see spec's "Resolution feedback semantics" section: each
@@ -358,8 +463,19 @@ where
     // hitting it indicates a soundness bug in the resolver.
     let cap = 2usize.saturating_mul(pending_at_iter_0).saturating_add(4);
 
-    for _iter in 0..cap {
+    for iter_idx in 0..cap {
         stats.iterations += 1;
+        // F4 — start a fresh per-iteration snapshot when tracing is
+        // enabled.  Stays `None` (zero allocation) when disabled.
+        let mut snapshot: Option<IterationSnapshot> = stats.trace.as_ref().map(|_| {
+            IterationSnapshot {
+                iteration_index: iter_idx,
+                unresolved_count_at_entry: unresolved.len(),
+                classifications: Vec::new(),
+                edits_applied: Vec::new(),
+                cfg_rebuild_triggered: false,
+            }
+        });
         // Classify every unresolved anchor on the current optimised
         // IR.  Build the next `known_targets` map from scratch — see
         // the spec's "Resolution feedback semantics" — so a per-
@@ -373,16 +489,33 @@ where
         // the placeholder Return; passing the same `known_targets`
         // through to a CFG rebuild would re-emit the same placeholder
         // and we'd be stuck in a cycle).
-        let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
+        //
+        // F4 — also track each anchor's `addr` alongside the placeholder
+        // node id so the per-edit capture site can record the pcode-
+        // insn address in the trace's [`EditEvent`].
+        let mut in_place_edits: Vec<(NodeId, ResolvedTargets, PcodeInsnAddr)> = Vec::new();
         for (addr, anchor_output) in &unresolved {
             // R4: pass the rom through so the jump-table arm can
             // read table entries.  Cloning the Arc is cheap
             // (atomic refcount); we hold a borrow across the
             // classifier call by promoting the Arc to a `&dyn`.
             let rom_ref: Option<&dyn ReadOnlyMemory> = config.rom.as_deref();
-            let Some(resolved) =
-                classify_anchor_with_rom_and_sp(&graph, *anchor_output, lr_vn, rom_ref, sp_vn)
-            else {
+            let resolved_opt =
+                classify_anchor_with_rom_and_sp(&graph, *anchor_output, lr_vn, rom_ref, sp_vn);
+
+            // F4 — record the per-anchor classification outcome
+            // before dispatch consumes the resolution.
+            if capture_classifications
+                && let Some(snap) = snapshot.as_mut()
+            {
+                let outcome = match &resolved_opt {
+                    Some(r) => ClassificationOutcome::Resolved(r.clone()),
+                    None => ClassificationOutcome::StillUnresolved,
+                };
+                snap.classifications.push((*addr, outcome));
+            }
+
+            let Some(resolved) = resolved_opt else {
                 continue;
             };
 
@@ -407,12 +540,22 @@ where
             if can_inplace
                 && let Some(ret) = placeholder_return
             {
-                in_place_edits.push((ret, resolved.clone()));
+                in_place_edits.push((ret, resolved.clone(), *addr));
                 // Don't add to next_known — the in-place edit
                 // erases the placeholder; the cfg builder must
                 // not see this address again.
-                let _ = addr;
                 continue;
+            }
+            // F4 — record `KnownTargetUpdate` BEFORE `next_known` is
+            // populated so the recorded order matches the iteration
+            // order over `unresolved`.
+            if capture_edits
+                && let Some(snap) = snapshot.as_mut()
+            {
+                snap.edits_applied.push(EditEvent::KnownTargetUpdate {
+                    addr: *addr,
+                    kind: resolved.clone(),
+                });
             }
             next_known.insert(*addr, resolved);
         }
@@ -423,7 +566,7 @@ where
         // (`apply_link_register` keeps the same NodeId; `apply_tail_call`
         // patches the cache's `exit_control` via the helper threaded
         // into `apply_in_place_edit`).
-        for (placeholder, resolved) in &in_place_edits {
+        for (placeholder, resolved, addr) in &in_place_edits {
             apply_in_place_edit(
                 &mut graph,
                 &config,
@@ -432,6 +575,25 @@ where
                 &mut stats,
                 &mut region_ir_cache,
             )?;
+            // F4 — record the actual edit that fired.
+            if capture_edits
+                && let Some(snap) = snapshot.as_mut()
+            {
+                let event = match resolved {
+                    ResolvedTargets::LinkRegister => EditEvent::LinkRegister { addr: *addr },
+                    ResolvedTargets::Single(target) => EditEvent::TailCall {
+                        addr: *addr,
+                        target: *target,
+                    },
+                    // `Multiple` is not an in-place case; record as
+                    // `KnownTargetUpdate` for diagnostic completeness.
+                    ResolvedTargets::Multiple(_) => EditEvent::KnownTargetUpdate {
+                        addr: *addr,
+                        kind: resolved.clone(),
+                    },
+                };
+                snap.edits_applied.push(event);
+            }
         }
 
         // Recompute unresolved AFTER in-place edits — the edits
@@ -456,6 +618,12 @@ where
         // unresolved (error).
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&known_targets);
         if !edge_set_changed && in_place_edits.is_empty() {
+            // F4 — push snapshot before the success-or-error exit.
+            if let Some(trace) = stats.trace.as_mut()
+                && let Some(snap) = snapshot.take()
+            {
+                trace.push(snap);
+            }
             // Fixed point.  Any branch in `unresolved_after_edits`
             // not in `next_known` is genuinely unresolvable.
             if !unresolved_after_edits.is_empty() {
@@ -483,6 +651,12 @@ where
         // IR and re-classify in the next loop turn.
         if !edge_set_changed {
             run_stable_only(&config, &mut graph, &mut stats)?;
+            // F4 — push snapshot before continuing/returning.
+            if let Some(trace) = stats.trace.as_mut()
+                && let Some(snap) = snapshot.take()
+            {
+                trace.push(snap);
+            }
             // After in-place edits, if no unresolved branches remain
             // we're done — run the destructive subset and return.
             if unresolved.is_empty() {
@@ -496,6 +670,16 @@ where
         // currently-held Sleigh into the next build, then harvest it
         // back from the new CFG so the next iteration sees the same
         // handle (no re-construction).
+        //
+        // F4 — mark the rebuild flag in the snapshot before pushing.
+        if let Some(snap) = snapshot.as_mut() {
+            snap.cfg_rebuild_triggered = true;
+        }
+        if let Some(trace) = stats.trace.as_mut()
+            && let Some(snap) = snapshot.take()
+        {
+            trace.push(snap);
+        }
         known_targets = next_known;
         let (g, u, new_cfg) = build_lift_stable(
             sleigh,

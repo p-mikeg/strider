@@ -202,6 +202,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        debug: None,
     };
     if let Ok((_graph, stats)) = run_orchestrator_with_stats(config) {
         // If the tail-call edit fired, we expect cfg_rebuilds == 1
