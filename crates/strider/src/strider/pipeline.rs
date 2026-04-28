@@ -68,6 +68,29 @@ pub struct AnalyzeOutcome {
     pub region_handles: Vec<RegionLiftHandles>,
 }
 
+/// W10 — single-line summary of an [`AnalyzeOutcome`] for diagnostics
+/// ("why didn't tier 2 resolve X?").  Pairs naturally with F4's debug-
+/// config story: when a user runs the orchestrator and inspects the
+/// outcome, formatting the outcome with `{}` gives a quick readout of
+/// the data the outcome actually carries — unresolved-branch count and
+/// per-region handle count.
+///
+/// Iteration and cfg-rebuild counts live on
+/// [`crate::indirect_resolve_tier2::OrchestratorStats`], not on
+/// `AnalyzeOutcome` (the outcome is the lift result, not the
+/// orchestrator's bookkeeping).  Format `OrchestratorStats` directly
+/// to surface those counters.
+impl std::fmt::Display for AnalyzeOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AnalyzeOutcome {{ unresolved_branches: {}, regions: {} }}",
+            self.unresolved_branches.len(),
+            self.region_handles.len(),
+        )
+    }
+}
+
 /// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
 /// function graph.
 ///
@@ -443,5 +466,54 @@ impl Strider {
             unresolved_branches,
             region_handles,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for [`AnalyzeOutcome`] formatting helpers (W10).
+
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+
+    /// W10 — build a real (but minimal) `AnalyzeOutcome` by analysing
+    /// a one-instruction `ret` program, then assert the `Display`
+    /// readout contains the unresolved-branch and region counts.  Going
+    /// through the real `analyze_cfg` path keeps this test honest about
+    /// what the outcome's fields actually carry — synthesising a fake
+    /// `BuiltFunctionGraph` would lose that grounding.
+    #[test]
+    fn display_summarises_unresolved_branches_and_region_count() {
+        // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
+        // `unresolved_branches.len() == 0`.
+        let arch = crate::SleighArch::x86_64();
+        let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
+        let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
+            .expect("probe sleigh")
+            .regs()
+            .expect("probe regs");
+        let strider = crate::Strider::new(
+            arch,
+            regs,
+            crate::CallingConvention::x86_64_systemv_abi(),
+        )
+        .expect("strider");
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let cfg = cfg::Builder::new(sleigh, 0x1000, cfg::OptionsBuilder::new().build())
+            .build()
+            .expect("cfg");
+        let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
+        // Plain `ret`: zero unresolved branches, exactly one region.
+        let s = format!("{outcome}");
+        assert!(
+            s.contains("unresolved_branches: 0"),
+            "Display output must surface the unresolved-branch count; got {s:?}",
+        );
+        assert!(
+            s.contains("regions: 1"),
+            "Display output must surface the region count; got {s:?}",
+        );
     }
 }
