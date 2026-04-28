@@ -1,68 +1,45 @@
-//! Producer-shape classifier for tier-2 indirect-branch resolution.
+//! Producer-shape classifier shim — F5 relocates the canonical
+//! implementation into [`opt::indirect_branch_resolve`].  This module
+//! preserves the original strider-level API surface
+//! (`BuiltFunctionGraph` argument, `cfg::ResolvedTargets` return) for
+//! back-compat with existing tests and orchestrator code.
 //!
-//! Walks the producer node of a placeholder anchor's value-input and
-//! classifies it into a [`ResolvedTargets`].  The arms here are the
-//! soundness-checked subset for round R2 (R4 will add the
-//! jump-table arm).
+//! Internally each function delegates to the opt-side classifier and
+//! converts the returned [`opt::BranchResolution`] into the
+//! cfg-side [`cfg::test_api::ResolvedTargets`] enum.  Both enums are
+//! structurally identical; the conversion is mechanical.
 
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeKind, NodeOutputId};
+use ir::node::NodeOutputId;
 use opt::ReadOnlyMemory;
 
-use super::jump_table::classify_jump_table;
+/// Convert opt's local resolution enum into cfg's
+/// canonical [`ResolvedTargets`].  Hoisted out of every shim so the
+/// mapping is a single source of truth.
+fn from_opt(r: opt::BranchResolution) -> ResolvedTargets {
+    match r {
+        opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
+        opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),
+        opt::BranchResolution::Multiple(ts) => ResolvedTargets::Multiple(ts),
+    }
+}
 
 /// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`].  Returns `None` when the producer doesn't
-/// match any of the known sound shapes — the orchestrator (R3)
-/// interprets `None` as "still unresolved at this iteration; try
-/// again or surface as `UnresolvedIndirectBranch` at fixed point."
-///
-/// Equivalent to [`classify_anchor_with_rom`] with `rom == None`.
-/// The jump-table arm (R4) becomes a no-op in that case because
-/// reading table entries requires rodata access; for callers that
-/// have a rom, prefer the rom-aware form.
-///
-/// `link_register_vn` is the calling convention's link register
-/// varnode (`None` on stack-push ABIs like x86 / x86_64 where there
-/// is no architectural link register).  When `None`, the
-/// `InitialVar(lr) → LinkRegister` arm is short-circuited — there
-/// can be no LR match without a known LR varnode.
-///
-/// # Soundness
-///
-/// Every arm in this match must be a producer shape that, on the
-/// optimised IR, **unambiguously** identifies the indirect branch's
-/// runtime target.  Shapes the prior in-place heuristic tried
-/// (`Load(InitialVar(sp))` for `pop pc`-style returns) are
-/// deliberately NOT included here: a `push X; pop pc` tail call
-/// has the same Load-shape and would be misclassified as a return.
-/// We rely on `StackLoadForward` having already simplified
-/// properly-popped return addresses to `InitialVar(lr_vn)` directly
-/// — that's the shape the LinkRegister arm matches.  See R2.4 for
-/// the explicit soundness tests.
+/// [`ResolvedTargets`].  Delegates to
+/// [`opt::classify_anchor`].
 #[must_use]
 pub fn classify_anchor(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    classify_anchor_with_rom(graph, anchor_output, link_register_vn, None)
+    opt::classify_anchor(&graph.graph, anchor_output, link_register_vn).map(from_opt)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
-/// for the R4 jump-table arm.
-///
-/// Same contract as [`classify_anchor`] for every shape that
-/// doesn't require rom access; the only difference is the new
-/// `NodeKind::Load(_)` arm that pattern-matches the canonical
-/// jump-table dispatch shape and reads its table entries via `rom`.
-///
-/// Pass `rom = None` to disable the jump-table arm; otherwise pass
-/// the same rom the cfg builder + optimiser pipeline use (almost
-/// always the ELF's `.rodata` + `.text` view), so the entries the
-/// classifier reads agree with the entries downstream consumers
-/// see.
+/// for the jump-table arm.  Delegates to
+/// [`opt::classify_anchor_with_rom`].
 #[must_use]
 pub fn classify_anchor_with_rom(
     graph: &BuiltFunctionGraph,
@@ -70,30 +47,14 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
-    classify_anchor_with_rom_and_sp(graph, anchor_output, link_register_vn, rom, None)
+    opt::classify_anchor_with_rom(&graph.graph, anchor_output, link_register_vn, rom)
+        .map(from_opt)
 }
 
-/// Classify a placeholder anchor with both an optional [`ReadOnlyMemory`]
-/// (for the rodata jump-table arm) and an optional stack-pointer
-/// varnode (for the BUG-30 stack-array-of-labels arm).
-///
-/// Same contract as [`classify_anchor`] for every shape unaffected by
-/// either side-channel.  When `rom` is `None`, the rodata-jump-table
-/// arm is short-circuited.  When `stack_ptr_vn` is `None`, the BUG-30
-/// stack-array arm is short-circuited.
-///
-/// The orchestrator passes both: the rom for the binary-image rodata,
-/// and the calling convention's stack-pointer varnode for the
-/// stack-array shape.
-///
-/// # Soundness
-///
-/// Both new arms preserve the classifier's overall contract: the
-/// resulting `ResolvedTargets::Multiple` enumerates the *full* set of
-/// possible runtime targets.  Failing closed (returning `None`) on
-/// any partial proof defers the branch to a later iteration or to
-/// `UnresolvedIndirectBranch` at fixed point — never under-
-/// approximating.
+/// Classify a placeholder anchor with both an optional
+/// [`ReadOnlyMemory`] (for the rodata jump-table arm) and an optional
+/// stack-pointer varnode (for the BUG-30 stack-array-of-labels arm).
+/// Delegates to [`opt::classify_anchor_with_rom_and_sp`].
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
     graph: &BuiltFunctionGraph,
@@ -102,146 +63,15 @@ pub fn classify_anchor_with_rom_and_sp(
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    let producer_id = graph.graph.get_node_from_output(anchor_output);
-    let kind = *graph.graph.node_kind(producer_id);
-    match kind {
-        // SOUND: a literal constant in the IR comes from one of:
-        //   - a tracked IntConst pcode insn in the source region,
-        //   - constant folding (`ConstantFold`),
-        //   - a `LoadReadOnly` resolution against the binary's rodata.
-        // All three are deterministic functions of the function's
-        // pcode, so the same address is the only possible runtime
-        // target of this BranchIndirect.  IntConst stores a u128;
-        // truncate to u64 because virtual-address space is 64-bit
-        // and any higher bits are noise (e.g. a 128-bit SIMD vn used
-        // as a target).
-        NodeKind::IntConst(k) => {
-            #[allow(clippy::cast_possible_truncation)]
-            let truncated = k as u64;
-            Some(ResolvedTargets::Single(truncated))
-        }
-        // SOUND: `InitialVar(vn)` is the function-entry value of
-        // varnode `vn`.  When `vn == lr_vn`, the indirect branch
-        // dispatches to the caller-provided return address — i.e. a
-        // standard return.  This is the shape `StackLoadForward`
-        // produces for properly-popped return addresses (R2.4 has
-        // the explicit `pop pc` test).  The `link_register_vn ==
-        // None` case (x86 / x86_64) short-circuits to None because
-        // there is no architectural link register on those ABIs.
-        NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
-            Some(ResolvedTargets::LinkRegister)
-        }
-        // SOUND: `ValuePhi`'s output is the merge of one
-        // per-predecessor value input (slot 0 is the phi token,
-        // slots 1.. are the values — see `node_signature::expected_signature`
-        // for ValuePhi).  When *every* value input folds to
-        // `IntConst(k_i)`, the runtime target set is exactly
-        // `{k_i}` for the predecessors that ever reach this branch
-        // — sound because adding more predecessors to a phi can
-        // only widen the set (each new predecessor brings its own
-        // constant via the same `IntConst` rule), never invalidate
-        // the existing entries.  Mixed-input phis (any non-const
-        // slot) are NOT sound: a runtime value could resolve to
-        // any address, so we must defer to the orchestrator (R3).
-        //
-        // This arm matters even after `RedundantPhis` runs: that
-        // pass only collapses phis whose inputs are *identical*,
-        // so a phi of distinct constants stays a phi.  When
-        // RedundantPhis happens to collapse the phi to a single
-        // IntConst, the IntConst arm above handles it.  Both
-        // shapes produce the same induced edge set after dedup.
-        NodeKind::ValuePhi => {
-            // Skip slot 0 (the ControlPhi-token); slots 1.. are
-            // the per-predecessor values.
-            let inputs: Vec<NodeOutputId> =
-                graph.graph.node_inputs(producer_id).into_iter().collect();
-            let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
-            for &val in inputs.iter().skip(1) {
-                let val_producer = graph.graph.get_node_from_output(val);
-                match graph.graph.node_kind(val_producer) {
-                    NodeKind::IntConst(k) => {
-                        // Same u128→u64 truncation as the IntConst
-                        // arm: virtual-address space is 64-bit;
-                        // higher bits are noise.
-                        #[allow(clippy::cast_possible_truncation)]
-                        targets.push(*k as u64);
-                    }
-                    // Any non-IntConst input means the runtime
-                    // target is unbounded — we cannot soundly
-                    // enumerate.  Defer.
-                    _ => return None,
-                }
-            }
-            // Sort + dedup so the resulting Multiple is canonical.
-            // The orchestrator's edge-set convergence test compares
-            // induced edge sets across iterations; a stable order
-            // makes the comparison cheap and avoids spurious
-            // "different" results from per-iteration phi-input
-            // ordering noise.
-            targets.sort_unstable();
-            targets.dedup();
-            // SOUND: an empty `Multiple` would silently advertise zero
-            // runtime targets, making the dispatch site appear
-            // unreachable and feeding a `Switch { targets: [] }`
-            // terminator that has no outgoing edges.  A degenerate
-            // zero-value-input `ValuePhi` cannot arise from the normal
-            // lift path (every phi is initialised with at least one
-            // value input via `link_regions`), but `DeadBranchElim`
-            // running at fixed-point can detach inputs and leave a
-            // zero-input phi observable transiently in unusual cases.
-            // We treat that case as "still unresolved at this iter"
-            // rather than as a sound enumeration of zero targets.
-            if targets.is_empty() {
-                None
-            } else {
-                Some(ResolvedTargets::Multiple(targets))
-            }
-        }
-        // R4: jump-table arm.  Producer is a Load — a candidate for
-        // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
-        // IntConst(stride))))` jump-table dispatch shape.  See
-        // `jump_table::classify_jump_table` for the full shape match,
-        // bound proof (KnownBits + predecessor-If walk), and entry
-        // read.
-        //
-        // F3 / BUG-30: when the rodata jump-table arm doesn't match
-        // and an SP varnode is supplied, fall through to
-        // `stack_array::classify_stack_array` which handles the
-        // computed-goto-via-local-stack-array shape (gcc/clang -O0
-        // lowering: array of `&&L_i` written to stack at function
-        // entry, dispatched by `Load[sp + base + idx*stride]`).
-        // Both arms fail closed (return None) on any partial proof,
-        // so a `Some` from either is sound.
-        NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(graph, anchor_output, rom, link_register_vn) {
-                return Some(r);
-            }
-            if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
-            }
-            None
-        }
-        // F3 / BUG-30: ARM / arm-thumb / arm-be lifters wrap the
-        // dispatch target in `IntBinaryOp(And)` with a constant mask
-        // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
-        // stack_array classifier transparently strips the mask, so
-        // route And-anchors through the same arm — but only when the
-        // SP varnode is supplied (no SP, no stack-array shape to
-        // match).
-        NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
-            if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
-            }
-            None
-        }
-        // R2.1 / R2.2 / R2.3: every other producer shape is "still
-        // unresolved" — the orchestrator will try again on a later
-        // iteration or surface `UnresolvedIndirectBranch` at fixed
-        // point.
-        _ => None,
-    }
+    opt::classify_anchor_with_rom_and_sp(
+        &graph.graph,
+        anchor_output,
+        link_register_vn,
+        rom,
+        stack_ptr_vn,
+    )
+    .map(from_opt)
 }
-
 #[cfg(test)]
 mod tests {
     //! Unit tests for [`classify_anchor`].

@@ -1,237 +1,85 @@
-//! In-place IR edits for tier-2 resolutions that don't require a CFG
-//! rebuild.  Two variants are supported:
+//! In-place IR edits — F5 shim.  The canonical implementation is in
+//! [`opt::indirect_branch_resolve::inplace`].  This module preserves
+//! the original strider-level API (`BuiltFunctionGraph` argument,
+//! strider's [`crate::error::Error`] return) for back-compat with the
+//! orchestrator and existing tests.
 //!
-//!   * **`LinkRegister`**: the placeholder `Return(target_value)`
-//!     already has the right control-flow shape — control reaches a
-//!     `Return` node, which is exactly what the calling convention's
-//!     return idiom needs.  We append the convention's `ret_val_regs`
-//!     as additional value inputs to the existing Return node.  The
-//!     placeholder's `target_value` slot stays as input #2 (the same
-//!     `NodeOutputId`); the appended ret_vals occupy slots #3 onward.
-//!     The cached `RegionIrEntry::exit_control` handle is unchanged
-//!     because we're modifying a node, not replacing it.
-//!
-//!   * **`Single` tail call**: replace the placeholder
-//!     `Return(target_vn)` with `Call(IntConst(target)) →
-//!     Return(ret_vars)`.  The placeholder Return is detached
-//!     (becoming a zombie unreachable node — the validator skips it
-//!     via the entry-rooted reachability scope) and a fresh
-//!     `IntConst → Call → Return` chain is wired on the same control
-//!     and memory inputs.  The new Return's `NodeId` is returned so
-//!     callers (the orchestrator / cache) can patch
-//!     [`crate::RegionIrEntry::exit_control`].
-//!
-//! # Correctness — cache handles
-//!
-//! Both edits preserve cached `RegionIrEntry` entry handles because
-//! the body of the region (everything before the placeholder Return)
-//! is untouched.  The exit handles change semantically:
-//!
-//!   * `apply_link_register` keeps the same Return `NodeId`; the
-//!     cache's `exit_control` need not be patched.
-//!   * `apply_tail_call` produces a new Return `NodeId`; callers MUST
-//!     patch `exit_control` (and `exit_memory`) using the returned id.
-//!
-//! Cached body refs that pre-date the edit remain valid because the
-//! body itself is not touched.
+//! The opt-side functions return [`opt::Error`].  We bridge into
+//! strider's error enum via the existing `IrError` route — opt errors
+//! that wrap an `ir::ErrorKind` round-trip cleanly through
+//! `strider::ErrorKind::IrError`.
 
 #![allow(clippy::module_name_repetitions)]
 
 use ir::BuiltFunctionGraph;
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use ir::node::{NodeId, NodeOutputId};
 
 use crate::error::{ErrorKind, Result};
 
-/// Applies the `LinkRegister` resolution to a placeholder
-/// `Return(control, memory, target_value)` node by appending
-/// `ret_val_outputs` as additional value inputs.
-///
-/// The placeholder's input layout pre-edit:
-///
-///   `[control, memory, target_value]`
-///
-/// Post-edit:
-///
-///   `[control, memory, target_value, ret_val_0, ret_val_1, …]`
-///
-/// The `target_value` slot is intentionally retained — it doesn't
-/// matter for downstream consumers (it was the dispatch varnode, now
-/// effectively a no-op slot in the Return) and removing it would
-/// require shifting subsequent input indices.  Future rounds may
-/// optimise this away; the IR's `validate` is robust to extra Return
-/// value inputs.
-///
-/// # Correctness — node id stability
-///
-/// We use [`Graph::add_node_input`] which mutates the existing Return
-/// node in place.  The Return's `NodeId` (and therefore any cached
-/// `RegionIrEntry::exit_control` handle pointing at its control input
-/// chain) is unchanged.
+/// Bridge: opt's classifier emits its own [`opt::Error`] that wraps
+/// either an `ir::ErrorKind` (round-trippable) or an
+/// `ExpectedNodeNotFound` (which strider models as `WrongNodeKind`).
+/// Translate so callers see the strider error variants they expect.
+fn opt_to_strider_err(e: opt::Error) -> crate::error::Error {
+    match e.into_kind() {
+        // Round-trip through the existing IR-error bridge so the
+        // backtrace + location chain are preserved.
+        opt::ErrorKind::IrError(ir_kind) => ir::Error::from(ir_kind).into(),
+        // The two cases we surface in the in-place editors:
+        // wrong-kind / wrong-arity Returns.
+        opt::ErrorKind::ExpectedNodeNotFound(expected, _kind) => {
+            ErrorKind::WrongNodeKind {
+                node: NodeId::from_u32(0), // arity diagnostics don't need the id
+                expected,
+            }
+            .into()
+        }
+        // No other opt::ErrorKind variants escape the in-place editors
+        // today.  Reroute defensively as Unimplemented so a future
+        // opt-side change surfaces as a typed strider error rather
+        // than silently dropping context.
+        other => ErrorKind::Unimplemented(format!(
+            "unexpected opt error from indirect_branch_resolve in-place editor: {other:?}"
+        ))
+        .into(),
+    }
+}
+
+/// Apply the `LinkRegister` resolution.  Delegates to
+/// [`opt::apply_link_register`].
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::WrongNodeKind`] if `placeholder_return` is not a
-///   `NodeKind::Return` node.
-/// * [`ErrorKind::IrError`] propagating any failure from
-///   [`Graph::add_node_input`] (e.g. attempting to add an input to a
-///   cacheable node, which `Return` is not — but the check is
-///   defensive in case of future signature changes).
+/// * [`ErrorKind::WrongNodeKind`] when `placeholder_return` is not a
+///   [`ir::node::NodeKind::Return`].
+/// * [`ErrorKind::IrError`] propagating IR errors from the opt-side
+///   `add_node_input` call.
 pub fn apply_link_register(
     fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
-    // Safety check: must be a Return node.  The orchestrator only
-    // ever passes the placeholder Return's id, but defending against
-    // a misuse here surfaces a typed error rather than silently
-    // mangling an unrelated node.
-    let kind = *fg.graph.node_kind(placeholder_return);
-    if !matches!(kind, NodeKind::Return) {
-        return Err(ErrorKind::WrongNodeKind {
-            node: placeholder_return,
-            expected: "Return",
-        }
-        .into());
-    }
-    // Append each ret-val.  add_node_input updates the use-list and
-    // input-index bookkeeping; we don't re-validate after each call
-    // because the validator runs at the orchestrator level after all
-    // edits land.
-    for &ret in ret_val_outputs {
-        // Bridges ir::Error → strider::Error via the existing
-        // strider_error bridge_error! impl in crate::error.
-        fg.graph.add_node_input(placeholder_return, ret)?;
-    }
-    Ok(())
+    opt::apply_link_register(&mut fg.graph, placeholder_return, ret_val_outputs)
+        .map_err(opt_to_strider_err)
 }
 
-/// Applies the `Single`-tail-call resolution by replacing the
-/// placeholder `Return(target_value)` with `Call(IntConst(target)) →
-/// Return(ret_vars)`.
-///
-/// Pre-edit:
-///
-///   `Return(control, memory, target_value)`
-///
-/// Post-edit:
-///
-///   `IntConst(target) → Call(control, memory, IntConst) →
-///   Return(call.ctrl_out, call.mem_out, ret_val_0, ret_val_1, …)`
-///
-/// The placeholder Return is detached (becomes a zombie unreachable
-/// from `entry`).  The new Return is wired on the Call's control and
-/// memory outputs.
-///
-/// # Correctness
-///
-/// * The placeholder's pre-Return control and memory inputs are
-///   reused as the Call's control and memory inputs — no
-///   `replace_all_uses` rewires are needed because we're consuming
-///   them at exactly the same point in the chain.
-/// * `IntConst(target)` is created with the same integer width as
-///   the original `target_value`'s output kind, so the Call's
-///   address operand has a sensible type.
-/// * Detaching the placeholder removes its inputs from their
-///   producers' use-lists (via [`Graph::detach_node_inputs`]).  The
-///   placeholder node remains in the arena but is unreachable from
-///   `entry`; the validator's Layer A skips it via reachability
-///   scoping.
-/// * The new Return's `NodeId` is returned so the orchestrator can
-///   patch the cache's exit-control handle.
+/// Apply the `Single`-tail-call resolution.  Delegates to
+/// [`opt::apply_tail_call`].
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::WrongNodeKind`] if `placeholder_return` is not a
-///   `NodeKind::Return` node.
-/// * [`ErrorKind::IrError`] propagating IR construction errors
-///   (e.g. wrong input arity, non-value output kind).
+/// * [`ErrorKind::WrongNodeKind`] when `placeholder_return` is not a
+///   [`ir::node::NodeKind::Return`] or has unexpected input arity.
+/// * [`ErrorKind::IrError`] propagating IR construction errors.
 pub fn apply_tail_call(
     fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
     target: u64,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
-    // Safety check.
-    let kind = *fg.graph.node_kind(placeholder_return);
-    if !matches!(kind, NodeKind::Return) {
-        return Err(ErrorKind::WrongNodeKind {
-            node: placeholder_return,
-            expected: "Return",
-        }
-        .into());
-    }
-    // Read the placeholder's input layout: [control, memory,
-    // target_value].  We require exactly 3 inputs — the post-R1.4
-    // tier-2 placeholder shape.
-    let inputs: Vec<NodeOutputId> = fg
-        .graph
-        .node_inputs(placeholder_return)
-        .into_iter()
-        .collect();
-    if inputs.len() != 3 {
-        return Err(ErrorKind::WrongNodeKind {
-            node: placeholder_return,
-            expected: "Return with [control, memory, target_value] (3 inputs)",
-        }
-        .into());
-    }
-    let control_in = inputs[0];
-    let memory_in = inputs[1];
-    let target_value = inputs[2];
-
-    // Determine the IntConst's output type from the original
-    // target_value's output kind.  Falls back to U64 when the target
-    // is not a value-typed output (defensive — production placeholder
-    // Returns always have value at slot 2).
-    let target_int_ty = fg
-        .graph
-        .output_kind(target_value)
-        .as_integer_or_err()
-        .unwrap_or(ir::node::NodeOutputType::U64);
-
-    // CORRECTNESS — detach BEFORE creating the new chain: this
-    // removes the placeholder's three inputs from their respective
-    // use-lists.  The placeholder node id remains in the arena but
-    // becomes unreachable; validate's Layer A skips unreachable
-    // nodes via the entry-rooted walk.
-    fg.graph.detach_node_inputs(placeholder_return);
-
-    // Create the IntConst(target) with the same integer width as
-    // the original target_value.  The mask in build_int_const-style
-    // construction is applied here so the stored `u128` matches the
-    // type's bit width (mirrors FunctionBuilder::build_int_const).
-    let masked_target = u128::from(target) & target_int_ty.bit_mask_u128();
-    let int_const = fg.graph.create_node(
-        NodeKind::IntConst(masked_target),
-        [],
-        [NodeOutputKind::OutputType(target_int_ty)],
-    );
-    let int_const_out = fg.graph.node_outputs_exact::<1>(int_const)?[0];
-
-    // Create the Call node.  Inputs: [control, memory,
-    // call_address].  Outputs: [Control, Memory] — no clobbered
-    // varnodes because we don't have access to the calling
-    // convention's clobber list at this entry point (the orchestrator
-    // would supply it via a future-rounds API).  Empty clobbers is
-    // sound: the surviving Return doesn't need any of those values.
-    let call = fg.graph.create_node(
-        NodeKind::Call,
-        [control_in, memory_in, int_const_out],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
-    );
-    let [call_ctrl_out, call_mem_out] = fg.graph.node_outputs_exact::<2>(call)?;
-
-    // Create the new Return.  Inputs: [call.ctrl, call.mem,
-    // ...ret_val_outputs].  Returns has no outputs.
-    let mut new_return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
-    new_return_inputs.push(call_ctrl_out);
-    new_return_inputs.push(call_mem_out);
-    new_return_inputs.extend_from_slice(ret_val_outputs);
-    let new_return = fg.graph.create_node(NodeKind::Return, new_return_inputs, []);
-
-    Ok(new_return)
+    opt::apply_tail_call(&mut fg.graph, placeholder_return, target, ret_val_outputs)
+        .map_err(opt_to_strider_err)
 }
-
 #[cfg(test)]
 mod tests {
     //! Unit tests for [`apply_link_register`] and [`apply_tail_call`].
@@ -247,7 +95,7 @@ mod tests {
 
     use super::*;
     use ir::FunctionBuilder;
-    use ir::node::NodeOutputType;
+    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
     /// Build a placeholder graph whose only Return is
     /// `Return(control, memory, IntConst(0xdead))`.  Returns the
