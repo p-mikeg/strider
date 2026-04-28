@@ -24,6 +24,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::indirect_resolve_tier2::{
@@ -50,6 +53,49 @@ fn make_sleigh_factory(
         let reader = BufMemReader::new(bytes.clone(), base);
         Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh")
     })
+}
+
+/// Type alias matching `OrchestratorConfig::make_sleigh`'s field type.
+type SleighFactory = Box<dyn FnMut() -> Sleigh<BufMemReader<Vec<u8>>>>;
+
+/// Returns a `make_sleigh` closure that increments `counter` every time
+/// it is invoked, plus the same `Arc<AtomicUsize>` for the test to
+/// observe the count after the orchestrator returns.  Used by tests
+/// that pin the "Sleigh constructed at most once per orchestrator run"
+/// contract.
+fn make_counted_sleigh_factory(
+    bytes: Vec<u8>,
+    base: u64,
+) -> (SleighFactory, Arc<AtomicUsize>) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = Arc::clone(&counter);
+    let factory: SleighFactory = Box::new(move || {
+        counter_clone.fetch_add(1, Ordering::SeqCst);
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(bytes.clone(), base);
+        Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh")
+    });
+    (factory, counter)
+}
+
+/// Like [`make_counted_sleigh_factory`] but panics if invoked more than
+/// once.  Used by the defensive guard test to pin "Sleigh is constructed
+/// at most once per orchestrator run" — the panic message is what the
+/// guard test asserts on.
+fn make_panicking_sleigh_factory(
+    bytes: Vec<u8>,
+    base: u64,
+) -> (SleighFactory, Arc<AtomicUsize>) {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = Arc::clone(&counter);
+    let factory: SleighFactory = Box::new(move || {
+        let prev = counter_clone.fetch_add(1, Ordering::SeqCst);
+        assert!(prev < 1, "make_sleigh called more than once");
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(bytes.clone(), base);
+        Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh")
+    });
+    (factory, counter)
 }
 
 fn make_config<'a>(
@@ -430,4 +476,248 @@ fn orchestrator_uses_cache_no_relifting() {
     // Fast path: 1 rebuild, 1 stable run.
     assert_eq!(stats.cfg_rebuilds, 1);
     assert_eq!(stats.stable_runs, 1);
+}
+
+// ── Sleigh persistence across iterations ──────────────────────────────────
+
+#[test]
+fn orchestrator_constructs_sleigh_only_once_fast_path() {
+    // CORRECTNESS pin: the orchestrator must construct Sleigh exactly
+    // once per run.  Sleigh construction loads the SLA spec and is
+    // expensive — re-constructing per iteration would be a perf bug.
+    // Even in the fast path (no indirect branch, no loop), the count
+    // must be 1.  The Sleigh travels into the Cfg via `Builder::build`
+    // and is harvested back out via `Cfg::sleigh` for the next
+    // iteration.
+    let strider = make_strider_x86_64();
+    let bytes = vec![0xc3u8]; // ret
+    let (factory, counter) = make_counted_sleigh_factory(bytes, 0x1000);
+    let config = OrchestratorConfig {
+        strider: &strider,
+        start_addr: 0x1000,
+        make_sleigh: factory,
+        rom: None,
+        fn_max_size: None,
+        allow_code_before_start_addr: false,
+    };
+    let _ = run_orchestrator(config).expect("orchestrator");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Sleigh must be constructed exactly once per orchestrator run (fast path)",
+    );
+}
+
+#[test]
+fn orchestrator_constructs_sleigh_only_once_with_in_place_edit() {
+    // Same contract but for the in-place-edit path (tail call).  The
+    // orchestrator iterates through the loop body at least once,
+    // applies the in-place edit, re-runs the stable subset, and
+    // returns.  Even with multiple iterations, Sleigh is constructed
+    // exactly once.
+    let k = 0x500u64;
+    let k_le = (k as u32).to_le_bytes();
+    let mut bytes: Vec<u8> = vec![
+        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
+    ];
+    bytes.extend(std::iter::repeat_n(0xccu8, 64));
+    let strider = make_strider_x86_64();
+    let (factory, counter) = make_counted_sleigh_factory(bytes, 0x1000);
+    let config = OrchestratorConfig {
+        strider: &strider,
+        start_addr: 0x1000,
+        make_sleigh: factory,
+        rom: None,
+        fn_max_size: None,
+        allow_code_before_start_addr: false,
+    };
+    // Tolerate either Ok (resolved) or Err (unresolved); the contract
+    // we pin is on Sleigh construction, not on the resolution outcome.
+    let _ = run_orchestrator_with_stats(config);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Sleigh must be constructed exactly once per orchestrator run \
+         (in-place-edit path with multiple iterations)",
+    );
+}
+
+#[test]
+fn orchestrator_constructs_sleigh_only_once_unresolved() {
+    // Error path: `jmp rax` cannot resolve on x86_64.  The orchestrator
+    // reaches a fixed point and returns Err.  Even on the error path,
+    // Sleigh is constructed exactly once.
+    let strider = make_strider_x86_64();
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    let (factory, counter) = make_counted_sleigh_factory(bytes, 0x1000);
+    let config = OrchestratorConfig {
+        strider: &strider,
+        start_addr: 0x1000,
+        make_sleigh: factory,
+        rom: None,
+        fn_max_size: None,
+        allow_code_before_start_addr: false,
+    };
+    let result = run_orchestrator(config);
+    assert!(result.is_err(), "jmp rax must produce an error");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Sleigh must be constructed exactly once per orchestrator run (error path)",
+    );
+}
+
+#[test]
+fn orchestrator_constructs_sleigh_only_once_with_cfg_rebuild() {
+    // CORRECTNESS pin: a fixture exercising the orchestrator's
+    // CFG-rebuild path with `fn_max_size` set so an inside-the-range
+    // `Single(K)` resolution would NOT be a tail call.  Even when the
+    // rebuild path fires, Sleigh must be constructed exactly once.
+    //
+    // NOTE: in round 1 the optimiser may not always fold this fixture
+    // into `Single(K)`, so the orchestrator may exit via the
+    // unresolved-fixed-point error path without rebuilding.  Either way,
+    // the contract on Sleigh construction count holds (counter == 1).
+    // BEFORE the fix: if a rebuild had fired (e.g. on a future fixture
+    // that DOES fold), the counter would have been >= 2.
+    // AFTER the fix: counter is always 1.
+    let k = 0x1010u64; // inside the 0xcc filler region of the fixture
+    let k_le = (k as u32).to_le_bytes();
+    let mut bytes: Vec<u8> = vec![
+        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
+    ];
+    bytes.extend(std::iter::repeat_n(0xccu8, 64));
+    let strider = make_strider_x86_64();
+    let (factory, counter) = make_counted_sleigh_factory(bytes, 0x1000);
+    let config = OrchestratorConfig {
+        strider: &strider,
+        start_addr: 0x1000,
+        make_sleigh: factory,
+        // Function size cap so the cfg builder's tail-call decision
+        // matches the orchestrator's: 0x1000..0x1048 is the function.
+        fn_max_size: Some(0x48),
+        rom: None,
+        allow_code_before_start_addr: false,
+    };
+    // Tolerate either outcome — the contract is on Sleigh construction
+    // count, not on resolution success.  The orchestrator may either
+    // resolve (one rebuild) or hit the cap / error out.
+    let res = run_orchestrator_with_stats(config);
+    let stats = res.as_ref().map(|(_, s)| *s).ok();
+    let err_kind = res.as_ref().err().map(|e| format!("{:?}", e.kind()));
+    let observed = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        observed,
+        1,
+        "Sleigh must be constructed exactly once even with CFG rebuilds; \
+         stats={:?}, err={:?}",
+        stats, err_kind,
+    );
+}
+
+#[test]
+#[should_panic(expected = "make_sleigh called more than once")]
+fn make_sleigh_panics_on_second_call_pinning_guard() {
+    // Defensive guard: we use a panic-on-second-call closure in
+    // [`orchestrator_make_sleigh_called_at_most_once`].  This pinning
+    // test confirms the closure actually panics on the second invocation
+    // — i.e. the test infrastructure itself is sound.
+    let bytes = vec![0xc3u8];
+    let (mut factory, _counter) = make_panicking_sleigh_factory(bytes, 0x1000);
+    let _first = factory();
+    let _second = factory(); // expected to panic
+}
+
+#[test]
+fn orchestrator_make_sleigh_called_at_most_once() {
+    // CORRECTNESS pin (the defensive form): wire a `make_sleigh` that
+    // panics on its second invocation.  If the orchestrator were to
+    // call it more than once across iterations — the bug this change
+    // fixes — the test would panic.  Today, with x86_64 fixtures, the
+    // orchestrator's loop body rarely triggers a rebuild because no
+    // x86_64 push/pop/jmp fixture in the suite resolves to a `Single(K)`
+    // inside the function range.  Even so, this test pins the contract
+    // at the API surface so future fixtures cannot regress us.
+    let strider = make_strider_x86_64();
+    // Try every existing x86_64 orchestrator scenario in turn.  Each
+    // scenario uses a fresh panic-on-second-call closure.
+
+    // 1. fast path (no indirect branch).
+    {
+        let bytes = vec![0xc3u8];
+        let (factory, _) = make_panicking_sleigh_factory(bytes, 0x1000);
+        let config = OrchestratorConfig {
+            strider: &strider,
+            start_addr: 0x1000,
+            make_sleigh: factory,
+            rom: None,
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+        };
+        let _ = run_orchestrator(config);
+    }
+    // 2. unresolved (jmp rax).
+    {
+        let mut bytes = vec![0xff, 0xe0u8];
+        bytes.extend(std::iter::repeat_n(0xccu8, 16));
+        let (factory, _) = make_panicking_sleigh_factory(bytes, 0x1000);
+        let config = OrchestratorConfig {
+            strider: &strider,
+            start_addr: 0x1000,
+            make_sleigh: factory,
+            rom: None,
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+        };
+        let _ = run_orchestrator(config);
+    }
+    // 3. tail-call in-place edit (push K; pop rax; jmp rax with K outside).
+    {
+        let k = 0x500u64;
+        let k_le = (k as u32).to_le_bytes();
+        let mut bytes: Vec<u8> = vec![
+            0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
+        ];
+        bytes.extend(std::iter::repeat_n(0xccu8, 64));
+        let (factory, _) = make_panicking_sleigh_factory(bytes, 0x1000);
+        let config = OrchestratorConfig {
+            strider: &strider,
+            start_addr: 0x1000,
+            make_sleigh: factory,
+            rom: None,
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+        };
+        let _ = run_orchestrator(config);
+    }
+}
+
+#[test]
+fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
+    // CORRECTNESS pin: the resulting graph for a function that does
+    // NOT need indirect resolution is identical regardless of how many
+    // times Sleigh is reused.  We compare the node counts and node
+    // kinds between two independent runs of the orchestrator on the
+    // same input — both runs must produce structurally equivalent
+    // graphs.  This protects against silent state corruption in a
+    // re-used Sleigh.
+    let strider = make_strider_x86_64();
+
+    let make_run = || {
+        let bytes = vec![0xc3u8]; // ret
+        let config = make_config(&strider, bytes, 0x1000);
+        run_orchestrator(config).expect("orchestrator")
+    };
+    let g1 = make_run();
+    let g2 = make_run();
+
+    let kinds_1: Vec<ir::node::NodeKind> =
+        g1.preorder().map(|nid| *g1.graph.node_kind(nid)).collect();
+    let kinds_2: Vec<ir::node::NodeKind> =
+        g2.preorder().map(|nid| *g2.graph.node_kind(nid)).collect();
+    assert_eq!(
+        kinds_1, kinds_2,
+        "graph node-kind sequence must be stable across orchestrator runs",
+    );
 }

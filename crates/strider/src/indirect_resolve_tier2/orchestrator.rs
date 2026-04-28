@@ -53,9 +53,77 @@ use opt::ReadOnlyMemory;
 
 use crate::error::{ErrorKind, Result};
 use crate::strider::Strider;
-use crate::{invalidate_split_regions, lift_new_regions_into_with_stats, RegionIrCache};
+use crate::{cache_key_for_region, lift_new_regions_into_with_stats, RegionIrCache};
 
 use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom};
+
+/// Per-iteration snapshot of a `Cfg`'s region insn counts, keyed by
+/// machine address.  Used by [`build_lift_stable`] to detect region
+/// splits between iterations without needing to keep the previous
+/// iteration's full `Cfg` alive (which would also pin its `Sleigh`,
+/// preventing us from threading a single `Sleigh` through all
+/// iterations).
+type CfgSplitSnapshot = HashMap<MachineInsnAddr, usize>;
+
+/// Build a [`CfgSplitSnapshot`] from `cfg` — captures only the data
+/// [`apply_split_invalidation`] needs, so the orchestrator can drop
+/// the full `Cfg` (including its `Sleigh`) after the snapshot is
+/// taken.  This is the key enabler of the per-run single-`Sleigh`
+/// contract: the orchestrator never holds a stale `Cfg` across
+/// iterations — only its split-detection snapshot.
+fn take_split_snapshot<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> Result<CfgSplitSnapshot> {
+    let mut snapshot = HashMap::new();
+    for region_id in cfg.region_ids() {
+        let key = cache_key_for_region(cfg, region_id)?;
+        let region = cfg
+            .graph
+            .node_weight(region_id)
+            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+        snapshot.insert(key, region.insns.len());
+    }
+    Ok(snapshot)
+}
+
+/// Cache-eviction pass equivalent to [`crate::invalidate_split_regions`]
+/// but driven by a [`CfgSplitSnapshot`] instead of a full `Cfg`.  The
+/// orchestrator uses this so it can drop the previous iteration's
+/// `Cfg` (recovering its `Sleigh`) and still detect region splits.
+///
+/// Returns the number of cache entries evicted, so the caller can
+/// update [`OrchestratorStats::cache_evictions_on_split`].
+///
+/// CORRECTNESS — equivalence with `invalidate_split_regions`: both
+/// scan `new_cfg`'s regions, compare each region's current insn count
+/// against the same region's count in the previous iteration, and
+/// evict the cache entry on shrinkage (= a `split_region` event
+/// moved insns out of this region).  The snapshot variant has the
+/// exact same semantics — only the data source for the previous
+/// counts differs.
+fn apply_split_invalidation<R: rsleigh::MemReader>(
+    cache: &mut RegionIrCache,
+    prev_snapshot: &CfgSplitSnapshot,
+    new_cfg: &Cfg<R>,
+) -> Result<usize> {
+    let cache_size_before = cache.len();
+    for region_id in new_cfg.region_ids() {
+        let key = cache_key_for_region(new_cfg, region_id)?;
+        if !cache.contains_key(&key) {
+            continue;
+        }
+        let new_region = new_cfg
+            .graph
+            .node_weight(region_id)
+            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+        let new_insn_count = new_region.insns.len();
+        let Some(&old_insn_count) = prev_snapshot.get(&key) else {
+            continue;
+        };
+        if new_insn_count < old_insn_count {
+            cache.remove(&key);
+        }
+    }
+    Ok(cache_size_before.saturating_sub(cache.len()))
+}
 
 /// Configuration for the orchestrator.  Held outside the
 /// orchestrator function so callers can construct one and reuse the
@@ -63,7 +131,7 @@ use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom};
 /// per-iteration setup costs.
 pub struct OrchestratorConfig<'a, B>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     /// The strider — stable across iterations.
     pub strider: &'a Strider,
@@ -158,7 +226,7 @@ pub struct OrchestratorStats {
 /// * Propagates strider / cfg / opt errors verbatim.
 pub fn run<B>(config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     let (graph, _stats) = run_with_stats(config)?;
     Ok(graph)
@@ -175,7 +243,7 @@ pub fn run_with_stats<B>(
     mut config: OrchestratorConfig<'_, B>,
 ) -> Result<(ir::BuiltFunctionGraph, OrchestratorStats)>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     let mut stats = OrchestratorStats::default();
     // The `known_targets` map accumulates tier-2 resolutions across
@@ -197,10 +265,29 @@ where
     //     surface, even while round 1's physical lift is still
     //     non-incremental.
     //
-    //   * `prev_cfg` retains the previous iteration's CFG so
-    //     `invalidate_split_regions` can compare insn counts to detect
-    //     region splits at rebuild time.  `None` before the first
-    //     build completes; `Some(cfg)` thereafter.
+    //   * `prev_snapshot` retains a per-region insn-count snapshot of
+    //     the previous iteration's CFG so [`apply_split_invalidation`]
+    //     can compare insn counts to detect region splits at rebuild
+    //     time.  We keep only the snapshot — not the full `Cfg` — so
+    //     the previous iteration's `Sleigh` (the heavy resource we
+    //     thread through `Sleigh persistence`) is recovered by
+    //     destructuring the consumed `Cfg` and re-used across iterations
+    //     instead of being dropped.  `None` before the first build
+    //     completes; `Some(snapshot)` thereafter.
+    //
+    //   * `sleigh` is the ONE `rsleigh::Sleigh` handle used by every
+    //     iteration.  Constructed once via `config.make_sleigh` at
+    //     loop entry, consumed by `Builder::with_endianness` per
+    //     iteration, and harvested back via `cfg.sleigh` between
+    //     iterations.  CORRECTNESS — re-using one Sleigh across many
+    //     `lift_one` calls is sound: `lift_one` takes `&mut self`
+    //     because the C++ side mutates internal decode buffers, which
+    //     are reset on every call; there is no per-CFG state in
+    //     Sleigh.  This is the same pattern `cfg::region_builder` uses
+    //     within a single CFG build.  Re-constructing the Sleigh
+    //     per iteration would re-load the SLA spec — a measurable
+    //     hot-path cost the orchestrator's fixed-point loop pays for
+    //     every CFG rebuild.
     //
     //   * `known_targets` and the lift counters in `stats` (see the
     //     `pcode_insns_lifted` / `regions_newly_lifted` fields) make
@@ -208,17 +295,29 @@ where
     //     the IR graph across iterations can drop in alongside this
     //     orchestrator without changing the loop control flow.
     let mut region_ir_cache: RegionIrCache = std::collections::HashMap::new();
-    let mut prev_cfg: Option<Cfg<rsleigh::mem_readers::BufMemReader<B>>> = None;
+    let mut prev_snapshot: Option<CfgSplitSnapshot> = None;
+    // Construct Sleigh exactly once — this is the heavy step we want
+    // to avoid repeating across iterations.  See the `sleigh` field
+    // comment above for the correctness argument.
+    let mut sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>> =
+        (config.make_sleigh)();
 
     // Iteration 0: build the CFG, lift to IR, run the stable subset.
     let (mut graph, mut unresolved, iter0_cfg) = build_lift_stable(
-        &mut config,
+        sleigh,
+        &config,
         &known_targets,
         &mut stats,
         &mut region_ir_cache,
-        prev_cfg.as_ref(),
+        prev_snapshot.as_ref(),
     )?;
-    prev_cfg = Some(iter0_cfg);
+    // Harvest sleigh + snapshot from iter 0's cfg, then drop the
+    // remainder.  The Cfg is no longer needed once we have its
+    // split-detection snapshot — the orchestrator's classifier and
+    // in-place edits operate on the IR graph alone.
+    prev_snapshot = Some(take_split_snapshot(&iter0_cfg)?);
+    let Cfg { sleigh: harvested_sleigh, .. } = iter0_cfg;
+    sleigh = harvested_sleigh;
 
     // Fast path: function with no `BranchIndirect` at all.  No tier-2
     // work, no rebuild — but we DO still run the destructive subset
@@ -375,18 +474,25 @@ where
             continue;
         }
 
-        // Edge-set changed → structural rebuild.
+        // Edge-set changed → structural rebuild.  Thread the
+        // currently-held Sleigh into the next build, then harvest it
+        // back from the new CFG so the next iteration sees the same
+        // handle (no re-construction).
         known_targets = next_known;
         let (g, u, new_cfg) = build_lift_stable(
-            &mut config,
+            sleigh,
+            &config,
             &known_targets,
             &mut stats,
             &mut region_ir_cache,
-            prev_cfg.as_ref(),
+            prev_snapshot.as_ref(),
         )?;
         graph = g;
         unresolved = u;
-        prev_cfg = Some(new_cfg);
+        // Harvest the snapshot + Sleigh BEFORE the next iteration.
+        prev_snapshot = Some(take_split_snapshot(&new_cfg)?);
+        let Cfg { sleigh: harvested_sleigh, .. } = new_cfg;
+        sleigh = harvested_sleigh;
 
         // Convergence shortcut: if the rebuild produced no
         // unresolved branches, we're done.
@@ -408,7 +514,7 @@ where
 /// resolutions).
 fn is_tail_call<B>(target: u64, config: &OrchestratorConfig<'_, B>) -> bool
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     if target < config.start_addr && !config.allow_code_before_start_addr {
         return true;
@@ -466,7 +572,7 @@ fn apply_in_place_edit<B>(
     cache: &mut RegionIrCache,
 ) -> Result<()>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     match resolved {
         ResolvedTargets::LinkRegister => {
@@ -609,7 +715,7 @@ fn read_ret_val_outputs<B>(
     _config: &OrchestratorConfig<'_, B>,
 ) -> Result<Vec<ir::Value>>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     // CORRECTNESS: empty vec is sound — see function-level docs.
     // Future rounds will populate from the cache's
@@ -620,32 +726,43 @@ where
 /// Builds the CFG, lifts to IR, runs the **stable** optimiser
 /// subset.  Increments `stats.cfg_rebuilds` and `stats.stable_runs`.
 ///
-/// CORRECTNESS — cache lifecycle: when `prev_cfg` is `Some`, this
-/// invokes [`invalidate_split_regions`] FIRST so any cached entry
+/// CORRECTNESS — Sleigh persistence: `sleigh` is **passed in by value**
+/// rather than constructed inside this function.  The orchestrator
+/// constructs Sleigh exactly once via `config.make_sleigh` at loop
+/// entry, then threads the same handle through every call to
+/// `build_lift_stable` by harvesting it from the previous iteration's
+/// `Cfg::sleigh` field.  Reusing one Sleigh across many `lift_one`
+/// calls is sound — `lift_one` mutates only Sleigh's internal decode
+/// buffers, which are reset each call; there is no per-CFG state in
+/// Sleigh.  This pattern is what `cfg::region_builder` already does
+/// within a single CFG build; doing it across iterations gives us the
+/// same property at the orchestrator scale and avoids re-loading the
+/// SLA spec on every iteration.
+///
+/// CORRECTNESS — cache lifecycle: when `prev_snapshot` is `Some`, this
+/// invokes [`apply_split_invalidation`] FIRST so any cached entry
 /// whose underlying region was split (its insn count shrank) is
-/// evicted before the new lift populates the cache.  The lift then
-/// uses [`lift_new_regions_into_with_stats`] which reports counts
-/// under the cache contract (regions already in the cache pre-call
-/// contribute zero — round-2 semantic).  Round-1 still physically
-/// re-lifts the IR each call (no persistent FunctionBuilder yet)
-/// but the **measurable** cache contract is preserved.
+/// evicted before the new lift populates the cache.  The snapshot is
+/// taken from the previous iteration's `Cfg` BEFORE the orchestrator
+/// destructured it to recover the Sleigh handle — so the split-
+/// detection contract is preserved without holding the previous `Cfg`
+/// alive across iterations.
 #[allow(clippy::type_complexity)]
 fn build_lift_stable<B>(
-    config: &mut OrchestratorConfig<'_, B>,
+    sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
+    config: &OrchestratorConfig<'_, B>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
     stats: &mut OrchestratorStats,
     region_ir_cache: &mut RegionIrCache,
-    prev_cfg: Option<&Cfg<rsleigh::mem_readers::BufMemReader<B>>>,
+    prev_snapshot: Option<&CfgSplitSnapshot>,
 ) -> Result<(
     ir::BuiltFunctionGraph,
     Vec<(PcodeInsnAddr, ir::Value)>,
     Cfg<rsleigh::mem_readers::BufMemReader<B>>,
 )>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
-    // Fresh sleigh per iteration — Builder consumes by value.
-    let sleigh = (config.make_sleigh)();
     let mut opts_builder = OptionsBuilder::new();
     if let Some(rom) = config.rom.clone() {
         opts_builder = opts_builder.set_read_only_memory(rom);
@@ -668,15 +785,13 @@ where
             .build()?;
     stats.cfg_rebuilds += 1;
 
-    // CORRECTNESS — split-invalidation: if a previous CFG exists,
+    // CORRECTNESS — split-invalidation: if a previous snapshot exists,
     // detect regions whose insn count shrank (a `split_region` event
     // moved pcode into a fresh second-half region) and evict their
     // cache entries.  The next lift will re-lift the now-shorter first
     // half from pcode; the second half lifts as a brand-new entry.
-    if let Some(prev) = prev_cfg {
-        let cache_size_before = region_ir_cache.len();
-        invalidate_split_regions(region_ir_cache, prev, &cfg)?;
-        let evictions = cache_size_before.saturating_sub(region_ir_cache.len());
+    if let Some(prev) = prev_snapshot {
+        let evictions = apply_split_invalidation(region_ir_cache, prev, &cfg)?;
         stats.cache_evictions_on_split += evictions;
     }
 
@@ -718,7 +833,7 @@ fn run_stable_only<B>(
     stats: &mut OrchestratorStats,
 ) -> Result<()>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     // CORRECTNESS — stable-only: this is invoked between iterations
     // when the IR shape may still change (more in-place edits could
@@ -739,7 +854,7 @@ fn run_destructive<B>(
     stats: &mut OrchestratorStats,
 ) -> Result<()>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer + Clone,
+    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
     // CORRECTNESS — destructive at fixed point only: the IR shape is
     // final here (no future iterations will add nodes), so
@@ -1015,5 +1130,101 @@ mod tests {
         assert_eq!(s.pcode_insns_lifted, 0);
         assert_eq!(s.regions_newly_lifted, 0);
         assert_eq!(s.cache_evictions_on_split, 0);
+    }
+
+    // ── Sleigh persistence: split-snapshot helpers ─────────────────────────
+
+    #[test]
+    fn apply_split_invalidation_noop_on_empty_snapshot() {
+        // Pin: an empty `prev_snapshot` is a valid no-op input for
+        // [`apply_split_invalidation`] — the orchestrator constructs an
+        // empty snapshot conceptually before iter 0 is built (it's wrapped
+        // in `Option::None` rather than an empty map, but the helper must
+        // also tolerate the empty-map case for defensive composability).
+        use crate::RegionIrEntry;
+        let mut cache: RegionIrCache = HashMap::new();
+        cache.insert(
+            MachineInsnAddr { addr: 0x1000 },
+            RegionIrEntry::empty(pcode_addr(0x1000)),
+        );
+        let snapshot: CfgSplitSnapshot = HashMap::new();
+        // Build a real (single-region) Cfg so `apply_split_invalidation`
+        // has a `new_cfg` argument.  We synthesise it by lifting `ret`.
+        let arch = crate::SleighArch::x86_64();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let new_cfg = cfg::Builder::new(
+            sleigh,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg");
+        let evictions =
+            apply_split_invalidation(&mut cache, &snapshot, &new_cfg).expect("invalidation");
+        // Empty snapshot → no comparisons → no evictions, regardless of
+        // what's already in the cache.
+        assert_eq!(evictions, 0);
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn take_split_snapshot_reports_each_region_once() {
+        // Pin: [`take_split_snapshot`] visits every region of `cfg`
+        // exactly once and produces an entry per region.  This is the
+        // essential property that makes the snapshot a faithful proxy
+        // for the full Cfg's region-set in [`apply_split_invalidation`].
+        let arch = crate::SleighArch::x86_64();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let cfg = cfg::Builder::new(
+            sleigh,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg");
+        let snapshot = take_split_snapshot(&cfg).expect("snapshot");
+        // Single-region (just `ret`) → exactly one snapshot entry.
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot.contains_key(&MachineInsnAddr { addr: 0x1000 }));
+        // The recorded count is the region's pcode insn count
+        // (a positive integer).
+        let count = snapshot.get(&MachineInsnAddr { addr: 0x1000 }).copied().unwrap_or(0);
+        assert!(count >= 1, "ret instruction must produce at least one pcode insn");
+    }
+
+    #[test]
+    fn sleigh_can_be_used_for_multiple_cfg_builds_via_orchestrator_path() {
+        // CORRECTNESS pin: this is the source-level form of the cfg-
+        // crate's `cfg_sleigh_field_round_trip` / `sleigh_can_be_used_for_
+        // multiple_cfg_builds` tests.  Build a Cfg, harvest its sleigh
+        // field, build a second Cfg with the same sleigh — both must
+        // succeed.  Mirrors the orchestrator's iteration boundary
+        // exactly: `cfg.sleigh` is the recovery channel between
+        // iterations, and reusing the handle is the entire point of
+        // Approach (A).
+        let arch = crate::SleighArch::x86_64();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let cfg1 = cfg::Builder::new(
+            sleigh,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg1");
+        let recovered = cfg1.sleigh;
+        let cfg2 = cfg::Builder::new(
+            recovered,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg2");
+        assert!(cfg2.graph.node_count() >= 1);
     }
 }
