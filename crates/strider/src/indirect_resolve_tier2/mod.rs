@@ -24,10 +24,14 @@ mod classify;
 pub mod inplace;
 pub mod jump_table;
 pub mod orchestrator;
+pub mod stack_array;
 
-pub use classify::{classify_anchor, classify_anchor_with_rom};
+pub use classify::{
+    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
+};
 pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
+pub use stack_array::classify_stack_array;
 pub use orchestrator::{
     run as run_orchestrator, run_with_stats as run_orchestrator_with_stats, OrchestratorConfig,
     OrchestratorStats,

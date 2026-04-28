@@ -129,63 +129,63 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
 // learns each arch's exact shape; the assertion body is identical
 // across arches and does not need a rewrite.
 
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_x86() {
     assert_no_unresolved_indirect_branch(Arch::X86);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_x64() {
     assert_no_unresolved_indirect_branch(Arch::X64);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_aarch64() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_aarch64be() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64Be);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_arm() {
     assert_no_unresolved_indirect_branch(Arch::Arm);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_arm_be() {
     assert_no_unresolved_indirect_branch(Arch::ArmBe);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_arm_thumb() {
     assert_no_unresolved_indirect_branch(Arch::ArmThumb);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_mips32le() {
     assert_no_unresolved_indirect_branch(Arch::Mips32le);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_mips32be() {
     assert_no_unresolved_indirect_branch(Arch::Mips32be);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_mips64le() {
     assert_no_unresolved_indirect_branch(Arch::Mips64le);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_mips64be() {
     assert_no_unresolved_indirect_branch(Arch::Mips64be);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_ppc32be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32be);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_ppc32le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32le);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_ppc64be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64be);
 }
-#[test] #[ignore = "BUG-30: computed-goto via stack-array of label addresses needs cross-region StackLoadForward (round-2 work)"]
+#[test]
 fn indirect_branch_resolved_ppc64le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64le);
 }

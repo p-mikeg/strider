@@ -70,6 +70,38 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
+    classify_anchor_with_rom_and_sp(graph, anchor_output, link_register_vn, rom, None)
+}
+
+/// Classify a placeholder anchor with both an optional [`ReadOnlyMemory`]
+/// (for the rodata jump-table arm) and an optional stack-pointer
+/// varnode (for the BUG-30 stack-array-of-labels arm).
+///
+/// Same contract as [`classify_anchor`] for every shape unaffected by
+/// either side-channel.  When `rom` is `None`, the rodata-jump-table
+/// arm is short-circuited.  When `stack_ptr_vn` is `None`, the BUG-30
+/// stack-array arm is short-circuited.
+///
+/// The orchestrator passes both: the rom for the binary-image rodata,
+/// and the calling convention's stack-pointer varnode for the
+/// stack-array shape.
+///
+/// # Soundness
+///
+/// Both new arms preserve the classifier's overall contract: the
+/// resulting `ResolvedTargets::Multiple` enumerates the *full* set of
+/// possible runtime targets.  Failing closed (returning `None`) on
+/// any partial proof defers the branch to a later iteration or to
+/// `UnresolvedIndirectBranch` at fixed point — never under-
+/// approximating.
+#[must_use]
+pub fn classify_anchor_with_rom_and_sp(
+    graph: &BuiltFunctionGraph,
+    anchor_output: NodeOutputId,
+    link_register_vn: Option<rsleigh::Vn>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    stack_ptr_vn: Option<rsleigh::Vn>,
+) -> Option<ResolvedTargets> {
     let producer_id = graph.graph.get_node_from_output(anchor_output);
     let kind = *graph.graph.node_kind(producer_id);
     match kind {
@@ -170,13 +202,24 @@ pub fn classify_anchor_with_rom(
         // IntConst(stride))))` jump-table dispatch shape.  See
         // `jump_table::classify_jump_table` for the full shape match,
         // bound proof (KnownBits + predecessor-If walk), and entry
-        // read.  Falls through to None when (a) the shape doesn't
-        // match, (b) the index can't be bounded, or (c) any table
-        // entry can't be read from rom — every failure mode defers
-        // to the orchestrator rather than producing an unsound or
-        // partial Multiple.
+        // read.
+        //
+        // F3 / BUG-30: when the rodata jump-table arm doesn't match
+        // and an SP varnode is supplied, fall through to
+        // `stack_array::classify_stack_array` which handles the
+        // computed-goto-via-local-stack-array shape (gcc/clang -O0
+        // lowering: array of `&&L_i` written to stack at function
+        // entry, dispatched by `Load[sp + base + idx*stride]`).
+        // Both arms fail closed (return None) on any partial proof,
+        // so a `Some` from either is sound.
         NodeKind::Load(_) => {
-            classify_jump_table(graph, anchor_output, rom, link_register_vn)
+            if let Some(r) = classify_jump_table(graph, anchor_output, rom, link_register_vn) {
+                return Some(r);
+            }
+            if let Some(sp) = stack_ptr_vn {
+                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
+            }
+            None
         }
         // R2.1 / R2.2 / R2.3: every other producer shape is "still
         // unresolved" — the orchestrator will try again on a later

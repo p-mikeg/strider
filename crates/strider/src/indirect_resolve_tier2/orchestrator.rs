@@ -55,7 +55,7 @@ use crate::error::{ErrorKind, Result};
 use crate::strider::Strider;
 use crate::{cache_key_for_region, lift_new_regions_into_with_stats, RegionIrCache};
 
-use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom};
+use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp};
 
 /// Per-iteration snapshot of a `Cfg`'s region insn counts, keyed by
 /// machine address.  Used by [`build_lift_stable`] to detect region
@@ -367,6 +367,7 @@ where
         // a per-iteration delta.
         let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
         let lr_vn = config.strider.calling_convention().link_register_vn;
+        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
         // Track which anchors are slated for in-place edits (so we
         // do NOT add them to `next_known` — in-place edits remove
         // the placeholder Return; passing the same `known_targets`
@@ -380,7 +381,7 @@ where
             // classifier call by promoting the Arc to a `&dyn`.
             let rom_ref: Option<&dyn ReadOnlyMemory> = config.rom.as_deref();
             let Some(resolved) =
-                classify_anchor_with_rom(&graph, *anchor_output, lr_vn, rom_ref)
+                classify_anchor_with_rom_and_sp(&graph, *anchor_output, lr_vn, rom_ref, sp_vn)
             else {
                 continue;
             };
