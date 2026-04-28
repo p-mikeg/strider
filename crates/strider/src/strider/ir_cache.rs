@@ -552,25 +552,47 @@ pub fn extend_predecessors_with_handle(
 ) -> Result<()> {
     use ir::node::{NodeKind, NodeOutputKind};
 
-    // Append predecessor's exit control to the ControlState's inputs.
-    // CORRECTNESS: ControlState is non-cacheable; add_node_input
-    // mutates in place.  Pinned NodeId in cache stays valid.
+    // W1 — rollback contract: every append below contributes one input to
+    // a phi node.  If the per-var phi loop errors mid-iteration, the prior
+    // appends (ControlState + MemPhi + already-handled var phis) would
+    // leave phi arities mismatched (some have N+1 inputs, others have N)
+    // — a soundness violation the orchestrator's predecessor_diffs cannot
+    // detect.  We track every successful append in a stack and pop them
+    // on error so the function is all-or-nothing.
+    //
+    // The first two steps and any per-var phi extension can fail with an
+    // IR error (cacheable-node guard) or — for the var-phi fallback —
+    // the unsupported-regsize dispatch.  The cacheable-node guard cannot
+    // fire today (ControlState / MemPhi / ControlPhi are all non-cacheable
+    // by design), but defensive hardening matters because F1 fingerprint
+    // plumbing extends create_node's behavior in ways that could grow new
+    // failure modes for the per-var fallback.
+    let mut appended: Vec<NodeId> = Vec::new();
+
+    // Step 1: append predecessor's exit control to the ControlState.
+    // CORRECTNESS: ControlState is non-cacheable; add_node_input mutates
+    // in place, so the pinned NodeId in the cache stays valid.
     graph
         .graph
-        .add_node_input(cache_entry.entry_control_state, pred.exit_control)?;
+        .add_node_input(cache_entry.entry_control_state, pred.exit_control)
+        .map_err(|e| {
+            // First append — nothing to roll back.
+            crate::error::Error::from(e)
+        })?;
+    appended.push(cache_entry.entry_control_state);
 
-    // Append predecessor's exit memory to the MemPhi's inputs.
-    // CORRECTNESS: MemPhi is non-cacheable; same in-place mutation.
-    graph
+    // Step 2: append predecessor's exit memory to the MemPhi.
+    if let Err(e) = graph
         .graph
-        .add_node_input(cache_entry.entry_mem_phi, pred.exit_memory)?;
+        .add_node_input(cache_entry.entry_mem_phi, pred.exit_memory)
+    {
+        // Roll back step 1 before propagating.
+        rollback_appends(&mut graph.graph, &appended);
+        return Err(e.into());
+    }
+    appended.push(cache_entry.entry_mem_phi);
 
-    // For each per-var phi: append the predecessor's exit value, or
-    // synthesise an InitialVar(vn) fallback.
-    // CORRECTNESS: ControlPhi is non-cacheable; the per-var fallback
-    // (creating an InitialVar) IS cacheable — create_node returns the
-    // existing InitialVar(vn) node if one already exists, so we never
-    // double-create.
+    // Step 3: per-var phi extensions.  Same in-place mutation; non-cacheable.
     let phis_to_extend: Vec<(Vn, NodeId)> = cache_entry
         .entry_var_phis
         .iter()
@@ -580,9 +602,9 @@ pub fn extend_predecessors_with_handle(
         let value_for_pred = if let Some(&v) = pred.exit_vn_to_value.get(&vn) {
             v
         } else {
-            // Fallback: build/dedup an InitialVar(vn) and feed its
-            // sole output.  Determine the integer width from the Vn's
-            // size; clamp to a supported NodeOutputType.
+            // Fallback: build/dedup an InitialVar(vn).  Failures here
+            // surface the unsupported-regsize dispatch — exactly the
+            // partial-update window W1 closes.
             let ty: ir::node::NodeOutputType = match vn.size {
                 1 => ir::node::NodeOutputType::U8,
                 2 => ir::node::NodeOutputType::U16,
@@ -591,6 +613,7 @@ pub fn extend_predecessors_with_handle(
                 16 => ir::node::NodeOutputType::U128,
                 32 => ir::node::NodeOutputType::U256,
                 other => {
+                    rollback_appends(&mut graph.graph, &appended);
                     return Err(crate::error::ErrorKind::UnsupportedRegSize(other).into());
                 }
             };
@@ -599,15 +622,47 @@ pub fn extend_predecessors_with_handle(
                 [],
                 [NodeOutputKind::OutputType(ty)],
             );
-            graph.graph.node_outputs_exact::<1>(iv)?[0]
+            match graph.graph.node_outputs_exact::<1>(iv) {
+                Ok(outs) => outs[0],
+                Err(e) => {
+                    rollback_appends(&mut graph.graph, &appended);
+                    return Err(e.into());
+                }
+            }
         };
-        graph.graph.add_node_input(phi_node_id, value_for_pred)?;
+        if let Err(e) = graph.graph.add_node_input(phi_node_id, value_for_pred) {
+            rollback_appends(&mut graph.graph, &appended);
+            return Err(e.into());
+        }
+        appended.push(phi_node_id);
     }
 
     // Bump the cached predecessor count so a subsequent
-    // predecessor_diffs call doesn't double-flag this region.
+    // predecessor_diffs call doesn't double-flag this region.  The bump
+    // is the "commit" — it happens only if every append above succeeded.
     cache_entry.cached_predecessor_count += 1;
     Ok(())
+}
+
+/// Removes the most recently appended input from each node in `appended`,
+/// in reverse order.  Used by [`extend_predecessors_with_handle`] to
+/// roll back a partial extension when a later step fails.
+///
+/// CORRECTNESS — silent no-op on remove failure: if the rollback's
+/// remove_node_input itself fails (only possible in pathological corruption
+/// cases — the just-appended index is in range by construction), we
+/// continue rolling back the rest.  The caller's error is the one that
+/// gets propagated; the rollback is best-effort cleanup.
+fn rollback_appends(graph: &mut ir::Graph, appended: &[NodeId]) {
+    for &node_id in appended.iter().rev() {
+        // Each append placed the input at index `len - 1`; popping the
+        // last index undoes that single append.
+        let last_idx = graph.node_inputs(node_id).len();
+        if last_idx == 0 {
+            continue;
+        }
+        let _ = graph.remove_node_input(node_id, (last_idx - 1) as u32);
+    }
 }
 
 #[cfg(test)]
@@ -1185,6 +1240,100 @@ mod tests {
             ),
             "fallback must be InitialVar(vn), got {:?}",
             graph.graph.node_kind(new_input_node),
+        );
+    }
+
+    // ── W1: rollback when the per-var phi loop fails mid-extension ─────────
+
+    /// Helper: build a graph whose entry-region has TWO ControlPhis — one
+    /// for a normally-sized vn and one whose vn has an unsupported size
+    /// (5).  When `extend_predecessors_with_handle` reaches the unsupported
+    /// vn it must error out AND undo the prior ControlState / MemPhi
+    /// appends so the function leaves no partial-update window for callers
+    /// to observe.
+    fn build_graph_with_one_unsupported_var() -> (ir::BuiltFunctionGraph, RegionIrEntry) {
+        // The "good" vn (4 bytes, supported).
+        let v_ok = make_vn(0x10);
+        // The "bad" vn — size 5 is not in the supported set
+        // {1,2,4,8,16,32}.  We can't actually have this vn participate in
+        // the builder (the builder rejects sizes via NodeOutputType::try_from),
+        // so we construct the graph with `v_ok` and then PATCH the cache
+        // entry's `entry_var_phis` to claim a phi for `v_bad` exists.
+        // The fallback branch in extend_predecessors_with_handle will
+        // attempt to construct InitialVar(v_bad) which fails the size
+        // dispatch — exactly the error path W1 must roll back.
+        let v_bad = Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x20,
+            },
+            size: 5,
+        };
+        let (graph, mut entry) = build_minimal_graph_with_one_var();
+        // The good vn is `v_ok` (matches make_vn(0x10) used by the helper).
+        // Verify and attach a phantom phi-id for v_bad pointing at the
+        // existing v_ok phi node — the helper iterates the map, sees
+        // v_bad, fails the size dispatch, and we want the rollback to
+        // undo the ControlState+MemPhi appends regardless of which vn
+        // entry triggered the error.
+        let some_phi_id = *entry.entry_var_phis.get(&v_ok).expect("v_ok phi");
+        entry.entry_var_phis.insert(v_bad, some_phi_id);
+        (graph, entry)
+    }
+
+    #[test]
+    fn extend_predecessors_with_handle_rolls_back_on_var_phi_error() {
+        // W1: when the per-var phi loop errors AFTER ControlState/MemPhi
+        // were already extended, the function must undo those prior
+        // appends.  Pre/post-call snapshots of ControlState/MemPhi input
+        // counts and cached_predecessor_count must be equal — no partial
+        // update visible to the caller.
+        let (mut graph, mut entry) = build_graph_with_one_unsupported_var();
+        let cs = entry.entry_control_state;
+        let mp = entry.entry_mem_phi;
+        let cs_inputs_before = graph.graph.node_inputs(cs).into_iter().count();
+        let mp_inputs_before = graph.graph.node_inputs(mp).into_iter().count();
+        let pred_count_before = entry.cached_predecessor_count;
+
+        let entry_ctrl = {
+            let outs: Vec<_> = graph.graph.node_outputs(graph.entry).into_iter().collect();
+            outs[0]
+        };
+        let initial_mem = graph
+            .preorder()
+            .find(|&nid| matches!(graph.graph.node_kind(nid), ir::node::NodeKind::InitialMemory))
+            .expect("InitialMemory");
+        let im_out = graph
+            .graph
+            .node_outputs(initial_mem)
+            .into_iter()
+            .next()
+            .expect("output");
+        let pred = PredecessorHandles {
+            exit_control: entry_ctrl,
+            exit_memory: im_out,
+            // Empty so the unsupported-vn path triggers the size dispatch
+            // and surfaces the error mid-loop.
+            exit_vn_to_value: HashMap::new(),
+        };
+        let res = extend_predecessors_with_handle(&mut entry, &mut graph, &pred);
+        assert!(res.is_err(), "must propagate the size-dispatch error");
+
+        // Rollback contract: the prior ControlState / MemPhi appends are
+        // undone; cached_predecessor_count is unchanged.
+        let cs_inputs_after = graph.graph.node_inputs(cs).into_iter().count();
+        let mp_inputs_after = graph.graph.node_inputs(mp).into_iter().count();
+        assert_eq!(
+            cs_inputs_after, cs_inputs_before,
+            "ControlState input count must roll back on error",
+        );
+        assert_eq!(
+            mp_inputs_after, mp_inputs_before,
+            "MemPhi input count must roll back on error",
+        );
+        assert_eq!(
+            entry.cached_predecessor_count, pred_count_before,
+            "cached_predecessor_count must not increment on error",
         );
     }
 }
