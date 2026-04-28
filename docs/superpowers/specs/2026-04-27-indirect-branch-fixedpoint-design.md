@@ -144,7 +144,7 @@ Both classifications produce the same induced edge set.  Convergence is unaffect
 **Stale cache invalidation:**
 
 * In-place IR edits (Return → Call+Return) mutate nodes inside a single region's subgraph.  The cached entry's *control* / *memory* boundary handles don't change (the placeholder Return becomes a Call+Return; control still exits via a Return-shaped tail), so the cache stays valid.
-* CFG split (`split_region`): when a region splits because a new branch lands in its interior, the cache must be updated.  The first half keeps its cache entry; the second half gets a fresh one.  This is mechanical — splits already exist in cfg, we add the cache update at split time.
+* CFG split (`split_region`): when a region splits because a new branch (indirect or otherwise) lands in its interior, the original cache entry's body now spans BOTH halves' pcode but is attributed to only the first half.  Round-1 strategy: **invalidate on split**.  Detect a split by observing that a previously-cached `MachineInsnAddr` now corresponds to a region with fewer instructions than when its cache entry was built.  Evict the entry; re-lift the first half from pcode; lift the second half as a new entry.  The old IR nodes for the second half's pcode become unreachable zombies in the persistent `Graph` (the validator's reachability scope skips zombies, per CLAUDE.md).  This violates the "lifted at most once" contract specifically for the split region, but only for that region — the rest of the function's cache stays load-bearing.  A surgical split-the-cache-body alternative (track per-insn boundary handles, splice the body at the split point) is documented under "Future work".
 * Stale predecessor edges: handled in protocol step 3 above.
 
 **Practical guarantee:**
@@ -422,6 +422,7 @@ Reviewers should reject any commit in this area lacking these comments.
 ## Future work (not part of this round)
 
 * **Incremental rebuild.**  Avoid full CFG/IR teardown each iteration; only re-explore newly-discovered targets.  Only worth doing if profiling shows the rebuild dominates analyze time.
+* **Surgical cache-split on `split_region`.**  Currently the orchestrator invalidates the entire first-half cache entry on a split and re-lifts.  A future iteration tracks per-insn boundary handles inside each cached region and splices the IR body at the split point — no re-lift, no zombies.
 * **Pattern-driven tier 2.**  Today's tier 2 hand-codes the producer-shape match.  Reformulating as `pattern` crate queries would let downstream consumers extend the resolver without modifying strider.
 * **Cycle-detection diagnostics.**  When `MAX_ITERATIONS` is hit, dump the unresolved set and the candidate resolutions per iteration to help debug a runaway resolver.
 
