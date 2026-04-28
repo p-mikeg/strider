@@ -63,13 +63,23 @@ pub fn apply_link_register(
 /// Return(ret_vars)`.
 ///
 /// Pre-edit: `Return(control, memory, target_value)`
-/// Post-edit: `IntConst(target) → Call(control, memory, IntConst) →
+/// Post-edit: `IntConst(target) →
+///   Call(control, memory, IntConst, arg_passing_0, …) [outs:
+///   Control, Memory, clob_0, …] →
 ///   Return(call.ctrl_out, call.mem_out, ret_val_0, …)`
 ///
 /// The placeholder Return is detached (becomes a zombie unreachable
 /// from `entry`).  The new Return is wired on the Call's control and
 /// memory outputs.  Returns the new Return's [`NodeId`] so callers
 /// can patch any cached exit-control handles.
+///
+/// `arg_passing_outputs`, `clobbered_kinds`, and `ret_val_outputs`
+/// thread the calling-convention context through the freshly-spliced
+/// Call+Return — see [`super::AnchorCallingContext`] for how the opt
+/// pass and the strider orchestrator populate them.  Empty slices are
+/// sound (the resulting Call/Return is degenerate but well-typed); a
+/// real ABI-aware caller passes the placeholder's pre-edit ABI
+/// register values.
 ///
 /// # Errors
 ///
@@ -81,6 +91,8 @@ pub fn apply_tail_call(
     graph: &mut Graph,
     placeholder_return: NodeId,
     target: u64,
+    arg_passing_outputs: &[NodeOutputId],
+    clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
     let kind = *graph.node_kind(placeholder_return);
@@ -118,16 +130,26 @@ pub fn apply_tail_call(
     );
     let int_const_out = graph.node_outputs_exact::<1>(int_const)?[0];
 
-    // Create the Call node.  Outputs: [Control, Memory] — no
-    // clobbered varnodes because we don't have access to the calling
-    // convention's clobber list at this entry point.  Empty clobbers
-    // is sound: the surviving Return doesn't need any of those values.
-    let call = graph.create_node(
-        NodeKind::Call,
-        [control_in, memory_in, int_const_out],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
-    );
-    let [call_ctrl_out, call_mem_out] = graph.node_outputs_exact::<2>(call)?;
+    // Create the Call node.  Inputs: [control, memory, target,
+    // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
+    let mut call_inputs: Vec<NodeOutputId> =
+        Vec::with_capacity(3 + arg_passing_outputs.len());
+    call_inputs.push(control_in);
+    call_inputs.push(memory_in);
+    call_inputs.push(int_const_out);
+    call_inputs.extend_from_slice(arg_passing_outputs);
+    let mut call_outputs: Vec<NodeOutputKind> =
+        Vec::with_capacity(2 + clobbered_kinds.len());
+    call_outputs.push(NodeOutputKind::Control);
+    call_outputs.push(NodeOutputKind::Memory);
+    call_outputs.extend_from_slice(clobbered_kinds);
+    let call = graph.create_node(NodeKind::Call, call_inputs, call_outputs);
+    // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
+    // those are produced for downstream consumers (typically empty
+    // here because the only consumer is the freshly-spliced Return).
+    let call_outs: Vec<_> = graph.node_outputs(call).into_iter().collect();
+    let call_ctrl_out = call_outs[0];
+    let call_mem_out = call_outs[1];
 
     let mut new_return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
     new_return_inputs.push(call_ctrl_out);
@@ -195,7 +217,8 @@ mod tests {
     fn apply_tail_call_emits_call_then_return() {
         let (mut graph, placeholder) = build_placeholder_graph();
         let _new_return =
-            apply_tail_call(&mut graph, placeholder, 0xc0de_u64, &[]).expect("apply");
+            apply_tail_call(&mut graph, placeholder, 0xc0de_u64, &[], &[], &[])
+                .expect("apply");
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
         let mut had_call = false;
@@ -223,7 +246,133 @@ mod tests {
             .all_node_ids()
             .find(|&nid| matches!(graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
-        let result = apply_tail_call(&mut graph, ret_id, 0xc0de, &[]);
+        let result = apply_tail_call(&mut graph, ret_id, 0xc0de, &[], &[], &[]);
         assert!(result.is_err(), "must reject 2-input Return: {result:?}");
+    }
+
+    /// Spawns a value-typed `IntConst` and returns its single output id —
+    /// a convenient stand-in for an "ABI register's IR value at the
+    /// placeholder site" in unit tests that don't care which register
+    /// it came from.
+    fn synth_value_output(
+        graph: &mut ir::Graph,
+        value: u128,
+        ty: NodeOutputType,
+    ) -> NodeOutputId {
+        let nid = graph.create_node(
+            NodeKind::IntConst(value),
+            [],
+            [NodeOutputKind::OutputType(ty)],
+        );
+        graph
+            .node_outputs_exact::<1>(nid)
+            .expect("IntConst has one output")[0]
+    }
+
+    // H0 — calling-convention threading tests for the in-place editors.
+    //
+    // Pre-fix: `apply_link_register` and `apply_tail_call` produced a
+    // Return / Call with no ABI ret-val / arg-passing / clobbered slots,
+    // so pattern queries that walk those slots failed silently.  These
+    // tests pin the post-fix shape: ret-val outputs append to the
+    // Return's input list, arg-passing outputs append to the Call's
+    // input list (after `[ctrl, mem, target]`), and clobbered output
+    // kinds append to the Call's output list (after `[Control, Memory]`).
+
+    #[test]
+    fn apply_link_register_threads_ret_val_outputs_into_return() {
+        // Two ret-val outputs supplied → resulting Return's inputs are
+        // `[ctrl, mem, target_value, ret_val_0, ret_val_1]`.
+        let (mut graph, placeholder) = build_placeholder_graph();
+        let inputs_before: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
+        assert_eq!(inputs_before.len(), 3);
+        let r0 = synth_value_output(&mut graph, 0x42, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut graph, 0x43, NodeOutputType::U64);
+        apply_link_register(&mut graph, placeholder, &[r0, r1]).expect("apply");
+        let inputs_after: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
+        assert_eq!(
+            inputs_after.len(),
+            inputs_before.len() + 2,
+            "Return must gain one input per ret-val output",
+        );
+        assert_eq!(inputs_after[3], r0);
+        assert_eq!(inputs_after[4], r1);
+    }
+
+    #[test]
+    fn apply_tail_call_threads_arg_passing_into_call() {
+        // Three arg-passing outputs → Call's inputs are
+        // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
+        let (mut graph, placeholder) = build_placeholder_graph();
+        let a0 = synth_value_output(&mut graph, 0x01, NodeOutputType::U64);
+        let a1 = synth_value_output(&mut graph, 0x02, NodeOutputType::U64);
+        let a2 = synth_value_output(&mut graph, 0x03, NodeOutputType::U64);
+        let new_return =
+            apply_tail_call(&mut graph, placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
+                .expect("apply");
+        // The new Return's input #0 is the Call's ctrl output.  Walk
+        // back to the Call.
+        let new_return_inputs: Vec<_> =
+            graph.node_inputs(new_return).into_iter().collect();
+        let call_ctrl = new_return_inputs[0];
+        let (call_node, _) = graph.output_definition(call_ctrl);
+        assert!(matches!(graph.node_kind(call_node), NodeKind::Call));
+        let call_inputs: Vec<_> = graph.node_inputs(call_node).into_iter().collect();
+        assert_eq!(
+            call_inputs.len(),
+            6,
+            "Call must have [ctrl, mem, target, a0, a1, a2]",
+        );
+        assert_eq!(call_inputs[3], a0);
+        assert_eq!(call_inputs[4], a1);
+        assert_eq!(call_inputs[5], a2);
+    }
+
+    #[test]
+    fn apply_tail_call_threads_clobbered_kinds_into_call_outputs() {
+        // Two clobbered output kinds → Call's outputs are
+        // `[Control, Memory, clob_0, clob_1]`.
+        let (mut graph, placeholder) = build_placeholder_graph();
+        let clob_kinds = [
+            NodeOutputKind::OutputType(NodeOutputType::U64),
+            NodeOutputKind::OutputType(NodeOutputType::U32),
+        ];
+        let new_return = apply_tail_call(
+            &mut graph,
+            placeholder,
+            0xbeef,
+            &[],
+            &clob_kinds,
+            &[],
+        )
+        .expect("apply");
+        // Walk to the Call.
+        let new_return_inputs: Vec<_> =
+            graph.node_inputs(new_return).into_iter().collect();
+        let (call_node, _) = graph.output_definition(new_return_inputs[0]);
+        let call_outputs: Vec<_> = graph.node_outputs(call_node).into_iter().collect();
+        assert_eq!(
+            call_outputs.len(),
+            4,
+            "Call must have [Control, Memory, clob_0, clob_1]",
+        );
+        assert_eq!(graph.output_kind(call_outputs[2]), clob_kinds[0]);
+        assert_eq!(graph.output_kind(call_outputs[3]), clob_kinds[1]);
+    }
+
+    #[test]
+    fn apply_tail_call_threads_ret_val_outputs_into_return() {
+        // Two ret-val outputs → new Return's inputs are
+        // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
+        let (mut graph, placeholder) = build_placeholder_graph();
+        let r0 = synth_value_output(&mut graph, 0x10, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut graph, 0x11, NodeOutputType::U64);
+        let new_return =
+            apply_tail_call(&mut graph, placeholder, 0xface, &[], &[], &[r0, r1])
+                .expect("apply");
+        let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+        assert_eq!(inputs.len(), 4, "[call_ctrl, call_mem, r0, r1]");
+        assert_eq!(inputs[2], r0);
+        assert_eq!(inputs[3], r1);
     }
 }

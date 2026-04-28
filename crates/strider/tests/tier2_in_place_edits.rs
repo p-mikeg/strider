@@ -83,7 +83,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0x1234_5678_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[])
+    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
@@ -117,7 +117,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xc0de_u64, &[])
+    let new_return = apply_tail_call(&mut graph, return_id, 0xc0de_u64, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(graph.graph.node_kind(new_return), NodeKind::Return));
@@ -131,7 +131,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xface_u64, &[])
+    let new_return = apply_tail_call(&mut graph, return_id, 0xface_u64, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
@@ -229,7 +229,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[])
+    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
@@ -242,4 +242,119 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
         NodeKind::IntConst(v) => assert_eq!(*v, u128::from(target)),
         other => panic!("expected IntConst, got {other:?}"),
     }
+}
+
+// ── H0: ABI threading for tier-2 in-place tail-call resolution ───────────
+
+/// Drive a real strider lift to produce a placeholder Return, run
+/// `apply_tail_call` with non-empty `arg_passing_outputs` /
+/// `clobbered_kinds` / `ret_val_outputs` (mirroring what the
+/// orchestrator's `apply_in_place_edit` populates), then run a
+/// `pattern::call().arg(0, …)` query to confirm the Call exposes a
+/// real arg slot 0.
+///
+/// **Pre-H0:** `apply_tail_call`'s 4-arg signature ignored the
+/// calling convention.  `pattern::call().arg(0, predicate(|_| true))`
+/// returned zero matches because the resulting Call had only
+/// `[ctrl, mem, target]` inputs — no arg slots.
+///
+/// **Post-H0:** with the convention threaded, the Call has arg slot 0
+/// and the pattern query matches.  This is the load-bearing claim of
+/// H0: pattern queries against tier-2-resolved indirect Calls now
+/// work.
+#[test]
+fn tier2_apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
+    use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use pattern::{any, call, IntoPat, Matcher, Var};
+
+    // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
+    // runs, the placeholder Return has 3 inputs `[ctrl, mem,
+    // InitialVar(rax)]`.
+    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&graph);
+
+    // Synthesise three value-typed outputs to stand in for x86_64
+    // SysV's first three arg-passing regs (RDI, RSI, RDX).  In
+    // production these come from the cache's `exit_vn_to_value` /
+    // an existing `InitialVar(rdi)`, but for this unit-level
+    // integration test the IR identity of the value doesn't matter —
+    // only that the in-place edit threads it through unchanged.
+    let mk_const = |g: &mut ir::BuiltFunctionGraph, v: u128| {
+        let nid = g.graph.create_node(
+            NodeKind::IntConst(v),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        g.graph.node_outputs_exact::<1>(nid).expect("out")[0]
+    };
+    let arg0 = mk_const(&mut graph, 0xa00);
+    let arg1 = mk_const(&mut graph, 0xa01);
+    let arg2 = mk_const(&mut graph, 0xa02);
+    let ret_val = mk_const(&mut graph, 0xb00);
+
+    // Stand-in clobbered kinds (one per RBX/RBP/R12 → 3 slots).
+    let clob_kinds = [
+        NodeOutputKind::OutputType(NodeOutputType::U64),
+        NodeOutputKind::OutputType(NodeOutputType::U64),
+        NodeOutputKind::OutputType(NodeOutputType::U64),
+    ];
+
+    let _new_return = apply_tail_call(
+        &mut graph,
+        return_id,
+        0xdead_beef,
+        &[arg0, arg1, arg2],
+        &clob_kinds,
+        &[ret_val],
+    )
+    .expect("apply_tail_call");
+
+    // Validate the post-edit graph.  `validate` is the contract the
+    // optimiser's pipeline relies on between iterations.
+    ir::validate::validate(&graph.graph, graph.entry).expect("validate");
+
+    // The headline assertion: a `pattern::call().arg(0, …)` query
+    // matches at least once.  Pre-H0 this would have returned zero
+    // matches because the Call had no arg slot 0.
+    let v0 = Var::new();
+    let pat: pattern::Pat = call().arg(0, any().capture(v0)).into();
+    let matcher = Matcher::new(&graph);
+    let matches = matcher.find_all(&pat);
+    assert!(
+        !matches.is_empty(),
+        "pattern::call().arg(0) must match the in-place-edited Call",
+    );
+    // Bonus: the captured value must be exactly arg0 (the
+    // in-place edit threaded it through unchanged).
+    let m = &matches[0];
+    let captured = m.get(v0).expect("arg0 capture must bind");
+    assert_eq!(
+        captured, arg0,
+        "captured arg slot 0 must equal the threaded arg0 value",
+    );
+
+    // Cross-check the Call's clobbered-output kinds: the Call's
+    // outputs are `[Control, Memory] + clobbered_kinds`, so output
+    // count must be 5.
+    let call_node = {
+        // The Call is the producer of the new Return's ctrl input.
+        let ret_inputs: Vec<_> =
+            graph.graph.node_inputs(_new_return).into_iter().collect();
+        let (call_node, _) = graph.graph.output_definition(ret_inputs[0]);
+        call_node
+    };
+    let call_outputs: Vec<_> = graph.graph.node_outputs(call_node).into_iter().collect();
+    assert_eq!(
+        call_outputs.len(),
+        2 + clob_kinds.len(),
+        "Call's outputs are [Control, Memory] + clobbered_kinds",
+    );
+
+    // And: the new Return's ret-val slot 2 is `ret_val`.
+    let ret_inputs: Vec<_> =
+        graph.graph.node_inputs(_new_return).into_iter().collect();
+    assert_eq!(
+        ret_inputs[2], ret_val,
+        "Return's ret-val slot 0 (input #2) must be the threaded ret_val",
+    );
 }

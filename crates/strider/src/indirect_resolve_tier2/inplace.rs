@@ -66,6 +66,12 @@ pub fn apply_link_register(
 /// Apply the `Single`-tail-call resolution.  Delegates to
 /// [`opt::apply_tail_call`].
 ///
+/// `arg_passing_outputs`, `clobbered_kinds`, and `ret_val_outputs`
+/// thread the calling-convention's argument-passing register values,
+/// clobbered output kinds, and return-value register values into the
+/// freshly-spliced Call+Return.  See the opt-side function and
+/// [`opt::indirect_branch_resolve::AnchorCallingContext`] for details.
+///
 /// # Errors
 ///
 /// * [`ErrorKind::WrongNodeKind`] when `placeholder_return` is not a
@@ -75,10 +81,19 @@ pub fn apply_tail_call(
     fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
     target: u64,
+    arg_passing_outputs: &[NodeOutputId],
+    clobbered_kinds: &[ir::node::NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
-    opt::apply_tail_call(&mut fg.graph, placeholder_return, target, ret_val_outputs)
-        .map_err(opt_to_strider_err)
+    opt::apply_tail_call(
+        &mut fg.graph,
+        placeholder_return,
+        target,
+        arg_passing_outputs,
+        clobbered_kinds,
+        ret_val_outputs,
+    )
+    .map_err(opt_to_strider_err)
 }
 #[cfg(test)]
 mod tests {
@@ -204,7 +219,8 @@ mod tests {
         // the entry.
         let (mut graph, placeholder) = build_placeholder_graph();
         let new_return =
-            apply_tail_call(&mut graph, placeholder, 0xc0de_u64, &[]).expect("apply");
+            apply_tail_call(&mut graph, placeholder, 0xc0de_u64, &[], &[], &[])
+                .expect("apply");
         // Walk the graph: there must be a Call + a Return reachable.
         let mut had_call = false;
         let mut had_new_return = false;
@@ -238,7 +254,8 @@ mod tests {
         let (mut graph, placeholder) = build_placeholder_graph();
         let target = 0xc0de_u64;
         let new_return =
-            apply_tail_call(&mut graph, placeholder, target, &[]).expect("apply");
+            apply_tail_call(&mut graph, placeholder, target, &[], &[], &[])
+                .expect("apply");
         // new_return inputs: [call_ctrl, call_mem, ...ret_vals].
         // call_ctrl is produced by Call (output #0); walk to it.
         let new_return_inputs: Vec<_> =
@@ -270,7 +287,7 @@ mod tests {
         // graph.  This pins use-list consistency and structural
         // soundness.
         let (mut graph, placeholder) = build_placeholder_graph();
-        let _new_return = apply_tail_call(&mut graph, placeholder, 0x1234, &[])
+        let _new_return = apply_tail_call(&mut graph, placeholder, 0x1234, &[], &[], &[])
             .expect("apply");
         ir::validate::validate(&graph.graph, graph.entry).expect("validate");
     }
@@ -280,7 +297,7 @@ mod tests {
         // The returned NodeId must point to a Return node that's
         // distinct from the original placeholder.
         let (mut graph, placeholder) = build_placeholder_graph();
-        let new_return = apply_tail_call(&mut graph, placeholder, 0xface, &[])
+        let new_return = apply_tail_call(&mut graph, placeholder, 0xface, &[], &[], &[])
             .expect("apply");
         assert_ne!(
             new_return, placeholder,
@@ -304,8 +321,9 @@ mod tests {
             let [out] = graph.graph.node_outputs_exact::<1>(nid).expect("out");
             out
         };
-        let new_return = apply_tail_call(&mut graph, placeholder, 0xbeef, &[extra])
-            .expect("apply");
+        let new_return =
+            apply_tail_call(&mut graph, placeholder, 0xbeef, &[], &[], &[extra])
+                .expect("apply");
         let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
         // Layout: [call_ctrl, call_mem, extra].
         assert_eq!(inputs.len(), 3);
@@ -323,7 +341,7 @@ mod tests {
             .preorder()
             .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
-        let result = apply_tail_call(&mut graph, int_const_id, 0xc0de, &[]);
+        let result = apply_tail_call(&mut graph, int_const_id, 0xc0de, &[], &[], &[]);
         assert!(result.is_err(), "must reject non-Return: {result:?}");
     }
 
@@ -348,7 +366,8 @@ mod tests {
             .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let new_return =
-            apply_tail_call(&mut graph, return_id, 0xfeedface_u64, &[]).expect("apply");
+            apply_tail_call(&mut graph, return_id, 0xfeedface_u64, &[], &[], &[])
+                .expect("apply");
         // Walk to the IntConst created by apply_tail_call and check
         // its output type.
         let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
@@ -382,8 +401,9 @@ mod tests {
             .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
         // 0x1_0000_0000 > U32::MAX → masking to U32 gives 0.
-        let new_return = apply_tail_call(&mut graph, return_id, 0x1_0000_0000_u64, &[])
-            .expect("apply");
+        let new_return =
+            apply_tail_call(&mut graph, return_id, 0x1_0000_0000_u64, &[], &[], &[])
+                .expect("apply");
         let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
         let call_ctrl = inputs[0];
         let (call_node, _) = graph.graph.output_definition(call_ctrl);
@@ -416,7 +436,7 @@ mod tests {
             .preorder()
             .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
-        let result = apply_tail_call(&mut graph, ret_id, 0xc0de, &[]);
+        let result = apply_tail_call(&mut graph, ret_id, 0xc0de, &[], &[], &[]);
         assert!(result.is_err(), "must reject 2-input Return: {result:?}");
     }
 }

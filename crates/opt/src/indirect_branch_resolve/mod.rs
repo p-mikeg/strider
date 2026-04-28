@@ -36,10 +36,11 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use ir::Graph;
-use ir::node::{NodeId, NodeKind, NodeOutputId};
+use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::{ReadOnlyMemory, Result};
@@ -127,12 +128,45 @@ pub struct IndirectBranchResolve {
     /// store [`AnchorAddr`] rather than `cfg::PcodeInsnAddr` to keep
     /// the opt crate free of any cfg dependency.
     pub unresolved_anchors: Vec<(AnchorAddr, NodeOutputId)>,
+    /// Per-anchor calling-convention context: argument-passing
+    /// varnodes' CURRENT IR values + clobbered output kinds + return-
+    /// value varnodes' CURRENT IR values, all read at the placeholder
+    /// site BEFORE the optimizer runs.  The orchestrator populates
+    /// this from the cache's `exit_vn_to_value` for the dispatch
+    /// region; the pass threads them into the resulting Call/Return
+    /// nodes.
+    ///
+    /// Defaulting to an empty map preserves back-compat with callers
+    /// that haven't populated this field yet — the in-place editors
+    /// emit a degenerate but well-typed Call/Return in that case.
+    pub anchor_contexts: HashMap<AnchorAddr, AnchorCallingContext>,
     /// Predicate: `is_tail_call(target_addr)` returns `true` when
     /// `target_addr` lies outside the function's range (so a `Single`
     /// resolution can be applied in-place rather than via CFG rebuild).
     /// Boxed so the pass struct stays object-safe-friendly without
     /// making the predicate a generic.
     pub is_tail_call: Box<dyn Fn(u64) -> bool + Send + Sync>,
+}
+
+/// Per-anchor calling-convention snapshot consumed by the in-place
+/// editors.  See [`IndirectBranchResolve::anchor_contexts`].
+#[derive(Debug, Clone, Default)]
+pub struct AnchorCallingContext {
+    /// IR `NodeOutputId`s for the calling convention's
+    /// `arg_passing_vars` at the dispatch site.  Threaded as
+    /// `inputs[3..]` to the resulting Call node (slots after control,
+    /// memory, target).
+    pub arg_passing_outputs: Vec<NodeOutputId>,
+    /// `NodeOutputKind`s for the calling convention's clobbered
+    /// varnodes at the dispatch site.  Threaded as the Call node's
+    /// value outputs after `[Control, Memory]`.
+    pub clobbered_kinds: Vec<NodeOutputKind>,
+    /// IR `NodeOutputId`s for the calling convention's `ret_val_regs`
+    /// at the dispatch site.  Threaded as the resulting Return node's
+    /// inputs after `[control, memory, target_value]`
+    /// (link-register case) or `[call_ctrl, call_mem]` (tail-call
+    /// case).
+    pub ret_val_outputs: Vec<NodeOutputId>,
 }
 
 /// Opaque address tag carried alongside each anchor — opaque to opt,
@@ -165,6 +199,7 @@ impl IndirectBranchResolve {
             stack_ptr_vn: None,
             rom: None,
             unresolved_anchors: Vec::new(),
+            anchor_contexts: HashMap::new(),
             is_tail_call: Box::new(|_| false),
         }
     }
@@ -195,7 +230,13 @@ impl Optimizer for IndirectBranchResolve {
         entry: NodeId,
     ) -> Result<OptimizationResult> {
         let mut changed = false;
-        for (_addr, anchor_output) in &self.unresolved_anchors {
+        // Cache an empty context once for anchors that haven't been
+        // populated by a calling-convention-aware caller.  Defaulting
+        // to empty slices keeps the in-place editors well-typed; a
+        // real ABI-aware caller (see `strider`'s orchestrator) seeds
+        // the per-anchor entries.
+        let empty_ctx = AnchorCallingContext::default();
+        for (addr, anchor_output) in &self.unresolved_anchors {
             // Phase 5 — `classify_anchor_with_rom_and_sp` now takes
             // `&BuiltFunctionGraph` so it can drive `pattern::Matcher`
             // for the jump-table and stack-array shape matches.  The
@@ -223,19 +264,14 @@ impl Optimizer for IndirectBranchResolve {
             else {
                 continue;
             };
+            let ctx = self.anchor_contexts.get(addr).unwrap_or(&empty_ctx);
             match resolved {
                 BranchResolution::LinkRegister => {
-                    // Round-1 stub for `ret_val_outputs` mirrors the
-                    // strider orchestrator's documented limitation
-                    // (see orchestrator.rs::read_ret_val_outputs):
-                    // the cache's `exit_vn_to_value` isn't yet wired
-                    // to populate ABI return-value inputs.  Future
-                    // rounds: thread the calling-convention's
-                    // ret_val_regs through this pass via a new field
-                    // on `IndirectBranchResolve` and supply them
-                    // here.  Code-review H1: keeps the opt-pass and
-                    // orchestrator paths aligned on this stub.
-                    inplace::apply_link_register(graph, placeholder, &[])?;
+                    inplace::apply_link_register(
+                        graph,
+                        placeholder,
+                        &ctx.ret_val_outputs,
+                    )?;
                     changed = true;
                 }
                 BranchResolution::Single(target) => {
@@ -244,10 +280,14 @@ impl Optimizer for IndirectBranchResolve {
                         // it via CFG rebuild.
                         continue;
                     }
-                    // Same Round-1 stub for ret_val_outputs as
-                    // LinkRegister above.
-                    let _new_return =
-                        inplace::apply_tail_call(graph, placeholder, target, &[])?;
+                    let _new_return = inplace::apply_tail_call(
+                        graph,
+                        placeholder,
+                        target,
+                        &ctx.arg_passing_outputs,
+                        &ctx.clobbered_kinds,
+                        &ctx.ret_val_outputs,
+                    )?;
                     changed = true;
                 }
                 BranchResolution::Multiple(_) => {

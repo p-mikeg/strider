@@ -775,8 +775,8 @@ where
             // CORRECTNESS: appending ret-val regs to the placeholder
             // Return preserves its NodeId and its control/memory
             // chain — the cache's exit_control handle stays valid.
-            let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
-            apply_link_register(graph, placeholder, &ret_vals)?;
+            let ctx = build_anchor_calling_context(graph, placeholder, config, cache);
+            apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
             stats.link_register_edits += 1;
             Ok(())
         }
@@ -801,7 +801,7 @@ where
             // Call.ctrl_out.  See
             // `update_cache_exit_handle_after_tail_call` for the
             // matching protocol.
-            let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
+            let ctx = build_anchor_calling_context(graph, placeholder, config, cache);
             // Capture the placeholder's pre-edit control input — this
             // is the cache key we'll match on AFTER apply_tail_call
             // detaches the placeholder.  Doing it before the edit
@@ -815,7 +815,14 @@ where
                     None
                 }
             };
-            let new_return = apply_tail_call(graph, placeholder, *target, &ret_vals)?;
+            let new_return = apply_tail_call(
+                graph,
+                placeholder,
+                *target,
+                &ctx.arg_passing_outputs,
+                &ctx.clobbered_kinds,
+                &ctx.ret_val_outputs,
+            )?;
             // CORRECTNESS — the new Return's input #0 is the Call's
             // ctrl output, which is the new "exit control" of this
             // region.  Update the cache entry that previously
@@ -883,40 +890,124 @@ fn update_cache_exit_handle_after_tail_call(
     }
 }
 
-/// Read the calling convention's ret-val varnodes from the
-/// placeholder's pre-Return state.  Used by both `apply_link_register`
-/// and `apply_tail_call` to thread real ABI return values into the
-/// surviving Return.
+/// Build the calling-convention context for the placeholder's
+/// dispatch site.  Reads the convention's `arg_passing_regs` /
+/// `callee_saved_regs` (negated to "caller-saved/clobbered") /
+/// `ret_val_regs` from the cache entry whose `exit_control` matches
+/// the placeholder's pre-Return control, falling back to a fresh
+/// `InitialVar(vn)` (or an existing one if already present in the
+/// graph) when a varnode isn't tracked in the cache — same convention
+/// as [`ir::FunctionBuilder::read_variable`].
 ///
-/// CORRECTNESS: the placeholder Return's control input is the
-/// pre-Return control, so the per-region `vn_to_value` map at that
-/// control's region is the right place to read ret-val regs.  For
-/// round-1 we approximate by walking the Return's uses backward —
-/// since the optimiser has run, ABI return registers fold to their
-/// post-clobber values at this control point automatically.  When
-/// no convention ret-val regs exist (e.g. void-returning function),
-/// we return an empty slice — `apply_link_register` and
-/// `apply_tail_call` are robust to it.
-///
-/// Round-1 simplification: returns an empty `Vec` so the in-place
-/// edits emit a Return with no ret-vals.  This is sound because the
-/// placeholder's `target_value` is preserved at slot 2 (for
-/// LinkRegister) or replaced by Call's outputs (for tail-call); the
-/// actual ABI ret-val passing is downstream of where we sit in the
-/// IR.  Future rounds may walk the cache's `exit_vn_to_value` to
-/// thread the convention's ret-val regs in.
-fn read_ret_val_outputs<B>(
-    _graph: &ir::BuiltFunctionGraph,
-    _placeholder: NodeId,
-    _config: &OrchestratorConfig<'_, B>,
-) -> Result<Vec<ir::Value>>
+/// CORRECTNESS — H0: pre-fix the in-place editors built `Call(target)`
+/// and `Return(target)` with no ABI inputs/outputs, silently breaking
+/// pattern queries that walked arg slots / clobbered outputs / ret-val
+/// inputs on tier-2-resolved indirect calls.  This helper is the
+/// strider-side bridge that threads the placeholder's pre-edit ABI
+/// state through the opt-side editors so the resulting Call/Return
+/// match the shape `FunctionBuilder::build_call` /
+/// `FunctionBuilder::build_return` would have produced for a direct
+/// call/return.
+fn build_anchor_calling_context<B>(
+    graph: &mut ir::BuiltFunctionGraph,
+    placeholder: NodeId,
+    config: &OrchestratorConfig<'_, B>,
+    cache: &RegionIrCache,
+) -> opt::AnchorCallingContext
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
-    // CORRECTNESS: empty vec is sound — see function-level docs.
-    // Future rounds will populate from the cache's
-    // `exit_vn_to_value`.
-    Ok(Vec::new())
+    let cc = config.strider.calling_convention();
+    // Locate the cache entry whose `exit_control` matches the
+    // placeholder's pre-edit control input — the placeholder's region
+    // is the one whose body terminator the placeholder consumes.
+    let placeholder_ctrl_in: Option<ir::node::NodeOutputId> = {
+        let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
+        inputs.first().copied()
+    };
+    let cache_entry: Option<&crate::RegionIrEntry> = placeholder_ctrl_in.and_then(|ctrl| {
+        cache
+            .values()
+            .find(|entry| entry.exit_control == ctrl)
+    });
+
+    let mut ctx = opt::AnchorCallingContext::default();
+    for vn in &cc.arg_passing_regs {
+        if let Some(out) = read_or_init_var(graph, cache_entry, *vn) {
+            ctx.arg_passing_outputs.push(out);
+        }
+    }
+    // Clobbered = caller-saved.  The convention models this as the
+    // negation of `callee_saved_regs`, so for the in-place edit we
+    // emit clobbered output kinds matching each callee_saved varnode's
+    // size.  A real `FunctionBuilder::build_call` reads the variable
+    // values pre-call to seed the Call's inputs and emits a fresh
+    // value-typed output per clobber; here we only need the OUTPUT
+    // kinds, since the freshly-spliced Return doesn't read the
+    // clobber values back (the Return's inputs are the ret_val_regs).
+    //
+    // This mirrors the FunctionBuilder's clobbered-output-kind shape:
+    // one OutputType per varnode, sized by the varnode's byte width.
+    for vn in &cc.callee_saved_regs {
+        let ty: ir::node::NodeOutputType = match (vn.size).try_into() {
+            Ok(t) => t,
+            // Unsupported size → skip this clobber.  Conservative: a
+            // missing clobber slot only loses a downstream pattern
+            // match, but produces a well-typed graph.
+            Err(_) => continue,
+        };
+        ctx.clobbered_kinds.push(ir::node::NodeOutputKind::OutputType(ty));
+    }
+    for vn in &cc.ret_val_regs {
+        if let Some(out) = read_or_init_var(graph, cache_entry, *vn) {
+            ctx.ret_val_outputs.push(out);
+        }
+    }
+    ctx
+}
+
+/// Resolve a varnode to its IR value at the placeholder site.
+/// First looks up `cache_entry.exit_vn_to_value`; on miss, scans the
+/// graph for an existing `InitialVar(vn)` node; on second miss,
+/// creates one.  Mirrors [`ir::FunctionBuilder::read_variable`]'s
+/// fallback to InitialVar for variables that were never written in
+/// this region.  Returns `None` when the varnode's byte size has no
+/// matching `NodeOutputType` (e.g. odd-sized HW registers in some
+/// architectures) — those varnodes are simply omitted from the ABI
+/// context, which produces a well-typed but degenerate Call/Return.
+fn read_or_init_var(
+    graph: &mut ir::BuiltFunctionGraph,
+    cache_entry: Option<&crate::RegionIrEntry>,
+    vn: rsleigh::Vn,
+) -> Option<ir::node::NodeOutputId> {
+    if let Some(entry) = cache_entry
+        && let Some(&out) = entry.exit_vn_to_value.get(&vn)
+    {
+        return Some(out);
+    }
+    // Scan for an existing InitialVar(vn).  InitialVars are not
+    // cache-deduplicated by `Graph::create_node` (see
+    // `NodeKind::is_cacheable`), so the FunctionBuilder's lift might
+    // have created one already and we'd duplicate by calling
+    // `create_node` again.  Linear scan is O(graph size) but fires at
+    // most once per anchor per iteration — well within budget.
+    for nid in graph.graph.all_node_ids() {
+        if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
+            && *existing == vn
+            && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
+        {
+            return Some(out);
+        }
+    }
+    // Create a fresh InitialVar for this varnode.
+    let ty: ir::node::NodeOutputType = vn.size.try_into().ok()?;
+    let nid = graph.graph.create_node(
+        ir::node::NodeKind::InitialVar(vn),
+        [],
+        [ir::node::NodeOutputKind::OutputType(ty)],
+    );
+    let [out] = graph.graph.node_outputs_exact::<1>(nid).ok()?;
+    Some(out)
 }
 
 /// Builds the CFG, lifts to IR, runs the **stable** optimiser
