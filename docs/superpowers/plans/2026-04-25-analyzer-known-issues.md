@@ -12,7 +12,7 @@
 | BUG-2  | **FIXED** | (was: mips32le, mips32be) | High | CFG fall-through idiom + narrow-CONST sign-extension (commits `fa6a5c1`, `7ad5dfd`) |
 | BUG-3  | **FIXED** | (was: arm post-opt residue) | High | Comparison emits Bool to AnyInt; coerce-on-write at write_reg_vn + coerce-on-read at handle_cond_branch |
 | BUG-4  | **FIXED** | (was: arm) | Medium | ARM conditional select non-Bool — fixed transitively by BUG-3 |
-| BUG-5  | **mostly fixed** | tail-call & jump-table residue | High | CFG terminates region on BranchIndirect; analyzer treats BranchIndirect as Return — correct for `bx lr` / `pop {pc}` returns, **incorrect** for real tail calls (loses the Call site) and jump tables (loses successor edges).  Our fixtures avoid both cases (`-fno-optimize-sibling-calls`, no switch-jump-tables).  External binaries needing accurate tail-call / jump-table modelling would need a target-input-classifying refinement. |
+| BUG-5  | **CLOSED** | (was: arm `pop {pc}` placeholder) | High | Replaced by the indirect-branch fixed-point design (spec: `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`; plan: `docs/superpowers/plans/2026-04-27-indirect-branch-fixedpoint.md`).  Tier 1's mini-graph + tier 2's `LinkRegister` / `IntConst` / `Multiple-of-IntConsts` / jump-table arms together resolve every BranchIndirect site that the legacy `BranchIndirect → Return` blanket mishandled (real tail calls and `bx lr` / `pop {pc}` returns both classify correctly).  Computed-goto via stack-array-of-labels remains open as the structurally-different BUG-30 (round-2 cross-region stack analysis). |
 | BUG-6  | **FIXED** | (was: all 6 archs) | Medium | `-fno-optimize-sibling-calls` in fixtures Makefile (commit `9ea7f6f`) |
 | BUG-7  | **FIXED** | (was: x86, x64) | Medium | Indirect call CFG MemReadErr no longer reproducible |
 | BUG-8  | **FIXED** | (was: x86 x87 residue) | High | Float arith chain — write_reg_vn mask positioning + ret-val-regs upgrade + F80/U80 NodeOutputType + ST0 in x86 cdecl float ret regs |
@@ -69,12 +69,20 @@
 **Root cause:** ARM's `IT`/`CSEL` lowering for `if (sel == 0) return a; if (sel == 1) return b; return c;` emits a non-Bool value where the IR builder expects Bool for the `If` node's condition input.
 **Fix sketch:** insert a `CastToBool` at the appropriate site, or handle the ARM-specific p-code shape in `handle_cond_branch`.
 
-### BUG-5 — `BranchIndirect` p-code opcode unimplemented
+### BUG-5 — `BranchIndirect` p-code opcode unimplemented [CLOSED]
 
-**Affects:** `control::nested_loops::arm`, `calls::apply_indirect::{aarch64,arm,mips32le,mips32be}`, `abi::tail_caller::arm`.
-**Surface:** `unimplemented p-code opcode BranchIndirect at crates/strider/src/strider/insn/mod.rs`.
-**Root cause:** `Opcode::BranchIndirect` is not in the `process_insn` opcode dispatch.
-**Fix sketch:** add a `handle_branch_indirect` to `strider::insn::control.rs`, similar to `handle_call_indirect` but emitting an indirect branch. Will likely need CFG support for indirect branch targets too (possibly opening up jump-table reconstruction work).
+**Status:** CLOSED.  Replaced by the indirect-branch fixed-point design.
+
+**Originally affected:** `control::nested_loops::arm`, `calls::apply_indirect::{aarch64,arm,mips32le,mips32be}`, `abi::tail_caller::arm`, `stack::escape_via_ptr::arm`, `complex_patterns::bit_test_zero::arm`.
+
+**Originally surfaced as:** `unimplemented p-code opcode BranchIndirect at crates/strider/src/strider/insn/mod.rs`, then later as a coarse `BranchIndirect → Return` blanket mapping that mis-classified real tail calls (lost the Call site) and jump tables (lost successor edges).
+
+**Resolution:** the indirect-branch resolution work landed under feature/ai across `2026-04-27-indirect-branch-fixedpoint.md` phases R1-R5.  Tier 1 uses a per-region `ConstantFold` + `KnownBits` mini-graph to classify constant-target indirect branches; tier 2 (the strider-level fixed-point loop) classifies the remaining cases via `LinkRegister` (the load-from-sp-then-bx pattern that arm `pop {pc}` produces, simplified through `StackLoadForward`), `IntConst` / `Multiple-of-IntConsts` (target via Phi-of-constants), and the jump-table arm (R4: bound-check + indexed `LoadReadOnly`).  The four ARM ignores were lifted in R5.2; `crates/strider/tests/indirect_branch.rs` adds a forward-looking computed-goto fixture (open as **BUG-30** until round 2 wires cross-region stack analysis).
+
+**See:**
+- Spec: `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
+- Plan: `docs/superpowers/plans/2026-04-27-indirect-branch-fixedpoint.md`
+- Closing commit: R5.2 / R5.3 (`feature/ai`).
 
 ### BUG-6 — Compiler tail-call elision drops Call nodes
 
@@ -259,7 +267,7 @@ These bugs span multiple severity levels. A reasonable ordering:
 
 1. **Foundational** (unblocks many tests): BUG-2 (MIPS DIV CFG), BUG-3 (Bool/AnyInt validator).
 2. **High-impact** (un-skips entire category): BUG-8/9/10/11 (float subsystem).
-3. **Medium scope, isolated fixes**: BUG-1 (MIPS MULT), BUG-5 (BranchIndirect), BUG-13 (u128 const).
+3. **Medium scope, isolated fixes**: BUG-1 (MIPS MULT), BUG-13 (u128 const).  ~~BUG-5 (BranchIndirect)~~ — closed under the indirect-branch fixed-point design.
 4. **Likely test-design tweaks** (no analyzer change): BUG-6 (tail-call), BUG-11 (XOR sign-bit lowering), BUG-18 (expect branch), BUG-20 (XOR fold), BUG-21 (sign-ext).
 5. **Lower-priority investigations**: BUG-7, BUG-12, BUG-14, BUG-15/16/17, BUG-19.
 
