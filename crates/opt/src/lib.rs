@@ -42,7 +42,7 @@ mod function_args;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
-mod stack_load_forward;
+pub mod stack_load_forward;
 mod stack_store;
 
 pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
