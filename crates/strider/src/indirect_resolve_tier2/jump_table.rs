@@ -598,18 +598,50 @@ fn bound_from_if_condition(
     }
 }
 
-/// Defines value identity for the predecessor-If walk: two
-/// NodeOutputIds match when they refer to the same output, OR when
-/// one produces a value that's a no-op cast/extend of the other.
+/// Defines value identity for the predecessor-If walk.
 ///
-/// Round R4 keeps this intentionally narrow — strict equality only.
-/// A future round can extend to recognise `idx & 0xff` vs `idx`
-/// cross-references, but the current bound-resolution is already
-/// covered: KnownBits handles the AND-mask shape, and the
-/// predecessor-If walk handles the `if (idx < N)` shape, so we don't
-/// have to chase aliasing in either direction.
-fn same_value(_graph: &BuiltFunctionGraph, a: NodeOutputId, b: NodeOutputId) -> bool {
-    a == b
+/// Two `NodeOutputId`s match when:
+///   * They refer to the same output (the trivial case).
+///   * One is the OUTPUT of a single-input `ControlPhi` / `ValuePhi`
+///     whose only value input is the other.  This covers the common
+///     pattern where the entry region's `If(idx < N)` reads idx
+///     directly while the dispatch region's `Load[..idx*stride..]`
+///     reads idx through the dispatch region's entry phi.  Without
+///     RedundantPhis (which intermediate orchestrator iterations
+///     omit) those two reads have different `NodeOutputId`s even
+///     though they're trivially identical values.
+///
+/// We follow the chain transitively so deeper phi nests collapse
+/// the same way.  A visited set protects against cycles (back-edges
+/// of unsimplified loops); on cycle, we return false rather than
+/// looping — same conservative direction as `walk_control_for_if_bound`.
+fn same_value(graph: &BuiltFunctionGraph, a: NodeOutputId, b: NodeOutputId) -> bool {
+    // Bidirectionally chase trivial phis: see if either side reduces
+    // to the other.  Cap depth to avoid pathological chains.
+    fn root(graph: &BuiltFunctionGraph, mut out: NodeOutputId) -> NodeOutputId {
+        let mut budget = 64usize;
+        let mut visited: HashSet<NodeOutputId> = HashSet::new();
+        while budget > 0 && visited.insert(out) {
+            let node = graph.graph.get_node_from_output(out);
+            match graph.graph.node_kind(node) {
+                NodeKind::ControlPhi(_) | NodeKind::ValuePhi => {
+                    let inputs: Vec<NodeOutputId> =
+                        graph.graph.node_inputs(node).into_iter().collect();
+                    // Slot 0 is the phi-token; slots 1.. are values.
+                    // A trivial phi has exactly one value input.
+                    if inputs.len() == 2 {
+                        out = inputs[1];
+                        budget -= 1;
+                        continue;
+                    }
+                    return out;
+                }
+                _ => return out,
+            }
+        }
+        out
+    }
+    root(graph, a) == root(graph, b)
 }
 
 // ── Read table entries ───────────────────────────────────────────────────────
@@ -1176,6 +1208,165 @@ mod tests {
         let g = builder.build().unwrap();
         let bound = bound_from_if_condition(&g, cmp, idx, true);
         assert_eq!(bound, Some(5));
+    }
+
+    /// Helper: build a graph where `entry` branches via
+    /// `if (idx < bound) { dispatch } else { exit }`, and the
+    /// dispatch region's placeholder Return uses an
+    /// `idx_in_dispatch` value (the dispatch's read of the same
+    /// idx_var, which travels through a single-input ControlPhi).
+    /// Returns the graph, the anchor (placeholder Return's
+    /// value-input), and the dispatch's view of idx.
+    fn build_pred_if_graph(
+        bound: u64,
+    ) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
+        use ir::{FunctionBuilder, IntCmpOp};
+        let idx_var = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x10,
+            },
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+        let entry = b.create_region().unwrap();
+        let dispatch = b.create_region().unwrap();
+        let exit = b.create_region().unwrap();
+        b.set_entry_region(entry).unwrap();
+
+        b.set_region(entry);
+        let idx_at_entry = b.read_variable(&idx_var).unwrap();
+        let bound_c = b.build_int_const(bound, NodeOutputType::U32);
+        let cond = b
+            .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+            .unwrap();
+        b.build_if(cond, dispatch, exit).unwrap();
+
+        b.set_region(dispatch);
+        let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+        // Use idx_in_dispatch as the placeholder anchor — exercises
+        // the bound walk against the dispatch's own idx-output, which
+        // (without RedundantPhis) wraps the entry idx in a
+        // single-input ControlPhi.
+        b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+
+        b.set_region(exit);
+        b.build_return(None, &[]).unwrap();
+
+        let g = b.build().unwrap();
+        // The placeholder Return is the 3-input one in dispatch.
+        let mut anchor = None;
+        for nid in g.preorder() {
+            if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+                continue;
+            }
+            let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+            if inputs.len() == 3 {
+                anchor = Some(inputs[2]);
+            }
+        }
+        (g, anchor.expect("placeholder return"), idx_in_dispatch)
+    }
+
+    #[test]
+    fn bound_via_predecessor_if_walks_one_hop() {
+        // `If(idx < 4)` directly dominates the placeholder Return's
+        // region.  bound_via_predecessor_if must follow control back
+        // through one hop and surface bound = 4.
+        let (g, anchor, idx_in_dispatch) = build_pred_if_graph(4);
+        let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
+        assert_eq!(bound, Some(4));
+    }
+
+    #[test]
+    fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
+        // No If on the path (single-region function with raw idx).
+        // The walk reaches Entry without finding a bound → None.
+        use ir::FunctionBuilder;
+        let idx_var = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x10,
+            },
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let idx = b.read_variable(&idx_var).unwrap();
+        b.build_return(Some(idx), &[]).unwrap();
+        let g = b.build().unwrap();
+        let mut anchor = None;
+        for nid in g.preorder() {
+            if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+                continue;
+            }
+            let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+            if inputs.len() == 3 {
+                anchor = Some(inputs[2]);
+            }
+        }
+        let anchor = anchor.expect("anchor");
+        let bound = bound_via_predecessor_if(&g, anchor, idx);
+        assert_eq!(bound, None);
+    }
+
+    #[test]
+    fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
+        // The If's condition compares a DIFFERENT variable, not the
+        // dispatch's idx.  The walk must NOT confabulate a bound.
+        use ir::{FunctionBuilder, IntCmpOp};
+        let idx_var = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x10,
+            },
+            size: 4,
+        };
+        let other_var = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x14,
+            },
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![idx_var, other_var], &[], &[], &[], None, 0)
+            .unwrap();
+        let entry = b.create_region().unwrap();
+        let dispatch = b.create_region().unwrap();
+        let exit = b.create_region().unwrap();
+        b.set_entry_region(entry).unwrap();
+
+        b.set_region(entry);
+        // Compare OTHER var, not idx.
+        let other = b.read_variable(&other_var).unwrap();
+        let bound_c = b.build_int_const(4u64, NodeOutputType::U32);
+        let cond = b
+            .build_int_cmp_operation(other, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+            .unwrap();
+        b.build_if(cond, dispatch, exit).unwrap();
+
+        b.set_region(dispatch);
+        let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+        b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+        b.set_region(exit);
+        b.build_return(None, &[]).unwrap();
+
+        let g = b.build().unwrap();
+        let mut anchor = None;
+        for nid in g.preorder() {
+            if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+                continue;
+            }
+            let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+            if inputs.len() == 3 {
+                anchor = Some(inputs[2]);
+            }
+        }
+        let anchor = anchor.expect("anchor");
+        let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
+        assert_eq!(bound, None, "If on unrelated var must not bound idx");
     }
 
     #[test]

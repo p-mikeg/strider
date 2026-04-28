@@ -538,6 +538,274 @@ pub fn build_push_target_pop_pc_scenario(
     (fg, anchor, lr)
 }
 
+// ── R4 jump-table fixtures ──────────────────────────────────────────────────
+//
+// Each helper builds a `BuiltFunctionGraph` whose placeholder Return's
+// value-input is shaped like a jump-table dispatch — `Load(IntAdd(
+// IntConst(base), IntMul(idx, IntConst(stride))))` — and runs the
+// stable optimiser subset so the structure is exactly what tier 2's
+// classifier sees in production.  Helpers parameterise over how `idx`
+// is bounded:
+//
+//   * AND-mask (KnownBits route) — `build_jump_table_known_bits_*`.
+//   * Predecessor `If(idx < N)` — `build_jump_table_predecessor_if_*`.
+//   * Neither (unbounded; classifier must return None) —
+//     `build_jump_table_unbounded`.
+//
+// All helpers go through `FunctionBuilder::new_raw` rather than the
+// cfg-builder + analyze_cfg_with_unresolved path because (a) we don't
+// need the cfg builder's tier-1 resolver here, (b) constructing real
+// arch bytes that lift to a jump-table-shaped IR is fixture overkill,
+// and (c) the FunctionBuilder API is the same code path the cfg
+// builder ultimately goes through, so we exercise the same lift
+// semantics.
+
+/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// with `idx & idx_mask` bounding the index.  After the stable
+/// optimiser subset runs, `KnownBits` proves `idx <= idx_mask` and
+/// the classifier's jump-table arm reads `idx_mask + 1` entries
+/// from the caller's rom.
+///
+/// Returns the graph and the placeholder Return's value-input slot.
+pub fn build_jump_table_known_bits_scenario(
+    base: u64,
+    stride: u64,
+    idx_mask: u64,
+) -> (BuiltFunctionGraph, ir::Value) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, OptimizerPipeline};
+
+    // Single tracked variable — a register-shaped VN.  We seed `idx`
+    // from `read_variable` so it's a non-IntConst (else the matcher
+    // would mis-disambiguate stride vs idx in commuted multiplications).
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
+        .expect("new_raw");
+    let region = b.create_region().expect("region");
+    b.set_entry_region(region).expect("set_entry");
+    b.set_region(region);
+
+    let raw_idx = b.read_variable(&idx_var).expect("read idx");
+    let mask_c = b.build_int_const(idx_mask, NodeOutputType::U32);
+    let masked = b
+        .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, NodeOutputType::U32)
+        .expect("idx & mask");
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let mul = b
+        .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+        .expect("mul");
+    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+        .expect("add");
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[])
+        .expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    // Stable optimiser subset.  We deliberately omit RedundantPhis
+    // and DeadBranchElim because the spec routes the jump-table
+    // classifier through the same destructive-omitted pipeline that
+    // intermediate iterations of the orchestrator use, so the graph
+    // shape we hand to classify_anchor here matches the orchestrator's
+    // intermediate-iteration sees.
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let anchor = anchor_value_input(&fg).expect("anchor");
+    (fg, anchor)
+}
+
+/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// with the index bounded by a *predecessor* `If(idx < bound)` —
+/// the dispatch region is on the true branch.  The stable optimiser
+/// subset is run, but RedundantPhis is OMITTED so the trivial-phi
+/// rule doesn't strip the entry merge-region's structure.
+///
+/// Topology:
+///   entry  ──[if idx < bound: true]── dispatch (loads + Returns)
+///         └──[false]─────────────────── exit (early Return)
+///
+/// The dispatch's placeholder Return is the anchor we return.
+pub fn build_jump_table_predecessor_if_scenario(
+    base: u64,
+    stride: u64,
+    bound: u64,
+) -> (BuiltFunctionGraph, ir::Value) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp, IntCmpOp};
+    use opt::{ConstantFold, OptimizerPipeline};
+
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
+        .expect("new_raw");
+    let entry = b.create_region().expect("entry");
+    let dispatch = b.create_region().expect("dispatch");
+    let exit = b.create_region().expect("exit");
+    b.set_entry_region(entry).expect("set_entry");
+
+    // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
+    b.set_region(entry);
+    let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
+    let bound_c = b.build_int_const(bound, NodeOutputType::U32);
+    let cond = b
+        .build_int_cmp_operation(raw_idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+        .expect("idx < bound");
+    b.build_if(cond, dispatch, exit).expect("if dispatch");
+
+    // Dispatch: build the jump-table-shaped load.
+    b.set_region(dispatch);
+    let idx = b.read_variable(&idx_var).expect("read idx (dispatch)");
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let mul = b
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+        .expect("mul");
+    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+        .expect("add");
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[])
+        .expect("placeholder return");
+
+    // Exit: a real, non-placeholder Return.  We use a non-1-input
+    // shape (3 returns of 0) so the placeholder-resolver helpers in
+    // this module can still distinguish placeholder from real
+    // Return by input count == 3.  We add zero ret_val_regs and a
+    // single dummy explicit value — total 3 inputs (control,
+    // memory, value) which matches the placeholder shape.  To
+    // avoid confusion, we use 0 explicit values (just control +
+    // memory, total 2 inputs) — a real ABI Return shape distinct
+    // from the 3-input placeholder.
+    b.set_region(exit);
+    b.build_return(None, &[]).expect("exit return");
+
+    let mut fg = b.build().expect("build");
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let anchor = anchor_value_input(&fg).expect("anchor");
+    (fg, anchor)
+}
+
+/// Build a placeholder `Return(load)` whose load is jump-table-shaped
+/// but whose `idx` is NOT bounded by either KnownBits-visible bits
+/// or a predecessor If.  Used to verify the classifier returns None
+/// rather than guessing a bound.
+pub fn build_jump_table_unbounded_scenario(
+    base: u64,
+    stride: u64,
+) -> (BuiltFunctionGraph, ir::Value) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, OptimizerPipeline};
+
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
+        .expect("new_raw");
+    let region = b.create_region().expect("region");
+    b.set_entry_region(region).expect("set_entry");
+    b.set_region(region);
+
+    let idx = b.read_variable(&idx_var).expect("read idx");
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let mul = b
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
+        .expect("mul");
+    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
+        .expect("add");
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[])
+        .expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let anchor = anchor_value_input(&fg).expect("anchor");
+    (fg, anchor)
+}
+
+/// Build a placeholder `Return(load)` whose load is NOT jump-table-
+/// shaped — used to verify the classifier's Load arm falls through
+/// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
+/// a simple global read).
+pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
+    use ir::node::NodeOutputType;
+    use ir::{FunctionBuilder};
+    use opt::{ConstantFold, OptimizerPipeline};
+
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+        .expect("new_raw");
+    let region = b.create_region().expect("region");
+    b.set_entry_region(region).expect("set_entry");
+    b.set_region(region);
+
+    let addr = b.build_int_const(0x1234_u64, NodeOutputType::U32);
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
+        .expect("load");
+    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    let mut fg = b.build().expect("build");
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.run(&mut fg).expect("opt pipeline");
+
+    let anchor = anchor_value_input(&fg).expect("anchor");
+    (fg, anchor)
+}
+
+/// Walk every reachable Return and return the value-input (slot 2)
+/// of the unique 3-input Return — the placeholder shape strider's
+/// R1.4 lift produces.  `None` when there's no such Return (caller
+/// asserts).  Local copy of the helper at the top of this module
+/// because the existing `current_anchor_after_opt` is private.
+pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
+    for nid in graph.preorder() {
+        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() != 3 {
+            continue;
+        }
+        return Some(inputs[2]);
+    }
+    None
+}
+
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can
