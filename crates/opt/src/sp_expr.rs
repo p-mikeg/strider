@@ -35,6 +35,7 @@ pub enum SpExpr {
 }
 
 impl SpExpr {
+    #[must_use]
     pub fn shifted(self, delta: i64) -> Self {
         match self {
             SpExpr::Terminal { base, offset } => SpExpr::Terminal {
@@ -59,6 +60,7 @@ impl SpExpr {
 /// — i.e. an unknown-extent range is treated as effectively infinite in both
 /// directions, matching the conservative verdict callers expect.
 #[inline]
+#[must_use]
 pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
     let a_end = a_off.saturating_add(a_size);
     let b_end = b_off.saturating_add(b_size);
@@ -72,6 +74,7 @@ pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool
 
 /// Reads an integer-constant output as signed, sign-extended from its declared
 /// bit width. Returns `None` for non-integer-constant or for U128/U256.
+#[must_use]
 pub fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     let c = g.int_const_val(out)?;
     g.output_kind(out).as_value()?.get_signed_int(c)

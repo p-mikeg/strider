@@ -439,6 +439,7 @@ fn realize(
 /// - `memo` — a per-call SP-decomposition memo.  Reuse the same memo
 ///   across multiple calls for the same graph to amortise the cost
 ///   of decomposing repeated SP expressions.
+#[must_use]
 pub fn find_stack_stored_value_at_offset(
     graph: &ir::Graph,
     mem: NodeOutputId,

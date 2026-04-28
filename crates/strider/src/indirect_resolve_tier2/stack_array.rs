@@ -116,9 +116,7 @@ pub fn classify_stack_array(
             &mut memo,
         )?;
         let c = graph.int_const_val(value)?;
-        #[allow(clippy::cast_possible_truncation)]
-        let masked = (c as u64) & target_mask;
-        targets.push(masked);
+        targets.push(c & target_mask);
     }
     targets.sort_unstable();
     targets.dedup();
@@ -160,16 +158,12 @@ fn strip_target_mask(
             NodeKind::IntBinaryOp(IntBinaryOp::And) => {
                 if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
                     if let Some(m) = graph.int_const_val(rhs) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let m64 = m as u64;
-                        mask &= m64;
+                        mask &= m;
                         current = lhs;
                         continue;
                     }
                     if let Some(m) = graph.int_const_val(lhs) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let m64 = m as u64;
-                        mask &= m64;
+                        mask &= m;
                         current = rhs;
                         continue;
                     }
@@ -189,8 +183,8 @@ fn strip_target_mask(
                 if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
                     let or_const = graph
                         .int_const_val(rhs)
-                        .map(|c| (c as u64, lhs))
-                        .or_else(|| graph.int_const_val(lhs).map(|c| (c as u64, rhs)));
+                        .map(|c| (c, lhs))
+                        .or_else(|| graph.int_const_val(lhs).map(|c| (c, rhs)));
                     if let Some((or_c, other)) = or_const {
                         // Strip iff every set bit of `or_c` is already
                         // cleared by `mask`.  This is precisely the
@@ -391,10 +385,10 @@ fn extract_idx_and_stride(
         NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
             let [lhs, rhs] = graph.graph.node_inputs_exact::<2>(node).ok()?;
             if let Some(stride) = graph.int_const_val(rhs) {
-                return Some((lhs, stride as u64));
+                return Some((lhs, stride));
             }
             if let Some(stride) = graph.int_const_val(lhs) {
-                return Some((rhs, stride as u64));
+                return Some((rhs, stride));
             }
             None
         }
@@ -404,8 +398,8 @@ fn extract_idx_and_stride(
             if s >= 64 {
                 return None;
             }
-            #[allow(clippy::cast_possible_truncation)]
-            let s32 = s as u32;
+            // s is bounded above by 64 → fits in u32 with no truncation.
+            let s32 = u32::try_from(s).ok()?;
             let stride = 1u64.checked_shl(s32)?;
             Some((lhs, stride))
         }
@@ -450,13 +444,13 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
-        for i in 0..2 {
+        for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
             let off_const = b.build_int_const(off as u64, NodeOutputType::U64);
             let addr = b
                 .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
                 .unwrap();
-            let target = b.build_int_const(targets[i], NodeOutputType::U64);
+            let target = b.build_int_const(target_addr, NodeOutputType::U64);
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();

@@ -270,6 +270,7 @@ fn extract_base_and_mul(
 /// here is the same propagation rules pared down to the cases that
 /// actually narrow an index value: `IntConst`, `And` with a const,
 /// `Truncate`, `Extend(ZeroExtend)`, and `ShiftRight` by a const.
+#[must_use]
 pub fn bound_via_known_bits(
     graph: &BuiltFunctionGraph,
     idx_output: NodeOutputId,
@@ -409,6 +410,7 @@ fn compute_max_mask(
 /// would have been taken and we'd never reach the dispatch).
 /// `IntCmp(idx, N)` evaluating true under {Less, LessEqual, Sless,
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
+#[must_use]
 pub fn bound_via_predecessor_if(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
