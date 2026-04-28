@@ -415,7 +415,16 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         // resolved this BranchIndirect to N
                         // statically-known targets.  Each target gets
                         // its own intra-fn `Branch` edge; the region
-                        // terminator is `Switch { targets }`.
+                        // terminator is `Switch { target_vn, targets,
+                        // target_value }`.  Strider's `handle_switch`
+                        // (F7) reads `target_vn` at region exit and
+                        // emits an If-ladder of `IntCmpOp::Equal +
+                        // If` against each `targets[i]`.  W9's
+                        // `target_value` is `None` here; the
+                        // orchestrator's known-targets feedback path
+                        // may populate it later for rounds that
+                        // preserve the previous iteration's IR
+                        // across rebuilds.
                         //
                         // If any target lies outside the function
                         // range, surface as unresolved — `Multiple`
@@ -434,7 +443,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         }
                         let region = self.finish_current_region(
                             RegionTerminator::Switch {
+                                target_vn,
                                 targets: targets.clone(),
+                                target_value: None,
                             },
                         )?;
                         for target in targets {

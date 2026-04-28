@@ -212,19 +212,74 @@ fn split_first_half_becomes_fallthrough() {
 // `indirect_dispatch.rs` for the live coverage.
 
 #[test]
-fn switch_variant_is_constructible_but_unused() {
-    // The `Switch` variant is reserved for the future jump-table resolver;
-    // pin its API shape now so future construction is purely additive.
+fn switch_variant_is_constructible_with_w9_fields() {
+    // The `Switch` variant is now (W9 + F7) the active jump-table
+    // terminator: cfg builder constructs it from the resolver's
+    // `Multiple` outcome with `target_vn` carried over from the
+    // original `BranchIndirect` and `target_value` left `None`.
+    // This test pins the variant's API shape post-W9.
+    let target_vn = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
     let term = RegionTerminator::Switch {
+        target_vn,
         targets: Vec::new(),
+        target_value: None,
     };
     let cloned = term.clone();
     assert_eq!(term, cloned);
     match term {
-        RegionTerminator::Switch { targets } => {
+        RegionTerminator::Switch {
+            target_vn: tvn,
+            targets,
+            target_value,
+        } => {
+            assert_eq!(tvn, target_vn);
             assert!(targets.is_empty());
+            assert!(target_value.is_none(), "cfg-built Switch has no pin");
         }
         other => panic!("unexpected variant: {other:?}"),
+    }
+}
+
+#[test]
+fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
+    // W9 round-trip pin: construct a Switch with all three fields
+    // populated (incl. a non-empty `targets` list and a
+    // `target_value` set to None — the cfg-built default), clone
+    // it, destructure both copies, and verify each field round-
+    // trips identically.  Pins the W9 contract that `target_value`
+    // is plumbed through clone/equality without surprise.
+    let target_vn = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x20,
+        },
+        size: 8,
+    };
+    let targets = vec![0x1100u64, 0x1200, 0x1300, 0x1400];
+    let term = RegionTerminator::Switch {
+        target_vn,
+        targets: targets.clone(),
+        target_value: None,
+    };
+    let cloned = term.clone();
+    assert_eq!(term, cloned, "Clone + Eq round-trip");
+    match cloned {
+        RegionTerminator::Switch {
+            target_vn: tvn,
+            targets: tts,
+            target_value,
+        } => {
+            assert_eq!(tvn, target_vn, "target_vn round-trips");
+            assert_eq!(tts, targets, "targets round-trip in order");
+            assert!(target_value.is_none(), "target_value default is None");
+        }
+        other => panic!("clone changed variant: {other:?}"),
     }
 }
 

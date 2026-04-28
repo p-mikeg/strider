@@ -99,12 +99,42 @@ pub enum RegionTerminator {
         /// Resolved tail-call target machine address.
         target: u64,
     },
-    /// FUTURE.  Jump table with N statically-known targets.  Reserved
-    /// in the API now so a later resolver upgrade is purely additive.
-    /// Not constructed by the current builder.
+    /// Jump table with N statically-known targets.  Constructed by
+    /// the cfg builder when its tier-1 resolver (or feedback from
+    /// strider's tier-2 fixed-point loop via `with_known_targets`)
+    /// classifies a `BranchIndirect` to
+    /// `indirect_resolve::ResolvedTargets::Multiple`.
+    ///
+    /// `target_vn` is the dispatch varnode (the `BranchIndirect`'s
+    /// `inputs[0]`); strider reads it at the region exit and emits
+    /// the lifted comparison value for an If-ladder (one
+    /// `IntCmpOp::Equal` + `If` per case, chained through the
+    /// false-branch — see F7 in
+    /// `2026-04-28-strider-extensions-roadmap.md`).
+    ///
+    /// `target_value` is an OPTIONAL pinned `NodeOutputId` for the
+    /// dispatch value (W9).  When `Some`, strider's `handle_switch`
+    /// uses this `NodeOutputId` directly instead of re-reading
+    /// `target_vn` — pinning the soundness contract that the
+    /// comparison value is the SAME value tier 2 classified.  The
+    /// cfg builder always sets this to `None`; it is plumbing for
+    /// the orchestrator's known-targets feedback path so a future
+    /// incremental rebuild round (which preserves the previous
+    /// iteration's IR across rebuilds) can wire the cached anchor
+    /// directly through.
     Switch {
+        /// The dispatch varnode — the `BranchIndirect`'s
+        /// `inputs[0]`.  Strider reads this at the region exit to
+        /// obtain the lifted comparison value for the If-ladder.
+        target_vn: rsleigh::Vn,
         /// Statically-known dispatch targets.
         targets: Vec<u64>,
+        /// OPTIONAL pinned `NodeOutputId` for the dispatch value.
+        /// `None` from the cfg builder; populated by the
+        /// orchestrator's known-targets feedback path when
+        /// available.  When `Some`, strider uses it directly
+        /// instead of re-reading `target_vn`.
+        target_value: Option<ir::Value>,
     },
     /// `BranchIndirect` whose target the cfg-time tier-1 resolver
     /// (`indirect_resolve::resolve_indirect_target`) could not prove.
