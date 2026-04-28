@@ -1,16 +1,9 @@
 use crate::error::Result;
 
 mod insn;
-pub mod ir_cache;
 mod pipeline;
 mod vn_io;
 
-pub use ir_cache::{
-    cache_key_for_region, count_uncached_regions, extend_predecessors_into,
-    extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
-    lift_new_regions_into_with_stats, predecessor_diffs, LiftStats, PredecessorHandles,
-    RegionIrCache, RegionIrEntry,
-};
 pub use pipeline::{AnalyzeOutcome, RegionLiftHandles, Strider};
 
 /// Per-function translation context that converts a [`cfg::Cfg`] into an IR

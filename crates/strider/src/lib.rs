@@ -30,18 +30,23 @@
 //! - [`SleighArch`] — architecture selection for the Sleigh lifter
 //! - [`CallingConvention`] — describes which registers are caller-saved
 
+pub mod cache;
 mod strider;
 pub mod error;
 pub mod indirect_resolve_tier2;
 pub mod rewrite;
 
-pub use strider::ir_cache;
-pub use strider::{
+// W6: `ir_cache` is the historical name for what is now `cache::*`.  Keep
+// the alias so external callers continue to compile while we migrate.
+#[doc(hidden)]
+pub use cache as ir_cache;
+pub use cache::{
     cache_key_for_region, count_uncached_regions, extend_predecessors_into,
     extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
-    lift_new_regions_into_with_stats, predecessor_diffs, AnalyzeOutcome, LiftStats,
-    PredecessorHandles, RegionIrCache, RegionIrEntry, RegionLiftHandles, Strider,
+    lift_new_regions_into_with_stats, predecessor_diffs, LiftStats, PredecessorHandles,
+    RegionIrCache, RegionIrEntry,
 };
+pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
 pub use rewrite::GraphRewriter;
 pub use error::{Error, ErrorKind, Result};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};
