@@ -45,7 +45,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     b.build_return(Some(loaded), &[])?;
     let mut fg = b.build()?;
 
-    pipeline_with_sp(sp, vec![4, 8, 12]).run(&mut fg)?;
+    pipeline_with_sp(sp, vec![4, 8, 12]).run(&mut fg.graph, fg.entry)?;
 
     let ret = fg
         .all_node_ids()
@@ -84,7 +84,7 @@ fn full_call_pipeline_collects_args() -> opt::Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
 
-    pipeline_with_sp(sp, vec![0, 4]).run(&mut fg)?;
+    pipeline_with_sp(sp, vec![0, 4]).run(&mut fg.graph, fg.entry)?;
 
     let call = fg
         .all_node_ids()

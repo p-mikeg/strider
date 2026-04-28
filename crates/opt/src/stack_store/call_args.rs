@@ -88,7 +88,7 @@ fn collect_stack_args_in_chain_order(
                 let addr = inputs[1];
                 let prev = inputs[0];
                 let mut visiting = rustc_hash::FxHashSet::default();
-                match decompose_sp(fg, addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                match decompose_sp(&fg.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;
@@ -220,7 +220,21 @@ impl CallStackArgCollect {
 }
 
 impl Optimizer for CallStackArgCollect {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl CallStackArgCollect {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let calls: Vec<NodeId> = function
             .preorder()
             .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Call))

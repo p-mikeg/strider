@@ -1,22 +1,27 @@
-//! Constant-output inspection and creation helpers on
-//! [`crate::function::BuiltFunctionGraph`].
+//! Constant-output inspection and creation helpers.
+//!
+//! Canonical definitions live on [`crate::graph::Graph`] so opt passes
+//! that take `&mut Graph` (F2 trait refactor) can use them directly.
+//! [`BuiltFunctionGraph`] retains thin wrappers for back-compat with
+//! existing call sites.
 
 use crate::Result;
 use crate::function::BuiltFunctionGraph;
+use crate::graph::Graph;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
-impl BuiltFunctionGraph {
+impl Graph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type), or `None` if the output is not an integer constant.
     #[must_use]
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
-        let ty = self.graph.output_kind(out).as_value()?;
+        let ty = self.output_kind(out).as_value()?;
         if !ty.is_integer() {
             return None;
         }
-        let node = self.graph.get_node_from_output(out);
-        match *self.graph.node_kind(node) {
-            // IntConst stores u128; narrow to u64 for callers that only need ≤64-bit values.
+        let node = self.get_node_from_output(out);
+        match *self.node_kind(node) {
+            // IntConst stores u128; narrow to u64 for callers that only need <=64-bit values.
             NodeKind::IntConst(v) => ty.get_unsigned_int_u128(v).and_then(|w| u64::try_from(w).ok()),
             _ => None,
         }
@@ -24,13 +29,13 @@ impl BuiltFunctionGraph {
 
     /// Returns the boolean constant value of `out`, or `None` if it is not a
     /// `BoolConst` node.
-    #[must_use] 
+    #[must_use]
     pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
-        if !self.graph.output_kind(out).is_bool() {
+        if !self.output_kind(out).is_bool() {
             return None;
         }
-        let node = self.graph.get_node_from_output(out);
-        match *self.graph.node_kind(node) {
+        let node = self.get_node_from_output(out);
+        match *self.node_kind(node) {
             NodeKind::BoolConst(v) => Some(v),
             _ => None,
         }
@@ -38,14 +43,14 @@ impl BuiltFunctionGraph {
 
     /// Returns the raw bits of a float constant, or `None` if the output is
     /// not a `FloatConst` node.
-    #[must_use] 
+    #[must_use]
     pub fn float_const_val(&self, out: NodeOutputId) -> Option<u64> {
-        let ty = self.graph.output_kind(out).as_value()?;
+        let ty = self.output_kind(out).as_value()?;
         if !ty.is_float() {
             return None;
         }
-        let node = self.graph.get_node_from_output(out);
-        match *self.graph.node_kind(node) {
+        let node = self.get_node_from_output(out);
+        match *self.node_kind(node) {
             NodeKind::FloatConst(bits) => Some(bits),
             _ => None,
         }
@@ -59,12 +64,12 @@ impl BuiltFunctionGraph {
     /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
-        let node = self.graph.create_node(
+        let node = self.create_node(
             NodeKind::IntConst(u128::from(val)),
             [],
             [NodeOutputKind::OutputType(ty)],
         );
-        Ok(self.graph.node_outputs_exact::<1>(node)?[0])
+        Ok(self.node_outputs_exact::<1>(node)?[0])
     }
 
     /// Creates (or retrieves) a `BoolConst(val)` node.
@@ -74,12 +79,12 @@ impl BuiltFunctionGraph {
     /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_bool_const(&mut self, val: bool) -> Result<NodeOutputId> {
-        let node = self.graph.create_node(
+        let node = self.create_node(
             NodeKind::BoolConst(val),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::Bool)],
         );
-        Ok(self.graph.node_outputs_exact::<1>(node)?[0])
+        Ok(self.node_outputs_exact::<1>(node)?[0])
     }
 
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
@@ -89,12 +94,59 @@ impl BuiltFunctionGraph {
     /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
-        let node = self.graph.create_node(
+        let node = self.create_node(
             NodeKind::FloatConst(bits),
             [],
             [NodeOutputKind::OutputType(ty)],
         );
-        Ok(self.graph.node_outputs_exact::<1>(node)?[0])
+        Ok(self.node_outputs_exact::<1>(node)?[0])
+    }
+}
+
+impl BuiltFunctionGraph {
+    /// Back-compat wrapper around [`Graph::int_const_val`].
+    #[must_use]
+    pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
+        self.graph.int_const_val(out)
+    }
+
+    /// Back-compat wrapper around [`Graph::bool_const_val`].
+    #[must_use]
+    pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
+        self.graph.bool_const_val(out)
+    }
+
+    /// Back-compat wrapper around [`Graph::float_const_val`].
+    #[must_use]
+    pub fn float_const_val(&self, out: NodeOutputId) -> Option<u64> {
+        self.graph.float_const_val(out)
+    }
+
+    /// Back-compat wrapper around [`Graph::make_int_const`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Graph::make_int_const`].
+    pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+        self.graph.make_int_const(val, ty)
+    }
+
+    /// Back-compat wrapper around [`Graph::make_bool_const`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Graph::make_bool_const`].
+    pub fn make_bool_const(&mut self, val: bool) -> Result<NodeOutputId> {
+        self.graph.make_bool_const(val)
+    }
+
+    /// Back-compat wrapper around [`Graph::make_float_const`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Graph::make_float_const`].
+    pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+        self.graph.make_float_const(bits, ty)
     }
 }
 

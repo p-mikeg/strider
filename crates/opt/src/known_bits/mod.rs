@@ -244,7 +244,21 @@ fn node_known_bits(
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl KnownBits {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // Collect once; mutations only add new nodes (never change existing ones).
         let nodes: Vec<_> = function.preorder().collect();
 

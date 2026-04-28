@@ -812,7 +812,7 @@ where
     // `DeadBranchElimination` / `CallOtherElide` so phi nodes the
     // cache pins by `NodeId` survive across iterations.
     let pipeline = config.strider.build_stable_optimizer_pipeline();
-    pipeline.run(&mut graph)?;
+    pipeline.run_on_built(&mut graph)?;
     stats.stable_runs += 1;
 
     Ok((graph, unresolved, cfg))
@@ -840,7 +840,7 @@ where
     // come on the next turn).  Running the destructive subset here
     // would risk removing nodes that a future iteration's edit needs.
     let pipeline = config.strider.build_stable_optimizer_pipeline();
-    pipeline.run(graph)?;
+    pipeline.run_on_built(graph)?;
     stats.stable_runs += 1;
     Ok(())
 }
@@ -860,7 +860,7 @@ where
     // final here (no future iterations will add nodes), so
     // `RedundantPhis` / `DeadBranchElimination` are safe to run.
     let pipeline = config.strider.build_destructive_optimizer_pipeline();
-    pipeline.run(graph)?;
+    pipeline.run_on_built(graph)?;
     stats.destructive_runs += 1;
     Ok(())
 }

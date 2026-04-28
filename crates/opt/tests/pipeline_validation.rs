@@ -18,7 +18,7 @@ use common::{make_fn, sp_vn};
 #[test]
 fn run_validates_after_default_pipeline() -> opt::Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64)))?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     Ok(())
 }
 
@@ -38,6 +38,6 @@ fn run_with_post_passes_validates() -> opt::Result<()> {
     p.add(ConstantFold);
     p.add(StackStoreDetect::new(sp));
     p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
-    p.run(&mut fg)?;
+    p.run(&mut fg.graph, fg.entry)?;
     Ok(())
 }

@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 
 use rustc_hash::FxHashSet;
 
-use ir::BuiltFunctionGraph;
+use ir::Graph;
 use ir::node::NodeId;
 
 use crate::pipeline::OptimizationResult;
@@ -53,19 +53,22 @@ impl WorkSet {
 /// severing their inputs is always safe. Cleans up dead-block residue and
 /// orphaned address-arithmetic chains left behind by passes that rewrite
 /// reachable consumers (e.g. `DeadBranchElimination`, `FunctionArgDetect`).
-pub(crate) fn detach_unreachable_nodes(fg: &mut BuiltFunctionGraph) -> OptimizationResult {
-    let reachable: FxHashSet<NodeId> = fg.preorder().collect();
-    // Two-phase: gather the targets up-front (releases the borrow on `fg`
+pub(crate) fn detach_unreachable_nodes(
+    graph: &mut Graph,
+    entry: NodeId,
+) -> OptimizationResult {
+    let reachable: FxHashSet<NodeId> = graph.preorder(entry).collect();
+    // Two-phase: gather the targets up-front (releases the borrow on `graph`
     // and prunes "no inputs to detach" cases) before mutating the graph.
-    let to_detach: Vec<NodeId> = fg
+    let to_detach: Vec<NodeId> = graph
         .all_node_ids()
-        .filter(|n| !reachable.contains(n) && !fg.graph.node_inputs(*n).is_empty())
+        .filter(|n| !reachable.contains(n) && !graph.node_inputs(*n).is_empty())
         .collect();
     if to_detach.is_empty() {
         return OptimizationResult::NoChange;
     }
     for node_id in to_detach {
-        fg.graph.detach_node_inputs(node_id);
+        graph.detach_node_inputs(node_id);
     }
     OptimizationResult::Changed
 }

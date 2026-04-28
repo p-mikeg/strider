@@ -35,7 +35,7 @@ fn bench_chain(c: &mut Criterion) {
                 || build_or_and_chain(n),
                 |mut fg| {
                     let mut iters = 0usize;
-                    while KnownBits.optimize(&mut fg).unwrap().changed() {
+                    while KnownBits.optimize(&mut fg.graph, fg.entry).unwrap().changed() {
                         iters += 1;
                         if iters > 200 {
                             panic!("did not converge");

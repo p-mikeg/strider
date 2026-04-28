@@ -1,10 +1,14 @@
-//! Graph-mutation helpers on [`crate::function::BuiltFunctionGraph`].
+//! Graph-mutation helpers — defined on [`crate::graph::Graph`] so opt
+//! passes that take `&mut Graph` (F2 trait refactor) can use them
+//! directly.  [`BuiltFunctionGraph`] retains a thin wrapper for
+//! back-compat with existing call sites.
 
 use crate::Result;
 use crate::function::BuiltFunctionGraph;
+use crate::graph::Graph;
 use crate::node::NodeOutputId;
 
-impl BuiltFunctionGraph {
+impl Graph {
     /// Redirects every consumer of `old` to `new_val`.
     ///
     /// Returns `true` if at least one use was replaced, `false` if `old` had
@@ -20,7 +24,7 @@ impl BuiltFunctionGraph {
         old: NodeOutputId,
         new_val: NodeOutputId,
     ) -> Result<bool> {
-        let mut cursor = self.graph.output_use_cursor(old);
+        let mut cursor = self.output_use_cursor(old);
         if cursor.current().is_none() {
             return Ok(false);
         }
@@ -28,6 +32,25 @@ impl BuiltFunctionGraph {
             cursor.replace_current_with(new_val)?;
         }
         Ok(true)
+    }
+}
+
+impl BuiltFunctionGraph {
+    /// Back-compat wrapper around [`Graph::replace_all_uses`].
+    ///
+    /// Kept so existing callers that hold a `BuiltFunctionGraph` continue to
+    /// compile after F2's `Optimizer` trait refactor moved the canonical
+    /// definition onto `Graph`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Graph::replace_all_uses`].
+    pub fn replace_all_uses(
+        &mut self,
+        old: NodeOutputId,
+        new_val: NodeOutputId,
+    ) -> Result<bool> {
+        self.graph.replace_all_uses(old, new_val)
     }
 }
 

@@ -61,7 +61,7 @@ fn forward_basic() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
@@ -103,7 +103,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -142,7 +142,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -177,7 +177,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
@@ -224,7 +224,7 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -270,7 +270,7 @@ fn bail_on_call_between() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -340,7 +340,7 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -421,7 +421,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -501,7 +501,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
@@ -547,7 +547,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -602,7 +602,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -656,7 +656,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
@@ -711,7 +711,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Big));
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -811,7 +811,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     prep.add(ConstantFold);
     prep.add(RedundantPhis);
     prep.add(StackStoreDetect::new(sp));
-    prep.run(&mut fg)?;
+    prep.run(&mut fg.graph, fg.entry)?;
 
     let total_truncate_before = fg
         .all_node_ids()
@@ -825,7 +825,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // Run StackLoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg)?;
+    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg.graph, fg.entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.

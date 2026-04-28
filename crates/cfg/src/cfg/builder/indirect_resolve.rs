@@ -222,7 +222,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         pipeline.add(opt::ConstantFold);
         pipeline.add(opt::KnownBits);
         pipeline.add(opt::RedundantPhis);
-        pipeline.run(&mut fg)?;
+        pipeline.run_on_built(&mut fg)?;
     }
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
@@ -241,7 +241,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         pipeline.add(opt::ConstantFold);
         pipeline.add(opt::KnownBits);
         pipeline.add(opt::RedundantPhis);
-        pipeline.run(&mut fg)?;
+        pipeline.run_on_built(&mut fg)?;
     }
 
     // ── Step 6: classify.  Look at the `Return` node's value-input

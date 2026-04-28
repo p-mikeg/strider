@@ -85,7 +85,21 @@ impl FunctionArgDetect {
 }
 
 impl Optimizer for FunctionArgDetect {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl FunctionArgDetect {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
         changed |= detect_register_args(function, &self.arg_passing_regs)?;
         changed |= detect_stack_args(
@@ -101,7 +115,7 @@ impl Optimizer for FunctionArgDetect {
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
         // The detach result is hygiene-only (post-pass return values are
         // ignored by the pipeline); don't escalate it into `Changed`.
-        let _ = crate::worklist::detach_unreachable_nodes(function);
+        let _ = crate::worklist::detach_unreachable_nodes(&mut function.graph, function.entry);
         Ok(changed)
     }
 }
@@ -237,7 +251,7 @@ fn detect_stack_args(
         let load_size = load_ty.byte_size() as i64;
         let mut visiting = rustc_hash::FxHashSet::default();
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(fg, addr, sp_vn, &mut memo, &mut visiting)
+            decompose_sp(&fg.graph, addr, sp_vn, &mut memo, &mut visiting)
         else {
             continue;
         };
@@ -475,7 +489,7 @@ fn mem_chain_is_dirty(
             } else {
                 let addr = inputs[1];
                 let mut sp_visiting = rustc_hash::FxHashSet::default();
-                match decompose_sp(fg, addr, sp_vn, sp_memo, &mut sp_visiting) {
+                match decompose_sp(&fg.graph, addr, sp_vn, sp_memo, &mut sp_visiting) {
                     None => {
                         // Address is not SP-rooted: provably non-aliasing
                         // with the stack-arg byte range.  Walk through.

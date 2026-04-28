@@ -24,7 +24,7 @@ use pattern::{CastMask, Matcher, Pat, Var, add, any_int_const, initial_var_for};
 /// which sits between the matcher's input descent and the InitialVar
 /// the patterns are looking for.
 fn collapse_phis(g: &mut BuiltFunctionGraph) {
-    RedundantPhis.optimize(g).expect("RedundantPhis");
+    RedundantPhis.optimize(&mut g.graph, g.entry).expect("RedundantPhis");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────

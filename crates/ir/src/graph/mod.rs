@@ -83,4 +83,25 @@ impl Graph {
             call_other_names: HashMap::new(),
         }
     }
+
+    /// Returns an iterator that visits all reachable nodes in pre-order,
+    /// starting from `entry`.  Callers that already hold a `BuiltFunctionGraph`
+    /// can use the wrapping [`crate::function::BuiltFunctionGraph::preorder`]
+    /// shortcut instead.
+    ///
+    /// CORRECTNESS — F2: opt passes that take `(graph, entry)` use this
+    /// to walk reachable nodes without needing a `BuiltFunctionGraph`
+    /// wrapper.  The walk order matches the historical
+    /// `BuiltFunctionGraph::preorder` exactly (same `walk_graph` impl).
+    #[must_use]
+    pub fn preorder(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
+        crate::walk::walk_graph(self, entry)
+    }
+
+    /// Iterates over **every** node id in the graph, including nodes that are
+    /// not reachable from any entry (e.g. detached zombies left behind by
+    /// optimizer passes).
+    pub fn all_node_ids(&self) -> impl Iterator<Item = crate::node::NodeId> + '_ {
+        self.nodes.keys()
+    }
 }

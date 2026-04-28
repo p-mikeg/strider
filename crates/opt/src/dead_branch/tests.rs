@@ -57,7 +57,7 @@ fn dead_branch_false() -> Result<()> {
     // (entry, true-branch, false-branch).
     assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg)?;
+    let result = DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
     assert!(result.changed());
 
     // After: true region's CS loses its input (dead branch removed).
@@ -81,7 +81,7 @@ fn dead_branch_true() -> Result<()> {
 
     assert_eq!(count_cs_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg)?;
+    let result = DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
     assert!(result.changed());
 
     assert_eq!(
@@ -123,7 +123,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 
     // DeadBranchElimination alone should not fire because the condition
     // is a BoolBinaryOp node, not a BoolConst.
-    assert!(!DeadBranchElimination.optimize(&mut fg)?.changed());
+    assert!(!DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?.changed());
     Ok(())
 }
 
@@ -163,7 +163,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(ConstantFold);
     pipeline.add(DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let if_count = fg
@@ -234,7 +234,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     // Run DBE directly — pipeline.run() would re-validate, and we constructed
     // a deliberately-unusual (but IR-permitted) shape. DBE itself must handle
     // it without leaving a stale reference behind.
-    DeadBranchElimination.optimize(&mut fg)?;
+    DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
 
     let post_inputs: Vec<_> = fg.graph.node_inputs(false_cs).into_iter().collect();
     assert_eq!(
@@ -284,7 +284,7 @@ fn control_phi_loses_dead_slot() -> Result<()> {
         .count();
     assert!(pre_phi_count > 0);
 
-    DeadBranchElimination.optimize(&mut fg)?;
+    DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
     // A ControlPhi at the join should now have only the live predecessor's
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg

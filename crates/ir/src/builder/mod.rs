@@ -137,8 +137,33 @@ impl FunctionBuilder {
         &self.body().graph
     }
 
-    pub(crate) fn graph_mut(&mut self) -> &mut Graph {
+    /// Returns a mutable reference to the underlying [`Graph`] without
+    /// consuming the builder.
+    ///
+    /// This is the primary entry point for in-place graph mutation
+    /// (e.g. running an `opt::Optimizer` pass on a builder that we
+    /// still want to use afterwards — see F2).  The returned reference
+    /// borrows the same `Graph` as [`Self::body`] / [`Self::body_mut`],
+    /// so any mutations are immediately visible through every accessor.
+    ///
+    /// CORRECTNESS — pairs with [`Self::entry`]: opt passes need
+    /// `(graph, entry)` together (entry anchors the reachable-node walk
+    /// the validator's Layer A is scoped to).  Always call both.
+    pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.function.graph
+    }
+
+    /// Returns the recorded entry [`NodeId`] of the function being
+    /// built — the same id that [`Self::build`] would copy into the
+    /// produced [`crate::function::BuiltFunctionGraph`].
+    ///
+    /// CORRECTNESS — pairs with [`Self::graph_mut`]: opt passes that
+    /// take `(graph, entry)` get a stable handle here.  The entry node
+    /// id never changes once the builder's first region is registered,
+    /// so callers may cache it across iterations.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.function.entry
     }
 
     pub(super) fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {

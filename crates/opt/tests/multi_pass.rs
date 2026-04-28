@@ -42,7 +42,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
 
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let if_count = fg
@@ -69,7 +69,7 @@ fn known_bits_then_constant_fold() -> opt::Result<()> {
         let five = b.build_int_const(5u64, NodeOutputType::U8);
         Ok(b.build_int_binary_operation(masked, five, IntBinaryOp::Add, NodeOutputType::U8)?)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     // 0xFF + 5 = 0x104 → wrap to 0x04 in U8.
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x04));
     Ok(())
@@ -106,7 +106,7 @@ fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
     b.build_return(Some(merged), &[])?;
     let mut fg = b.build()?;
 
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     // After all three passes cooperate, the return should be IntConst(11).
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(11));
@@ -126,7 +126,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
         let plus = b.build_int_binary_operation(x, eight, IntBinaryOp::Add, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(plus, eight, IntBinaryOp::Sub, NodeOutputType::U64)?)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     // After full collapse, the return-value-producing node must NOT be an
     // arithmetic op — the (x+8)-8 chain must have been replaced by `x` (a
     // ControlPhi/InitialVar read).
@@ -170,7 +170,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     p.add(DeadBranchElimination);
     p.add(StackStoreDetect::new(sp));
     p.add(StackLoadForward::new(sp, target::Endianness::Little));
-    p.run(&mut fg)?;
+    p.run(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
         return_kind(&fg)?,
@@ -196,7 +196,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
         }
         Ok(acc)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     // Must collapse to a single Add(x, 20) — not 20 separate Add nodes.
     let ret_val = fg
@@ -257,7 +257,7 @@ fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
     b.build_return(Some(live_v), &[])?;
 
     let mut fg = b.build()?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let if_count = fg
@@ -307,7 +307,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
     b.build_return(None, &[])?;
 
     let mut fg = b.build()?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     // Final state: no If, return is IntConst(42).
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
@@ -328,7 +328,7 @@ fn default_pipeline_exercises_all_passes() -> opt::Result<()> {
 #[test]
 fn pipeline_no_change_on_already_optimal() -> opt::Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(7u64, NodeOutputType::U64)))?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
     Ok(())
 }
@@ -342,7 +342,7 @@ fn pipeline_keeps_zero_sub_x() -> opt::Result<()> {
         let zero = b.build_int_const(0u64, NodeOutputType::U64);
         Ok(b.build_int_binary_operation(zero, x, IntBinaryOp::Sub, NodeOutputType::U64)?)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     let kind = return_kind(&fg)?;
     assert!(
         matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Sub)),

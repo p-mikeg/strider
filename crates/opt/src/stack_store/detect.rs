@@ -28,7 +28,7 @@ fn try_detect_stack_store(
     let [old_mem_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
 
     let mut visiting = rustc_hash::FxHashSet::default();
-    let Some(expr) = decompose_sp(fg, addr, sp_vn, memo, &mut visiting) else {
+    let Some(expr) = decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -93,7 +93,21 @@ impl StackStoreDetect {
 }
 
 impl Optimizer for StackStoreDetect {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl StackStoreDetect {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let nodes: Vec<NodeId> = function.preorder().collect();
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;

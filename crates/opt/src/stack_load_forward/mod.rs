@@ -54,7 +54,21 @@ impl StackLoadForward {
 }
 
 impl Optimizer for StackLoadForward {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl StackLoadForward {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let loads: Vec<NodeId> = function
             .preorder()
             .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Load(_)))
@@ -87,7 +101,7 @@ fn try_forward_load(
 
     let mut visiting = rustc_hash::FxHashSet::default();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(fg, addr, sp_vn, memo, &mut visiting)
+        decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -215,7 +229,7 @@ fn probe(
             }
             let addr = inputs[1];
             let mut sp_visiting = rustc_hash::FxHashSet::default();
-            match decompose_sp(fg, addr, sp_vn, memo, &mut sp_visiting) {
+            match decompose_sp(&fg.graph, addr, sp_vn, memo, &mut sp_visiting) {
                 None => {
                     // Address is not SP-rooted: provably non-aliasing
                     // with the stack-arg byte range.  Continue.

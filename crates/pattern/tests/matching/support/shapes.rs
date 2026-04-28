@@ -148,7 +148,7 @@ pub fn function_arg_reg() -> (BuiltFunctionGraph, rsleigh::Vn) {
     let v = t.read_var(&reg);
     let mut g = t.ret_val(v);
     FunctionArgDetect::new(vec![reg], sp, vec![])
-        .optimize(&mut g)
+        .optimize(&mut g.graph, g.entry)
         .expect("FunctionArgDetect");
     (g, reg)
 }
@@ -162,5 +162,5 @@ pub fn run_stack_store_pipeline(g: &mut BuiltFunctionGraph, sp: rsleigh::Vn) {
     p.add(ConstantFold);
     p.add(RedundantPhis);
     p.add(StackStoreDetect::new(sp));
-    p.run(g).expect("opt pipeline");
+    p.run(&mut g.graph, g.entry).expect("opt pipeline");
 }

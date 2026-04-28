@@ -109,7 +109,7 @@ pub fn run_to_fixed_point<P: opt::Optimizer>(
 ) -> Result<()> {
     const MAX_ITERS: usize = 100;
     for _ in 0..MAX_ITERS {
-        if !pass.optimize(fg)?.changed() {
+        if !pass.optimize(&mut fg.graph, fg.entry)?.changed() {
             return Ok(());
         }
     }

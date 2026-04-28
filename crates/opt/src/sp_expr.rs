@@ -18,7 +18,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use ir::node::{NodeId, NodeKind, NodeOutputId};
-use ir::{BuiltFunctionGraph, IntBinaryOp};
+use ir::{Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression.
 #[derive(Clone, Debug)]
@@ -68,9 +68,9 @@ pub(crate) fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) 
 
 /// Reads an integer-constant output as signed, sign-extended from its declared
 /// bit width. Returns `None` for non-integer-constant or for U128/U256.
-pub(crate) fn int_const_signed(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
-    let c = fg.int_const_val(out)?;
-    fg.graph.output_kind(out).as_value()?.get_signed_int(c)
+pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
+    let c = g.int_const_val(out)?;
+    g.output_kind(out).as_value()?.get_signed_int(c)
 }
 
 /// Per-pass-call memo for `decompose_sp`.
@@ -81,7 +81,7 @@ pub(crate) type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 /// cycles through `ControlPhi` back-edges; cycle-broken results are NOT
 /// memoized (so a different call path can still resolve the same output).
 pub(crate) fn decompose_sp(
-    fg: &BuiltFunctionGraph,
+    g: &Graph,
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -90,12 +90,12 @@ pub(crate) fn decompose_sp(
     if let Some(cached) = memo.get(&out) {
         return cached.clone();
     }
-    let node = fg.graph.get_node_from_output(out);
+    let node = g.get_node_from_output(out);
     if !visiting.insert(node) {
         // Cycle: do NOT cache (a different call path may resolve it).
         return None;
     }
-    let result = decompose_sp_inner(fg, out, node, sp_vn, memo, visiting);
+    let result = decompose_sp_inner(g, out, node, sp_vn, memo, visiting);
     visiting.remove(&node);
     // Cache `Some(_)` results unconditionally — the decomposition is a
     // deterministic function of `out`. Don't cache `None`: it could mean
@@ -111,45 +111,45 @@ pub(crate) fn decompose_sp(
 }
 
 fn decompose_sp_inner(
-    fg: &BuiltFunctionGraph,
+    g: &Graph,
     out: NodeOutputId,
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
-    match *fg.graph.node_kind(node) {
+    match *g.node_kind(node) {
         NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
             base: out,
             offset: 0,
         }),
         NodeKind::ControlPhi(vn) if vn == sp_vn => {
-            decompose_sp_phi(fg, node, sp_vn, memo, visiting)
+            decompose_sp_phi(g, node, sp_vn, memo, visiting)
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            let inputs = fg.graph.node_inputs(node);
+            let inputs = g.node_inputs(node);
             if inputs.len() != 2 {
                 return None;
             }
             let l = inputs[0];
             let r = inputs[1];
-            if let Some(c) = int_const_signed(fg, r) {
-                decompose_sp(fg, l, sp_vn, memo, visiting).map(|e| e.shifted(c))
-            } else if let Some(c) = int_const_signed(fg, l) {
-                decompose_sp(fg, r, sp_vn, memo, visiting).map(|e| e.shifted(c))
+            if let Some(c) = int_const_signed(g, r) {
+                decompose_sp(g, l, sp_vn, memo, visiting).map(|e| e.shifted(c))
+            } else if let Some(c) = int_const_signed(g, l) {
+                decompose_sp(g, r, sp_vn, memo, visiting).map(|e| e.shifted(c))
             } else {
                 None
             }
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            let inputs = fg.graph.node_inputs(node);
+            let inputs = g.node_inputs(node);
             if inputs.len() != 2 {
                 return None;
             }
             let l = inputs[0];
             let r = inputs[1];
-            int_const_signed(fg, r).and_then(|c| {
-                decompose_sp(fg, l, sp_vn, memo, visiting).map(|e| e.shifted(c.wrapping_neg()))
+            int_const_signed(g, r).and_then(|c| {
+                decompose_sp(g, l, sp_vn, memo, visiting).map(|e| e.shifted(c.wrapping_neg()))
             })
         }
         _ => None,
@@ -157,13 +157,13 @@ fn decompose_sp_inner(
 }
 
 fn decompose_sp_phi(
-    fg: &BuiltFunctionGraph,
+    g: &Graph,
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
     visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
-    let inputs = fg.graph.node_inputs(node);
+    let inputs = g.node_inputs(node);
     // A ControlPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
     // values. Fewer than 2 inputs means no actual predecessor — the phi is
     // either malformed or has been simplified mid-pass; we cannot prove
@@ -182,7 +182,7 @@ fn decompose_sp_phi(
         // stack_arg_offsets[0] == 0 a fabricated `offset = 0` would be
         // silently misclassified as the first stack arg.
         let SpExpr::Terminal { base, offset } =
-            decompose_sp(fg, pred_input, sp_vn, memo, visiting)?
+            decompose_sp(g, pred_input, sp_vn, memo, visiting)?
         else {
             return None;
         };
@@ -262,7 +262,7 @@ mod tests {
         let v = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32);
         b.build_return(Some(v), &[])?;
         let fg = b.build()?;
-        assert_eq!(int_const_signed(&fg, v), Some(-4));
+        assert_eq!(int_const_signed(&fg.graph, v), Some(-4));
         Ok(())
     }
 
@@ -280,7 +280,7 @@ mod tests {
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, sp_val, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, sp_val, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
     }
@@ -299,7 +299,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -319,7 +319,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, addr, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
     }
@@ -341,13 +341,13 @@ mod tests {
         let mut memo = SpExprMemo::default();
         let r1 = {
             let mut v = FxHashSet::default();
-            decompose_sp(&fg, addr, sp, &mut memo, &mut v)
+            decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
         };
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
         let r2 = {
             let mut v = FxHashSet::default();
-            decompose_sp(&fg, addr, sp, &mut memo, &mut v)
+            decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
         };
         assert!(matches!((&r1, &r2),
             (Some(SpExpr::Terminal { offset: -4, .. }),
@@ -368,7 +368,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        assert!(decompose_sp(&fg, c, sp, &mut memo, &mut visiting).is_none());
+        assert!(decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting).is_none());
         Ok(())
     }
 
@@ -398,7 +398,7 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, s3, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, s3, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -427,7 +427,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, c, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting);
         assert!(r.is_none());
         assert!(
             !memo.contains_key(&c),
@@ -484,7 +484,7 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
-        let r = decompose_sp(&fg, sp_at_c, sp, &mut memo, &mut visiting);
+        let r = decompose_sp(&fg.graph, sp_at_c, sp, &mut memo, &mut visiting);
         assert!(
             r.is_none(),
             "expected None for ControlPhi(sp) with a non-SP-rooted predecessor, got {r:?}"

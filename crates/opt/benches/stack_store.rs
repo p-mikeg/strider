@@ -47,7 +47,7 @@ fn bench_pushes(c: &mut Criterion) {
             b.iter_batched(
                 || build_pushes(n),
                 |mut fg| {
-                    StackStoreDetect::new(sp).optimize(&mut fg).unwrap();
+                    StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry).unwrap();
                     black_box(fg);
                 },
                 criterion::BatchSize::SmallInput,

@@ -127,7 +127,21 @@ fn try_eliminate_dead_branch(
 pub struct DeadBranchElimination;
 
 impl Optimizer for DeadBranchElimination {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl DeadBranchElimination {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns
         // (where one elimination exposes another) are caught by the outer

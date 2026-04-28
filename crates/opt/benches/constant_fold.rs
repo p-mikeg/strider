@@ -38,7 +38,7 @@ fn bench_chain(c: &mut Criterion) {
                 || build_chain(n),
                 |mut fg| {
                     let mut iters = 0usize;
-                    while ConstantFold.optimize(&mut fg).unwrap().changed() {
+                    while ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap().changed() {
                         iters += 1;
                         if iters > 200 {
                             panic!("did not converge");

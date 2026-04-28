@@ -39,7 +39,7 @@ fn elides_callother_with_known_nop_name() -> crate::Result<()> {
     // Sanity: the CallOther exists and is reachable before the pass.
     assert_eq!(count_reachable_call_other_named(&fg, "setISAMode"), 1);
 
-    let result = CallOtherElide.optimize(&mut fg)?;
+    let result = CallOtherElide.optimize(&mut fg.graph, fg.entry)?;
     assert!(
         result.changed(),
         "elision must report Changed when at least one CallOther is removed",
@@ -74,7 +74,7 @@ fn preserves_callother_with_unknown_name() -> crate::Result<()> {
         1
     );
 
-    let result = CallOtherElide.optimize(&mut fg)?;
+    let result = CallOtherElide.optimize(&mut fg.graph, fg.entry)?;
     assert!(
         !result.changed(),
         "no name in NO_OP_USER_OPS matched → pass must report NoChange",
@@ -106,7 +106,7 @@ fn elides_multiple_in_chain() -> crate::Result<()> {
     let mut fg = b.build()?;
     assert_eq!(count_reachable_call_other_named(&fg, "setISAMode"), 3);
 
-    let result = CallOtherElide.optimize(&mut fg)?;
+    let result = CallOtherElide.optimize(&mut fg.graph, fg.entry)?;
     assert!(result.changed());
     assert_eq!(
         count_reachable_call_other_named(&fg, "setISAMode"),
@@ -144,7 +144,7 @@ fn preserves_callother_when_value_output_has_consumer() -> crate::Result<()> {
     let mut fg = b.build()?;
     assert_eq!(count_reachable_call_other_named(&fg, "setISAMode"), 1);
 
-    let result = CallOtherElide.optimize(&mut fg)?;
+    let result = CallOtherElide.optimize(&mut fg.graph, fg.entry)?;
     assert!(
         !result.changed(),
         "CallOther with a live value-output consumer must be preserved",
@@ -196,7 +196,7 @@ fn coexists_with_redundant_phis_in_pipeline() -> crate::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(CallOtherElide);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     // No `setISAMode` CallOther survives.
     assert_eq!(count_reachable_call_other_named(&fg, "setISAMode"), 0);

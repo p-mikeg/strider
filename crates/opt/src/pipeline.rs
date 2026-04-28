@@ -48,6 +48,35 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
+/// Bridge helper for opt-pass impls that internally still operate on
+/// `&mut ir::BuiltFunctionGraph` (because their helper functions and the
+/// `pattern` crate's rewrite machinery are typed against it).  Wraps a
+/// `(&mut Graph, NodeId)` pair into a temporary `BuiltFunctionGraph`
+/// for the duration of the call, then restores the (potentially
+/// mutated) graph back into the caller's slot.
+///
+/// CORRECTNESS — the temporary `BuiltFunctionGraph` carries empty
+/// `variables` / `call_clobbered` / `ret_val_regs`.  Opt impls never
+/// read those fields (verified by grep — only `function.graph` and
+/// `function.entry` are touched), so the dummy values are safe.
+///
+/// CORRECTNESS — `mem::take(graph)` replaces the caller's `Graph` with
+/// `Graph::default()` (an empty graph) only for the duration of `f`.
+/// On panic the empty graph is observable, but opt passes don't
+/// catch_unwind, so this is no worse than a panic anywhere else in the
+/// pipeline.
+pub(crate) fn with_built<R>(
+    graph: &mut ir::Graph,
+    entry: ir::node::NodeId,
+    f: impl FnOnce(&mut ir::BuiltFunctionGraph) -> R,
+) -> R {
+    let stolen = std::mem::take(graph);
+    let mut tmp = ir::BuiltFunctionGraph::from_graph_and_entry(stolen, entry);
+    let r = f(&mut tmp);
+    *graph = tmp.graph;
+    r
+}
+
 /// A single IR optimization pass.
 ///
 /// Implement this trait to add a new pass.  The pass receives a mutable
@@ -57,15 +86,32 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// [`OptimizationResult::NoChange`] if the graph is already in normal form for
 /// this pass.
 pub trait Optimizer {
-    /// Run one sweep of this pass over `function`.
+    /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
+    ///
+    /// # F2 contract
+    ///
+    /// The trait takes `(&mut Graph, NodeId)` rather than
+    /// `&mut BuiltFunctionGraph` so callers can run optimizer passes on a
+    /// graph that has not yet been packaged into a final
+    /// [`ir::BuiltFunctionGraph`] (e.g. on a live [`ir::FunctionBuilder`] via
+    /// [`ir::FunctionBuilder::graph_mut`] + [`ir::FunctionBuilder::entry`]).
+    /// `BuiltFunctionGraph` becomes a final-output convenience type, no
+    /// longer required during analysis.
+    ///
+    /// `entry` is the function's entry [`ir::node::NodeId`] — needed because
+    /// several passes walk the reachable-node set (`graph.preorder(entry)`)
+    /// or use it directly (`ir::walk::cfg_reachable(graph, entry)`).
     ///
     /// # Errors
     ///
     /// Returns the first error encountered by the pass — typically an IR
     /// validation failure or a pattern-rewrite error propagated up through
     /// [`crate::Error`].
-    fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult>;
-
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult>;
 }
 
 /// An ordered list of [`Optimizer`] passes that are run in a shared fixed-point
@@ -158,13 +204,17 @@ impl OptimizerPipeline {
     /// Returns the first [`crate::Error`] reported by any pass, or the
     /// final-validate error from `ir::validate::validate` if the post-pass
     /// run leaves an invalid graph.
-    pub fn run(&self, graph: &mut ir::BuiltFunctionGraph) -> crate::Result<()> {
+    pub fn run(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         let mut iters: u32 = 0;
         loop {
             let mut changed = false;
             for opt in &self.optimizers {
-                if opt.optimize(graph)?.changed() {
+                if opt.optimize(graph, entry)?.changed() {
                     changed = true;
                 }
             }
@@ -177,9 +227,100 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize(graph)?;
+            opt.optimize(graph, entry)?;
         }
-        ir::validate::validate(&graph.graph, graph.entry)?;
+        ir::validate::validate(graph, entry)?;
+        Ok(())
+    }
+
+    /// Back-compat wrapper that accepts a [`ir::BuiltFunctionGraph`].
+    ///
+    /// Delegates to [`Self::run`] by extracting `(&mut graph.graph,
+    /// graph.entry)`.  Tests and downstream code that already hold a
+    /// `BuiltFunctionGraph` keep working unchanged through F2's trait
+    /// refactor; new code is encouraged to call [`Self::run`] directly with
+    /// a `(graph, entry)` pair (e.g. from
+    /// [`ir::FunctionBuilder::graph_mut`] + [`ir::FunctionBuilder::entry`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::run`].
+    pub fn run_on_built(
+        &self,
+        function: &mut ir::BuiltFunctionGraph,
+    ) -> crate::Result<()> {
+        let entry = function.entry;
+        self.run(&mut function.graph, entry)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! F2 unit tests for the [`OptimizerPipeline::run`] /
+    //! [`OptimizerPipeline::run_on_built`] equivalence contract.
+
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use ir::FunctionBuilder;
+    use ir::node::NodeOutputType;
+
+    /// Build a tiny single-region function returning `IntConst(K)`.
+    fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let v = b.build_int_const(k, NodeOutputType::U64);
+        b.build_return(Some(v), &[]).unwrap();
+        b.build().unwrap()
+    }
+
+    /// `run(graph, entry)` and `run_on_built(built)` produce the same
+    /// resulting graph state.  Pins F2's "the new entry point is a
+    /// drop-in replacement" contract.
+    #[test]
+    fn pipeline_run_with_graph_and_entry_replicates_old_built_behavior() -> crate::Result<()> {
+        let mut a = one_const_fn(7);
+        let mut b = one_const_fn(7);
+
+        let pipeline = crate::default_pipeline();
+
+        // Path A: run via the new (graph, entry) signature.
+        let entry = a.entry;
+        pipeline.run(&mut a.graph, entry)?;
+
+        // Path B: run via the back-compat run_on_built wrapper.
+        pipeline.run_on_built(&mut b)?;
+
+        // Both runs must succeed and produce graphs of the same shape.
+        // We compare reachable-node counts as a coarse but objective
+        // structural fingerprint — the two pipelines applied identical
+        // rewrites, so the live-set sizes match exactly.
+        let a_count = a.preorder().count();
+        let b_count = b.preorder().count();
+        assert_eq!(a_count, b_count, "run and run_on_built must produce identical graph shapes");
+        Ok(())
+    }
+
+    /// `run(graph, entry)` validates the final graph just like the
+    /// historical `run(&mut BuiltFunctionGraph)` did — i.e. an invalid
+    /// graph in the post-pass output surfaces as `ValidationFailed`.
+    /// Smoke test using an empty post-pass list and a valid input —
+    /// run must succeed (no validation error) and the graph must be
+    /// unchanged.
+    #[test]
+    fn pipeline_run_validates_final_graph_on_clean_input() -> crate::Result<()> {
+        let mut g = one_const_fn(3);
+        let pipeline = crate::default_pipeline();
+        let entry = g.entry;
+        let before = g.preorder().count();
+        pipeline.run(&mut g.graph, entry)?;
+        let after = g.preorder().count();
+        // The default pipeline on an already-folded constant cannot fold
+        // further; the reachable-count is stable.  This pins that
+        // `run(graph, entry)` doesn't accidentally mutate the graph
+        // beyond what the underlying passes produce.
+        assert!(after <= before, "default pipeline must not GROW the reachable set");
         Ok(())
     }
 }

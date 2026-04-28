@@ -71,7 +71,21 @@ fn try_lower_cast_to_float(
 pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl ConstantFold {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running

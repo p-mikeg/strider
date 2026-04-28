@@ -155,7 +155,21 @@ fn remove_phis(
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
-    fn optimize(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl RedundantPhis {
+    fn optimize_built(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let reachable = ir::walk::cfg_reachable(&function.graph, function.entry);
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
@@ -179,7 +193,7 @@ impl Optimizer for RedundantPhis {
         // no other pass can act on the result.  Run it for hygiene but do
         // NOT escalate it into a `Changed` signal — that just costs the
         // pipeline one extra fixed-point iteration with no work to do.
-        let _ = crate::worklist::detach_unreachable_nodes(function);
+        let _ = crate::worklist::detach_unreachable_nodes(&mut function.graph, function.entry);
         Ok(res)
     }
 }

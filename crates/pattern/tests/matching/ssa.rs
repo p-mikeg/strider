@@ -110,7 +110,7 @@ fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
     let mut g = t.ret_val(v);
 
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut g)
+        .optimize(&mut g.graph, g.entry)
         .expect("FunctionArgDetect");
     g
 }

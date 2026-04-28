@@ -1283,3 +1283,110 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
          preserves more of what the function actually computed"
     );
 }
+
+// ── F2: graph_mut / entry / non-consuming use of the builder ─────────────────
+//
+// These tests pin the F2 contract: the builder exposes `graph_mut()` and
+// `entry()` so callers can mutate the underlying `Graph` in place (e.g.
+// run optimizer passes) without consuming the builder via `build()`.
+
+/// `graph_mut()` must return a mutable reference to the same `Graph` that
+/// `body().graph` would return — so a write through `graph_mut()` is visible
+/// through the immutable view.
+#[test]
+fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
+    let mut b = empty_builder()?;
+    // Capture the node count via the immutable view first.
+    let count_before = b.body().graph.nodes.len();
+    // Mutate via graph_mut() — create an IntConst node directly.
+    let node_id = b.graph_mut().create_node(
+        NodeKind::IntConst(42u128),
+        std::iter::empty(),
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    // Read back via the immutable view; the new node must be visible.
+    let count_after = b.body().graph.nodes.len();
+    assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via body()");
+    assert!(matches!(
+        b.body().graph.node_kind(node_id),
+        NodeKind::IntConst(42)
+    ));
+    Ok(())
+}
+
+/// `entry()` must return the same `NodeId` that `build()` would record on the
+/// produced `BuiltFunctionGraph`.  This is the contract opt passes rely on
+/// when they take `(graph, entry)` from a builder that hasn't been consumed.
+#[test]
+fn entry_returns_recorded_entry_node_id() -> Result<()> {
+    let b = empty_builder()?;
+    let entry_via_accessor = b.entry();
+    // The builder's body field carries the same `entry` value that
+    // `build()` would copy into the produced `BuiltFunctionGraph`.
+    let entry_via_body = b.body().entry;
+    assert_eq!(
+        entry_via_accessor, entry_via_body,
+        "FunctionBuilder::entry() must match body().entry — opt passes consume both"
+    );
+    Ok(())
+}
+
+/// Calling `build()` after mutating via `graph_mut()` must still succeed
+/// and the resulting `BuiltFunctionGraph` must be consistent with the
+/// in-place mutations.
+#[test]
+fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
+    let mut b = empty_builder()?;
+    // Set up a one-region function so build() has something to validate.
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let val = b.build_int_const(7u64, NodeOutputType::U64);
+    b.build_return(Some(val), &[])?;
+    // Mutate via graph_mut() in the same way an opt pass would.
+    let extra = b.graph_mut().create_node(
+        NodeKind::IntConst(99u128),
+        std::iter::empty(),
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    // After the mutation, build() must still succeed.
+    let built = b.build()?;
+    // The extra node is in the arena (graph keeps every node it ever
+    // creates; reachability is independent of presence in the map).
+    assert!(
+        built.all_node_ids().any(|n| n == extra),
+        "build() after graph_mut() mutation must preserve the new node"
+    );
+    Ok(())
+}
+
+/// Two consecutive in-place mutations via `graph_mut()` must both be visible
+/// in the final state — i.e. the second mutation sees the first's effect.
+#[test]
+fn consecutive_inplace_optimizations_compose() -> Result<()> {
+    let mut b = empty_builder()?;
+    // First mutation: create constant A.
+    let a = b.graph_mut().create_node(
+        NodeKind::IntConst(1u128),
+        std::iter::empty(),
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    // Second mutation: create constant B.  The second call sees the first
+    // mutation (the underlying graph counter advanced) — node ids must differ.
+    let b_id = b.graph_mut().create_node(
+        NodeKind::IntConst(2u128),
+        std::iter::empty(),
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    assert_ne!(a, b_id, "consecutive create_node calls must produce distinct ids");
+    // Both nodes are in the arena.
+    assert!(matches!(
+        b.body().graph.node_kind(a),
+        NodeKind::IntConst(1)
+    ));
+    assert!(matches!(
+        b.body().graph.node_kind(b_id),
+        NodeKind::IntConst(2)
+    ));
+    Ok(())
+}

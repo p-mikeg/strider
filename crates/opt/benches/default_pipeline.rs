@@ -37,7 +37,7 @@ fn bench_default(c: &mut Criterion) {
             b.iter_batched(
                 || build_mixed(n),
                 |mut fg| {
-                    default_pipeline().run(&mut fg).unwrap();
+                    default_pipeline().run(&mut fg.graph, fg.entry).unwrap();
                     black_box(fg);
                 },
                 criterion::BatchSize::SmallInput,

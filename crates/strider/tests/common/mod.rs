@@ -194,7 +194,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(opt::LoadReadOnly(rom_for_opt));
-    p.run(&mut graph)
+    p.run(&mut graph.graph, graph.entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     graph
 }

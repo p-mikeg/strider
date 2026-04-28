@@ -55,7 +55,21 @@ pub const NO_OP_USER_OPS: &[&str] = &[
 pub struct CallOtherElide;
 
 impl Optimizer for CallOtherElide {
-    fn optimize(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> Result<OptimizationResult> {
+        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
+        // via helper functions and the `pattern` crate's rewrite machinery.
+        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
+        // temporary `BuiltFunctionGraph` for the duration of the pass.
+        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
+impl CallOtherElide {
+    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         // Collect candidates first — we can't iterate while mutating the
         // graph, and `preorder` borrows `function` immutably.
         let candidates: Vec<NodeId> = function

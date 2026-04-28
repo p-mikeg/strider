@@ -62,7 +62,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
 
     // The only ControlPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
@@ -100,7 +100,7 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     b.build_return(None, &[])?;
 
     let mut fg = b.build()?;
-    RedundantPhis.optimize(&mut fg)?;
+    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
     // must be 0.
@@ -131,7 +131,7 @@ fn control_state_single_pred_collapses() -> crate::Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
     assert!(
-        RedundantPhis.optimize(&mut fg)?.changed(),
+        RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed(),
         "single-pred CS must be simplified"
     );
     Ok(())
@@ -163,7 +163,7 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
     pipeline.add(crate::ConstantFold);
     pipeline.add(crate::DeadBranchElimination);
     pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg)?;
+    pipeline.run(&mut fg.graph, fg.entry)?;
     // Validation runs at the end of `pipeline.run`, so reaching here means
     // the unreachable store didn't leave an invalid graph.
     Ok(())
@@ -195,8 +195,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    while RedundantPhis.optimize(&mut fg)?.changed() {}
-    let baseline = RedundantPhis.optimize(&mut fg)?;
+    while RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed() {}
+    let baseline = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -215,7 +215,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let res = RedundantPhis.optimize(&mut fg)?;
+    let res = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,

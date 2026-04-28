@@ -29,9 +29,9 @@ fn default_pipeline_idempotent() -> opt::Result<()> {
         Ok(b.build_int_binary_operation(a, c2, IntBinaryOp::Add, NodeOutputType::U64)?)
     })?;
 
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     let count1 = fg.all_node_ids().count();
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     let count2 = fg.all_node_ids().count();
     assert_eq!(count1, count2, "second run must not change node count");
     Ok(())
@@ -50,7 +50,7 @@ fn long_reassoc_chain_converges() -> opt::Result<()> {
         }
         Ok(acc)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     Ok(())
 }
 
@@ -62,7 +62,8 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     impl Optimizer for AlwaysChanged {
         fn optimize(
             &self,
-            _function: &mut ir::BuiltFunctionGraph,
+            _graph: &mut ir::Graph,
+            _entry: ir::node::NodeId,
         ) -> opt::Result<OptimizationResult> {
             Ok(OptimizationResult::Changed)
         }
@@ -75,7 +76,7 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(AlwaysChanged);
 
-    match pipeline.run(&mut fg) {
+    match pipeline.run(&mut fg.graph, fg.entry) {
         Ok(()) => Err(opt::Error::from(opt::ErrorKind::AssertionFailed(
             "expected the pipeline to bail out, got Ok".to_string(),
         ))),

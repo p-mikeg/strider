@@ -28,7 +28,7 @@ fn default_pipeline_folds_int_chain() -> opt::Result<()> {
         let bb = b.build_int_binary_operation(a, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
         Ok(b.build_int_binary_operation(bb, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(10));
     Ok(())
 }
@@ -54,7 +54,7 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     b.build_return(Some(v2), &[])?;
     let mut fg = b.build()?;
 
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
 
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let if_nodes = fg
@@ -71,7 +71,7 @@ fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
 #[test]
 fn default_pipeline_validates_at_end() -> opt::Result<()> {
     let mut fg = make_fn(|b| Ok(b.build_int_const(42u64, NodeOutputType::U64)))?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     Ok(())
 }
 
@@ -86,7 +86,7 @@ fn default_pipeline_known_bits_cooperates_with_constant_fold() -> opt::Result<()
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         Ok(b.build_int_binary_operation(or_, f0, IntBinaryOp::And, NodeOutputType::U8)?)
     })?;
-    default_pipeline().run(&mut fg)?;
+    default_pipeline().run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xF0));
     Ok(())
 }
@@ -103,7 +103,7 @@ fn manual_pipeline_matches_default_for_simple_input() -> opt::Result<()> {
     p.add(KnownBits);
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
-    p.run(&mut fg)?;
+    p.run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
     Ok(())
 }
