@@ -221,6 +221,19 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
+        // F3 / BUG-30: ARM / arm-thumb / arm-be lifters wrap the
+        // dispatch target in `IntBinaryOp(And)` with a constant mask
+        // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
+        // stack_array classifier transparently strips the mask, so
+        // route And-anchors through the same arm — but only when the
+        // SP varnode is supplied (no SP, no stack-array shape to
+        // match).
+        NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
+            if let Some(sp) = stack_ptr_vn {
+                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
+            }
+            None
+        }
         // R2.1 / R2.2 / R2.3: every other producer shape is "still
         // unresolved" — the orchestrator will try again on a later
         // iteration or surface `UnresolvedIndirectBranch` at fixed

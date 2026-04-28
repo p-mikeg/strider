@@ -147,21 +147,67 @@ fn strip_target_mask(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
-    let producer = graph.graph.get_node_from_output(anchor_output);
-    if let NodeKind::IntBinaryOp(IntBinaryOp::And) = graph.graph.node_kind(producer) {
-        if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
-            // Either operand may be the constant mask.
-            if let Some(m) = graph.int_const_val(rhs) {
-                #[allow(clippy::cast_possible_truncation)]
-                return (lhs, m as u64);
+    let mut current = anchor_output;
+    let mut mask: u64 = !0u64;
+    // Strip up to a fixed number of layers; ARM-Thumb commonly nests
+    // `And(Or(load, 1), 0xFFFFFFFE)` (set LSB then mask it off) — that's
+    // 2 layers.  Cap at 4 to defend against pathologically deep wrappers
+    // from buggy lifter output.
+    for _ in 0..4 {
+        let producer = graph.graph.get_node_from_output(current);
+        match graph.graph.node_kind(producer) {
+            // And-with-constant: mask narrows.
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
+                    if let Some(m) = graph.int_const_val(rhs) {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let m64 = m as u64;
+                        mask &= m64;
+                        current = lhs;
+                        continue;
+                    }
+                    if let Some(m) = graph.int_const_val(lhs) {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let m64 = m as u64;
+                        mask &= m64;
+                        current = rhs;
+                        continue;
+                    }
+                }
+                break;
             }
-            if let Some(m) = graph.int_const_val(lhs) {
-                #[allow(clippy::cast_possible_truncation)]
-                return (rhs, m as u64);
+            // Or-with-constant: when the OR's constant is fully covered
+            // by the bits we'll later mask off (i.e. `or_const & mask
+            // == 0`), the OR is a no-op for the dispatch target — strip
+            // it transparently.  Common in ARM-Thumb: `Or(load, 1)`
+            // followed by `And(_, 0xFFFFFFFE)` — the OR sets bit 0, the
+            // AND clears it.  When the OR's constant overlaps with
+            // surviving mask bits, leave the wrapper in place (the
+            // shape match below will fail and we defer to the
+            // orchestrator).
+            NodeKind::IntBinaryOp(IntBinaryOp::Or) => {
+                if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
+                    let or_const = graph
+                        .int_const_val(rhs)
+                        .map(|c| (c as u64, lhs))
+                        .or_else(|| graph.int_const_val(lhs).map(|c| (c as u64, rhs)));
+                    if let Some((or_c, other)) = or_const {
+                        // Strip iff every set bit of `or_c` is already
+                        // cleared by `mask`.  This is precisely the
+                        // case where the OR has no observable effect on
+                        // the masked result.
+                        if or_c & mask == 0 {
+                            current = other;
+                            continue;
+                        }
+                    }
+                }
+                break;
             }
+            _ => break,
         }
     }
-    (anchor_output, !0u64)
+    (current, mask)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -197,7 +243,8 @@ fn match_stack_array_shape(
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
     let mut terms: Vec<NodeOutputId> = Vec::new();
-    flatten_add_tree(graph, addr_output, &mut terms, &mut 0);
+    let mut sub_const_offset: i64 = 0;
+    flatten_add_tree(graph, addr_output, &mut terms, &mut sub_const_offset, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
@@ -219,7 +266,9 @@ fn match_stack_array_shape(
     // SP-rooted (`Terminal`) or a constant.  Constants accumulate in
     // `extra_offset`; SP-rooted terms must be exactly one (sp + K).
     let mut sp_memo = SpExprMemo::default();
-    let mut base_offset_acc: i64 = 0;
+    // Seed the offset accumulator with the constant-rhs Sub adjustment
+    // that `flatten_add_tree` rolled up while walking.
+    let mut base_offset_acc: i64 = sub_const_offset;
     let mut found_sp = false;
     for (i, t) in terms.iter().enumerate() {
         if i == idx_pos {
@@ -268,15 +317,19 @@ fn match_stack_array_shape(
     })
 }
 
-/// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the
-/// list of additive operands.  `IntBinaryOp(Sub)` is not flattened
-/// (negative-coefficient terms aren't shaped like the BUG-30 stride
-/// expression we're matching on).  Capped at 32 nodes to defend
-/// against pathologically deep trees from buggy lifter output.
+/// Recursively flattens a chain of `IntBinaryOp(Add)` and
+/// `IntBinaryOp(Sub)` nodes into the list of additive operands plus a
+/// running constant offset adjustment.  Sub's rhs (when it's a
+/// constant) is negated and folded into `extra_offset`; non-constant
+/// rhs of Sub bails the flatten by pushing the Sub itself unmodified
+/// (which then fails the per-term decompose step downstream — sound).
+/// Capped at 32 nodes to defend against pathologically deep trees from
+/// buggy lifter output.
 fn flatten_add_tree(
     graph: &BuiltFunctionGraph,
     out: NodeOutputId,
     acc: &mut Vec<NodeOutputId>,
+    extra_offset: &mut i64,
     budget: &mut usize,
 ) {
     if *budget >= 32 {
@@ -285,12 +338,30 @@ fn flatten_add_tree(
     }
     *budget += 1;
     let node = graph.graph.get_node_from_output(out);
-    if let NodeKind::IntBinaryOp(IntBinaryOp::Add) = graph.graph.node_kind(node) {
-        if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(node) {
-            flatten_add_tree(graph, lhs, acc, budget);
-            flatten_add_tree(graph, rhs, acc, budget);
-            return;
+    match graph.graph.node_kind(node) {
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+            if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(node) {
+                flatten_add_tree(graph, lhs, acc, extra_offset, budget);
+                flatten_add_tree(graph, rhs, acc, extra_offset, budget);
+                return;
+            }
         }
+        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
+            if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(node) {
+                // Only handle Sub with a constant rhs (the common
+                // "addr -= K" idiom from arm/arm-thumb stack-array
+                // dispatch lowering).  Negate the constant and roll it
+                // into extra_offset; recurse on lhs.  When rhs is
+                // non-constant, push the Sub unmodified — the per-term
+                // decompose step downstream will fail closed.
+                if let Some(c) = opt::sp_expr::int_const_signed(&graph.graph, rhs) {
+                    *extra_offset = extra_offset.wrapping_sub(c);
+                    flatten_add_tree(graph, lhs, acc, extra_offset, budget);
+                    return;
+                }
+            }
+        }
+        _ => {}
     }
     acc.push(out);
 }

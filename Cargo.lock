@@ -1093,6 +1093,7 @@ dependencies = [
  "pcode-lift",
  "reader",
  "rsleigh",
+ "rustc-hash",
  "strider-error",
  "target",
  "thiserror",
