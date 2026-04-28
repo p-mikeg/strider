@@ -1,23 +1,24 @@
-//! Shared fixture builders for the tier-2 classifier integration tests.
+//! Fixture builders feeding the tier-2 *classifier* unit / integration tests.
 //!
-//! Each helper drives `Strider::analyze_cfg` against a
-//! synthetic byte sequence + arch + calling-convention triple, runs
-//! the full strider optimiser pipeline, then returns a
-//! `(BuiltFunctionGraph, anchor_NodeOutputId, link_register_vn)`
-//! tuple ready for `classify_anchor` to consume.
+//! Split out from the previous monolithic `tier2_helpers.rs` (W7).  Every
+//! helper here builds a `BuiltFunctionGraph` whose unique placeholder
+//! Return's value-input is shaped to exercise one specific classifier arm
+//! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).
 //!
-//! IMPORTANT: the anchor returned is **NOT** the original
-//! `NodeOutputId` recorded at lift time — that id can be invalidated
-//! by `ConstantFold`'s `replace_all_uses` rewires.  Instead, helpers
-//! resolve the placeholder Return's current value-input (slot 2) on
-//! the post-optimisation graph and return that.  This mirrors what
-//! the R3 orchestrator will do at each tier-2 invocation: walk to
-//! the Return's input slot to find the live producer.
+//! Subset matrix:
 //!
-//! The fixtures intentionally use small hand-assembled byte sequences
-//! so the failure modes are attributable to the classifier under test
-//! (or to the optimiser passes the helper runs), not to a build
-//! pipeline whose contents the caller has to reason about.
+//! | Helper                                            | Anchor shape                                |
+//! |---------------------------------------------------|---------------------------------------------|
+//! | `build_int_const_target_scenario_via_stack`       | `IntConst(K)` after StackLoadForward        |
+//! | `build_initial_var_target_scenario_x86_64`        | `InitialVar(rax)` (no lr on x86_64)         |
+//! | `build_value_phi_target_scenario`                 | `ValuePhi(IntConst, …)` over diamond merge  |
+//! | `build_pop_pc_via_stack_load_forward_scenario`    | `InitialVar(lr)` via push-lr / pop-pc       |
+//! | `build_push_target_pop_pc_scenario`               | `IntConst(K)` via push-K / pop-pc           |
+//! | `build_bx_lr_scenario`                            | `InitialVar(lr)` via AArch64 `mov x0,x30; br x0` |
+//! | `build_jump_table_known_bits_scenario`            | `Load(base + (idx & mask)*stride)`          |
+//! | `build_jump_table_predecessor_if_scenario`        | `Load(base + idx*stride)` after `If(idx<N)` |
+//! | `build_jump_table_unbounded_scenario`             | `Load(base + idx*stride)` (unbounded idx)   |
+//! | `build_non_jump_table_load_scenario`              | `Load(IntConst(addr))` (control case)       |
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
@@ -28,96 +29,7 @@ use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, SleighArch, Strider};
 
-/// Walk every reachable Return node's inputs and return the value-input
-/// (slot 2) of the unique placeholder Return whose pcode-address-keyed
-/// anchor was registered in `unresolved_branches`.
-///
-/// The placeholder Return has exactly 3 inputs: `[control, memory,
-/// target_value]` (R1.4's lift contract).  All other Return nodes —
-/// the function's real ABI returns — have either 2 inputs or
-/// `2 + ret_val_regs.len()` inputs.  Filtering by `inputs.len() == 3`
-/// uniquely picks out the placeholder.
-fn current_anchor_after_opt(
-    graph: &BuiltFunctionGraph,
-) -> ir::Value {
-    let mut found: Option<ir::Value> = None;
-    for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            // Not a tier-2 placeholder: real ABI Returns have 2
-            // (no value) or 2 + ret_val_regs.len() inputs.
-            continue;
-        }
-        assert!(
-            found.is_none(),
-            "fixture must have exactly one placeholder Return; found a second",
-        );
-        // Slot layout: [control, memory, target_value].
-        found = Some(inputs[2]);
-    }
-    found.expect("fixture must have one placeholder Return after optimisation")
-}
-
-/// Run `Strider::analyze_cfg` on a hand-assembled byte
-/// sequence + the standard SystemV-x86_64 calling convention, then run
-/// the full optimiser pipeline.  Returns the resulting graph plus the
-/// (single) tier-2 placeholder anchor's `NodeOutputId` and the
-/// convention's link-register VN (always `None` on x86_64 — that arch
-/// pushes return addresses on the stack).
-///
-/// Panics if the synthetic CFG produces zero or multiple
-/// `UnresolvedIndirectBranch` placeholders — every fixture in this
-/// module is supposed to have exactly one indirect branch.
-pub fn run_pipeline_x86_64(
-    bytes: Vec<u8>,
-) -> (BuiltFunctionGraph, ir::Value, Option<rsleigh::Vn>) {
-    let base = 0x1000u64;
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
-        .expect("create x86_64 sleigh");
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
-        .build()
-        .expect("cfg build");
-
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
-    let strider =
-        Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).expect("Strider::new");
-    let lr_vn = strider.calling_convention().link_register_vn;
-    let outcome = strider
-        .analyze_cfg(&cfg)
-        .expect("analyze_cfg");
-    let mut graph = outcome.graph;
-
-    // Run the full optimiser pipeline so the placeholder's anchor
-    // value reaches the producer-shape the classifier looks at.
-    // ConstantFold collapses `mov rax, K; jmp *rax` to IntConst(K);
-    // RedundantPhis simplifies the trivial Return shape we don't
-    // need to walk past.
-    let p = strider.build_optimizer_pipeline();
-    p.run(&mut graph.graph, graph.entry).expect("optimizer pipeline");
-
-    assert_eq!(
-        outcome.unresolved_branches.len(),
-        1,
-        "fixture must have exactly one tier-2 placeholder",
-    );
-    // Resolve the *current* anchor after the optimiser ran — the
-    // original recorded NodeOutputId may be orphaned if any pass
-    // `replace_all_uses`-rewrote the placeholder's input slot
-    // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
-    // IntConst).  See module-level docs for the full contract.
-    let anchor = current_anchor_after_opt(&graph);
-    (graph, anchor, lr_vn)
-}
+use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 
 /// Build a function whose only indirect branch is `mov rax, K; jmp *rax`.
 /// After `ConstantFold` runs, the placeholder Return's value-input
@@ -763,7 +675,7 @@ pub fn build_jump_table_unbounded_scenario(
 /// a simple global read).
 pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder};
+    use ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
@@ -785,25 +697,6 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
 
     let anchor = anchor_value_input(&fg).expect("anchor");
     (fg, anchor)
-}
-
-/// Walk every reachable Return and return the value-input (slot 2)
-/// of the unique 3-input Return — the placeholder shape strider's
-/// R1.4 lift produces.  `None` when there's no such Return (caller
-/// asserts).  Local copy of the helper at the top of this module
-/// because the existing `current_anchor_after_opt` is private.
-pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
-    for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
-        return Some(inputs[2]);
-    }
-    None
 }
 
 /// Build a function whose only indirect branch resolves to
@@ -874,6 +767,6 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         1,
         "bx lr fixture must have exactly one tier-2 placeholder",
     );
-    let anchor = current_anchor_after_opt(&graph);
+    let anchor = super::orchestrator::current_anchor_after_opt(&graph);
     (graph, anchor, lr_vn)
 }
