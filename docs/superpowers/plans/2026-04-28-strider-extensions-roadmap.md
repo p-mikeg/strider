@@ -55,62 +55,76 @@ Estimated wall-time per phase (with subagent dispatch): Phase 1 ≈ 2h, Phase 2 
 
 ---
 
-# F2 — Refactor `FunctionBuilder` not to consume on `build()`
+# F2 — Drop `build()` from the analysis path; refactor `Optimizer` trait to take `&mut Graph`
 
 **Phase 1.** Foundation for F5 and F6.
 
 ## Current state
 
-`FunctionBuilder::build(self) -> Result<BuiltFunctionGraph>` consumes self. Once called, you can't add more nodes to the underlying `Graph` without reconstructing the builder. This is what blocked the G1-COMPLETE physical IR persistence (the orchestrator falls back to per-iteration rebuild).
+`FunctionBuilder::build(self) -> Result<BuiltFunctionGraph>` ([crates/ir/src/builder/mod.rs:377](crates/ir/src/builder/mod.rs#L377)) consumes self.  The body is just a field-move + a call to `validate::validate` — no analysis work, no transformation.  The wrapper exists because `Optimizer::optimize(&mut BuiltFunctionGraph)` ([crates/opt/src/pipeline.rs:67](crates/opt/src/pipeline.rs#L67)) is the trait signature.  `BuiltFunctionGraph` owns `Graph` by value, so calling the optimizer requires moving `Graph` from `FunctionBuilder` into `BuiltFunctionGraph`.
+
+This is the actual blocker.  The wrapper is unnecessary indirection in the analysis path.
 
 ## Target state
 
+**Refactor `Optimizer::optimize`** from `&mut BuiltFunctionGraph` to `&mut Graph` plus `entry: NodeId`:
+
 ```rust
-impl FunctionBuilder {
-    /// Existing: consume + produce final BuiltFunctionGraph.
-    pub fn build(self) -> Result<BuiltFunctionGraph> { ... }
+// crates/opt/src/pipeline.rs
+pub trait Optimizer {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::NodeId,
+    ) -> crate::Result<OptimizationResult>;
+}
 
-    /// New: snapshot the current state into a BuiltFunctionGraph
-    /// without consuming self.  The builder remains usable for
-    /// further node additions; subsequent calls return updated
-    /// snapshots reflecting the new state.
-    pub fn snapshot(&self) -> Result<BuiltFunctionGraphRef<'_>> { ... }
-
-    /// New: extract the underlying Graph by reference for opt
-    /// passes that need &mut Graph.
-    pub fn graph_mut(&mut self) -> &mut Graph { ... }
+impl OptimizerPipeline {
+    pub fn run(&self, graph: &mut ir::Graph, entry: ir::NodeId) -> crate::Result<()> { ... }
 }
 ```
 
-`BuiltFunctionGraphRef<'a>` is a borrow-flavored sibling of `BuiltFunctionGraph` — same accessors, but doesn't take ownership of the underlying graph.
+`BuiltFunctionGraph` becomes a **final-output convenience type** for downstream consumers (dot dumper, preorder iterator, packaged artifact).  It's never required during analysis.  `FunctionBuilder` exposes `graph_mut()` and `entry()` so the orchestrator and F6's rewriter pass `(graph, entry)` directly to the optimizer.
+
+`build(self) -> BuiltFunctionGraph` stays for users who want the packaged artifact at the end of analysis (for export, for matching against the existing `pattern::Matcher::new(&BuiltFunctionGraph)` API, for dot rendering).  Per Q1: **both APIs kept**, no deprecation.
+
+## Cascading changes
+
+The trait change ripples through every `impl Optimizer for X`.  Roughly 10 impls across the opt crate (`ConstantFold`, `KnownBits`, `RedundantPhis`, `DeadBranchElim`, `LoadReadOnly`, `StackStoreDetect`, `StackLoadForward`, `function_args::FunctionArgDetect`, `CallStackArgCollect`, `CallOtherElide`).  Each changes from `(&self, &mut BuiltFunctionGraph)` to `(&self, &mut Graph, NodeId)`.
+
+`pattern::Matcher` and `dot::dumper` keep taking `&BuiltFunctionGraph` — they're consumer-facing, not optimizer-facing.  An adapter `FunctionBuilder::as_built(&self) -> BuiltFunctionGraphRef<'_>` (or `&BuiltFunctionGraph` if we make it borrow the inner Graph via a custom Deref) handles the read-only-borrow case for matching.
 
 ## Files
 
-- Modify: `crates/ir/src/builder/mod.rs` — add `snapshot()`, expose `graph_mut()`.
-- Modify: `crates/ir/src/function.rs` — add `BuiltFunctionGraphRef<'a>`.
-- Modify: `crates/ir/src/lib.rs` — re-export.
-- Modify: existing `build()` callers if they need the new shape (likely few: most callers build exactly once).
-- Create: `crates/ir/tests/builder_snapshot.rs` — contract pinning.
+- Modify: `crates/opt/src/pipeline.rs` — `Optimizer::optimize` signature change; `OptimizerPipeline::run` signature change.
+- Modify: every `impl Optimizer for X` in `crates/opt/src/*/mod.rs` — mechanical update.
+- Modify: `crates/ir/src/builder/mod.rs` — add `pub fn graph_mut(&mut self) -> &mut Graph` and `pub fn entry(&self) -> NodeId`.  Keep `build(self) -> Result<BuiltFunctionGraph>` unchanged.
+- Modify: every consumer of `OptimizerPipeline::run` (notably the strider orchestrator at `crates/strider/src/strider/pipeline.rs` and the tier-2 orchestrator at `crates/strider/src/indirect_resolve_tier2/orchestrator.rs`) — pass `(graph, entry)` instead of `&mut built`.
+- Create: `crates/ir/tests/builder_extended_use.rs` — pin the contract that opt + builder compose without `build()`.
 
 ## Tests
 
-Per "many tests including unit tests" rule, BOTH layers:
+**Unit tests** (in `crates/ir/src/builder/mod.rs::tests`):
+- `graph_mut_returns_mutable_reference_to_inner_graph`
+- `entry_returns_recorded_entry_node_id`
+- `build_after_inplace_optimization_still_succeeds` — mutate via graph_mut, then call build, verify resulting BuiltFunctionGraph is consistent.
+- `consecutive_inplace_optimizations_compose` — run two optimizers via `&mut Graph`, verify graph state advances correctly.
 
-**Unit tests** (in `#[cfg(test)] mod tests {}` at bottom of `builder/mod.rs`):
-- `snapshot_does_not_consume_builder` — call `snapshot()`, then call it again; both succeed.
-- `snapshot_reflects_subsequent_node_additions` — snapshot, add node, snapshot again, second contains the new node.
-- `graph_mut_returns_mutable_reference` — mutate via `graph_mut()`, verify mutation visible in snapshot.
-- `build_after_snapshot_consumes_normally` — backward compat: existing `build()` still works after a `snapshot()`.
+**Unit tests** (in `crates/opt/src/pipeline.rs::tests`):
+- `pipeline_run_with_graph_and_entry_replicates_old_built_behavior` — round-trip test: same inputs produce equivalent outputs whether called via the new `&mut Graph` signature or the old (now-deprecated) `&mut BuiltFunctionGraph` signature.
 
-**Integration tests** (`crates/ir/tests/builder_snapshot.rs`):
-- `lift_partial_function_snapshot_then_extend` — build a 2-region function, snapshot, build a 3rd region into the same builder, snapshot again, verify both snapshots are valid.
-- `optimizer_runs_on_snapshot_then_more_nodes_added` — snapshot → run ConstantFold via `BuiltFunctionGraphRef` → add node → re-snapshot → re-run optimizer. Verify optimizer is idempotent on the extended graph.
+**Integration tests** (`crates/ir/tests/builder_extended_use.rs`):
+- `analysis_loop_without_build_round_trips` — build a function, run optimizer, mutate graph, run optimizer again, verify state.
+- `final_build_after_extended_use_yields_valid_built` — after N iterations of in-place optimization via `graph_mut()`, the final `build()` call produces a valid `BuiltFunctionGraph` that passes `validate`.
 
 ## Acceptance
 
-- 4 unit tests + 2 integration tests pass.
-- All existing `build()` callers continue to work unchanged.
-- Workspace test count: pre-F2 baseline + 6 new tests, 0 regressions.
+- 4 unit + 2 unit + 2 integration = **8 new tests** pass.
+- Every `impl Optimizer` migrated to the new signature.
+- All existing optimizer tests still pass via the migrated impls.
+- Strider's pipelines pass `(&mut graph, entry)` instead of `&mut built`.
+- `build()` still works for downstream consumers but is no longer called inside analysis loops.
+- Workspace test count: pre-F2 baseline + 8 new tests, 0 regressions.
 - clippy clean.
 
 ---
@@ -170,8 +184,14 @@ The multi-predecessor case (step 3.b) generalizes: if all predecessors PROVE the
 ### Hazards and bail conditions
 
 - **Aliasing intermediate Store.**  Any `Store` (or `StackStore` at the same offset) between the producing Store and the Load invalidates the forward.  Detected by step 2's filter.
-- **Loops.**  If the walk re-enters a region already on the visit stack, bail.  Loop carries (e.g., `for (int i = 0; i < N; i++) targets[i] = ...`) genuinely require dataflow analysis we're not doing here; conservative bail is correct.
-- **Depth limit.**  Cap the walk at 8 hops (configurable via `Options::stack_load_forward_max_depth`).  Pathological functions (very deep call-stack-style chains) bail at the cap; they get the same conservative-no-forward result they had pre-F3.
+- **Loops.**  Cycle detection via a shared `visited: HashSet<RegionId>`.  If the walk re-enters a region already in `visited`, bail (return `None` for that branch).  Loop carries (e.g., `for (int i = 0; i < N; i++) targets[i] = ...`) genuinely require dataflow analysis we're not doing here; conservative bail is correct.
+- **Multi-pred join blowup.**  A join with N predecessors normally costs N recursive walks.  Without memoization, two joins downstream of the same region could re-walk it exponentially.  Use a shared `memo: HashMap<RegionId, Option<MatchedStore>>` that records the result of walking each region exactly once per query.  Total walk cost is then O(num_regions) per load, not exponential.
+
+### Why no artificial depth cap
+
+The walk is bounded above by the function's region count: cycle detection prevents revisits, memoization prevents re-walks at joins, and `InitialMemory` terminates the chain at function entry.  An arbitrary depth cap (my earlier "8 hops" suggestion) would only introduce false negatives on legitimate large functions where the prologue and exit are far apart — without buying any soundness or performance guarantee that cycle detection + memoization don't already provide.
+
+The walk has no `Options::stack_load_forward_max_depth` knob.  The implementer should still add an assertion-style upper bound (e.g., `visited.len() <= num_regions_in_cfg + 1`) inside the walk that fires `Err(InternalError("walk exceeded region count, soundness bug"))` — this catches genuine logic bugs in the walk implementation without affecting correctness for any valid input.
 
 ## Files
 
@@ -650,12 +670,12 @@ This is the largest tier of tests because the contract spans every site.
 
 ## Acceptance criteria across all 7 features
 
-- Phase 1 (F2): +6 tests.
+- Phase 1 (F2): +8 tests.
 - Phase 2 (F3 + F4 + F7): +40 tests (F3: 21 incl. -15 ignored; F4: 9; F7: 10), -15 ignored.
 - Phase 3 (F5 + F6): +18 tests (F5: 7; F6: 11).
 - Phase 4 (F1): +22 tests.
-- **Total: ~86 new passing tests, -15 ignored**, no regressions.
-- Workspace state at end: ≈2884 passed / 0 failed / 18 ignored, clippy clean across all 7 phases.
+- **Total: ~88 new passing tests, -15 ignored**, no regressions.
+- Workspace state at end: ≈2886 passed / 0 failed / 18 ignored, clippy clean across all 7 phases.
 - BUG-30 closed.
 - Jump tables encoded in IR (via If-ladder) and pattern-rewritable.
 - All 7 features have unit tests AND integration tests per the user's binding rule.
@@ -674,8 +694,8 @@ This is the largest tier of tests because the contract spans every site.
 
 ## Decisions (Q1–Q7) — locked
 
-- **Q1 — F2 backward compat:** **both APIs** kept. `build(self)` stays for one-shot final use; `snapshot()` added for in-flight inspection.  No deprecation.
-- **Q2 — F3 depth limit:** **8 hops**, configurable via `Options::stack_load_forward_max_depth` (default 8).
+- **Q1 — F2 backward compat:** `build(self)` stays for downstream final-output use; **no `snapshot()` is added**.  Per the user's correction: the right design is to refactor `Optimizer::optimize` to take `&mut Graph` directly and never call `build()` during analysis.  See F2 for the cascading-trait-change details.
+- **Q2 — F3 depth limit:** **No depth limit.**  Cycle-detection (visited set) + memoization (per-region cached result) bound the walk at O(num_regions) per query, which is the correct and tight bound.  An arbitrary depth cap would only cause false negatives on legitimate large functions.  An internal assertion (`visited.len() <= num_regions + 1`) catches genuine walk-implementation bugs without restricting valid input.
 - **Q3 — F4 trace capture format:** **pure data structures.** No `tracing` crate adapter.
 - **Q4 — F5 pass placement:** **after `StackLoadForward`, before `RedundantPhis`** in the stable subset.  Implementer free to override if a different order proves necessary during integration.
 - **Q5 — F6 rewriter API:** **constants + input replacement only.**  No general `build_int_add` / `build_load` exposed in the rewriter façade; users compose via `pattern::rewrite_rule(lhs, rhs)` + the pattern crate's existing builder constructors.
