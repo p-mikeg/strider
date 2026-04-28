@@ -39,6 +39,7 @@ mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
 mod function_args;
+pub mod indirect_branch_resolve;
 mod known_bits;
 mod load_readonly;
 mod redundant_phis;
@@ -49,6 +50,11 @@ pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use function_args::FunctionArgDetect;
+pub use indirect_branch_resolve::{
+    AnchorAddr, BranchResolution, IndirectBranchResolve, apply_link_register, apply_tail_call,
+    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
+    classify_jump_table, classify_stack_array, find_placeholder_return_for_anchor,
+};
 pub use known_bits::KnownBits;
 pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;
