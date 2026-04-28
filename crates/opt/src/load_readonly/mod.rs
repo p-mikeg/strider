@@ -87,6 +87,19 @@ impl<M: ReadOnlyMemory + 'static> LoadReadOnly<M> {
                 continue;
             };
             let new_out = function.make_int_const(masked, ty)?;
+            // F1 provenance propagation: carry the Load's fingerprint into
+            // the replacement IntConst.  The Load's fp already reflects the
+            // address computation that fed it (auto-merged from inputs at
+            // construction time) plus the lift-site addr of the Load insn
+            // itself, so the IntConst's fingerprint after merge proves the
+            // load resolved to a constant via that disassembled address.
+            let producer = function.graph.get_node_from_output(new_out);
+            let producer_fp = function.graph.fingerprint_of(producer).clone();
+            let load_fp = function.graph.fingerprint_of(node_id).clone();
+            function.graph.set_fingerprint(
+                producer,
+                ir::Fingerprint::merge(&producer_fp, &load_fp),
+            );
             result |= OptimizationResult::from_changed(function.replace_all_uses(data_out, new_out)?);
         }
         Ok(result)

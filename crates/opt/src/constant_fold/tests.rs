@@ -1713,3 +1713,56 @@ fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     );
     Ok(())
 }
+
+// ── F1 fingerprint propagation through fold rules ───────────────────────────
+
+#[test]
+fn int_add_fold_unions_input_fingerprints() -> Result<()> {
+    // After ConstantFold rewrites IntAdd(IntConst(3), IntConst(4)) →
+    // IntConst(7), the replacement node must carry the IntAdd's fingerprint
+    // — which is the union of the two input IntConsts' fingerprints because
+    // create_node auto-merges from inputs.  Without explicit propagation,
+    // the IntConst(7) replacement (built with no inputs) would have an
+    // empty fingerprint and provenance would be silently lost across fold.
+    let addr_a = ir::PcodeInsnAddr::new(0x1000, 0);
+    let addr_b = ir::PcodeInsnAddr::new(0x1004, 0);
+    let addr_add = ir::PcodeInsnAddr::new(0x1008, 0);
+    let mut fg = make_fn(|b| {
+        let c3 = b.build_int_const(3u64, NodeOutputType::U64);
+        let c4 = b.build_int_const(4u64, NodeOutputType::U64);
+        // CORRECTNESS: seed fingerprints BEFORE building the IntAdd so its
+        // create_node call auto-merges the seeded addrs into the add's
+        // fingerprint.  Setting them after-the-fact would leave the add
+        // with an empty fingerprint at the time of the fold.
+        let c3_node = b.body().graph.get_node_from_output(c3);
+        let c4_node = b.body().graph.get_node_from_output(c4);
+        b.body_mut()
+            .graph
+            .set_fingerprint(c3_node, ir::Fingerprint::from_single(addr_a));
+        b.body_mut()
+            .graph
+            .set_fingerprint(c4_node, ir::Fingerprint::from_single(addr_b));
+        let add = b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)?;
+        let add_node = b.body().graph.get_node_from_output(add);
+        // The IntAdd node's auto-merged fp already contains addr_a + addr_b;
+        // also seed the addr of the add insn itself for the union check.
+        let prior = b.body().graph.fingerprint_of(add_node).clone();
+        b.body_mut().graph.set_fingerprint(
+            add_node,
+            ir::Fingerprint::merge(&prior, &ir::Fingerprint::from_single(addr_add)),
+        );
+        Ok(add)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    let val = return_value(&fg)?;
+    let producer = fg.graph.get_node_from_output(val);
+    assert_eq!(fg.graph.node_kind(producer), &NodeKind::IntConst(7));
+    let fp = fg.graph.fingerprint_of(producer);
+    assert!(
+        fp.contains(addr_a) && fp.contains(addr_b) && fp.contains(addr_add),
+        "folded IntConst(7) must inherit the IntAdd's fingerprint \
+         (containing both operand addrs and the add insn addr); got {:?}",
+        fp.iter().collect::<Vec<_>>(),
+    );
+    Ok(())
+}

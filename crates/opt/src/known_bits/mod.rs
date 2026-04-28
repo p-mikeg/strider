@@ -312,6 +312,20 @@ impl KnownBits {
                     continue;
                 }
                 let new_out = function.make_int_const(kb.ones, ty)?;
+                // F1 provenance propagation: the replacement IntConst has
+                // no inputs and would otherwise be left with the empty
+                // fingerprint by create_node's auto-merge.  Inherit the
+                // folded node's fingerprint so the proof-of-work chain
+                // survives the bit-level fold.  Merge (not overwrite) in
+                // case create_node already populated a non-empty fp via
+                // dedup-cache hit on a pre-existing IntConst.
+                let producer = function.graph.get_node_from_output(new_out);
+                let producer_fp = function.graph.fingerprint_of(producer).clone();
+                let folded_fp = function.graph.fingerprint_of(node_id).clone();
+                function.graph.set_fingerprint(
+                    producer,
+                    ir::Fingerprint::merge(&producer_fp, &folded_fp),
+                );
                 result |= OptimizationResult::from_changed(function.replace_all_uses(out, new_out)?);
             }
         }

@@ -167,3 +167,47 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())
 }
+
+// ── F1 fingerprint propagation through LoadReadOnly ─────────────────────────
+
+#[test]
+fn load_to_const_carries_load_addr_fingerprint() -> Result<()> {
+    // When LoadReadOnly resolves a Load(IntConst(0x1000)) to IntConst(42),
+    // the replacement must inherit the Load node's fingerprint — which in
+    // turn carries the addr-input's seeded provenance.  This makes pattern
+    // matches on the resulting constant traceable back to the load's
+    // disassembled address.
+    let load_addr_seed = ir::PcodeInsnAddr::new(0x4000, 0);
+    let mut fg = make_fn(|b| {
+        let addr = b.build_int_const(0x1000u64, NodeOutputType::U64);
+        // Seed the addr-IntConst's fingerprint BEFORE building the Load so
+        // create_node's auto-merge captures the addr's provenance into the
+        // Load node at construction time.
+        let addr_node = b.body().graph.get_node_from_output(addr);
+        b.body_mut()
+            .graph
+            .set_fingerprint(addr_node, ir::Fingerprint::from_single(load_addr_seed));
+        Ok(b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?)
+    })?;
+    assert!(
+        LoadReadOnly(TestRom)
+            .optimize(&mut fg.graph, fg.entry)?
+            .changed(),
+    );
+    let val = fg.graph.node_inputs(
+        fg.all_node_ids()
+            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+            .expect("return"),
+    )[2];
+    let producer = fg.graph.get_node_from_output(val);
+    assert_eq!(fg.graph.node_kind(producer), &NodeKind::IntConst(42));
+    let fp = fg.graph.fingerprint_of(producer);
+    assert!(
+        fp.contains(load_addr_seed),
+        "folded constant must carry the load-addr seed (proof of work \
+         that the load's address computation is what justified the \
+         constant); got {:?}",
+        fp.iter().collect::<Vec<_>>(),
+    );
+    Ok(())
+}
