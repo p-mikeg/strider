@@ -88,6 +88,42 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     ));
 }
 
+// ── W3: region_id_at_start public-API contract ────────────────────────────
+
+#[test]
+fn region_id_at_start_returns_some_for_real_function_entry() {
+    // W3 — `region_id_at_start` is `pub` (cross-crate-callable),
+    // not `pub(crate)` / `test_api`-only.  This test pins the public
+    // contract from the cfg crate's own test suite so an accidental
+    // visibility narrowing (which would break F5's
+    // `IndirectBranchResolve` in the opt crate) fails at the cfg
+    // boundary.
+    let cfg = real_cfg("add");
+    // The CFG entry's region must start at the function's entry
+    // machine address; `region_id_at_start` therefore finds it.
+    let entry_region = cfg
+        .graph
+        .node_weight(cfg.entry)
+        .expect("entry region exists");
+    let entry_addr = entry_region.start_addr.machine_addr;
+    let rid = cfg.region_id_at_start(entry_addr);
+    assert_eq!(
+        rid,
+        Some(cfg.entry),
+        "region_id_at_start must locate the entry region by its start addr",
+    );
+}
+
+#[test]
+fn region_id_at_start_returns_none_for_unknown_machine_addr() {
+    // An address that does not start any region in the cfg returns
+    // None; the helper only matches `start_addr.machine_addr`, never
+    // mid-region addresses.
+    let cfg = real_cfg("add");
+    let rid = cfg.region_id_at_start(cfg::MachineInsnAddr { addr: 0xdead_beef });
+    assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
+}
+
 #[test]
 fn duplicate_if_case_true_is_detected_by_region_if() {
     // Two IfCaseTrue edges — should fail through `region_if`'s call to

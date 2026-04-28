@@ -101,6 +101,13 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// by id: this is a content-keyed lookup that is stable across CFG
     /// rebuilds (same machine address always produces the same key).
     ///
+    /// W3 — also used by the **`opt` crate's** `IndirectBranchResolve`
+    /// pass (F5) when resolving an indirect branch's anchor to the
+    /// region that owns it.  The method is `pub` (not `pub(crate)` /
+    /// `test_api`) precisely so that cross-crate consumers — `opt`,
+    /// `strider`, future analysis crates — can correlate machine
+    /// addresses with regions without going through a private channel.
+    ///
     /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
     /// equals `addr` exactly.  Mid-region matches return `None` — the
     /// caller is interested in the canonical region whose lift would
@@ -120,3 +127,4 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         None
     }
 }
+
