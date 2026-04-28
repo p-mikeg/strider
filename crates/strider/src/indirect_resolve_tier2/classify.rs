@@ -148,7 +148,22 @@ pub fn classify_anchor_with_rom(
             // ordering noise.
             targets.sort_unstable();
             targets.dedup();
-            Some(ResolvedTargets::Multiple(targets))
+            // SOUND: an empty `Multiple` would silently advertise zero
+            // runtime targets, making the dispatch site appear
+            // unreachable and feeding a `Switch { targets: [] }`
+            // terminator that has no outgoing edges.  A degenerate
+            // zero-value-input `ValuePhi` cannot arise from the normal
+            // lift path (every phi is initialised with at least one
+            // value input via `link_regions`), but `DeadBranchElim`
+            // running at fixed-point can detach inputs and leave a
+            // zero-input phi observable transiently in unusual cases.
+            // We treat that case as "still unresolved at this iter"
+            // rather than as a sound enumeration of zero targets.
+            if targets.is_empty() {
+                None
+            } else {
+                Some(ResolvedTargets::Multiple(targets))
+            }
         }
         // R4: jump-table arm.  Producer is a Load — a candidate for
         // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
@@ -541,19 +556,21 @@ mod tests {
     }
 
     #[test]
-    fn classify_value_phi_empty_returns_multiple_empty() {
-        // Defensive: a ValuePhi with no value inputs (only the
-        // phi-token slot).  Arity-wise this is malformed in
-        // production, but the classifier must not panic — it
-        // should return `Multiple(vec![])`, since every input
-        // (vacuously) folded to IntConst.  The orchestrator will
-        // see an empty edge set and treat the branch as still
-        // unresolved at fixed point (no targets to wire).  This
-        // pins the empty case so a future refactor can't silently
-        // change it to `None`.
+    fn classify_value_phi_empty_returns_none() {
+        // M1 (review fix): a ValuePhi with no value inputs MUST NOT
+        // classify as Multiple(vec![]).  An empty target set would
+        // silently feed the orchestrator a Switch{targets:[]}
+        // terminator with no successor edges, making the dispatch
+        // site appear unreachable.  We treat the degenerate case as
+        // "still unresolved at this iteration" — None — so the
+        // orchestrator either retries on a later iteration or, at
+        // fixed point, surfaces `UnresolvedIndirectBranch` cleanly.
+        // A degenerate zero-value-input ValuePhi cannot arise from
+        // the normal lift path, but DeadBranchElim's input-detach
+        // can leave a zero-input phi observable transiently.
         let (graph, anchor) = build_value_phi_graph(&[]);
         let result = classify_anchor(&graph, anchor, None);
-        assert_eq!(result, Some(ResolvedTargets::Multiple(vec![])));
+        assert_eq!(result, None);
     }
 
     #[test]
