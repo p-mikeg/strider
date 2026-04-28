@@ -410,9 +410,11 @@ where
             // CORRECTNESS: apply_tail_call detaches the placeholder's
             // inputs, builds Call+Return on the same control/memory
             // chain, and returns the new Return's NodeId.  Body refs
-            // outside the placeholder subgraph are untouched.
+            // outside the placeholder subgraph are untouched.  We
+            // discard the returned id here in round-1; future rounds
+            // patch the cache's `exit_control` handle with it.
             let ret_vals = read_ret_val_outputs(graph, placeholder, config)?;
-            apply_tail_call(graph, placeholder, *target, &ret_vals)?;
+            let _new_return = apply_tail_call(graph, placeholder, *target, &ret_vals)?;
             stats.tail_call_edits += 1;
             Ok(())
         }

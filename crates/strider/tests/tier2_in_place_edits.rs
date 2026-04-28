@@ -74,15 +74,60 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
 }
 
 #[test]
-fn apply_tail_call_round_1_returns_typed_error() {
-    // Pins the round-1 contract: the in-place tail-call editor is
-    // not yet implemented.  Round-2 work replaces this with a real
-    // implementation; the test will then change to assert the
-    // resulting Call+Return shape.  Until then the orchestrator
-    // routes Single-tail-call resolutions through the CFG rebuild
-    // path.
+fn apply_tail_call_replaces_placeholder_with_call_then_return() {
+    // R3-FIXUP G2: apply_tail_call now does a real in-place edit.
+    // After the edit, the IR contains a Call with the IntConst
+    // target as its address, feeding a fresh Return.  The original
+    // placeholder Return is detached (unreachable from entry) but
+    // the rest of the body is untouched.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let result = apply_tail_call(&mut graph, return_id, 0x1234_5678, &[]);
-    assert!(result.is_err(), "round 1: must return Unimplemented");
+    let target = 0x1234_5678_u64;
+    let new_return = apply_tail_call(&mut graph, return_id, target, &[])
+        .expect("apply_tail_call");
+    assert_ne!(
+        new_return, return_id,
+        "tail-call edit must produce a fresh Return id",
+    );
+    // Walk: the new Return must be reachable; the old placeholder
+    // must not be.
+    let mut new_seen = false;
+    let mut old_seen = false;
+    for nid in graph.preorder() {
+        if nid == new_return {
+            new_seen = true;
+        }
+        if nid == return_id {
+            old_seen = true;
+        }
+    }
+    assert!(new_seen, "new Return must be reachable from entry");
+    assert!(!old_seen, "old placeholder must be detached / unreachable");
+    // ir::validate must still pass.
+    ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
+}
+
+#[test]
+fn apply_tail_call_real_lift_target_int_const_value_matches() {
+    // After the edit, the Call's address-input is an IntConst with
+    // the exact target value.  Pins the soundness contract — the
+    // tail call dispatches to the resolved target, not some folded
+    // approximation.
+    use ir::node::NodeKind;
+    let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
+    let return_id = locate_placeholder_return(&graph);
+    let target = 0xdead_beef_u64;
+    let new_return = apply_tail_call(&mut graph, return_id, target, &[])
+        .expect("apply_tail_call");
+    let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
+    let call_ctrl = inputs[0];
+    let (call_node, _idx) = graph.graph.output_definition(call_ctrl);
+    let call_inputs: Vec<_> =
+        graph.graph.node_inputs(call_node).into_iter().collect();
+    let call_addr = call_inputs[2];
+    let (addr_node, _) = graph.graph.output_definition(call_addr);
+    match graph.graph.node_kind(addr_node) {
+        NodeKind::IntConst(v) => assert_eq!(*v, u128::from(target)),
+        other => panic!("expected IntConst, got {other:?}"),
+    }
 }
