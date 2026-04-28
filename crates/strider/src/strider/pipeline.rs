@@ -41,13 +41,14 @@ pub struct RegionLiftHandles {
     pub exit_vn_to_value: std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>,
 }
 
-/// The full result of a strider lift, exposing both the lifted IR and
-/// the placeholder-anchor side-table the strider-level fixed-point
-/// loop's tier-2 resolver consumes.
+/// The full result of a strider lift, exposing the lifted IR plus the
+/// placeholder-anchor side-table the strider-level fixed-point loop's
+/// tier-2 resolver consumes plus per-region IR-handle snapshots.
 ///
-/// Returned by [`Strider::analyze_cfg_with_unresolved`].  Callers that
-/// don't need the deferred-branch table can use the simpler
-/// [`Strider::analyze_cfg`] entry point.
+/// Returned by [`Strider::analyze_cfg`] (W2: single canonical entry
+/// point).  Callers that only need the graph can use `outcome.graph`
+/// directly; tier-2-aware callers read `unresolved_branches` and
+/// `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub graph: ir::BuiltFunctionGraph,
@@ -60,10 +61,10 @@ pub struct AnalyzeOutcome {
     pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
     /// Per-region IR-handle snapshots captured at lift time.  Keyed
     /// by the region's machine start address (matches the cache key
-    /// used by [`crate::ir_cache::RegionIrCache`]).  Empty if the
-    /// caller didn't ask for it (the original `analyze_cfg_with_unresolved`
-    /// shim sets this to an empty vec; `analyze_cfg_with_handles`
-    /// populates it).
+    /// used by [`crate::ir_cache::RegionIrCache`]).  Always populated
+    /// after W2 — the previous "empty if caller didn't ask" branch
+    /// went away with the consolidation onto a single canonical
+    /// `analyze_cfg` entry point.
     pub region_handles: Vec<RegionLiftHandles>,
 }
 
@@ -241,52 +242,36 @@ impl Strider {
         vns
     }
 
-    /// Translates a complete control-flow graph into an [`ir::BuiltFunctionGraph`].
+    /// Translates a complete control-flow graph into an [`AnalyzeOutcome`]
+    /// — the unified return type that bundles the lifted IR with the
+    /// placeholder-anchor side-table (populated when the CFG contains
+    /// `RegionTerminator::UnresolvedIndirectBranch` regions) and the
+    /// per-region IR-handle snapshots used by the strider fixed-point
+    /// orchestrator's cache.
     ///
-    /// The pipeline:
-    /// 1. Build the function entry node.
-    /// 2. Map the CFG graph: each node stores `Option<ir::RegionId>` (None first,
-    ///    then filled in fallibly via `node_weight_mut`).
-    /// 3. Set the entry region.
-    /// 4. Translate instructions in each region, resolving branch targets via
-    ///    the mapped graph.
-    /// 5. Link fallthrough edges by iterating `cfg_ir_graph`'s edges.
+    /// Callers that only need the graph can use `outcome.graph` directly
+    /// (most per-arch fixture tests do this).  Tier-2-aware callers read
+    /// `outcome.unresolved_branches` and `outcome.region_handles`.
+    ///
+    /// W2 — single canonical entry point.  Replaces the pre-W2
+    /// `analyze_cfg` (returned `BuiltFunctionGraph`) and
+    /// `analyze_cfg_with_unresolved` (returned `AnalyzeOutcome`) pair —
+    /// having two near-identical methods invited drift on every
+    /// orchestrator change.  Callers that previously called
+    /// `analyze_cfg(&cfg)?` now write `analyze_cfg(&cfg)?.graph`; the
+    /// extra `.graph` field-access is the only caller-side change.
     ///
     /// # Errors
     ///
     /// Returns an [`Error`] wrapping the underlying failure when:
     /// - the IR builder fails to create or look up a region
     ///   ([`ErrorKind::CfgNoRegion`], [`ErrorKind::IrError`]);
-    /// - an instruction translation fails (any of the per-opcode error variants
-    ///   in [`ErrorKind`]: [`ErrorKind::UnimplementedOpcode`],
+    /// - an instruction translation fails (any of the per-opcode error
+    ///   variants in [`ErrorKind`]: [`ErrorKind::UnimplementedOpcode`],
     ///   [`ErrorKind::MissingOutputVn`], [`ErrorKind::UnsupportedVnSpace`],
     ///   [`ErrorKind::UnsupportedRegSize`], etc.);
     /// - the CFG itself is malformed ([`ErrorKind::CfgError`]).
     pub fn analyze_cfg<R: rsleigh::MemReader>(
-        &self,
-        cfg: &cfg::Cfg<R>,
-    ) -> Result<ir::BuiltFunctionGraph> {
-        // Discard the unresolved-branch side-table — callers that
-        // need it use `analyze_cfg_with_unresolved` directly.  This
-        // shim preserves the pre-R1.4 entry-point shape so existing
-        // callers (the per-arch test suite, examples) compile
-        // unchanged.
-        Ok(self.analyze_cfg_with_unresolved(cfg)?.graph)
-    }
-
-    /// Variant of [`Self::analyze_cfg`] that also returns the
-    /// placeholder-anchor side-table populated when the CFG contains
-    /// `RegionTerminator::UnresolvedIndirectBranch` regions.
-    ///
-    /// Used by the strider-level fixed-point loop's tier-2 resolver
-    /// (R2 onward).  Callers that do not need tier-2 information
-    /// should prefer [`Self::analyze_cfg`].
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::analyze_cfg`] — propagates IR builder
-    /// failures, per-opcode lifting failures, and CFG inconsistencies.
-    pub fn analyze_cfg_with_unresolved<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Result<AnalyzeOutcome> {

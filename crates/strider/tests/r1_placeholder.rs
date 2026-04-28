@@ -72,7 +72,8 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
         .expect("Strider::new");
     let graph = strider
         .analyze_cfg(&cfg)
-        .expect("strider must lift unresolved branches as placeholder Return");
+        .expect("strider must lift unresolved branches as placeholder Return")
+        .graph;
 
     // Exactly one Return node — strider emitted the placeholder, did
     // not double-emit, and did not lift the BranchIndirect via the
@@ -116,8 +117,8 @@ fn unresolved_branches_table_tracks_each_placeholder() {
     let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
         .expect("Strider::new");
     let outcome = strider
-        .analyze_cfg_with_unresolved(&cfg)
-        .expect("analyze_cfg_with_unresolved");
+        .analyze_cfg(&cfg)
+        .expect("analyze_cfg");
     // Single deferred branch in this synthetic fixture.
     assert_eq!(
         outcome.unresolved_branches.len(),

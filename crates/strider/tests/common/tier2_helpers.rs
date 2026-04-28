@@ -1,6 +1,6 @@
 //! Shared fixture builders for the tier-2 classifier integration tests.
 //!
-//! Each helper drives `Strider::analyze_cfg_with_unresolved` against a
+//! Each helper drives `Strider::analyze_cfg` against a
 //! synthetic byte sequence + arch + calling-convention triple, runs
 //! the full strider optimiser pipeline, then returns a
 //! `(BuiltFunctionGraph, anchor_NodeOutputId, link_register_vn)`
@@ -61,7 +61,7 @@ fn current_anchor_after_opt(
     found.expect("fixture must have one placeholder Return after optimisation")
 }
 
-/// Run `Strider::analyze_cfg_with_unresolved` on a hand-assembled byte
+/// Run `Strider::analyze_cfg` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
 /// (single) tier-2 placeholder anchor's `NodeOutputId` and the
@@ -93,8 +93,8 @@ pub fn run_pipeline_x86_64(
         Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).expect("Strider::new");
     let lr_vn = strider.calling_convention().link_register_vn;
     let outcome = strider
-        .analyze_cfg_with_unresolved(&cfg)
-        .expect("analyze_cfg_with_unresolved");
+        .analyze_cfg(&cfg)
+        .expect("analyze_cfg");
     let mut graph = outcome.graph;
 
     // Run the full optimiser pipeline so the placeholder's anchor
@@ -215,7 +215,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Va
 /// the load via a single-input `Return(target_value)` — exactly
 /// the shape strider's R1.4 placeholder lift produces.
 ///
-/// Bypasses the cfg builder + `Strider::analyze_cfg_with_unresolved`
+/// Bypasses the cfg builder + `Strider::analyze_cfg`
 /// because the only x86_64 byte sequence that compresses to this
 /// shape requires a `mov [rsp+K], imm; ...; jmp *[rsp+K]` flow with
 /// a real conditional branch — that's a 25+-byte fixture that adds
@@ -330,7 +330,7 @@ pub fn build_value_phi_target_scenario(
     // Resolve the placeholder anchor by walking the unique 3-input
     // Return.  Same contract as `current_anchor_after_opt`, copied
     // inline because that helper hard-codes the
-    // analyze_cfg_with_unresolved-driven path.
+    // analyze_cfg-driven path.
     let mut found: Option<ir::Value> = None;
     for nid in fg.preorder() {
         if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
@@ -349,7 +349,7 @@ pub fn build_value_phi_target_scenario(
 
 /// Build a `BuiltFunctionGraph` modelling gcc-ARM's standard
 /// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
-/// directly (not through cfg + analyze_cfg_with_unresolved).
+/// directly (not through cfg + analyze_cfg).
 ///
 /// Steps in the IR:
 ///   1. Single region.  Tracked vars: `sp`, `lr`.
@@ -553,7 +553,7 @@ pub fn build_push_target_pop_pc_scenario(
 //     `build_jump_table_unbounded`.
 //
 // All helpers go through `FunctionBuilder::new_raw` rather than the
-// cfg-builder + analyze_cfg_with_unresolved path because (a) we don't
+// cfg-builder + analyze_cfg path because (a) we don't
 // need the cfg builder's tier-1 resolver here, (b) constructing real
 // arch bytes that lift to a jump-table-shaped IR is fixture overkill,
 // and (c) the FunctionBuilder API is the same code path the cfg
@@ -863,8 +863,8 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         .build()
         .expect("cfg build");
     let outcome = strider
-        .analyze_cfg_with_unresolved(&cfg)
-        .expect("analyze_cfg_with_unresolved");
+        .analyze_cfg(&cfg)
+        .expect("analyze_cfg");
     let mut graph = outcome.graph;
     let p = strider.build_optimizer_pipeline();
     p.run(&mut graph.graph, graph.entry).expect("optimizer pipeline");

@@ -190,7 +190,8 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let mut graph = ana.analyze_cfg(&cfg)
-        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
+        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"))
+        .graph;
     let rom_for_opt = reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     let mut p = ana.build_optimizer_pipeline();
     p.add(opt::LoadReadOnly(rom_for_opt));

@@ -236,7 +236,7 @@ pub fn predecessor_diffs<R: rsleigh::MemReader>(
 /// CORRECTNESS NOTE — `lift_new_regions_into`:
 ///
 /// Lifts every uncached region in `cfg` into the IR graph (via
-/// [`Strider::analyze_cfg_with_unresolved`]) and populates `cache`
+/// [`Strider::analyze_cfg`]) and populates `cache`
 /// with one [`RegionIrEntry`] per CFG region.  Cached regions in
 /// `cfg` keep their existing entries — populating overwrites the
 /// previous handles only when the snapshot was captured against the
@@ -324,7 +324,7 @@ pub struct LiftStats {
 ///
 /// # Errors
 ///
-/// Propagates `analyze_cfg_with_unresolved` errors.
+/// Propagates `analyze_cfg` errors.
 pub fn lift_new_regions_into_with_stats<R: rsleigh::MemReader>(
     strider: &super::Strider,
     cache: &mut RegionIrCache,
@@ -363,7 +363,7 @@ pub fn lift_new_regions_into_with_stats<R: rsleigh::MemReader>(
     // captured against the freshly-built graph and replaces any
     // prior cache entries — but the LiftStats above already pinned
     // the round-2-compatible "new regions only" count.
-    let outcome = strider.analyze_cfg_with_unresolved(cfg)?;
+    let outcome = strider.analyze_cfg(cfg)?;
     populate_cache_from_handles(cache, &outcome.region_handles);
     Ok((outcome, stats))
 }
