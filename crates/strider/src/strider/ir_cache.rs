@@ -861,6 +861,80 @@ mod tests {
     }
 
     #[test]
+    fn extend_predecessors_with_handle_two_calls_grow_input_count_by_two() {
+        // Sanity: two consecutive calls add two inputs to each phi.
+        // Pins that the function is idempotent in the sense of
+        // "every call grows by exactly 1" — no double-add bugs, no
+        // skipped extensions.
+        let v = make_vn(0x10);
+        let (mut graph, mut entry) = build_minimal_graph_with_one_var();
+        let phi_id = *entry.entry_var_phis.get(&v).expect("phi present");
+        let inputs_before = graph.graph.node_inputs(phi_id).into_iter().count();
+        let entry_ctrl = {
+            let outs: Vec<_> = graph.graph.node_outputs(graph.entry).into_iter().collect();
+            outs[0]
+        };
+        let initial_mem = graph
+            .preorder()
+            .find(|&nid| {
+                matches!(graph.graph.node_kind(nid), ir::node::NodeKind::InitialMemory)
+            })
+            .expect("InitialMemory");
+        let im_out = graph
+            .graph
+            .node_outputs(initial_mem)
+            .into_iter()
+            .next()
+            .expect("output");
+        let pred = PredecessorHandles {
+            exit_control: entry_ctrl,
+            exit_memory: im_out,
+            exit_vn_to_value: HashMap::new(),
+        };
+        extend_predecessors_with_handle(&mut entry, &mut graph, &pred).expect("extend 1");
+        extend_predecessors_with_handle(&mut entry, &mut graph, &pred).expect("extend 2");
+        let inputs_after = graph.graph.node_inputs(phi_id).into_iter().count();
+        assert_eq!(inputs_after, inputs_before + 2);
+        assert_eq!(entry.cached_predecessor_count, 1 + 2);
+    }
+
+    #[test]
+    fn extend_predecessors_with_handle_keeps_control_state_node_id_stable_across_calls() {
+        // The ControlState's NodeId is the same after two calls.
+        // Pins the round-trip stability that the orchestrator relies
+        // on across iterations.
+        let (mut graph, mut entry) = build_minimal_graph_with_one_var();
+        let cs_before = entry.entry_control_state;
+        let entry_ctrl = {
+            let outs: Vec<_> = graph.graph.node_outputs(graph.entry).into_iter().collect();
+            outs[0]
+        };
+        let initial_mem = graph
+            .preorder()
+            .find(|&nid| {
+                matches!(graph.graph.node_kind(nid), ir::node::NodeKind::InitialMemory)
+            })
+            .expect("InitialMemory");
+        let im_out = graph
+            .graph
+            .node_outputs(initial_mem)
+            .into_iter()
+            .next()
+            .expect("output");
+        let pred = PredecessorHandles {
+            exit_control: entry_ctrl,
+            exit_memory: im_out,
+            exit_vn_to_value: HashMap::new(),
+        };
+        extend_predecessors_with_handle(&mut entry, &mut graph, &pred).expect("e1");
+        extend_predecessors_with_handle(&mut entry, &mut graph, &pred).expect("e2");
+        assert_eq!(
+            entry.entry_control_state, cs_before,
+            "ControlState NodeId must stay stable across multiple extensions",
+        );
+    }
+
+    #[test]
     fn extend_predecessors_into_handles_var_not_in_predecessor_exit_map() {
         // When pred.exit_vn_to_value lacks the var, fallback to
         // building/reusing an InitialVar(vn) — the phi gets the

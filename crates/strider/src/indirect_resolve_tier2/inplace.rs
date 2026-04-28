@@ -480,6 +480,78 @@ mod tests {
     }
 
     #[test]
+    fn apply_tail_call_int_const_width_matches_target_value_width() {
+        // The IntConst created by apply_tail_call must have the same
+        // width as the original target_value's output type.  Pinned
+        // because a width mismatch (e.g. building a U32 IntConst when
+        // target_value is U64) would silently truncate the high
+        // bits of the target address.
+        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+            .expect("FunctionBuilder::new_raw");
+        let region = builder.create_region().expect("region");
+        builder.set_entry_region(region).expect("entry");
+        builder.set_region(region);
+        // 32-bit target value (deliberately not U64).
+        let target32 = builder.build_int_const(0xabcd_u64, NodeOutputType::U32);
+        builder.build_return(Some(target32), &[]).expect("return");
+        let mut graph = builder.build().expect("build");
+        let return_id = graph
+            .preorder()
+            .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::Return))
+            .expect("Return");
+        let new_return =
+            apply_tail_call(&mut graph, return_id, 0xfeedface_u64, &[]).expect("apply");
+        // Walk to the IntConst created by apply_tail_call and check
+        // its output type.
+        let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
+        let call_ctrl = inputs[0];
+        let (call_node, _) = graph.graph.output_definition(call_ctrl);
+        let call_inputs: Vec<_> = graph.graph.node_inputs(call_node).into_iter().collect();
+        let call_addr = call_inputs[2];
+        let kind = graph.graph.output_kind(call_addr);
+        assert_eq!(
+            kind.as_value().expect("value"),
+            NodeOutputType::U32,
+            "IntConst must inherit width from target_value",
+        );
+    }
+
+    #[test]
+    fn apply_tail_call_target_high_bits_masked_to_width() {
+        // When target exceeds the width of target_value, the high
+        // bits are masked off (mirrors FunctionBuilder::build_int_const
+        // semantics).  Pin the contract: low bits preserved.
+        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+            .expect("FunctionBuilder::new_raw");
+        let region = builder.create_region().expect("region");
+        builder.set_entry_region(region).expect("entry");
+        builder.set_region(region);
+        let target32 = builder.build_int_const(0u64, NodeOutputType::U32);
+        builder.build_return(Some(target32), &[]).expect("return");
+        let mut graph = builder.build().expect("build");
+        let return_id = graph
+            .preorder()
+            .find(|&nid| matches!(graph.graph.node_kind(nid), NodeKind::Return))
+            .expect("Return");
+        // 0x1_0000_0000 > U32::MAX → masking to U32 gives 0.
+        let new_return = apply_tail_call(&mut graph, return_id, 0x1_0000_0000_u64, &[])
+            .expect("apply");
+        let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
+        let call_ctrl = inputs[0];
+        let (call_node, _) = graph.graph.output_definition(call_ctrl);
+        let call_inputs: Vec<_> = graph.graph.node_inputs(call_node).into_iter().collect();
+        let call_addr = call_inputs[2];
+        let (addr_node, _) = graph.graph.output_definition(call_addr);
+        match graph.graph.node_kind(addr_node) {
+            NodeKind::IntConst(v) => {
+                // Mask to U32: 0x1_0000_0000 & 0xFFFF_FFFF == 0.
+                assert_eq!(*v, 0u128);
+            }
+            other => panic!("expected IntConst, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn apply_tail_call_rejects_wrong_input_arity_return() {
         // A Return with more or fewer than 3 inputs is not a
         // placeholder; apply_tail_call must reject it.
