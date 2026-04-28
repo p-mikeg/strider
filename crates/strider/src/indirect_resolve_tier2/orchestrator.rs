@@ -1322,6 +1322,8 @@ mod tests {
         assert_eq!(s.pcode_insns_lifted, 0);
         assert_eq!(s.regions_newly_lifted, 0);
         assert_eq!(s.cache_evictions_on_split, 0);
+        // F4: trace defaults to None (zero-overhead-when-disabled).
+        assert!(s.trace.is_none());
     }
 
     // ── Sleigh persistence: split-snapshot helpers ─────────────────────────
@@ -1418,5 +1420,72 @@ mod tests {
         .build()
         .expect("cfg2");
         assert!(cfg2.graph.node_count() >= 1);
+    }
+
+    // ── F4: debug-trace data-type unit tests ───────────────────────────────
+
+    #[test]
+    fn iteration_snapshot_constructed_via_struct_literal_starts_empty() {
+        // Pin: a freshly-constructed `IterationSnapshot` (the shape the
+        // orchestrator emits at the top of each iteration) carries
+        // empty classification + edit lists and a clean rebuild flag.
+        let snap = IterationSnapshot {
+            iteration_index: 0,
+            unresolved_count_at_entry: 0,
+            classifications: Vec::new(),
+            edits_applied: Vec::new(),
+            cfg_rebuild_triggered: false,
+        };
+        assert_eq!(snap.iteration_index, 0);
+        assert_eq!(snap.unresolved_count_at_entry, 0);
+        assert!(snap.classifications.is_empty());
+        assert!(snap.edits_applied.is_empty());
+        assert!(!snap.cfg_rebuild_triggered);
+    }
+
+    #[test]
+    fn classification_outcome_resolved_round_trips_via_debug_format() {
+        // Pin: `ClassificationOutcome::Resolved` carries the inner
+        // `ResolvedTargets` and survives a round-trip through Clone +
+        // PartialEq.  Debug formatting confirms the variant name +
+        // payload are visible.
+        let outcome = ClassificationOutcome::Resolved(ResolvedTargets::Single(0x4000));
+        let cloned = outcome.clone();
+        assert_eq!(outcome, cloned);
+        let dbg = format!("{outcome:?}");
+        assert!(dbg.contains("Resolved"), "Debug must surface variant name; got {dbg:?}");
+        assert!(dbg.contains("Single"), "Debug must surface inner kind; got {dbg:?}");
+        assert!(dbg.contains("16384"), "Debug must surface inner addr; got {dbg:?}");
+    }
+
+    #[test]
+    fn edit_event_link_register_carries_addr() {
+        // Pin: `EditEvent::LinkRegister` records the placeholder's
+        // pcode address; equality compares structurally.
+        let addr = pcode_addr(0x1234);
+        let ev = EditEvent::LinkRegister { addr };
+        match &ev {
+            EditEvent::LinkRegister { addr: a } => assert_eq!(*a, addr),
+            other => panic!("expected LinkRegister, got {other:?}"),
+        }
+        assert_eq!(ev.clone(), ev);
+    }
+
+    #[test]
+    fn edit_event_tail_call_carries_addr_and_target() {
+        // Pin: `EditEvent::TailCall` records BOTH the placeholder's
+        // pcode address AND the tail-call target.  Both are needed for
+        // diagnostics (which placeholder fired, where it jumps).
+        let addr = pcode_addr(0x1234);
+        let target: u64 = 0x500;
+        let ev = EditEvent::TailCall { addr, target };
+        match &ev {
+            EditEvent::TailCall { addr: a, target: t } => {
+                assert_eq!(*a, addr);
+                assert_eq!(*t, target);
+            }
+            other => panic!("expected TailCall, got {other:?}"),
+        }
+        assert_eq!(ev.clone(), ev);
     }
 }
