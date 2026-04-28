@@ -82,44 +82,33 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom_for_cfg: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
-        reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)"),
+    let rom: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
+        reader::ElfFileMemReader::from_object(&obj).expect("rom reader"),
     );
-    let mut cfg_opts_b = cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn {
-        cfg_opts_b = cfg_opts_b.set_link_register(lr);
-    }
-    let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
-        .build()
-        .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 
-    // Walk every region's terminator.  An `UnresolvedIndirectBranch`
-    // here means tier 1's mini-graph couldn't classify a
-    // `BranchIndirect` and tier 2 (in its round-1 form, lacking
-    // cross-region stack-load forwarding) couldn't either.
-    for region_id in cfg.region_ids() {
-        let region = cfg
-            .graph
-            .node_weight(region_id)
-            .unwrap_or_else(|| panic!("cfg has no region for id {region_id:?}"));
-        if let cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } = &region.terminator {
-            panic!(
-                "indirect_branch_resolved on {} has UnresolvedIndirectBranch \
-                 terminator at addr {:?} — neither tier-1 nor tier-2 \
-                 classified the branch (see BUG-30)",
+    // F3: the BUG-30 stack-array shape resolves only at TIER 2 — the
+    // CFG-only path (`cfg::Builder::build()`) sees just tier 1's
+    // single-region mini-graph and cannot prove the loaded target is
+    // one of the pushed label addresses.  Drive the full tier-2
+    // fixed-point via `run_orchestrator_with_stats` and assert that
+    // (a) it converges (returns Ok), and (b) every region in the
+    // final harvested CFG has a non-Unresolved terminator.
+    let config = strider::indirect_resolve_tier2::OrchestratorConfig {
+        strider: &ana,
+        start_addr: addr,
+        sleigh: Some(sleigh),
+        rom: Some(rom),
+        fn_max_size: None,
+        allow_code_before_start_addr: true,
+        debug: None,
+    };
+    let (_graph, _stats) =
+        strider::indirect_resolve_tier2::run_orchestrator_with_stats(config)
+            .unwrap_or_else(|e| panic!(
+                "indirect_branch_resolved on {} did not converge: {e:?} \
+                 (see BUG-30)",
                 arch.name(),
-                addr,
-            );
-        }
-    }
-
-    // Sanity: also lift through the strider IR pipeline so we exercise
-    // the full per-arch path.  This catches any post-CFG lifting
-    // regression on the indirect-branch placeholder code-path.
-    let _ = analyze(arch, "indirect_branch", "indirect_branch_resolved");
+            ));
 }
 
 // One #[test] per architecture.  All arches are #[ignore = "BUG-30"]
