@@ -629,6 +629,7 @@ where
 /// contribute zero — round-2 semantic).  Round-1 still physically
 /// re-lifts the IR each call (no persistent FunctionBuilder yet)
 /// but the **measurable** cache contract is preserved.
+#[allow(clippy::type_complexity)]
 fn build_lift_stable<B>(
     config: &mut OrchestratorConfig<'_, B>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -913,6 +914,91 @@ mod tests {
         assert_eq!(cap, usize::MAX);
     }
 
+    // ── G1-COMPLETE: cache-exit-handle / stats unit tests ───────────────────
+
+    #[test]
+    fn update_cache_exit_handle_replaces_matching_entries_only() {
+        // Build a synthetic cache with two entries — one whose
+        // `exit_control` matches the "old" id, one that doesn't.
+        // Apply the helper; only the matching entry should be
+        // patched.  Pins the per-entry uniqueness contract
+        // documented on the helper.
+        use crate::RegionIrEntry;
+        use cfg::PcodeInsnAddr;
+        use ir::node::{NodeId, NodeOutputId};
+        let mut cache: RegionIrCache = HashMap::new();
+        let old_id = NodeOutputId::from_u32(7);
+        let other_id = NodeOutputId::from_u32(8);
+        let new_id = NodeOutputId::from_u32(99);
+        let mut e1 = RegionIrEntry::empty(PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: 0x1000 },
+            insn_index: 0,
+        });
+        e1.exit_control = old_id;
+        e1.entry_control_state = NodeId::from_u32(1);
+        let mut e2 = RegionIrEntry::empty(PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: 0x2000 },
+            insn_index: 0,
+        });
+        e2.exit_control = other_id;
+        e2.entry_control_state = NodeId::from_u32(2);
+        cache.insert(MachineInsnAddr { addr: 0x1000 }, e1);
+        cache.insert(MachineInsnAddr { addr: 0x2000 }, e2);
+        update_cache_exit_handle_after_tail_call(&mut cache, old_id, new_id);
+        assert_eq!(
+            cache.get(&MachineInsnAddr { addr: 0x1000 }).expect("e1").exit_control,
+            new_id,
+            "entry whose exit_control matched must be patched",
+        );
+        assert_eq!(
+            cache.get(&MachineInsnAddr { addr: 0x2000 }).expect("e2").exit_control,
+            other_id,
+            "entry whose exit_control did not match must be left alone",
+        );
+    }
+
+    #[test]
+    fn update_cache_exit_handle_noop_on_empty_cache() {
+        // Pins: empty cache → no-op.  The helper must not panic on
+        // an empty input.
+        use ir::node::NodeOutputId;
+        let mut cache: RegionIrCache = HashMap::new();
+        update_cache_exit_handle_after_tail_call(
+            &mut cache,
+            NodeOutputId::from_u32(1),
+            NodeOutputId::from_u32(2),
+        );
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn update_cache_exit_handle_noop_when_no_match() {
+        // Pins: when no entry's exit_control equals `old`, the cache
+        // is left unchanged — the helper must not over-zealously
+        // mutate.
+        use crate::RegionIrEntry;
+        use cfg::PcodeInsnAddr;
+        use ir::node::{NodeId, NodeOutputId};
+        let mut cache: RegionIrCache = HashMap::new();
+        let mut e = RegionIrEntry::empty(PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: 0x1000 },
+            insn_index: 0,
+        });
+        e.exit_control = NodeOutputId::from_u32(7);
+        e.entry_control_state = NodeId::from_u32(1);
+        cache.insert(MachineInsnAddr { addr: 0x1000 }, e);
+        update_cache_exit_handle_after_tail_call(
+            &mut cache,
+            NodeOutputId::from_u32(99), // doesn't match
+            NodeOutputId::from_u32(100),
+        );
+        assert_eq!(
+            cache.get(&MachineInsnAddr { addr: 0x1000 }).expect("e").exit_control,
+            NodeOutputId::from_u32(7),
+            "no-match → cache stays put",
+        );
+    }
+
     #[test]
     fn orchestrator_stats_default_is_zero() {
         // OrchestratorStats fields all start at zero — pinning the
@@ -925,5 +1011,9 @@ mod tests {
         assert_eq!(s.link_register_edits, 0);
         assert_eq!(s.tail_call_edits, 0);
         assert_eq!(s.iterations, 0);
+        // G1-COMPLETE: new cache contract counters are also zeroed.
+        assert_eq!(s.pcode_insns_lifted, 0);
+        assert_eq!(s.regions_newly_lifted, 0);
+        assert_eq!(s.cache_evictions_on_split, 0);
     }
 }

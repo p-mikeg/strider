@@ -460,6 +460,12 @@ pub fn extend_predecessors_into<R: rsleigh::MemReader>(
 /// effectively shadow.  A future round may add an "evict-orphan"
 /// pass; round-1 doesn't need it because cache iteration is keyed on
 /// `new_cfg.region_ids()` end-to-end.
+///
+/// # Errors
+///
+/// Propagates [`crate::error::ErrorKind::CfgNoRegion`] if either CFG
+/// reports a region id that has no node weight (a malformed graph;
+/// the cfg builder never produces this in practice).
 pub fn invalidate_split_regions<R: rsleigh::MemReader>(
     cache: &mut RegionIrCache,
     old_cfg: &Cfg<R>,
@@ -1103,6 +1109,33 @@ mod tests {
             entry.entry_control_state, cs_before,
             "ControlState NodeId must stay stable across multiple extensions",
         );
+    }
+
+    // ── G1-COMPLETE: LiftStats unit tests ───────────────────────────────────
+
+    #[test]
+    fn lift_stats_default_is_zeroed() {
+        // Pin: the LiftStats default state means "nothing was lifted
+        // yet."  Callers can assume `Default::default()` is the
+        // identity for accumulation.
+        let stats = LiftStats::default();
+        assert_eq!(stats.pcode_insns_lifted, 0);
+        assert_eq!(stats.regions_lifted, 0);
+        assert!(stats.newly_lifted_addrs.is_empty());
+    }
+
+    #[test]
+    fn lift_stats_partial_eq_round_trip() {
+        // Pin: LiftStats supports structural equality for test
+        // assertion purposes.
+        let s1 = LiftStats::default();
+        let s2 = LiftStats::default();
+        assert_eq!(s1, s2);
+        let s3 = LiftStats {
+            pcode_insns_lifted: 5,
+            ..Default::default()
+        };
+        assert_ne!(s1, s3);
     }
 
     #[test]

@@ -111,10 +111,10 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     #[must_use]
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
         for rid in self.graph.node_indices() {
-            if let Some(region) = self.graph.node_weight(rid) {
-                if region.start_addr.machine_addr == addr {
-                    return Some(rid);
-                }
+            if let Some(region) = self.graph.node_weight(rid)
+                && region.start_addr.machine_addr == addr
+            {
+                return Some(rid);
             }
         }
         None
