@@ -190,41 +190,109 @@ fn match_stack_array_shape(
         graph.graph.node_inputs(load_node).into_iter().collect();
     let mem_input = *load_inputs.first()?;
     let addr_output = *load_inputs.get(1)?;
-    let add_node = graph.graph.get_node_from_output(addr_output);
-    if !matches!(
-        graph.graph.node_kind(add_node),
-        NodeKind::IntBinaryOp(IntBinaryOp::Add)
-    ) {
+
+    // Flatten the address into a sum of terms.  ARM lifters sometimes
+    // emit `Add(Add(sp, idx*stride), const)` (a nested Add tree)
+    // instead of the flat `Add(sp + const, idx*stride)` that x86 / x64
+    // produce.  Walk every `Add` / `Sub` node transitively to collect
+    // the additive operands.
+    let mut terms: Vec<NodeOutputId> = Vec::new();
+    flatten_add_tree(graph, addr_output, &mut terms, &mut 0);
+
+    // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
+    // we can crack into (idx, stride).  The rest must sum (with
+    // `decompose_sp`) to `Terminal { offset: K }`.
+    let mut idx_stride: Option<(NodeOutputId, u64, usize)> = None;
+    for (i, t) in terms.iter().enumerate() {
+        if let Some((idx, stride)) = extract_idx_and_stride(graph, *t) {
+            // First match wins; if there are multiple idx*stride
+            // sub-expressions in the address (unlikely in practice
+            // but defensible), the others would force the
+            // sum-decompose step to fail and we'd return None — sound.
+            idx_stride = Some((idx, stride, i));
+            break;
+        }
+    }
+    let (idx_output, stride, idx_pos) = idx_stride?;
+
+    // Sum the remaining terms via `decompose_sp`.  Each must be either
+    // SP-rooted (`Terminal`) or a constant.  Constants accumulate in
+    // `extra_offset`; SP-rooted terms must be exactly one (sp + K).
+    let mut sp_memo = SpExprMemo::default();
+    let mut base_offset_acc: i64 = 0;
+    let mut found_sp = false;
+    for (i, t) in terms.iter().enumerate() {
+        if i == idx_pos {
+            continue;
+        }
+        let mut visiting = rustc_hash::FxHashSet::default();
+        match decompose_sp(&graph.graph, *t, stack_ptr_vn, &mut sp_memo, &mut visiting) {
+            Some(SpExpr::Terminal { base: _, offset }) => {
+                if found_sp {
+                    // Two SP-rooted terms summed together (`sp+sp+...`)
+                    // doesn't describe a stack-slot address — bail.
+                    return None;
+                }
+                found_sp = true;
+                base_offset_acc = base_offset_acc.checked_add(offset)?;
+            }
+            Some(SpExpr::Phi { .. }) => {
+                // SP through a phi-join — out of scope for the
+                // single-region BUG-30 shape.  Bail.
+                return None;
+            }
+            None => {
+                // Maybe a pure constant (not SP-rooted).
+                if let Some(c) = opt::sp_expr::int_const_signed(&graph.graph, *t) {
+                    base_offset_acc = base_offset_acc.checked_add(c)?;
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+    if !found_sp {
+        // The address never references SP — it might be a pure
+        // constant address (handled by `classify_jump_table`'s rodata
+        // arm) or something else.  Bail; the caller already tried
+        // the rodata arm.
         return None;
     }
-    let [add_lhs, add_rhs] = graph.graph.node_inputs_exact::<2>(add_node).ok()?;
-    extract_sp_and_mul(graph, add_lhs, add_rhs, value_type, mem_input, stack_ptr_vn)
-        .or_else(|| extract_sp_and_mul(graph, add_rhs, add_lhs, value_type, mem_input, stack_ptr_vn))
-}
 
-fn extract_sp_and_mul(
-    graph: &BuiltFunctionGraph,
-    sp_candidate: NodeOutputId,
-    mul_candidate: NodeOutputId,
-    value_type: ir::node::NodeOutputType,
-    mem_input: NodeOutputId,
-    stack_ptr_vn: rsleigh::Vn,
-) -> Option<StackArrayShape> {
-    let mut sp_memo = SpExprMemo::default();
-    let mut sp_visiting = rustc_hash::FxHashSet::default();
-    let SpExpr::Terminal { base: _, offset: base_offset } =
-        decompose_sp(&graph.graph, sp_candidate, stack_ptr_vn, &mut sp_memo, &mut sp_visiting)?
-    else {
-        return None;
-    };
-    let (idx_output, stride) = extract_idx_and_stride(graph, mul_candidate)?;
     Some(StackArrayShape {
-        base_offset,
+        base_offset: base_offset_acc,
         stride,
         idx_output,
         value_type,
         mem_input,
     })
+}
+
+/// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the
+/// list of additive operands.  `IntBinaryOp(Sub)` is not flattened
+/// (negative-coefficient terms aren't shaped like the BUG-30 stride
+/// expression we're matching on).  Capped at 32 nodes to defend
+/// against pathologically deep trees from buggy lifter output.
+fn flatten_add_tree(
+    graph: &BuiltFunctionGraph,
+    out: NodeOutputId,
+    acc: &mut Vec<NodeOutputId>,
+    budget: &mut usize,
+) {
+    if *budget >= 32 {
+        acc.push(out);
+        return;
+    }
+    *budget += 1;
+    let node = graph.graph.get_node_from_output(out);
+    if let NodeKind::IntBinaryOp(IntBinaryOp::Add) = graph.graph.node_kind(node) {
+        if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(node) {
+            flatten_add_tree(graph, lhs, acc, budget);
+            flatten_add_tree(graph, rhs, acc, budget);
+            return;
+        }
+    }
+    acc.push(out);
 }
 
 /// Extract `(idx, stride)` from a node that scales an index value:
