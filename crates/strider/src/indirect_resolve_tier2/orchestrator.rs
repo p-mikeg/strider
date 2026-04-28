@@ -137,11 +137,23 @@ where
     pub strider: &'a Strider,
     /// Function entry address.
     pub start_addr: u64,
-    /// Sleigh-specification factory: invoked once per iteration to
-    /// build a fresh Sleigh context with a clean memory reader.  We
-    /// take a closure rather than the Sleigh directly because
-    /// [`cfg::Builder`] consumes the Sleigh by value on `build()`.
-    pub make_sleigh: Box<dyn FnMut() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>>,
+    /// The Sleigh context, owned by the config and threaded through
+    /// every iteration of the orchestrator's fixed-point loop.
+    ///
+    /// W5 — pre-W5 this was a `Box<dyn FnMut() -> Sleigh>` factory
+    /// because the (now-superseded) round-1 orchestrator built a fresh
+    /// Sleigh per iteration.  After the Sleigh-persistence work the
+    /// closure was called exactly once at loop entry; W5 drops the
+    /// indirection and takes the owned `Sleigh<R>` directly so the
+    /// "constructed once, reused per iteration" contract is visible
+    /// at the type signature.
+    ///
+    /// CORRECTNESS — the orchestrator threads this Sleigh into the
+    /// first `cfg::Builder::with_endianness` call (consumes by value),
+    /// then harvests it back from `Cfg::sleigh` after each iteration's
+    /// CFG drops, and re-uses the same handle in the next iteration.
+    /// See `Cfg::sleigh`'s persistence-contract docs.
+    pub sleigh: Option<rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>>,
     /// Read-only memory image for the optimiser's `LoadReadOnly`
     /// pass.  `None` to disable.  Cloned per-iteration via
     /// `Arc::clone` (cheap).
@@ -276,7 +288,7 @@ where
     //     completes; `Some(snapshot)` thereafter.
     //
     //   * `sleigh` is the ONE `rsleigh::Sleigh` handle used by every
-    //     iteration.  Constructed once via `config.make_sleigh` at
+    //     iteration.  Owned by the caller and handed over via `config.sleigh` (W5).  Taken at
     //     loop entry, consumed by `Builder::with_endianness` per
     //     iteration, and harvested back via `cfg.sleigh` between
     //     iterations.  CORRECTNESS — re-using one Sleigh across many
@@ -296,11 +308,16 @@ where
     //     orchestrator without changing the loop control flow.
     let mut region_ir_cache: RegionIrCache = std::collections::HashMap::new();
     let mut prev_snapshot: Option<CfgSplitSnapshot> = None;
-    // Construct Sleigh exactly once — this is the heavy step we want
-    // to avoid repeating across iterations.  See the `sleigh` field
-    // comment above for the correctness argument.
+    // Take ownership of the Sleigh out of the config (W5).  The
+    // orchestrator threads this single handle through every iteration —
+    // see the `sleigh` field doc for the persistence contract.
+    // `Option::take` lets us move ownership while keeping `config` borrowed
+    // by the rest of the loop (which still reads `config.strider`,
+    // `config.rom`, etc).
     let mut sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>> =
-        (config.make_sleigh)();
+        config.sleigh.take().ok_or_else(|| ErrorKind::Unimplemented(
+            "OrchestratorConfig::sleigh was None — caller must supply an owned Sleigh".to_string(),
+        ))?;
 
     // Iteration 0: build the CFG, lift to IR, run the stable subset.
     let (mut graph, mut unresolved, iter0_cfg) = build_lift_stable(
@@ -728,7 +745,7 @@ where
 ///
 /// CORRECTNESS — Sleigh persistence: `sleigh` is **passed in by value**
 /// rather than constructed inside this function.  The orchestrator
-/// constructs Sleigh exactly once via `config.make_sleigh` at loop
+/// takes the caller-supplied Sleigh out of `config.sleigh` (W5) at loop
 /// entry, then threads the same handle through every call to
 /// `build_lift_stable` by harvesting it from the previous iteration's
 /// `Cfg::sleigh` field.  Reusing one Sleigh across many `lift_one`

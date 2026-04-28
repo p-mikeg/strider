@@ -192,16 +192,13 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
         0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
     ];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
-    let bytes_clone = bytes.clone();
-    let make_sleigh = Box::new(move || {
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(bytes_clone.clone(), 0x1000);
-        Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh")
-    });
+    let arch_ref = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes.clone(), 0x1000);
+    let sleigh = Sleigh::new(arch_ref.sla_spec, arch_ref.pspec, reader).expect("sleigh");
     let config = OrchestratorConfig {
         strider: &strider,
         start_addr: 0x1000,
-        make_sleigh,
+        sleigh: Some(sleigh),
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
