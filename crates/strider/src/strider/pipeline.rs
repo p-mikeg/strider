@@ -2,6 +2,45 @@ use crate::error::{ErrorKind, Result};
 
 use super::IrStrider;
 
+/// Per-region IR-handle snapshot, captured during lift before
+/// `FunctionBuilder::build()` consumes the builder's region map.  Used
+/// by the strider [`crate::ir_cache::RegionIrCache`] to populate cache
+/// entries with live `NodeId`s that pin per-region phi-extension
+/// targets across orchestrator iterations.
+///
+/// Layout mirrors [`crate::RegionIrEntry`] but tracks `(VarId, ...)`
+/// pairs with the `Vn` resolved from the `FunctionBuilder` at lift
+/// time (the cache stores `Vn`-keyed maps for cross-iteration
+/// stability — `VarId` can renumber if the builder is rebuilt).
+#[derive(Debug, Clone)]
+pub struct RegionLiftHandles {
+    /// Region's start address (cache key).
+    pub start_addr: cfg::PcodeInsnAddr,
+    /// Number of CFG predecessors at lift time.  The cache uses this
+    /// to detect "the predecessor count grew since last iteration."
+    pub predecessor_count: usize,
+    /// `ControlState` `NodeId` (entry-boundary).
+    pub entry_control_state: ir::node::NodeId,
+    /// `MemPhi` `NodeId` (entry-boundary).
+    pub entry_mem_phi: ir::node::NodeId,
+    /// Entry control output produced by the `ControlState`.
+    pub entry_control: ir::node::NodeOutputId,
+    /// Entry memory output produced by the `MemPhi`.
+    pub entry_memory: ir::node::NodeOutputId,
+    /// Exit control output (consumed by the region's terminator).
+    pub exit_control: ir::node::NodeOutputId,
+    /// Exit memory output (consumed by the region's terminator).
+    pub exit_memory: ir::node::NodeOutputId,
+    /// Per-var entry-boundary `ControlPhi` `NodeId`s, keyed by `Vn`.
+    /// Used by `extend_predecessors_into` to know which phi node to
+    /// append a new predecessor's value to.
+    pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId>,
+    /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
+    /// Used by `extend_predecessors_into` to source values for new
+    /// predecessor edges.
+    pub exit_vn_to_value: std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>,
+}
+
 /// The full result of a strider lift, exposing both the lifted IR and
 /// the placeholder-anchor side-table the strider-level fixed-point
 /// loop's tier-2 resolver consumes.
@@ -19,6 +58,13 @@ pub struct AnalyzeOutcome {
     /// varnode (`target_vn`) in the placeholder Return.  Empty in
     /// the common case (no deferred branches).
     pub unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
+    /// Per-region IR-handle snapshots captured at lift time.  Keyed
+    /// by the region's machine start address (matches the cache key
+    /// used by [`crate::ir_cache::RegionIrCache`]).  Empty if the
+    /// caller didn't ask for it (the original `analyze_cfg_with_unresolved`
+    /// shim sets this to an empty vec; `analyze_cfg_with_handles`
+    /// populates it).
+    pub region_handles: Vec<RegionLiftHandles>,
 }
 
 /// Architecture-level binary analyser that lifts a [`cfg::Cfg`] to an IR
@@ -341,11 +387,76 @@ impl Strider {
                 .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
         }
 
+        // CORRECTNESS — region-handle snapshot: capture per-region IR
+        // handles BEFORE `build()` consumes the builder.  The cache
+        // populates from these snapshots in
+        // `crate::ir_cache::lift_new_regions_into`.  Each snapshot
+        // records `NodeId`s that survive `build()` (the IR graph is
+        // moved out of the builder, but `NodeId`s are stable indices
+        // into its arena), so cache entries built from these handles
+        // are valid for the lifetime of the returned
+        // `BuiltFunctionGraph`.
+        let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
+        for cfg_region_id in cfg.region_ids() {
+            let ir_region_id = ir_region_of(cfg_region_id)?;
+            let region = cfg
+                .graph
+                .node_weight(cfg_region_id)
+                .ok_or(ErrorKind::CfgNoRegion(cfg_region_id))?;
+            let predecessor_count = cfg.predecessor_count(cfg_region_id);
+
+            // Per-var phi node IDs, keyed by Vn.  We resolve each
+            // VarId to its Vn via the builder's vn_of_var accessor.
+            let mut entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId> =
+                std::collections::HashMap::new();
+            for (var_id, phi_out) in ir_strider.builder.region_initial_variables(ir_region_id) {
+                if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
+                    let phi_node = ir_strider
+                        .builder
+                        .body()
+                        .graph
+                        .output_definition(phi_out)
+                        .0;
+                    entry_var_phis.insert(vn, phi_node);
+                }
+            }
+
+            // Per-var exit values, keyed by Vn.
+            let mut exit_vn_to_value: std::collections::HashMap<
+                rsleigh::Vn,
+                ir::node::NodeOutputId,
+            > = std::collections::HashMap::new();
+            for (var_id, val_out) in ir_strider.builder.region_exit_variables(ir_region_id) {
+                if let Some(vn) = ir_strider.builder.vn_of_var(var_id) {
+                    exit_vn_to_value.insert(vn, val_out);
+                }
+            }
+
+            let entry_control = ir_strider.builder.region_entry_control(ir_region_id)?;
+            let entry_memory = ir_strider.builder.region_entry_memory(ir_region_id)?;
+            let exit_control = ir_strider.builder.region_cur_ctrl(ir_region_id);
+            let exit_memory = ir_strider.builder.region_cur_memory(ir_region_id);
+
+            region_handles.push(RegionLiftHandles {
+                start_addr: region.start_addr,
+                predecessor_count,
+                entry_control_state: ir_strider.builder.region_control_node(ir_region_id),
+                entry_mem_phi: ir_strider.builder.region_memory_node(ir_region_id),
+                entry_control,
+                entry_memory,
+                exit_control,
+                exit_memory,
+                entry_var_phis,
+                exit_vn_to_value,
+            });
+        }
+
         let unresolved_branches = ir_strider.unresolved_branches.clone();
         let graph = ir_strider.builder.build()?;
         Ok(AnalyzeOutcome {
             graph,
             unresolved_branches,
+            region_handles,
         })
     }
 }

@@ -236,4 +236,109 @@ impl FunctionBuilder {
         );
         self.link_region(child_region, ctrl, mem, parent_region)
     }
+
+    /// Returns the entry-boundary `ControlState` `NodeId` of `region`.
+    /// Used by the strider [`crate::ir_cache::RegionIrCache`] (in the
+    /// `strider` crate) to pin per-region phi-extension targets across
+    /// orchestrator iterations.
+    #[must_use]
+    pub fn region_control_node(&self, region: RegionId) -> NodeId {
+        self.regions[region].control_node
+    }
+
+    /// Returns the entry-boundary `MemPhi` `NodeId` of `region`.
+    #[must_use]
+    pub fn region_memory_node(&self, region: RegionId) -> NodeId {
+        self.regions[region].memory_node
+    }
+
+    /// Returns the current control-output of `region` — i.e. the
+    /// `Control` `NodeOutputId` consumed by the region's terminator.
+    /// At cache-population time this is the region's exit control.
+    #[must_use]
+    pub fn region_cur_ctrl(&self, region: RegionId) -> NodeOutputId {
+        self.regions[region].cur_ctrl
+    }
+
+    /// Returns the current memory-output of `region` — the `Memory`
+    /// `NodeOutputId` consumed by the region's terminator.
+    #[must_use]
+    pub fn region_cur_memory(&self, region: RegionId) -> NodeOutputId {
+        self.regions[region].cur_memory
+    }
+
+    /// Returns the entry-boundary control output (the `Control`
+    /// `NodeOutputId` produced by the region's `ControlState`).  Used
+    /// by the cache to pin the entry handle across iterations.
+    ///
+    /// CORRECTNESS: this is the FIRST output (`output_index 0`) of the
+    /// `ControlState` node — the `Control` slot.  The second output
+    /// (`output_index 1`) is the `ControlPhi` dispatch token consumed
+    /// by per-var phis, not the body's control.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedControl`] if `region`'s
+    /// `ControlState` does not have a Control output at index 0
+    /// (graph-construction bug).
+    pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
+        let cs_id = self.regions[region].control_node;
+        let outputs: Vec<NodeOutputId> = self.graph().node_outputs(cs_id).into_iter().collect();
+        for &out in &outputs {
+            if self.graph().output_kind(out).is_control() {
+                return Ok(out);
+            }
+        }
+        Err(ErrorKind::ExpectedControl(
+            *outputs.first().unwrap_or(&NodeOutputId::from_u32(0)),
+            self.graph().output_kind(*outputs.first().unwrap_or(&NodeOutputId::from_u32(0))),
+        )
+        .into())
+    }
+
+    /// Returns the entry-boundary memory output (the `Memory`
+    /// `NodeOutputId` produced by the region's `MemPhi`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::ExpectedMemory`] if `region`'s `MemPhi`
+    /// does not have a Memory output (graph-construction bug).
+    pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
+        let mp_id = self.regions[region].memory_node;
+        let outputs: Vec<NodeOutputId> = self.graph().node_outputs(mp_id).into_iter().collect();
+        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
+        for &out in &outputs {
+            if self.graph().output_kind(out).is_memory() {
+                return Ok(out);
+            }
+        }
+        Err(ErrorKind::ExpectedMemory(first, self.graph().output_kind(first)).into())
+    }
+
+    /// Returns an iterator over `(VarId, ControlPhi NodeOutputId)`
+    /// pairs for `region`'s entry-boundary per-var phi nodes.  Used
+    /// by the cache to pin the per-var phi `NodeOutputId`s.
+    pub fn region_initial_variables(
+        &self,
+        region: RegionId,
+    ) -> impl Iterator<Item = (VarId, NodeOutputId)> + '_ {
+        self.regions[region]
+            .initial_variables
+            .iter()
+            .map(|(var_id, &out)| (var_id, out))
+    }
+
+    /// Returns an iterator over `(VarId, NodeOutputId)` pairs for
+    /// `region`'s exit-boundary variable values — the value of each
+    /// tracked variable at the region's terminator.  Used by the
+    /// cache to populate `exit_vn_to_value`.
+    pub fn region_exit_variables(
+        &self,
+        region: RegionId,
+    ) -> impl Iterator<Item = (VarId, NodeOutputId)> + '_ {
+        self.regions[region]
+            .variables
+            .iter()
+            .map(|(var_id, &out)| (var_id, out))
+    }
 }

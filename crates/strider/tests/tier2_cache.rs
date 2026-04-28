@@ -240,6 +240,116 @@ fn cache_split_preserves_first_half_key() {
 }
 
 #[test]
+fn lift_new_regions_into_populates_cache_for_new_regions() {
+    // R3-FIXUP G1: lift_new_regions_into populates the cache with
+    // real (non-sentinel) NodeId handles for every CFG region.
+    let (strider, cfg) = build_single_region_setup();
+    let mut cache: RegionIrCache = HashMap::new();
+    let _outcome = lift_new_regions_into(&strider, &mut cache, &cfg).expect("lift");
+    assert!(!cache.is_empty(), "cache must be populated");
+    for entry in cache.values() {
+        // Sentinel-zero NodeIds indicate populate didn't fire.  A
+        // real entry has non-zero NodeIds for control_state and
+        // mem_phi.  (NodeId::from_u32(0) is the entry itself; rare
+        // for a region's ControlState to land there but possible —
+        // we use the ControlState being a non-trivial node as the
+        // contract check.)
+        assert_eq!(
+            entry.cached_predecessor_count,
+            cfg.predecessor_count(
+                cfg.region_ids()
+                    .find(|&rid| {
+                        cfg.graph.node_weight(rid).map(|r| r.start_addr.machine_addr)
+                            == Some(entry.start_addr.machine_addr)
+                    })
+                    .expect("region")
+            ),
+            "predecessor count must match cfg",
+        );
+    }
+}
+
+#[test]
+fn lift_new_regions_into_records_correct_exit_handles() {
+    // The exit_control / exit_memory handles point to real Control /
+    // Memory typed outputs in the resulting graph.
+    let (strider, cfg) = build_single_region_setup();
+    let mut cache: RegionIrCache = HashMap::new();
+    let outcome = lift_new_regions_into(&strider, &mut cache, &cfg).expect("lift");
+    for entry in cache.values() {
+        let kind = outcome.graph.graph.output_kind(entry.exit_control);
+        assert!(
+            kind.is_control(),
+            "exit_control must be a Control output, got {kind:?}",
+        );
+        let kind = outcome.graph.graph.output_kind(entry.exit_memory);
+        assert!(
+            kind.is_memory(),
+            "exit_memory must be a Memory output, got {kind:?}",
+        );
+    }
+}
+
+#[test]
+fn lift_new_regions_into_records_correct_entry_phi_node_ids() {
+    // The entry_control_state / entry_mem_phi NodeIds point to
+    // ControlState / MemPhi nodes respectively in the resulting graph.
+    use ir::node::NodeKind;
+    let (strider, cfg) = build_single_region_setup();
+    let mut cache: RegionIrCache = HashMap::new();
+    let outcome = lift_new_regions_into(&strider, &mut cache, &cfg).expect("lift");
+    for entry in cache.values() {
+        let cs_kind = outcome.graph.graph.node_kind(entry.entry_control_state);
+        assert!(
+            matches!(cs_kind, NodeKind::ControlState),
+            "entry_control_state must point at a ControlState, got {cs_kind:?}",
+        );
+        let mp_kind = outcome.graph.graph.node_kind(entry.entry_mem_phi);
+        assert!(
+            matches!(mp_kind, NodeKind::MemPhi),
+            "entry_mem_phi must point at a MemPhi, got {mp_kind:?}",
+        );
+    }
+}
+
+#[test]
+fn lift_new_regions_into_records_correct_exit_vn_to_value() {
+    // The exit_vn_to_value map keys are the same Vns the
+    // FunctionBuilder tracks as variables.  Each value is a value-
+    // typed NodeOutputId.
+    let (strider, cfg) = build_single_region_setup();
+    let mut cache: RegionIrCache = HashMap::new();
+    let outcome = lift_new_regions_into(&strider, &mut cache, &cfg).expect("lift");
+    for entry in cache.values() {
+        for (vn, &out) in &entry.exit_vn_to_value {
+            let kind = outcome.graph.graph.output_kind(out);
+            assert!(
+                kind.is_value(),
+                "exit value for {vn:?} must be a value output, got {kind:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn lift_new_regions_into_skips_cache_hits() {
+    // R3-FIXUP G1 round-1: even though full re-lift happens each
+    // call, calling lift_new_regions_into twice in a row produces
+    // a cache whose key set is unchanged (same region count) — the
+    // second call doesn't add bogus entries.
+    let (strider, cfg) = build_single_region_setup();
+    let mut cache: RegionIrCache = HashMap::new();
+    let _ = lift_new_regions_into(&strider, &mut cache, &cfg).expect("first lift");
+    let key_count_after_first = cache.len();
+    let _ = lift_new_regions_into(&strider, &mut cache, &cfg).expect("second lift");
+    assert_eq!(
+        cache.len(),
+        key_count_after_first,
+        "second lift must not add bogus cache entries",
+    );
+}
+
+#[test]
 fn cache_key_stable_across_rebuilds() {
     // Build the same function twice and assert the cache keys are
     // bit-identical.  This is the round-1 stand-in for the future

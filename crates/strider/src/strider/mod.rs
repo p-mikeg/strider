@@ -7,9 +7,10 @@ mod vn_io;
 
 pub use ir_cache::{
     cache_key_for_region, count_uncached_regions, extend_predecessors_into,
-    lift_new_regions_into, predecessor_diffs, RegionIrCache, RegionIrEntry,
+    extend_predecessors_with_handle, lift_new_regions_into, predecessor_diffs,
+    PredecessorHandles, RegionIrCache, RegionIrEntry,
 };
-pub use pipeline::{AnalyzeOutcome, Strider};
+pub use pipeline::{AnalyzeOutcome, RegionLiftHandles, Strider};
 
 /// Per-function translation context that converts a [`cfg::Cfg`] into an IR
 /// graph region by region.
