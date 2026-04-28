@@ -925,16 +925,6 @@ enum EdgeKind {
     Target(u64),
 }
 
-// Avoid a clippy `dead_code` warning on the unused `MachineInsnAddr`
-// import — this module imports it because the cache types live in
-// `MachineInsnAddr`-keyed maps and a future round will plumb cache
-// queries through the orchestrator.  Round-1 doesn't need it; the
-// import stays so future edits land cleanly without a fresh `use`.
-#[allow(dead_code)]
-fn _machine_insn_addr_phantom_use() -> MachineInsnAddr {
-    MachineInsnAddr { addr: 0 }
-}
-
 #[cfg(test)]
 mod tests {
     //! Unit tests for the orchestrator's helper functions.
