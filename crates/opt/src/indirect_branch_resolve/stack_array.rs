@@ -46,7 +46,7 @@
 
 use super::BranchResolution;
 use ir::node::{NodeKind, NodeOutputId};
-use ir::{Graph, IntBinaryOp};
+use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 use crate::stack_load_forward::find_stack_stored_value_at_offset;
 
@@ -80,10 +80,11 @@ const MAX_TABLE_ENTRIES: u64 = 4096;
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<BranchResolution> {
+    let graph = &fg.graph;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -94,7 +95,7 @@ pub fn classify_stack_array(
     // returning.  Non-And anchors take the path with `mask = !0`.
     let (load_anchor, target_mask) = strip_target_mask(graph, anchor_output);
 
-    let shape = match_stack_array_shape(graph, load_anchor, stack_ptr_vn)?;
+    let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
     let bound = bound_via_known_bits(graph, shape.idx_output)
         .or_else(|| bound_via_predecessor_if(graph, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
@@ -214,10 +215,11 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
+    let graph = &fg.graph;
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(_) = *graph.node_kind(load_node) else {
         return None;
@@ -245,7 +247,7 @@ fn match_stack_array_shape(
     // `decompose_sp`) to `Terminal { offset: K }`.
     let mut idx_stride: Option<(NodeOutputId, u64, usize)> = None;
     for (i, t) in terms.iter().enumerate() {
-        if let Some((idx, stride)) = extract_idx_and_stride(graph, *t) {
+        if let Some((idx, stride)) = extract_idx_and_stride(fg, *t) {
             // First match wins; if there are multiple idx*stride
             // sub-expressions in the address (unlikely in practice
             // but defensible), the others would force the
@@ -377,34 +379,54 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
-    let node = graph.get_node_from_output(candidate);
-    match graph.node_kind(node) {
-        NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
-            let [lhs, rhs] = graph.node_inputs_exact::<2>(node).ok()?;
-            if let Some(stride) = graph.int_const_val(rhs) {
-                return Some((lhs, stride));
-            }
-            if let Some(stride) = graph.int_const_val(lhs) {
-                return Some((rhs, stride));
-            }
-            None
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-            let [lhs, rhs] = graph.node_inputs_exact::<2>(node).ok()?;
-            let s = graph.int_const_val(rhs)?;
-            if s >= 64 {
-                return None;
-            }
-            // s is bounded above by 64 → fits in u32 with no truncation.
-            let s32 = u32::try_from(s).ok()?;
-            let stride = 1u64.checked_shl(s32)?;
-            Some((lhs, stride))
-        }
-        _ => None,
+    // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
+    // dispatch on `NodeKind`.  `pattern::mul` is auto-commutative,
+    // collapsing the prior `(idx, IntConst)` / `(IntConst, idx)` arms
+    // into one pattern.  `pattern::shl` keeps stated order (shifts
+    // are non-commutative) — the rhs must still be the const stride
+    // exponent.  We try the multiplication shape first, then the
+    // shift shape, mirroring the prior match's arm order.
+    use pattern::{IntVar, Matcher, Var, any_int_const, mul, shl, var};
+
+    let candidate_node = fg.graph.get_node_from_output(candidate);
+    let matcher = Matcher::new(fg);
+
+    // Mul(idx, IntConst(stride)) — either ordering.
+    let stride_var = IntVar::new();
+    let idx_var = Var::new();
+    let mul_pat = mul(var(idx_var), any_int_const(stride_var));
+    if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
+        let stride_u128 = m.get_int(stride_var)?;
+        // `IntVar` returns `u128`; the prior code's `int_const_val`
+        // truncated to `u64`.  Mirror that here.  Real strides fit
+        // in `u64` everywhere we run.
+        #[allow(clippy::cast_possible_truncation)]
+        let stride = stride_u128 as u64;
+        let idx = m.get(idx_var)?;
+        return Some((idx, stride));
     }
+
+    // ShiftLeft(idx, IntConst(s)) — non-commutative; rhs must be const.
+    let s_var = IntVar::new();
+    let idx_var = Var::new();
+    let shl_pat = shl(var(idx_var), any_int_const(s_var));
+    let m = matcher.match_at(candidate_node, &shl_pat.into())?;
+    let s_u128 = m.get_int(s_var)?;
+    // CORRECTNESS — preserve the prior bounds check exactly: reject
+    // `s >= 64` (would overflow `1u64 << s`) before computing the
+    // stride.  `IntVar` returns `u128`; out-of-range values reject
+    // here just as the prior `int_const_val` → `s >= 64` check did.
+    if s_u128 >= 64 {
+        return None;
+    }
+    // s_u128 is bounded above by 64 → fits in u32.
+    let s32 = u32::try_from(s_u128).ok()?;
+    let stride = 1u64.checked_shl(s32)?;
+    let idx = m.get(idx_var)?;
+    Some((idx, stride))
 }
 
 #[cfg(test)]
@@ -504,7 +526,7 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let result = classify_stack_array(&fg.graph, load_out, sp64());
+        let result = classify_stack_array(&fg, load_out, sp64());
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(BranchResolution::Multiple(expected)));
@@ -538,7 +560,7 @@ mod tests {
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        assert_eq!(classify_stack_array(&fg.graph, load_out, sp64()), None);
+        assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
     }
 
     #[test]
@@ -590,6 +612,6 @@ mod tests {
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        assert_eq!(classify_stack_array(&fg.graph, load_out, sp64()), None);
+        assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
     }
 }

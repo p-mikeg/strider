@@ -18,7 +18,7 @@ pub fn classify_jump_table(
     rom: Option<&dyn ReadOnlyMemory>,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    opt::classify_jump_table(&graph.graph, anchor_output, rom, link_register_vn).map(|r| {
+    opt::classify_jump_table(graph, anchor_output, rom, link_register_vn).map(|r| {
         match r {
             opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
             opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),

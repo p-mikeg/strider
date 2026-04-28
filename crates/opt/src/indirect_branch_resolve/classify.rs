@@ -10,7 +10,7 @@
 //! functions with the original `cfg::ResolvedTargets` return type for
 //! back-compat.
 
-use ir::Graph;
+use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId};
 
 use super::BranchResolution;
@@ -47,11 +47,11 @@ use crate::ReadOnlyMemory;
 /// — that's the shape the LinkRegister arm matches.
 #[must_use]
 pub fn classify_anchor(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<BranchResolution> {
-    classify_anchor_with_rom(graph, anchor_output, link_register_vn, None)
+    classify_anchor_with_rom(fg, anchor_output, link_register_vn, None)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -69,12 +69,12 @@ pub fn classify_anchor(
 /// see.
 #[must_use]
 pub fn classify_anchor_with_rom(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<BranchResolution> {
-    classify_anchor_with_rom_and_sp(graph, anchor_output, link_register_vn, rom, None)
+    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None)
 }
 
 /// Classify a placeholder anchor with both an optional
@@ -100,12 +100,13 @@ pub fn classify_anchor_with_rom(
 /// approximating.
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> Option<BranchResolution> {
+    let graph = &fg.graph;
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -169,12 +170,12 @@ pub fn classify_anchor_with_rom_and_sp(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(graph, anchor_output, rom, link_register_vn)
+            if let Some(r) = classify_jump_table(fg, anchor_output, rom, link_register_vn)
             {
                 return Some(r);
             }
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
+                return super::stack_array::classify_stack_array(fg, anchor_output, sp);
             }
             None
         }
@@ -186,7 +187,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(graph, anchor_output, sp);
+                return super::stack_array::classify_stack_array(fg, anchor_output, sp);
             }
             None
         }

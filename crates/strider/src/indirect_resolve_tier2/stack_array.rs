@@ -14,7 +14,7 @@ pub fn classify_stack_array(
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<ResolvedTargets> {
-    opt::classify_stack_array(&graph.graph, anchor_output, stack_ptr_vn).map(|r| match r {
+    opt::classify_stack_array(graph, anchor_output, stack_ptr_vn).map(|r| match r {
         opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
         opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),
         opt::BranchResolution::Multiple(ts) => ResolvedTargets::Multiple(ts),

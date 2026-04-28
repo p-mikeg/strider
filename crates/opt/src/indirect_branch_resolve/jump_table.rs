@@ -45,7 +45,7 @@ use std::collections::HashSet;
 
 use super::BranchResolution;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use ir::{Graph, IntBinaryOp, IntCmpOp};
+use ir::{BuiltFunctionGraph, Graph, IntBinaryOp, IntCmpOp};
 use crate::ReadOnlyMemory;
 use rsleigh::VnSpace;
 
@@ -73,16 +73,17 @@ const MAX_TABLE_ENTRIES: u64 = 4096;
 /// case a future refactor needs it.
 #[must_use]
 pub fn classify_jump_table(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<BranchResolution> {
+    let graph = &fg.graph;
     // Step 1: structural shape match.  `match_jump_table_shape`
     // returns the `idx` value and the `(base, stride, space)` triple
     // — everything we need to enumerate entries.  Falls through to
     // None for every shape that isn't an honest jump-table dispatch.
-    let shape = match_jump_table_shape(graph, anchor_output)?;
+    let shape = match_jump_table_shape(fg, anchor_output)?;
 
     // Step 2: bound the index.  Two strategies, tried in order:
     //   (a) KnownBits — purely structural inspection of the IR;
@@ -164,12 +165,15 @@ struct JumpTableShape {
 /// handle that one if it were a dispatch target) — returns None and
 /// defers to whatever later arms exist.
 fn match_jump_table_shape(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
 ) -> Option<JumpTableShape> {
+    let graph = &fg.graph;
     // The producer must be a Load.  classify.rs already routes here
     // only on Load, but we re-check defensively so this function is
-    // testable in isolation.
+    // testable in isolation.  We pull `space` and `entry_size` off the
+    // matched node up-front; the pattern-DSL match below then handles
+    // the structural shape only.
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(space) = *graph.node_kind(load_node) else {
         return None;
@@ -182,75 +186,46 @@ fn match_jump_table_shape(
     }
     let entry_size = ty.byte_size();
 
-    // Load inputs: [memory_token, addr].
-    let load_inputs: Vec<NodeOutputId> = graph.node_inputs(load_node).into_iter().collect();
-    let addr_output = *load_inputs.get(1)?;
+    // CORRECTNESS — pattern-DSL form is sound-equivalent to the four
+    // hand-written commutativity cases the prior version expanded:
+    // `pattern::add` and `pattern::mul` are auto-commutative, so the
+    // single `load().addr(add(any_int_const(base), mul(var(idx),
+    // any_int_const(stride))))` pattern matches all four operand
+    // orderings of `(base + idx*stride)` without an explicit fallback
+    // chain.  `any_int_const(IntVar)` guarantees the captured side is
+    // an `IntConst` node and binds the literal value to the `IntVar`,
+    // so on a successful match `idx_output` is necessarily the *other*
+    // operand of the multiplication — the same disambiguation the
+    // prior `extract_base_and_mul` performed by trying `int_const_val`
+    // on each `mul` operand in turn.
+    use pattern::{IntVar, Matcher, Var, add, any_int_const, load, mul, var};
+    let base_var = IntVar::new();
+    let stride_var = IntVar::new();
+    let idx_var = Var::new();
+    let pat = load().addr(add(
+        any_int_const(base_var),
+        mul(var(idx_var), any_int_const(stride_var)),
+    ));
+    let m = Matcher::new(fg).match_at(load_node, &pat.into())?;
 
-    // The address must be IntAdd(...).
-    let add_node = graph.get_node_from_output(addr_output);
-    if !matches!(
-        graph.node_kind(add_node),
-        NodeKind::IntBinaryOp(IntBinaryOp::Add)
-    ) {
-        return None;
-    }
-    let [add_lhs, add_rhs] = graph.node_inputs_exact::<2>(add_node).ok()?;
+    // CORRECTNESS — `IntVar` capture stores the constant value as
+    // `u128`; the prior code returned `u64` for both `base` and
+    // `stride` via `int_const_val`, which itself truncates to `u64`.
+    // We mirror the truncation here.  Real jump-table bases /
+    // strides fit in `u64` on every supported arch.
+    #[allow(clippy::cast_possible_truncation)]
+    let base = m.get_int(base_var)? as u64;
+    #[allow(clippy::cast_possible_truncation)]
+    let stride = m.get_int(stride_var)? as u64;
+    let idx_output = m.get(idx_var)?;
 
-    // Try both operand orderings: (const, mul) and (mul, const).
-    // `extract_base_and_mul` returns Some when one operand is a
-    // const-typed IntConst and the other is an IntMul we can crack
-    // open.
-    extract_base_and_mul(graph, add_lhs, add_rhs, entry_size, space)
-        .or_else(|| extract_base_and_mul(graph, add_rhs, add_lhs, entry_size, space))
-}
-
-/// Helper for [`match_jump_table_shape`]: tries to interpret
-/// `(base_candidate, mul_candidate)` as `(IntConst(base),
-/// IntMul(idx, IntConst(stride)))` — accepting both orderings inside
-/// the multiplication too.  Returns None on any structural mismatch.
-fn extract_base_and_mul(
-    graph: &Graph,
-    base_candidate: NodeOutputId,
-    mul_candidate: NodeOutputId,
-    entry_size: usize,
-    space: VnSpace,
-) -> Option<JumpTableShape> {
-    // The base side must be an IntConst — otherwise we can't pin
-    // `table[0]`'s address and rom-reading is impossible.
-    let base = graph.int_const_val(base_candidate)?;
-
-    // The mul side must be an IntMul of (idx, IntConst(stride)) in
-    // either order.
-    let mul_node = graph.get_node_from_output(mul_candidate);
-    if !matches!(
-        graph.node_kind(mul_node),
-        NodeKind::IntBinaryOp(IntBinaryOp::Mul)
-    ) {
-        return None;
-    }
-    let [mul_lhs, mul_rhs] = graph.node_inputs_exact::<2>(mul_node).ok()?;
-
-    // (idx, IntConst(stride))
-    if let Some(stride) = graph.int_const_val(mul_rhs) {
-        return Some(JumpTableShape {
-            base,
-            stride,
-            idx_output: mul_lhs,
-            entry_size,
-            space,
-        });
-    }
-    // (IntConst(stride), idx)
-    if let Some(stride) = graph.int_const_val(mul_lhs) {
-        return Some(JumpTableShape {
-            base,
-            stride,
-            idx_output: mul_rhs,
-            entry_size,
-            space,
-        });
-    }
-    None
+    Some(JumpTableShape {
+        base,
+        stride,
+        idx_output,
+        entry_size,
+        space,
+    })
 }
 
 // ── Bound via KnownBits ──────────────────────────────────────────────────────
@@ -864,7 +839,7 @@ mod tests {
         // load (non-const) so the shape match's stride-vs-idx
         // disambiguation is exercised cleanly.
         let (g, anchor) = build_jt_load(0x4000, 4, false, false, build_non_const_idx);
-        let shape = match_jump_table_shape(&g.graph, anchor).expect("must match");
+        let shape = match_jump_table_shape(&g, anchor).expect("must match");
         assert_eq!(shape.base, 0x4000);
         assert_eq!(shape.stride, 4);
         assert_eq!(shape.entry_size, 4);
@@ -875,7 +850,7 @@ mod tests {
         // IntAdd(IntMul(idx, stride), IntConst(base)) — base on the
         // right.  match-shape must try both orderings.
         let (g, anchor) = build_jt_load(0x5000, 4, true, false, build_non_const_idx);
-        let shape = match_jump_table_shape(&g.graph, anchor).expect("must match commuted add");
+        let shape = match_jump_table_shape(&g, anchor).expect("must match commuted add");
         assert_eq!(shape.base, 0x5000);
         assert_eq!(shape.stride, 4);
     }
@@ -885,7 +860,7 @@ mod tests {
         // IntMul(IntConst(stride), idx) — stride on the left of the
         // multiplication.
         let (g, anchor) = build_jt_load(0x6000, 8, false, true, build_non_const_idx);
-        let shape = match_jump_table_shape(&g.graph, anchor).expect("must match commuted mul");
+        let shape = match_jump_table_shape(&g, anchor).expect("must match commuted mul");
         assert_eq!(shape.base, 0x6000);
         assert_eq!(shape.stride, 8);
     }
@@ -894,7 +869,7 @@ mod tests {
     fn match_jump_table_shape_recognises_both_commutations() {
         // Both add and mul commuted — the worst-case ordering.
         let (g, anchor) = build_jt_load(0x7000, 4, true, true, build_non_const_idx);
-        let shape = match_jump_table_shape(&g.graph, anchor).expect("must match both commuted");
+        let shape = match_jump_table_shape(&g, anchor).expect("must match both commuted");
         assert_eq!(shape.base, 0x7000);
         assert_eq!(shape.stride, 4);
     }
@@ -903,7 +878,7 @@ mod tests {
     fn match_jump_table_shape_rejects_non_load_producer() {
         // Anchor is a raw IntConst, not a Load.  Reject.
         let (g, anchor) = build_with_anchor(|fb| fb.build_int_const(0x1000u64, NodeOutputType::U32));
-        assert!(match_jump_table_shape(&g.graph, anchor).is_none());
+        assert!(match_jump_table_shape(&g, anchor).is_none());
     }
 
     #[test]
@@ -914,7 +889,7 @@ mod tests {
             let addr = fb.build_int_const(0x1234u64, NodeOutputType::U32);
             fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
         });
-        assert!(match_jump_table_shape(&g.graph, anchor).is_none());
+        assert!(match_jump_table_shape(&g, anchor).is_none());
     }
 
     #[test]
@@ -939,7 +914,7 @@ mod tests {
                 .expect("add");
             fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
         });
-        assert!(match_jump_table_shape(&g.graph, anchor).is_none());
+        assert!(match_jump_table_shape(&g, anchor).is_none());
     }
 
     // ── Bound-via-known-bits tests ───────────────────────────────────────────
@@ -1096,7 +1071,7 @@ mod tests {
             entries: vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
             size: 4,
         };
-        let result = classify_jump_table(&g.graph, anchor, Some(&rom), None);
+        let result = classify_jump_table(&g, anchor, Some(&rom), None);
         match result {
             Some(BranchResolution::Multiple(ts)) => {
                 assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -1126,7 +1101,7 @@ mod tests {
                 .expect("add");
             fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
         });
-        let result = classify_jump_table(&g.graph, anchor, None, None);
+        let result = classify_jump_table(&g, anchor, None, None);
         assert_eq!(result, None);
     }
 
@@ -1156,7 +1131,7 @@ mod tests {
             entries: vec![0x10, 0x20, 0x30, 0x40],
             size: 4,
         };
-        let result = classify_jump_table(&g.graph, anchor, Some(&rom), None);
+        let result = classify_jump_table(&g, anchor, Some(&rom), None);
         assert_eq!(result, None);
     }
 

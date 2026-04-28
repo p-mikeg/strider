@@ -34,7 +34,7 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    opt::classify_anchor(&graph.graph, anchor_output, link_register_vn).map(from_opt)
+    opt::classify_anchor(graph, anchor_output, link_register_vn).map(from_opt)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -47,7 +47,7 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
-    opt::classify_anchor_with_rom(&graph.graph, anchor_output, link_register_vn, rom)
+    opt::classify_anchor_with_rom(graph, anchor_output, link_register_vn, rom)
         .map(from_opt)
 }
 
@@ -64,7 +64,7 @@ pub fn classify_anchor_with_rom_and_sp(
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
     opt::classify_anchor_with_rom_and_sp(
-        &graph.graph,
+        graph,
         anchor_output,
         link_register_vn,
         rom,

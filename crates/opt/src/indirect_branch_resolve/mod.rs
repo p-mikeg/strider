@@ -192,17 +192,26 @@ impl Optimizer for IndirectBranchResolve {
     fn optimize(
         &self,
         graph: &mut Graph,
-        _entry: NodeId,
+        entry: NodeId,
     ) -> Result<OptimizationResult> {
         let mut changed = false;
         for (_addr, anchor_output) in &self.unresolved_anchors {
-            let resolved_opt = classify::classify_anchor_with_rom_and_sp(
-                graph,
-                *anchor_output,
-                self.link_register_vn,
-                self.rom.as_deref(),
-                self.stack_ptr_vn,
-            );
+            // Phase 5 — `classify_anchor_with_rom_and_sp` now takes
+            // `&BuiltFunctionGraph` so it can drive `pattern::Matcher`
+            // for the jump-table and stack-array shape matches.  The
+            // pass owns only `&mut Graph`, so we wrap each call via
+            // `with_built` (read-only access — the classifier itself
+            // never mutates the graph; the in-place editors below run
+            // on the restored `&mut Graph`).
+            let resolved_opt = crate::pipeline::with_built(graph, entry, |fg| {
+                classify::classify_anchor_with_rom_and_sp(
+                    fg,
+                    *anchor_output,
+                    self.link_register_vn,
+                    self.rom.as_deref(),
+                    self.stack_ptr_vn,
+                )
+            });
             let Some(resolved) = resolved_opt else {
                 continue;
             };
