@@ -63,6 +63,14 @@ impl Strider {
         &self.calling_convention
     }
 
+    /// Returns the [`crate::SleighArch`] this Strider was built with.
+    /// Used by the strider-level fixed-point orchestrator to thread
+    /// the arch's endianness through per-iteration CFG rebuilds.
+    #[must_use]
+    pub fn arch(&self) -> &crate::SleighArch {
+        &self.arch
+    }
+
     /// Builds an optimizer pipeline containing the default passes plus the
     /// convention-aware stack-argument passes:
     ///

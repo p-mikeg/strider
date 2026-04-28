@@ -1,6 +1,10 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use opt::ReadOnlyMemory;
+
+use crate::cfg::builder::ResolvedTargets;
+use crate::cfg::types::PcodeInsnAddr;
 
 /// Configuration that governs how [`crate::cfg::Builder`] builds the CFG.
 ///
@@ -38,6 +42,16 @@ pub struct Options {
     /// stored in jump tables / read-only globals resolve.  `None`
     /// disables that step.
     pub(super) read_only_memory: Option<Arc<dyn ReadOnlyMemory>>,
+    /// Pre-classified `BranchIndirect` results to thread back into the
+    /// CFG build.  When the cfg builder encounters a `BranchIndirect`
+    /// at one of these pcode addresses, it skips tier 1's mini-graph
+    /// resolver and uses the cached classification directly — this is
+    /// the feedback loop the strider fixed-point orchestrator
+    /// (R3.6) uses to wire tier-2 results into a CFG rebuild.
+    ///
+    /// Default is empty (no known targets).  Populated by the
+    /// orchestrator via [`super::Builder::with_known_targets`].
+    pub(super) known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
 }
 
 // Manual `Debug` impl: `dyn ReadOnlyMemory` doesn't implement `Debug`,
@@ -50,6 +64,7 @@ impl std::fmt::Debug for Options {
             .field("allow_code_before_start_addr", &self.allow_code_before_start_addr)
             .field("link_register_vn", &self.link_register_vn)
             .field("read_only_memory", &self.read_only_memory.as_ref().map(|_| "<rom>"))
+            .field("known_targets", &self.known_targets)
             .finish()
     }
 }
@@ -65,6 +80,7 @@ impl PartialEq for Options {
         self.fn_max_size == other.fn_max_size
             && self.allow_code_before_start_addr == other.allow_code_before_start_addr
             && self.link_register_vn == other.link_register_vn
+            && self.known_targets == other.known_targets
             && match (&self.read_only_memory, &other.read_only_memory) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),

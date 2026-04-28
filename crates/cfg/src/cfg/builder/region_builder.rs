@@ -338,19 +338,31 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // remains a non-terminator opcode handled by the IR
                 // layer.  See plan
                 // `2026-04-27-indirect-branch-resolution.md` Phase 5.
+                //
+                // R3.6 feedback path: if `known_targets` has an entry
+                // for `addr`, use it directly — tier 2 from a prior
+                // iteration already classified this branch and we'd
+                // re-derive the same answer.  Hot-path on second-and-
+                // later iterations of the strider fixed-point loop.
                 let target_vn = *insn
                     .inputs
                     .first()
                     .ok_or(ErrorKind::MissingBranchTarget(addr))?;
-                let resolved = super::indirect_resolve::resolve_indirect_target(
-                    &self.insns,
-                    target_vn,
-                    &self.builder.sleigh,
-                    self.builder.options.link_register_vn,
-                    self.builder.options.read_only_memory.as_deref(),
-                    addr,
-                    self.builder.endianness,
-                )?;
+                let resolved = if let Some(cached) =
+                    self.builder.options.known_targets.get(&addr).cloned()
+                {
+                    Some(cached)
+                } else {
+                    super::indirect_resolve::resolve_indirect_target(
+                        &self.insns,
+                        target_vn,
+                        &self.builder.sleigh,
+                        self.builder.options.link_register_vn,
+                        self.builder.options.read_only_memory.as_deref(),
+                        addr,
+                        self.builder.endianness,
+                    )?
+                };
                 // R1.3: tier-1 None means "I can't classify this from
                 // the current region's pcode alone" — defer to the
                 // strider-level outer loop.  Stamp `target_vn` and
@@ -398,14 +410,43 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                             ));
                         }
                     }
-                    super::indirect_resolve::ResolvedTargets::Multiple(_) => {
-                        // Reserved for the future jump-table resolver;
-                        // not produced this round.  Surface as
-                        // unresolved so callers see a real error rather
-                        // than a silent miscompilation.
-                        return Err(
-                            ErrorKind::UnresolvedIndirectBranch(addr).into()
-                        );
+                    super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
+                        // Tier-2 (or R4 jump-table classifier) has
+                        // resolved this BranchIndirect to N
+                        // statically-known targets.  Each target gets
+                        // its own intra-fn `Branch` edge; the region
+                        // terminator is `Switch { targets }`.
+                        //
+                        // If any target lies outside the function
+                        // range, surface as unresolved — `Multiple`
+                        // doesn't have a per-target tail-call escape.
+                        // (Future: refine to mixed Branch/TailCall.)
+                        for target in &targets {
+                            let target_addr = PcodeInsnAddr {
+                                machine_addr: MachineInsnAddr { addr: *target },
+                                insn_index: 0,
+                            };
+                            if self.is_branch_tail_call(target_addr)? {
+                                return Err(
+                                    ErrorKind::UnresolvedIndirectBranch(addr).into(),
+                                );
+                            }
+                        }
+                        let region = self.finish_current_region(
+                            RegionTerminator::Switch {
+                                targets: targets.clone(),
+                            },
+                        )?;
+                        for target in targets {
+                            let target_addr = PcodeInsnAddr {
+                                machine_addr: MachineInsnAddr { addr: target },
+                                insn_index: 0,
+                            };
+                            self.builder.work_queue.push((
+                                Some((region, RegionEdgeKind::Branch)),
+                                target_addr,
+                            ));
+                        }
                     }
                 }
                 Ok(ProcessInsnRes::FinishedProcessing)

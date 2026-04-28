@@ -50,7 +50,15 @@ use opt::ReadOnlyMemory;
 use crate::cfg::types::{PcodeInsnAddr, RegionInstruction};
 use crate::error::Result;
 
+// Promoted to `pub` so the cfg crate's top-level re-export
+// (`pub use cfg::ResolvedTargets`) makes the enum part of the public
+// API that the strider orchestrator can use.
+
 /// The set of statically-known targets of a single `BranchIndirect`.
+///
+/// Exposed publicly via `cfg::ResolvedTargets` so the strider
+/// fixed-point orchestrator can construct `known_targets` maps and
+/// thread them back into [`crate::Builder::with_known_targets`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTargets {
     /// Target value is the function-entry value of the calling

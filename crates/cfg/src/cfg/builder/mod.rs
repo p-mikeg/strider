@@ -7,9 +7,11 @@ pub use indirect_resolve::test_api as indirect_resolve_test_api;
 #[doc(hidden)]
 pub use region_builder::test_api as region_builder_test_api;
 
+pub use indirect_resolve::ResolvedTargets;
+
 use region_builder::RegionBuilder;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use petgraph::graph::NodeIndex;
 
@@ -172,6 +174,28 @@ impl<R: rsleigh::MemReader> Builder<R> {
             RegionBuilder::new(self, addr, parent_region).build()?;
         }
         Ok(())
+    }
+
+    /// Threads tier-2 results back into the CFG build.
+    ///
+    /// When the builder encounters a `BranchIndirect` whose pcode
+    /// address is in `known_targets`, it uses the cached classification
+    /// directly instead of invoking tier 1's mini-graph resolver.
+    /// This is the strider fixed-point orchestrator's feedback path:
+    /// after tier 2 resolves an indirect branch, the next iteration's
+    /// CFG build reads the resolution from `known_targets` and emits
+    /// the appropriate `RegionTerminator` (`Branch` / `TailCall` /
+    /// `Switch` / `Return`) directly — no re-resolution overhead.
+    ///
+    /// Replaces any previous `known_targets` set on this builder.
+    /// Pass an empty map to clear.
+    #[must_use]
+    pub fn with_known_targets(
+        mut self,
+        known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
+    ) -> Self {
+        self.options.known_targets = known_targets;
+        self
     }
 
     /// Builds and returns the completed [`Cfg`].
