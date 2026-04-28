@@ -569,7 +569,15 @@ impl Fingerprint {
 }
 ```
 
-Storage: `Graph::fingerprints: HashMap<NodeId, Fingerprint>` — side-table, same pattern as `stack_phi_offsets` and `call_other_names`. Deliberately external to keep `Node` Copy/small.
+Storage: `Graph::fingerprints: cranelift_entity::SecondaryMap<NodeId, Fingerprint>` — side-table backed by a `Vec<Fingerprint>` indexed by the node-id integer.  This is the *dense*-side-table primitive cranelift-entity provides for entity-keyed storage where most entities have a value.
+
+Why `SecondaryMap` rather than `HashMap`:
+- **Dense access:** every value-producing node has a fingerprint, every fold creates one with a fingerprint — the entire IR is covered. `HashMap`'s bucketing overhead is wasted on dense data.
+- **O(1) without hashing:** `SecondaryMap::get(NodeId)` is a `Vec` index, not a hash lookup.
+- **Default-on-miss:** unset keys return `Default::default()` (an empty `Fingerprint`), which is the semantics we want for synthetic test nodes that don't go through the lift path.
+- **Memory:** O(max_node_id × sizeof(Fingerprint)) with the `Vec` backing.  For `SmallVec<[PcodeInsnAddr; 4]>` the per-entity inline cost is ~32 bytes — much tighter than `HashMap`'s bucket overhead for thousands of nodes.
+
+The existing sparse side-tables (`stack_phi_offsets`, `call_other_names`) keep their `HashMap` — they're keyed by `NodeId` but only specific kinds of nodes (StackStorePhi, CallOther) have entries.  Different access patterns warrant different storage primitives.
 
 ## Lift-site population
 
@@ -699,7 +707,7 @@ This is the largest tier of tests because the contract spans every site.
 - **Q3 — F4 trace capture format:** **pure data structures.** No `tracing` crate adapter.
 - **Q4 — F5 pass placement:** **after `StackLoadForward`, before `RedundantPhis`** in the stable subset.  Implementer free to override if a different order proves necessary during integration.
 - **Q5 — F6 rewriter API:** **constants + input replacement only.**  No general `build_int_add` / `build_load` exposed in the rewriter façade; users compose via `pattern::rewrite_rule(lhs, rhs)` + the pattern crate's existing builder constructors.
-- **Q6 — F1 fingerprint storage:** **side-table** `HashMap<NodeId, Fingerprint>` on `Graph`.  Matches `stack_phi_offsets` precedent; keeps `Node` Copy/small.
+- **Q6 — F1 fingerprint storage:** **side-table** as `cranelift_entity::SecondaryMap<NodeId, Fingerprint>` on `Graph` (NOT `HashMap`).  Fingerprints are dense (every value-producing node has one); `SecondaryMap`'s `Vec`-backed storage gives O(1) get/set with no hashing overhead and tight memory for dense data.  Existing sparse side-tables (`stack_phi_offsets`, `call_other_names`) keep their `HashMap` because their access pattern is sparse — different optimal data structure for different access patterns.  Keeps `Node` Copy/small either way.
 - **Q7 — Phase parallelism:** **parallel.**  Phase 2 dispatches F3 + F4 + F7 as 3 simultaneous subagents.  Phase 3 dispatches F5 + F6 as 2 simultaneous subagents.
 
 ---
