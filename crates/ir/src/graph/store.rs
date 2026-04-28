@@ -9,8 +9,8 @@
 use smallvec::SmallVec;
 
 use crate::node::{
-    Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeKind, NodeOutput, NodeOutputId,
-    NodeOutputIdList, NodeOutputKind,
+    Fingerprint, Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeKind, NodeOutput,
+    NodeOutputId, NodeOutputIdList, NodeOutputKind,
 };
 
 use super::Graph;
@@ -63,6 +63,12 @@ impl Graph {
     ///
     /// The inputs are recorded as [`NodeInput`] entries and added to the
     /// use-list of each referenced output so that consumers can be iterated.
+    ///
+    /// F1 provenance: the new node's [`Fingerprint`] is auto-merged from the
+    /// input producers' fingerprints, so most call sites get correct
+    /// provenance with zero source changes.  Lift sites that need to seed
+    /// the per-pcode-insn address (and constant-fold rules whose replacement
+    /// nodes have no inputs) override via [`Graph::set_fingerprint`].
     pub fn create_node(
         &mut self,
         kind: NodeKind,
@@ -72,6 +78,22 @@ impl Graph {
         let inputs: SmallVec<[NodeOutputId; 4]> = inputs.into_iter().collect();
         let output_kinds: SmallVec<[NodeOutputKind; 4]> = output_kinds.into_iter().collect();
         let node = Node::new(kind);
+
+        // F1: pre-compute the merged input fingerprint BEFORE the cache hit
+        // check so cache-hits and fresh nodes share the same propagation
+        // contract.  For a cache hit, an identical (kind, inputs, output_kinds)
+        // already exists, so its fingerprint is necessarily a superset of (or
+        // equal to) the merge — which is what we want; the cached node carries
+        // the full provenance from the first construction.
+        //
+        // CORRECTNESS: cache lookup happens against (kind, inputs,
+        // output_kinds), not fingerprint.  Two structurally identical creates
+        // dedup; the fingerprint merge below would be the same.
+        let merged_fp = Fingerprint::merge_many(
+            inputs
+                .iter()
+                .map(|out| self.fingerprint_of(self.get_node_from_output(*out))),
+        );
 
         // Build the cache key only for cacheable kinds; otherwise the two
         // `Vec`s would be allocated and discarded on every call.
@@ -114,7 +136,34 @@ impl Graph {
         // Update the node state
         self.nodes[node_id].inputs = NodeInputIdList::from_iter(inputs, &mut self.input_pool);
         self.nodes[node_id].outputs = NodeOutputIdList::from_iter(outputs, &mut self.output_pool);
+
+        // F1: install the auto-merged input fingerprint.  Lift sites or
+        // fold-rule overrides may replace this via set_fingerprint.
+        self.fingerprints[node_id] = merged_fp;
         node_id
+    }
+
+    /// Returns the [`Fingerprint`] associated with `node_id`.
+    ///
+    /// Nodes that never had an explicit fingerprint set return the default
+    /// (empty) fingerprint without panicking — synthetic test nodes and
+    /// graphs built before fingerprint plumbing both rely on this.
+    #[inline]
+    #[must_use]
+    pub fn fingerprint_of(&self, node_id: NodeId) -> &Fingerprint {
+        &self.fingerprints[node_id]
+    }
+
+    /// Replaces the [`Fingerprint`] for `node_id` with `fp`.
+    ///
+    /// Used at lift sites to seed the originating pcode address and by
+    /// fold rules whose replacement nodes have no inputs (constant-fold
+    /// of `Add(IntConst(a), IntConst(b))` to `IntConst(a+b)`, where the
+    /// auto-merge yields the empty fingerprint and the rule must inherit
+    /// the OLD node's provenance instead).
+    #[inline]
+    pub fn set_fingerprint(&mut self, node_id: NodeId, fp: Fingerprint) {
+        self.fingerprints[node_id] = fp;
     }
 
     /// Removes `node_id` from the dedup cache (using its *current* inputs and

@@ -970,3 +970,84 @@ fn node_input_id_at_returns_error_on_out_of_bounds() {
     assert_eq!(*index, 0);
     assert_eq!(*len, 0);
 }
+
+// ── F1 fingerprint side-table tests ─────────────────────────────────────────
+
+#[test]
+fn create_node_with_no_inputs_uses_empty_fingerprint() {
+    // A leaf node (no inputs, no explicit override) starts with the empty
+    // fingerprint.  Lift sites override this via set_fingerprint with the
+    // pcode address that constructed the node.
+    let mut graph = Graph::new();
+    let id = graph.create_node(
+        NodeKind::IntConst(42),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    assert!(graph.fingerprint_of(id).is_empty());
+}
+
+#[test]
+fn fingerprint_of_unknown_node_returns_default() {
+    // Querying a NodeId that was never given an explicit fingerprint must
+    // return the default (empty) without panicking — synthetic test nodes
+    // and nodes built before fingerprint plumbing both rely on this.
+    let mut graph = Graph::new();
+    let id = graph.create_node(
+        NodeKind::Entry,
+        [],
+        [NodeOutputKind::Control],
+    );
+    let fp = graph.fingerprint_of(id);
+    assert!(fp.is_empty());
+}
+
+#[test]
+fn set_fingerprint_overrides_default() {
+    // After set_fingerprint, fingerprint_of returns the new value.  Used by
+    // fold rules whose replacement nodes have no inputs (constant folds).
+    let mut graph = Graph::new();
+    let id = graph.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let addr = crate::PcodeInsnAddr::new(0x1000, 0);
+    graph.set_fingerprint(id, crate::Fingerprint::from_single(addr));
+    assert!(graph.fingerprint_of(id).contains(addr));
+    assert_eq!(graph.fingerprint_of(id).len(), 1);
+}
+
+#[test]
+fn create_node_auto_merges_input_fingerprints() {
+    // When a new node has inputs, its fingerprint is the union of every
+    // input's producer's fingerprint.  This is what makes most existing
+    // create_node call sites get correct provenance with zero source
+    // changes.
+    let mut graph = Graph::new();
+    let a_addr = crate::PcodeInsnAddr::new(0x1000, 0);
+    let b_addr = crate::PcodeInsnAddr::new(0x1004, 0);
+    let a = graph.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    graph.set_fingerprint(a, crate::Fingerprint::from_single(a_addr));
+    let b = graph.create_node(
+        NodeKind::IntConst(2),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    graph.set_fingerprint(b, crate::Fingerprint::from_single(b_addr));
+    let a_out = graph.node_outputs_exact::<1>(a).expect("a out")[0];
+    let b_out = graph.node_outputs_exact::<1>(b).expect("b out")[0];
+    let sum = graph.create_node(
+        NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+        [a_out, b_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let fp = graph.fingerprint_of(sum);
+    assert!(fp.contains(a_addr), "merged FP must contain a_addr");
+    assert!(fp.contains(b_addr), "merged FP must contain b_addr");
+    assert_eq!(fp.len(), 2);
+}

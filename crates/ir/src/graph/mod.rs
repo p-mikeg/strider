@@ -13,9 +13,11 @@
 
 use std::collections::HashMap;
 
-use cranelift_entity::{ListPool, PrimaryMap};
+use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
-use crate::node::{Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind};
+use crate::node::{
+    Fingerprint, Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
+};
 
 mod access;
 mod store;
@@ -60,6 +62,12 @@ pub struct Graph {
     /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
     /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
     pub(crate) call_other_names: HashMap<NodeId, String>,
+    /// F1 provenance side-table: per-node [`Fingerprint`] recording which
+    /// pcode instructions contributed to each node.  Backed by
+    /// [`SecondaryMap`] (a `Vec` indexed by node-id integer) because every
+    /// value-producing node has a fingerprint — dense access pattern, O(1)
+    /// without hashing, and unset slots default to the empty fingerprint.
+    pub(crate) fingerprints: SecondaryMap<NodeId, Fingerprint>,
 }
 
 impl Default for Graph {
@@ -81,6 +89,7 @@ impl Graph {
             node_to_id: HashMap::new(),
             stack_phi_offsets: HashMap::new(),
             call_other_names: HashMap::new(),
+            fingerprints: SecondaryMap::new(),
         }
     }
 
