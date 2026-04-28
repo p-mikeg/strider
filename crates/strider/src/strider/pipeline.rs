@@ -340,42 +340,75 @@ impl Strider {
             // `UnresolvedIndirectBranch` need their final
             // `BranchIndirect` insn lifted via the placeholder path
             // — `handle_unresolved_indirect_branch` emits
-            // `Return(target_value)` instead of an ABI Return.  We
-            // detect this case once per region (cheap match on the
-            // terminator) and skip the BranchIndirect insn in the
-            // per-instruction loop, then lift it via the dedicated
-            // handler post-loop.  Other terminators use the existing
-            // per-instruction dispatch path unchanged.
-            let unresolved_terminator =
-                if let cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } =
-                    &region.terminator
-                {
-                    Some((*target_vn, *addr))
-                } else {
-                    None
-                };
+            // `Return(target_value)` instead of an ABI Return.
+            //
+            // F7: regions whose terminator is `Switch` need their
+            // final `BranchIndirect` insn lifted via the If-ladder
+            // path — `handle_switch` emits N-1 chained
+            // `IntCmpOp::Equal + If` nodes against the resolved
+            // targets instead of a single Return.
+            //
+            // Both shapes detect the special case once per region
+            // (cheap match on the terminator) and skip the
+            // BranchIndirect insn in the per-instruction loop, then
+            // lift it via the dedicated handler post-loop.  Other
+            // terminators use the existing per-instruction dispatch
+            // path unchanged.
+            enum SpecialTerm {
+                Unresolved(rsleigh::Vn, cfg::PcodeInsnAddr),
+                Switch(rsleigh::Vn, Vec<u64>, Option<ir::Value>),
+            }
+            let special_terminator: Option<SpecialTerm> = match &region.terminator {
+                cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+                    Some(SpecialTerm::Unresolved(*target_vn, *addr))
+                }
+                cfg::RegionTerminator::Switch {
+                    target_vn,
+                    targets,
+                    target_value,
+                } => Some(SpecialTerm::Switch(
+                    *target_vn,
+                    targets.clone(),
+                    *target_value,
+                )),
+                _ => None,
+            };
             for wrapped_insn in &region.insns {
                 // Skip the offending BranchIndirect — it will be
-                // lifted as a placeholder Return below.  Every other
-                // pcode op in the region (incl. the load + sp_adjust
-                // a `pop pc` lifts to) still goes through the normal
-                // per-instruction dispatch so the optimiser sees the
-                // full computation graph.
-                if unresolved_terminator.is_some()
+                // lifted as a placeholder Return / If-ladder below.
+                // Every other pcode op in the region (incl. the
+                // load + sp_adjust a `pop pc` lifts to) still goes
+                // through the normal per-instruction dispatch so
+                // the optimiser sees the full computation graph.
+                if special_terminator.is_some()
                     && wrapped_insn.insn.opcode == rsleigh::Opcode::BranchIndirect
                 {
                     continue;
                 }
                 ir_strider.process_insn(node_idx, &wrapped_insn.insn, ir_region_of)?;
             }
-            if let Some((target_vn, addr)) = unresolved_terminator {
-                // Tier-2 anchor: lifts to `Return(target_value)` and
-                // pushes (addr, target_value) onto
-                // `unresolved_branches`.  Per the soft contract this
-                // is *not* an error; the strider-level outer loop
-                // raises `UnresolvedIndirectBranch` only at fixed
-                // point if tier 2 still can't classify.
-                ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
+            match special_terminator {
+                Some(SpecialTerm::Unresolved(target_vn, addr)) => {
+                    // Tier-2 anchor: lifts to `Return(target_value)`
+                    // and pushes (addr, target_value) onto
+                    // `unresolved_branches`.  Per the soft contract
+                    // this is *not* an error; the strider-level
+                    // outer loop raises `UnresolvedIndirectBranch`
+                    // only at fixed point if tier 2 still can't
+                    // classify.
+                    ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                }
+                Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
+                    // F7: jump-table dispatch — emit the If-ladder.
+                    ir_strider.handle_switch(
+                        node_idx,
+                        &target_vn,
+                        &targets,
+                        target_value,
+                        &ir_region_of,
+                    )?;
+                }
+                None => {}
             }
         }
 

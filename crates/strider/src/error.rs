@@ -99,6 +99,24 @@ pub enum ErrorKind {
     /// can correlate with the disassembly.
     #[error("indirect branch at {0:?} could not be resolved at fixed point")]
     UnresolvedIndirectBranch(cfg::PcodeInsnAddr),
+
+    /// F7: a `RegionTerminator::Switch` was constructed with an
+    /// empty `targets` list.  Defensive — the cfg builder rejects
+    /// `Multiple([])` upstream (tier-2's classifier returns `None`
+    /// for a zero-target jump table), so a Switch reaching strider
+    /// always has at least one target.  Surfaces as a typed error
+    /// rather than a panic to preserve the no-panic contract.
+    #[error("switch terminator at region {0:?} has no targets")]
+    SwitchHasNoTargets(cfg::RegionId),
+
+    /// F7: a `RegionTerminator::Switch` target machine address has
+    /// no corresponding CFG region.  Defensive — the cfg builder
+    /// enqueues each target for exploration as it constructs the
+    /// Switch, so by lift time every target is the start of a
+    /// region.  Surfaces as a typed error so a malformed CFG
+    /// doesn't crash the lifter.
+    #[error("switch target machine address {0:#x} has no CFG region")]
+    SwitchTargetMissing(u64),
 }
 
 strider_error::define_error! {
