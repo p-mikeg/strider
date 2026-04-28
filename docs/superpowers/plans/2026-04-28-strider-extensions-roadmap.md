@@ -824,6 +824,34 @@ This is the largest tier of tests because the contract spans every site.
 | F1 fingerprint storage cost dominates large functions | Phase 4 | `SmallVec<[PcodeInsnAddr; 4]>` keeps common case (≤ 4 ancestors) inline; benchmark on the largest fixture; if memory matters, switch to a bitset of region-relative IDs later. |
 | F1 missed `create_node` site silently leaves a node fingerprint-less | Phase 4 | A workspace-level integration test enumerates every node in a representative function and asserts non-empty fingerprint. |
 
+## Quick wins bundled per phase (W1–W11)
+
+Recent code carries small improvements that pair naturally with the 7-feature work — bundling them in the same phase that touches the same files keeps the diff coherent and avoids follow-up churn.  Each W is small enough to add ~5 minutes to its host phase.
+
+| # | Win | Bundle into | Effort | Notes |
+|---|---|---|---|---|
+| **W1** | Fix M3 — `extend_predecessors_with_handle` partial-update window | F1 | ~5 lines + 1 test | MEDIUM code-review finding deferred during R3-FIXUP.  Currently can't fire (cacheable check protects), but defensive hardening matters as F1 fingerprint plumbing touches the same code path.  Wrap the three mutation steps so a mid-call error rolls back instead of leaving phi arities mismatched.  Test: an artificial failure path (mock-injected) confirms rollback. |
+| **W2** | Consolidate `analyze_cfg` + `analyze_cfg_with_unresolved` into one canonical entry | F2 | ~30 lines | R1 added `analyze_cfg_with_unresolved` as a sibling and kept `analyze_cfg` as a back-compat shim.  F2 is rewriting the analyze entry anyway — pick one canonical name (recommendation: `analyze_cfg` returns `AnalyzeOutcome`, the with-unresolved variant goes away), update tests' call sites mechanically. |
+| **W3** | Promote `Cfg::region_id_at_start` from `pub(crate)`/`test_api` to `pub` | F5 | 1 line | G1-COMPLETE added it for cache invalidation as test-only.  F5 (move tier-2 to opt pass) needs cross-crate access from `opt` to `cfg`.  Promote now to avoid a future refactor that would break `pub` API consumers. |
+| **W4** | Drop `_machine_insn_addr_phantom_use` dead-code marker | F4 | 1 line | Code-review NIT.  Was a placeholder for future-rounds use that didn't materialize. |
+| **W5** | `OrchestratorConfig::make_sleigh: Box<dyn FnMut() -> Sleigh>` → owned `Sleigh<R>` | F2 | ~10 lines + caller updates | Sleigh-persistence agent kept `FnMut` for back-compat but the closure is now called exactly once.  Switching to owned `Sleigh<R>` directly signals the contract: caller constructs Sleigh, hands it over, orchestrator threads it.  Drops the closure indirection.  Caller updates: ~3 sites in tests. |
+| **W6** | Move `RegionIrCache` + `RegionIrEntry` + `LiftStats` into a dedicated `crates/strider/src/cache/` module | F1 | ~5 file moves, no logic change | `crates/strider/src/strider/ir_cache.rs` is 1190 lines and growing.  F1 fingerprint integration adds more cache-related types.  Better to give the cache its own subdirectory NOW before it grows further.  Module structure: `cache/{mod, entry, stats, lift, extend, invalidate}.rs`. |
+| **W7** | Split `tier2_helpers.rs` (879 lines) into focused submodules | F5 | mechanical file split | After F5 moves classify/inplace into opt, the helpers' relevance fragments.  Split into `tier2_helpers/{classify, inplace, orchestrator, cache}.rs` so each test file imports only what it needs. |
+| **W8** | Add `#[non_exhaustive]` to `OrchestratorStats` (and `IterationSnapshot` once F4 lands) | F4 | 1 line | F4 will add a field; without `#[non_exhaustive]`, downstream consumers' destructure-binds break with each new field.  Marking now signals "more fields incoming" and prevents that. |
+| **W9** | `RegionTerminator::Switch { target_vn, targets, target_value }` — also store the orchestrator's pinned `NodeOutputId` for the placeholder Return's target | F7 | ~15 lines | F7's `handle_switch` needs the index value.  Currently `target_vn` is re-read via `read_vn`.  The orchestrator already pinned the placeholder Return's `target_value` in `unresolved_branches`.  Wire it through Switch so handle_switch uses the cached `NodeOutputId` directly — saves a re-lookup and pins the soundness contract that the comparison value is the SAME value tier 2 classified. |
+| **W10** | `AnalyzeOutcome` gets a `Display` impl summarizing the analysis | F4 | ~20 lines + 1 test | Cheap diagnostic for users debugging "why didn't tier 2 resolve X" — print the unresolved-set count + iteration count + cfg-rebuild count.  Pairs naturally with F4's debug-config story. |
+| **W11** | `Cfg::sleigh` field doc clarifies "owned across analysis lifetime; threaded through orchestrator iterations" | F2 | doc-only | Sleigh-persistence agent left no doc; future readers will wonder why the field is public-by-value rather than private-with-accessor. |
+
+**Summary by phase:**
+- **F2 (Phase 1):** W2, W5, W11
+- **F4 (Phase 2):** W4, W8, W10
+- **F7 (Phase 2):** W9
+- **F5 (Phase 3):** W3, W7
+- **F1 (Phase 4):** W1, W6
+- **F3 (Phase 2) and F6 (Phase 3):** no Ws bundled
+
+Each phase's subagent dispatch instructions will explicitly name the Ws bundled into that phase as REQUIRED secondary deliverables.
+
 ## Decisions (Q1–Q7) — locked
 
 - **Q1 — F2 backward compat:** `build(self)` stays for downstream final-output use; **no `snapshot()` is added**.  Per the user's correction: the right design is to refactor `Optimizer::optimize` to take `&mut Graph` directly and never call `build()` during analysis.  See F2 for the cascading-trait-change details.
