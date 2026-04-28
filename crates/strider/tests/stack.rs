@@ -8,15 +8,12 @@ use common::*;
 per_arch_test!("stack", "volatile_three_writes", volatile_preserves_three_stores);
 // escape_via_ptr: BUG-12 (call elided) is fixed by an asm-volatile barrier
 // in external_take_ptr's body — see fixtures/cases/stack.c.
-// Phase 5's resolver replaces the legacy BranchIndirect→Return mapping;
-// arm `pop {pc}` (load + BranchIndirect) is unresolvable without stack-
-// load forwarding.  Tracked under BUG-5.
-per_arch_test!(
-    "stack", "escape_via_ptr", escape_has_stack_store_and_call,
-    ignore = {
-        Arm: "BUG-5 residue: arm `pop {pc}` lifts to load+BranchIndirect; resolver lacks stack-load-forward",
-    }
-);
+// BUG-5 (arm `pop {pc}` placeholder) is closed under the indirect-branch
+// fixed-point design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`):
+// tier 2's `LinkRegister` arm classifies the load-from-sp-then-bx pattern
+// once `StackLoadForward` simplifies the loaded target back to
+// `InitialVar(lr)`.
+per_arch_test!("stack", "escape_via_ptr", escape_has_stack_store_and_call);
 // large_local_array: BUG-13 (AArch64 U128 array-init constant) is fixed by
 // the IntConst u128 widening.  BUG-14 (ARM optimizer panic) is fixed
 // transitively by BUG-3's coerce-on-write at write_reg_vn (the panic was

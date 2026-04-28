@@ -20,19 +20,12 @@ per_arch_test!("control", "select_three",   select_three_has_two_ifs);
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
-// nested_loops: pre-Phase-5 BUG-5 fix collapsed BranchIndirect into
-// Return.  Phase 5's resolver replaces that mapping with a real
-// constant-target prover; ARM single-register `pop {pc}` lifts to
-// `load tmp = [sp]; BranchIndirect tmp`, which the resolver cannot
-// prove without stack-load forwarding.  Same root cause as
-// `tail_caller::arm` — see `crates/strider/tests/abi.rs`.  Tracked
-// under BUG-5.
-per_arch_test!(
-    "control", "nested_loops", nested_loops_has_two_loops,
-    ignore = {
-        Arm: "BUG-5 residue: arm `pop {pc}` lifts to load+BranchIndirect; resolver lacks stack-load-forward",
-    }
-);
+// nested_loops: BUG-5 closed under the indirect-branch fixed-point
+// design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`).
+// arm's `pop {pc}` resolves via tier 2's `LinkRegister` arm once
+// `StackLoadForward` simplifies the loaded target back to
+// `InitialVar(lr)`.
+per_arch_test!("control", "nested_loops", nested_loops_has_two_loops);
 // early_return: BUG-3 post-opt residue fixed by:
 //   1. write_reg_vn coercing val to reg's declared int type at the simple
 //      `container == reg` write path (so 1-byte flag registers don't smuggle
