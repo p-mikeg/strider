@@ -245,6 +245,15 @@ pub enum EditEvent {
         target: u64,
     },
     /// A structural rebuild's `known_targets` map gained an entry.
+    ///
+    /// **Trace ordering note (cr H1):** these events are captured at
+    /// **classification time**, not at the structural-rebuild apply
+    /// site that consumes them.  Within a single `IterationSnapshot`,
+    /// `KnownTargetUpdate` events therefore appear in the per-anchor
+    /// classification order, BEFORE any `LinkRegister` /
+    /// `TailCall` edit events for that iteration — even though
+    /// structurally the rebuild they correspond to happens later in
+    /// the iteration's loop body.  See [`run_with_stats`]'s docs.
     KnownTargetUpdate {
         /// Pcode address of the placeholder's `BranchIndirect`.
         addr: PcodeInsnAddr,
@@ -334,6 +343,27 @@ where
 /// Variant of [`run`] that also returns an [`OrchestratorStats`].
 /// Tests pin pipeline-tier / rebuild / in-place-edit counts via this
 /// entry point.
+///
+/// # Trace ordering (cr H1)
+///
+/// When [`OrchestratorConfig::debug`] enables tracing,
+/// `IterationSnapshot::edits_applied` is populated in two passes per
+/// iteration:
+///
+///   1. **Classification pass** — for each unresolved anchor whose
+///      classifier returns `Some(_)` and which is routed to a
+///      structural rebuild, an [`EditEvent::KnownTargetUpdate`] event
+///      is pushed BEFORE the rebuild fires.  The event records the
+///      classification at the moment it's enqueued for `next_known`.
+///   2. **In-place edit pass** — for each anchor routed to an
+///      in-place edit, an [`EditEvent::LinkRegister`] or
+///      [`EditEvent::TailCall`] event is pushed at the apply site.
+///
+/// As a result, within `edits_applied[i]`, `KnownTargetUpdate` events
+/// appear in classification order, BEFORE `LinkRegister` /
+/// `TailCall` events even though structurally the rebuild they
+/// correspond to happens later in the iteration.  Tests that pin trace
+/// ordering must respect this two-phase shape.
 ///
 /// # Errors
 ///
