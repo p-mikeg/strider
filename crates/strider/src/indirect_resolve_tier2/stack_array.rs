@@ -84,7 +84,17 @@ pub fn classify_stack_array(
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<ResolvedTargets> {
-    let shape = match_stack_array_shape(graph, anchor_output, stack_ptr_vn)?;
+    // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
+    // dispatch target via `IntBinaryOp(And)` with a constant mask
+    // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
+    // archs that interwork through the same idiom).  The Load at the
+    // dispatch site is the `lhs` of that And; we transparently look
+    // through the wrapper, run the rest of the classification on the
+    // underlying Load, and `& mask` each enumerated target before
+    // returning.  Non-And anchors take the path with `mask = !0`.
+    let (load_anchor, target_mask) = strip_target_mask(graph, anchor_output);
+
+    let shape = match_stack_array_shape(graph, load_anchor, stack_ptr_vn)?;
     let bound = bound_via_known_bits(graph, shape.idx_output)
         .or_else(|| bound_via_predecessor_if(graph, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
@@ -107,7 +117,8 @@ pub fn classify_stack_array(
         )?;
         let c = graph.int_const_val(value)?;
         #[allow(clippy::cast_possible_truncation)]
-        targets.push(c as u64);
+        let masked = (c as u64) & target_mask;
+        targets.push(masked);
     }
     targets.sort_unstable();
     targets.dedup();
@@ -116,6 +127,41 @@ pub fn classify_stack_array(
     } else {
         Some(ResolvedTargets::Multiple(targets))
     }
+}
+
+/// Strip a top-level `IntBinaryOp(And)` whose mask is a constant —
+/// returns the underlying value-output and the (u64-truncated) mask.
+/// When the anchor isn't an `And`, returns `(anchor_output, !0u64)` so
+/// the caller's masking step is a no-op.
+///
+/// Soundness: the mask is applied bit-wise to each enumerated
+/// IntConst stored value.  When the mask clears LSBs (e.g. ARM
+/// interworking's `& 0xFFFFFFFE`) the caller's `Multiple` enumerates
+/// the correct dispatch addresses; runtime targets are precisely the
+/// addresses the program would jump to.  When the mask clears more
+/// bits than the architecture's interworking idiom, the resulting
+/// addresses may not be valid — but that's a soundness-preserving
+/// over-approximation: extra targets produce dead CFG edges, no
+/// runtime target is omitted.
+fn strip_target_mask(
+    graph: &BuiltFunctionGraph,
+    anchor_output: NodeOutputId,
+) -> (NodeOutputId, u64) {
+    let producer = graph.graph.get_node_from_output(anchor_output);
+    if let NodeKind::IntBinaryOp(IntBinaryOp::And) = graph.graph.node_kind(producer) {
+        if let Ok([lhs, rhs]) = graph.graph.node_inputs_exact::<2>(producer) {
+            // Either operand may be the constant mask.
+            if let Some(m) = graph.int_const_val(rhs) {
+                #[allow(clippy::cast_possible_truncation)]
+                return (lhs, m as u64);
+            }
+            if let Some(m) = graph.int_const_val(lhs) {
+                #[allow(clippy::cast_possible_truncation)]
+                return (rhs, m as u64);
+            }
+        }
+    }
+    (anchor_output, !0u64)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -280,7 +326,7 @@ mod tests {
             [arg_val],
             [ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
-        let arg_u32_out = b.graph().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, NodeOutputType::U32);
         let masked = b
             .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::U32)
@@ -290,7 +336,7 @@ mod tests {
             [masked],
             [ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
-        let idx_u64_out = b.graph().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, NodeOutputType::U64);
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
