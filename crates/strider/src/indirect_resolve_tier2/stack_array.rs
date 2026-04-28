@@ -171,33 +171,61 @@ fn extract_sp_and_mul(
     else {
         return None;
     };
-    let mul_node = graph.graph.get_node_from_output(mul_candidate);
-    if !matches!(
-        graph.graph.node_kind(mul_node),
-        NodeKind::IntBinaryOp(IntBinaryOp::Mul)
-    ) {
-        return None;
+    let (idx_output, stride) = extract_idx_and_stride(graph, mul_candidate)?;
+    Some(StackArrayShape {
+        base_offset,
+        stride,
+        idx_output,
+        value_type,
+        mem_input,
+    })
+}
+
+/// Extract `(idx, stride)` from a node that scales an index value:
+///
+///   * `IntMul(idx, IntConst(stride))` — both operand orders.
+///   * `IntMul(IntConst(stride), idx)` — both operand orders.
+///   * `ShiftLeft(idx, IntConst(s))` — equivalent to `Mul(idx, 1 << s)`;
+///     emitted by aarch64 / arm / mips / ppc toolchains for power-of-two
+///     strides because those architectures have a single-cycle shift but
+///     a multi-cycle multiply.  The lifters expose this directly as
+///     `IntBinaryOp::ShiftLeft` so we recognise it here without
+///     requiring a `ConstantFold` pass to canonicalise the multiplier.
+///
+/// Soundness: `1 << s` can overflow u64 when `s >= 64`; reject those
+/// shifts (return None) rather than wrap.  The `MAX_TABLE_ENTRIES` cap
+/// in `classify_stack_array` makes very large strides unreachable in
+/// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
+/// lifter output should fail closed rather than wrap silently.
+fn extract_idx_and_stride(
+    graph: &BuiltFunctionGraph,
+    candidate: NodeOutputId,
+) -> Option<(NodeOutputId, u64)> {
+    let node = graph.graph.get_node_from_output(candidate);
+    match graph.graph.node_kind(node) {
+        NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
+            let [lhs, rhs] = graph.graph.node_inputs_exact::<2>(node).ok()?;
+            if let Some(stride) = graph.int_const_val(rhs) {
+                return Some((lhs, stride as u64));
+            }
+            if let Some(stride) = graph.int_const_val(lhs) {
+                return Some((rhs, stride as u64));
+            }
+            None
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
+            let [lhs, rhs] = graph.graph.node_inputs_exact::<2>(node).ok()?;
+            let s = graph.int_const_val(rhs)?;
+            if s >= 64 {
+                return None;
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let s32 = s as u32;
+            let stride = 1u64.checked_shl(s32)?;
+            Some((lhs, stride))
+        }
+        _ => None,
     }
-    let [mul_lhs, mul_rhs] = graph.graph.node_inputs_exact::<2>(mul_node).ok()?;
-    if let Some(stride) = graph.int_const_val(mul_rhs) {
-        return Some(StackArrayShape {
-            base_offset,
-            stride: stride as u64,
-            idx_output: mul_lhs,
-            value_type,
-            mem_input,
-        });
-    }
-    if let Some(stride) = graph.int_const_val(mul_lhs) {
-        return Some(StackArrayShape {
-            base_offset,
-            stride: stride as u64,
-            idx_output: mul_rhs,
-            value_type,
-            mem_input,
-        });
-    }
-    None
 }
 
 #[cfg(test)]
