@@ -22,9 +22,10 @@ pub use cfg::test_api::ResolvedTargets;
 
 mod classify;
 pub mod inplace;
+pub mod jump_table;
 pub mod orchestrator;
-// The jump-table extension lands in R4.
 
-pub use classify::classify_anchor;
+pub use classify::{classify_anchor, classify_anchor_with_rom};
 pub use inplace::{apply_link_register, apply_tail_call};
+pub use jump_table::classify_jump_table;
 pub use orchestrator::{run as run_orchestrator, OrchestratorConfig};

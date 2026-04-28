@@ -8,12 +8,20 @@
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId};
+use opt::ReadOnlyMemory;
+
+use super::jump_table::classify_jump_table;
 
 /// Classify a placeholder anchor's producer node into a
 /// [`ResolvedTargets`].  Returns `None` when the producer doesn't
 /// match any of the known sound shapes — the orchestrator (R3)
 /// interprets `None` as "still unresolved at this iteration; try
 /// again or surface as `UnresolvedIndirectBranch` at fixed point."
+///
+/// Equivalent to [`classify_anchor_with_rom`] with `rom == None`.
+/// The jump-table arm (R4) becomes a no-op in that case because
+/// reading table entries requires rodata access; for callers that
+/// have a rom, prefer the rom-aware form.
 ///
 /// `link_register_vn` is the calling convention's link register
 /// varnode (`None` on stack-push ABIs like x86 / x86_64 where there
@@ -38,6 +46,29 @@ pub fn classify_anchor(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
+) -> Option<ResolvedTargets> {
+    classify_anchor_with_rom(graph, anchor_output, link_register_vn, None)
+}
+
+/// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
+/// for the R4 jump-table arm.
+///
+/// Same contract as [`classify_anchor`] for every shape that
+/// doesn't require rom access; the only difference is the new
+/// `NodeKind::Load(_)` arm that pattern-matches the canonical
+/// jump-table dispatch shape and reads its table entries via `rom`.
+///
+/// Pass `rom = None` to disable the jump-table arm; otherwise pass
+/// the same rom the cfg builder + optimiser pipeline use (almost
+/// always the ELF's `.rodata` + `.text` view), so the entries the
+/// classifier reads agree with the entries downstream consumers
+/// see.
+#[must_use]
+pub fn classify_anchor_with_rom(
+    graph: &BuiltFunctionGraph,
+    anchor_output: NodeOutputId,
+    link_register_vn: Option<rsleigh::Vn>,
+    rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
     let producer_id = graph.graph.get_node_from_output(anchor_output);
     let kind = *graph.graph.node_kind(producer_id);
@@ -119,10 +150,23 @@ pub fn classify_anchor(
             targets.dedup();
             Some(ResolvedTargets::Multiple(targets))
         }
+        // R4: jump-table arm.  Producer is a Load — a candidate for
+        // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
+        // IntConst(stride))))` jump-table dispatch shape.  See
+        // `jump_table::classify_jump_table` for the full shape match,
+        // bound proof (KnownBits + predecessor-If walk), and entry
+        // read.  Falls through to None when (a) the shape doesn't
+        // match, (b) the index can't be bounded, or (c) any table
+        // entry can't be read from rom — every failure mode defers
+        // to the orchestrator rather than producing an unsound or
+        // partial Multiple.
+        NodeKind::Load(_) => {
+            classify_jump_table(graph, anchor_output, rom, link_register_vn)
+        }
         // R2.1 / R2.2 / R2.3: every other producer shape is "still
         // unresolved" — the orchestrator will try again on a later
         // iteration or surface `UnresolvedIndirectBranch` at fixed
-        // point.  R4 adds the jump-table arm.
+        // point.
         _ => None,
     }
 }

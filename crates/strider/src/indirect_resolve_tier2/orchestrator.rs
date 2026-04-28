@@ -54,7 +54,7 @@ use opt::ReadOnlyMemory;
 use crate::error::{ErrorKind, Result};
 use crate::strider::{AnalyzeOutcome, Strider};
 
-use super::classify_anchor;
+use super::classify_anchor_with_rom;
 
 /// Configuration for the orchestrator.  Held outside the
 /// orchestrator function so callers can construct one and reuse the
@@ -153,7 +153,14 @@ where
             // surface a None classification and let the next
             // iteration retry.)
             let _ = anchor_output; // silence unused warning when feature off
-            if let Some(resolved) = classify_anchor(&graph, *anchor_output, lr_vn) {
+            // R4: pass the rom through so the jump-table arm can
+            // read table entries.  Cloning the Arc is cheap
+            // (atomic refcount); we hold a borrow across the
+            // classifier call by promoting the Arc to a `&dyn`.
+            let rom_ref: Option<&dyn ReadOnlyMemory> = config.rom.as_deref();
+            if let Some(resolved) =
+                classify_anchor_with_rom(&graph, *anchor_output, lr_vn, rom_ref)
+            {
                 next_known.insert(*addr, resolved);
             }
         }
