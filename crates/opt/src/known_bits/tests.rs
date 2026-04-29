@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::ErrorKind;
+use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 
@@ -20,7 +20,7 @@ fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow!("no return node found in function"))?;
     let val = fg.graph.node_inputs(ret)[2];
     Ok(*fg.graph.kind_of_output(val))
 }
@@ -243,7 +243,7 @@ fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow!("no return node found in function"))?;
     Ok(fg.graph.node_inputs(ret)[2])
 }
 

@@ -203,7 +203,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
         .map(|n| fg.graph.node_inputs(n)[2])
-        .ok_or(opt::ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow::anyhow!("no return node found in function"))?;
     let ret_node = fg.graph.get_node_from_output(ret_val);
     let kind = *fg.graph.node_kind(ret_node);
     assert!(

@@ -1,5 +1,6 @@
 use super::*;
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+use crate::error::Result;
 use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use ir::BuiltFunctionGraph;
@@ -442,7 +443,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
 fn find_call(fg: &BuiltFunctionGraph) -> Result<NodeId> {
     fg.all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Call))
-        .ok_or_else(|| ErrorKind::ExpectedNodeNotFound("Call", NodeKind::Call).into())
+        .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))
 }
 
 /// cdecl-style: `push arg1=22; push arg0=11; call target(0x1000)`.

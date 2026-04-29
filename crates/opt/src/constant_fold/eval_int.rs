@@ -1,7 +1,9 @@
 use ir::node::NodeOutputType;
 use ir::{IntBinaryOp, IntCmpOp};
 
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 // ── integer constant evaluation ───────────────────────────────────────────────
 
@@ -141,11 +143,11 @@ pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
 
     let signed = |v: u128| -> Result<i128> {
         ty.get_signed_int_i128(v)
-            .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
+            .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
     };
     let unsigned_max = || -> Result<u128> {
         ty.get_unsigned_int_u128(u128::MAX)
-            .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
+            .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
     };
     let bits = ty.bit_width() as u32;
     let signed_min_max = || -> (i128, i128) {

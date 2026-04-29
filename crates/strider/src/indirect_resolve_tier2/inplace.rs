@@ -16,33 +16,6 @@ use ir::node::{NodeId, NodeOutputId};
 
 use crate::error::Result;
 
-/// Bridge: opt's classifier emits its own [`opt::Error`] that wraps
-/// either an `ir::ErrorKind` (round-trippable) or an
-/// `ExpectedNodeNotFound` (which strider models as a wrong-kind
-/// diagnostic).  Translate so callers see the message wording they
-/// expect.
-fn opt_to_strider_err(e: opt::Error) -> anyhow::Error {
-    match e.into_kind() {
-        // Round-trip through the existing IR-error bridge.
-        opt::ErrorKind::IrError(ir_kind) => ir::Error::from(ir_kind).into(),
-        // The two cases we surface in the in-place editors:
-        // wrong-kind / wrong-arity Returns.
-        opt::ErrorKind::ExpectedNodeNotFound(expected, _kind) => {
-            anyhow::anyhow!(
-                "node {:?} does not have expected kind {expected}",
-                NodeId::from_u32(0)
-            )
-        }
-        // No other opt::ErrorKind variants escape the in-place editors
-        // today.  Reroute defensively as Unimplemented so a future
-        // opt-side change surfaces with context rather than silently
-        // dropping it.
-        other => anyhow::anyhow!(
-            "not yet implemented: unexpected opt error from indirect_branch_resolve in-place editor: {other:?}"
-        ),
-    }
-}
-
 /// Apply the `LinkRegister` resolution.  Delegates to
 /// [`opt::apply_link_register`].
 ///
@@ -58,7 +31,7 @@ pub fn apply_link_register(
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
     opt::apply_link_register(&mut fg.graph, placeholder_return, ret_val_outputs)
-        .map_err(opt_to_strider_err)
+        // opt is now anyhow-based; ? lifts directly via identity From.
 }
 
 /// Apply the `Single`-tail-call resolution.  Delegates to
@@ -91,7 +64,7 @@ pub fn apply_tail_call(
         clobbered_kinds,
         ret_val_outputs,
     )
-    .map_err(opt_to_strider_err)
+    // opt is now anyhow-based; ? lifts directly via identity From.
 }
 #[cfg(test)]
 mod tests {

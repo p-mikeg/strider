@@ -14,7 +14,8 @@
 
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{BuiltFunctionGraph, FunctionBuilder, Value};
-use opt::{Error, Result};
+use anyhow::anyhow;
+use opt::Result;
 
 /// Builds a single-region function whose return value is what `f` produces.
 pub fn make_fn<F>(f: F) -> Result<BuiltFunctionGraph>
@@ -55,7 +56,7 @@ pub fn return_value(fg: &BuiltFunctionGraph) -> Result<Value> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(opt::ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow!("no return node found in function"))?;
     Ok(fg.graph.node_inputs(ret)[2])
 }
 
@@ -112,9 +113,7 @@ pub fn run_to_fixed_point<P: opt::Optimizer>(
             return Ok(());
         }
     }
-    Err(Error::from(opt::ErrorKind::AssertionFailed(
-        format!("pass did not converge in {MAX_ITERS} iterations"),
-    )))
+    Err(anyhow!("assertion failed: pass did not converge in {MAX_ITERS} iterations"))
 }
 
 // Re-export commonly used IR types so test files don't need long use-paths.

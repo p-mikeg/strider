@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use ir::node::NodeId;
 use ir::{BuiltFunctionGraph, IntUnaryOp};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pipeline::OptimizationResult;
 
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
@@ -436,7 +436,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 bool_const_with!([op, l, r, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
                     eval_int_cmp(op, l, r, input_ty)
-                        .map_err(pattern::Error::rewrite_closure)?
+                        .map_err(|e| pattern::Error::rewrite_closure(std::io::Error::other(format!("{e}"))))?
                 }),
             ))
         },
@@ -478,9 +478,9 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                     let signed = input_ty
                         .get_signed_int_i128(v)
                         .ok_or_else(|| {
-                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
-                                input_ty,
-                            ))
+                            pattern::Error::rewrite_closure(std::io::Error::other(format!(
+                                "expected integer type, got {input_ty:?}"
+                            )))
                         })? as u128;
                     ty.get_unsigned_int_u128(signed).ok_or_else(pattern::Error::skip)?
                 }),

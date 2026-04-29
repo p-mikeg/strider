@@ -1,5 +1,6 @@
 use super::*;
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+use crate::error::Result;
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
 
@@ -36,7 +37,7 @@ fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow!("no return node found in function"))?;
     let val = fg.graph.node_inputs(ret)[2];
     Ok(*fg.graph.kind_of_output(val))
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::ErrorKind;
+use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder,
@@ -27,7 +27,7 @@ fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow!("no return node found in function"))?;
     Ok(fg.graph.node_inputs(ret)[2])
 }
 
@@ -192,7 +192,7 @@ fn assert_add_with_const(
     let r = inputs[1];
     let masked = ty
         .get_unsigned_int(expected_const)
-        .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
+        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
             *fg.graph.kind_of_output(o),
@@ -235,7 +235,7 @@ fn assert_sub_with_const(
     let r = inputs[1];
     let masked = ty
         .get_unsigned_int(expected_const)
-        .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
+        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on_rhs = matches!(
         *fg.graph.kind_of_output(r),
         // IntConst stores u128; masked is u64, widen for comparison.
@@ -1369,7 +1369,7 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
     if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan(), "NaN must propagate through Add");
     } else {
-        return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());
+        return Err(anyhow!("assertion failed: expected FloatConst result"));
     }
     Ok(())
 }
@@ -1388,7 +1388,7 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
     if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan());
     } else {
-        return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());
+        return Err(anyhow!("assertion failed: expected FloatConst result"));
     }
     Ok(())
 }

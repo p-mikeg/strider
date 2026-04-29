@@ -77,12 +77,12 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     pipeline.add(AlwaysChanged);
 
     match pipeline.run(&mut fg.graph, fg.entry) {
-        Ok(()) => Err(opt::Error::from(opt::ErrorKind::AssertionFailed(
-            "expected the pipeline to bail out, got Ok".to_string(),
-        ))),
+        Ok(()) => Err(anyhow::anyhow!(
+            "assertion failed: expected the pipeline to bail out, got Ok"
+        )),
         Err(err) => {
             assert!(
-                matches!(err.kind(), opt::ErrorKind::FixedPointLimitExceeded(_)),
+                err.to_string().contains("did not converge"),
                 "expected FixedPointLimitExceeded, got {err:?}"
             );
             Ok(())
