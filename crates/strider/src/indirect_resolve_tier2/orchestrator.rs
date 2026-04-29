@@ -1096,6 +1096,202 @@ mod tests {
         assert_eq!(cache.len(), 1);
     }
 
+    // ── read_or_init_var dedup ───────────────────────────────────────────
+
+    #[test]
+    fn read_or_init_var_returns_cached_exit_value_when_present() {
+        // Cache entry has `exit_vn_to_value[vn] = Some(out)` →
+        // returns that output without scanning the graph or creating
+        // an InitialVar.  Pin: cache hit short-circuits.
+        use crate::RegionIrEntry;
+        use cfg::PcodeInsnAddr;
+        use ir::FunctionBuilder;
+        use ir::node::{NodeKind, NodeOutputType};
+
+        let vn = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x40,
+            },
+            size: 8,
+        };
+
+        // Build a graph with an unrelated value to use as the
+        // "cached exit value" — read_or_init_var must just return it
+        // without inspecting it.
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let cached_value = b.build_int_const(0xc0deu64, NodeOutputType::U64);
+        b.build_return(Some(cached_value), &[]).unwrap();
+        let mut g = b.build().unwrap();
+
+        let mut entry = RegionIrEntry::empty(PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr: 0x1000 },
+            insn_index: 0,
+        });
+        entry.exit_vn_to_value.insert(vn, cached_value);
+
+        let result = read_or_init_var(&mut g, Some(&entry), vn);
+        assert_eq!(
+            result,
+            Some(cached_value),
+            "cache hit must short-circuit and return the cached value verbatim",
+        );
+        // No fresh InitialVar(vn) was created (the cached path doesn't scan).
+        let initial_var_count = g
+            .graph
+            .all_node_ids()
+            .filter(|&nid| {
+                matches!(
+                    g.graph.node_kind(nid),
+                    NodeKind::InitialVar(existing) if *existing == vn,
+                )
+            })
+            .count();
+        assert_eq!(
+            initial_var_count, 0,
+            "cache hit must not create a redundant InitialVar(vn)",
+        );
+    }
+
+    #[test]
+    fn read_or_init_var_scan_returns_existing_initial_var_no_dup() {
+        // Cache miss but an InitialVar(vn) already exists in the
+        // graph (typical: the FunctionBuilder's lift created one) →
+        // read_or_init_var returns the existing output, NOT a fresh
+        // duplicate.  Pin: dedup contract documented in the impl.
+        use ir::FunctionBuilder;
+        use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+
+        let vn = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x38,
+            },
+            size: 8,
+        };
+
+        // Build a graph and add an InitialVar(vn) by hand (placed so it
+        // doesn't interfere with the spine — InitialVars are floating
+        // pure nodes).
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let placeholder = b.build_int_const(0u64, NodeOutputType::U64);
+        b.build_return(Some(placeholder), &[]).unwrap();
+        let mut g = b.build().unwrap();
+
+        let existing_iv = g.graph.create_node(
+            NodeKind::InitialVar(vn),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let [existing_out] = g.graph.node_outputs_exact::<1>(existing_iv).unwrap();
+
+        // No cache entry → falls through to the scan path.
+        let result = read_or_init_var(&mut g, None, vn);
+        assert_eq!(
+            result,
+            Some(existing_out),
+            "scan must reuse the existing InitialVar(vn) output",
+        );
+        let initial_var_count = g
+            .graph
+            .all_node_ids()
+            .filter(|&nid| {
+                matches!(
+                    g.graph.node_kind(nid),
+                    NodeKind::InitialVar(existing) if *existing == vn,
+                )
+            })
+            .count();
+        assert_eq!(
+            initial_var_count, 1,
+            "scan-hit must NOT create a duplicate InitialVar(vn)",
+        );
+    }
+
+    #[test]
+    fn read_or_init_var_creates_fresh_initial_var_on_miss() {
+        // Both cache miss and graph-scan miss → create a new
+        // InitialVar(vn) and return its output.  Pin the create path.
+        use ir::FunctionBuilder;
+        use ir::node::{NodeKind, NodeOutputType};
+
+        let vn = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x48,
+            },
+            size: 8,
+        };
+
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let placeholder = b.build_int_const(0u64, NodeOutputType::U64);
+        b.build_return(Some(placeholder), &[]).unwrap();
+        let mut g = b.build().unwrap();
+
+        let initial_var_count_before = g
+            .graph
+            .all_node_ids()
+            .filter(|&nid| {
+                matches!(
+                    g.graph.node_kind(nid),
+                    NodeKind::InitialVar(existing) if *existing == vn,
+                )
+            })
+            .count();
+        assert_eq!(initial_var_count_before, 0, "starting state has no InitialVar for this vn");
+
+        let result = read_or_init_var(&mut g, None, vn);
+        assert!(result.is_some(), "miss path must create and return Some");
+        let initial_var_count_after = g
+            .graph
+            .all_node_ids()
+            .filter(|&nid| {
+                matches!(
+                    g.graph.node_kind(nid),
+                    NodeKind::InitialVar(existing) if *existing == vn,
+                )
+            })
+            .count();
+        assert_eq!(initial_var_count_after, 1, "miss path creates exactly one InitialVar");
+    }
+
+    #[test]
+    fn read_or_init_var_returns_none_for_unsupported_byte_size() {
+        // VN with an odd byte size (5) has no NodeOutputType → fallback
+        // returns None rather than panicking.  Pin: documented "well-typed
+        // but degenerate Call/Return" contract.
+        use ir::FunctionBuilder;
+        use ir::node::NodeOutputType;
+
+        let vn_bad = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x60,
+            },
+            size: 5,
+        };
+
+        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let placeholder = b.build_int_const(0u64, NodeOutputType::U64);
+        b.build_return(Some(placeholder), &[]).unwrap();
+        let mut g = b.build().unwrap();
+
+        let result = read_or_init_var(&mut g, None, vn_bad);
+        assert_eq!(result, None, "5-byte vn has no NodeOutputType → None");
+    }
+
     #[test]
     fn apply_split_invalidation_evicts_on_shrunk_count() {
         // Pin: when the prev_snapshot says a region had N insns and
