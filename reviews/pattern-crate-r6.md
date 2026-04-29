@@ -1187,3 +1187,63 @@ The following items were noted but are out of scope per the review brief:
 
 - **The `pat/` subtree's split** (`builders/`, `ctor/`, `any.rs`, `guards.rs`, `traits.rs`, `node_pat.rs`, `mod.rs`) is well-organized: each file has a single clear responsibility. The unusual nested layout (vs. flat) seems to be paying off — files are mostly under 200 lines, and the per-builder style is consistent. Worth preserving.
 - **The `decl_var!` / `decl_bind_get!` / `decl_pat_*_ops!` / `op_variant_contract!` macro families collectively encode "13 op-family kinds" four times** (F-027). A future maintenance pass might consolidate via a build script or `proc_macro`, but the current state is functional.
+
+## Outcomes (review/pattern-crate-r6 branch)
+
+Phase 1 (Capture redesign) consolidated `Var` + `NodeVar` into a single
+`Capture` type and the corresponding internal Bindings storage; many
+findings are obviated by that redesign or applied as part of it.  Per-finding
+status:
+
+| ID | Status | Commit | Notes |
+| --- | --- | --- | --- |
+| F-001 | Obviated | 109e7c2 | `IntoPat::capture` now uniformly binds node + output |
+| F-002 | Obviated | 109e7c2 | Control-flow patterns bind via `try_match_node` (output: None) |
+| F-003 | Applied  | f22fcb9 | `match_consumer_node` honors `ignore_control_states` |
+| F-004 | Applied  | 7dbefe7 | example comment fixed (commutative add finds rbx-phi) |
+| F-005 | Applied  | 7dbefe7 | lib.rs commutativity bullet rewritten |
+| F-006 | Applied  | 7dbefe7 | `is_commutative_float_cmp_op` added; eq/ne now commute |
+| F-007 | Skipped  | —      | int_cmp returns `Pat`; new IntCmpOpPat builder is a separate enhancement, not a bug |
+| F-008 | Applied  | 109e7c2 | RetPat::ret_val doc rewritten in Phase 1 (after ctrl AND mem) |
+| F-009 | Applied  | 7dbefe7 | example comment matches actual single-step semantics |
+| F-010 | Applied  | 109e7c2 | `call_other` ctor doc updated with capture rule |
+| F-011 | Applied  | 2a27140 | `try_walk_through_cast` checks inputs.len() == 1 explicitly |
+| F-012 | Applied  | 6dd68ac | regression test pins multi-output root failure on Call |
+| F-013 | Applied  | 109e7c2 | `is_skip` demoted to pub(crate) |
+| F-014 | Skipped  | —      | RewriteSkip retained pub for downcast-in-tests; no longer re-exported |
+| F-015 | Applied  | 109e7c2 | `BuildOutcome` removed from re-exports; `BuildCtx` retained for `*_const_with!` macro expansion |
+| F-016 | Applied  | 109e7c2 | `PredicateFn` / `MatchPredicateFn` demoted to pub(crate) |
+| F-017 | Applied  | 109e7c2 | replaced with new typed accessors (`get_uint`, `get_int`, …) |
+| F-018 | Skipped  | —      | FunctionArg API kept for the planned strider-py surface |
+| F-019 | Applied  | 2a27140 | KindSpec/InputsSpec/etc demoted to pub(crate) |
+| F-020 | Applied  | 109e7c2 | `Pat::capture_impl` / `when_impl` inlined into IntoPat |
+| F-021 | Skipped  | —      | `predicate(f)` retained — exported and used directly by tests |
+| F-022 | Applied  | 109e7c2 | `missing_binding` / `not_buildable` helpers in error.rs |
+| F-023 | Skipped  | —      | duplication is contained (5 sites of 3 lines); macro adds noise |
+| F-024 | Skipped  | —      | three typed builders look identical but differ in commutativity decider; collapsing yields zero functional gain |
+| F-025 | Skipped  | —      | `impl_variant_any!` arms diverge meaningfully (arity, commutativity); unifying would obscure them |
+| F-026 | Applied  | 6dd68ac | `unit_conv` removed; float conversions call casts.rs::unary_node |
+| F-027 | Skipped  | —      | per-finding note: cross-cutting "13 op kinds" duplication is real but a derive-macro fix is high-cost low-yield today |
+| F-028 | Skipped  | —      | `cast_mask_of` is the canonical list; tests/docs reference it indirectly via `CastMask::all()` and individual flags |
+| F-029 | Applied  | 109e7c2 | `int_const` ctor uses `KindSpec::variant(_)` |
+| F-030 | Applied  | 109e7c2 | (cross-ref F-020) inlining done in Phase 1 |
+| F-031 | Applied  | 109e7c2 | `Match::root` is a method now |
+| F-032 | Applied  | 2a27140 | swap-defensive guard dropped; comment notes the caller invariant |
+| F-033 | Applied  | 109e7c2 | CallOtherPat consistently uses `KindSpec::variant_with` |
+| F-034 | Applied  | f22fcb9 | (cross-ref F-003) `match_consumer_node` aligns the dispatch path |
+| F-035 | Skipped  | —      | single-variant macro wrapper kept for shape-consistency with int/float unary ctors |
+| F-036 | Applied  | 7dbefe7 | `crate::build::*` doclinks repaired |
+| F-037 | Applied  | 109e7c2 | `crate::ErrorKind` doc reference removed |
+| F-038 | Applied  | 109e7c2 | `Pat::when_impl` doclink dropped (PredicateFn now pub(crate)) |
+| F-039 | Applied  | 7dbefe7 | BUG-19 codenames replaced with descriptive prose |
+| F-040 | Applied  | 2255cd3 | Matcher doc explicitly notes lazy index + once-cell cost |
+| F-041 | Applied  | 2255cd3 | Bindings doc: "external callers see read-only" wording |
+| F-042 | Skipped  | —      | exemplar pattern noted in `exemplar_vn` doc; consistency across all sites is low value |
+| F-043 | Skipped  | —      | `Capture::new` doc explains process-wide atomic counter rationale |
+| F-044 | Skipped  | —      | get_vn caveat documented; future producers without Vn mapping silently return None — same as today |
+| F-045 | Skipped  | —      | `decl_any_const!` arm comment retained as-is; it documents the variant-restriction invariant |
+| F-046 | Applied  | 2255cd3 | Bindings doc softens the "≤10 bindings" heuristic to an unverified-but-typical claim |
+| F-047 | Applied  | 2255cd3 | `find_all` reuses one Bindings + mark/restore |
+| F-048 | Skipped  | —      | `KindSpec::clone` is one Arc bump per find_all; below the noise floor |
+| F-049 | Applied  | f22fcb9 | (cross-ref F-003 / F-034) — fixed by the consumer walk-through |
+| F-050 | Skipped  | —      | linear scan is fine in the current single-digit-bindings regime; F-046 doc notes the soft-cap |

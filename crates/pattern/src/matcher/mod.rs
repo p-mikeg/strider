@@ -60,9 +60,16 @@ pub struct MatcherOptions {
 
 /// Executes pattern queries against a [`BuiltFunctionGraph`].
 ///
-/// Construction is O(1); the `FunctionArg` index is built lazily on first
-/// use of a `function_arg*` query.  `find_all` does a single preorder walk
-/// of the graph each call and tries the pattern against every node.
+/// Construction is O(1).  `find_all` / `match_at` do a single preorder
+/// walk of the graph each call and try the pattern against every
+/// candidate node (kind-prefiltered when the pattern's
+/// [`KindSpec`](crate::pat::node_pat::KindSpec) is concrete).  These
+/// paths never touch the `FunctionArg` index.
+///
+/// The `FunctionArg` query API (`function_arg`, `function_args`,
+/// `function_arg_count`, `function_arg_len`) builds an index lazily on
+/// first use via `OnceCell`: the first call pays a one-time preorder
+/// walk to populate `index → NodeId`; subsequent calls are O(1).
 pub struct Matcher<'g> {
     pub(super) fn_graph: &'g BuiltFunctionGraph,
     pub(crate) options: MatcherOptions,

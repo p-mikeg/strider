@@ -28,21 +28,33 @@ impl Binding {
     }
 }
 
-/// A set of capture-variable bindings accumulated during a single match attempt.
+/// A set of capture-variable bindings accumulated during a single
+/// match attempt.
 ///
-/// Bindings are append-only: once a variable is bound it cannot be rebound to a
-/// different value.  A mismatch (trying to bind an already-bound variable to a
-/// different value) makes the containing match fail.
+/// Bindings are append-only: once a variable is bound it cannot be
+/// rebound to a different value.  A mismatch (trying to bind an
+/// already-bound variable to a different value) makes the containing
+/// match fail.
 ///
-/// Backtracking uses a journal-based scheme: every match site that wants to
-/// speculatively attempt sub-matches calls [`Self::mark`] before the attempt
-/// and [`Self::restore`] on failure — the marker is a `usize` cursor into the
-/// append-only entry `Vec`, and restoring is an O(1) `Vec::truncate`.  No
-/// allocations, no per-kind HashMap clones, no deep copy of the full state.
+/// Backtracking uses a journal-based scheme: every match site that
+/// wants to speculatively attempt sub-matches calls [`Self::mark`]
+/// before the attempt and [`Self::restore`] on failure — the marker is
+/// a `usize` cursor into the append-only entry `Vec`, and restoring is
+/// an O(1) `Vec::truncate`.  No allocations, no per-kind HashMap
+/// clones, no deep copy of the full state.
 ///
-/// Lookups (`get_*`) are linear scans filtered by entry variant.  Typical
-/// matches produce a small handful of bindings so scan cost is in-cache and
-/// beats HashMap on cold-path inserts.
+/// Lookups (`get_*`) are linear scans filtered by entry variant.  In
+/// the patterns we currently exercise (constant-fold rules,
+/// indirect-branch resolvers) bindings stay in the single-digit
+/// range; if profiling shows the scan as hot we can layer a hash
+/// overlay on top of the journaled `Vec` without changing the public
+/// API.
+///
+/// External callers see `Bindings` as read-only: construction is via
+/// `Default::default()`, mutation goes through the `bind_*` family,
+/// and the `mark` / `restore` journal API is `pub(crate)` because only
+/// the matcher's commutative-retry / speculative-attempt paths
+/// legitimately need it.
 #[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<BindingEntry>,
