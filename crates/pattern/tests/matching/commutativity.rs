@@ -10,7 +10,7 @@
 //! cases in `arithmetic.rs` — are rechecked here with swapped operands to
 //! confirm they do NOT match.
 
-use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp};
+use ir::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp};
 use pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -195,4 +195,40 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     let x = Capture::new();
     let m = a::unique(&g, add(var(x), var(x)));
     assert_eq!(m.get_uint(x, &g), Some(5));
+}
+
+// ── F-006 regression: float_cmp(Equal/NotEqual) commutes ──────────────────────
+
+/// Builds a graph that asserts a float comparison `a OP b` and returns
+/// the boolean result (cast to u64 for typability).
+fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> ir::BuiltFunctionGraph {
+    let mut t = Tb::empty();
+    let a = t.f64(l);
+    let b = t.f64(r);
+    let v = t.fcmp(a, b, op);
+    let as_int = t.as_int(v, ir::node::NodeOutputType::U64);
+    t.ret_val(as_int)
+}
+
+#[test]
+fn float_eq_commutes() {
+    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
+    a::matches(&g, float_cmp(FloatCmpOp::Equal, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
+    a::matches(&g, float_cmp(FloatCmpOp::Equal, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+}
+
+#[test]
+fn float_ne_commutes() {
+    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::NotEqual);
+    a::matches(&g, float_cmp(FloatCmpOp::NotEqual, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
+    a::matches(&g, float_cmp(FloatCmpOp::NotEqual, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+}
+
+#[test]
+fn float_lt_does_not_commute() {
+    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::Less);
+    // Canonical order matches.
+    a::matches(&g, float_cmp(FloatCmpOp::Less, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+    // Swapped order must NOT match — Less is directional.
+    a::none(&g, float_cmp(FloatCmpOp::Less, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())));
 }

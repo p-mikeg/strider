@@ -18,11 +18,10 @@
 //! the family-level dispatcher (`int_binary`, `int_unary`, `int_cmp`, …), the
 //! op enum (`IntBinaryOp`, …), and the return type (`IntBinaryOpPat` or `Pat`).
 //!
-//! The shape intentionally mirrors — and is named the same as — the analogous
-//! macros in [`crate::build::constructors`], which already collapse the same
-//! boilerplate on the `Build`-typed side.  Keeping the two sides structurally
-//! parallel makes it easy to tell at a glance that the pat-side and build-side
-//! wrappers stay in lock-step.
+//! Each constructor returns a [`crate::pat::Pat`] (or a typed builder for
+//! the binary-op families).  Buildable patterns route through the
+//! `with_build_*` helpers in [`crate::pat::node_pat::NodePat`] so the
+//! same constructor doubles as a rewrite-rule RHS template.
 
 /// Declare public two-operand `Pat`-side constructors that delegate to a
 /// dispatcher `$builder(OpEnum::$variant, lhs, rhs)`.

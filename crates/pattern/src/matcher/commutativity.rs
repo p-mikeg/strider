@@ -1,4 +1,4 @@
-use ir::{BoolBinaryOp, FloatBinaryOp, IntBinaryOp, IntCmpOp};
+use ir::{BoolBinaryOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
 // ── Commutativity helpers ─────────────────────────────────────────────────────
 
@@ -24,4 +24,12 @@ pub(crate) fn is_commutative_float_op(op: FloatBinaryOp) -> bool {
 /// subtraction — all non-commutative, and intentionally excluded.
 pub(crate) fn is_commutative_int_cmp_op(op: IntCmpOp) -> bool {
     matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
+}
+
+/// `Equal` and `NotEqual` are symmetric for IEEE 754 (the comparison
+/// returns the same result regardless of operand order, including for
+/// NaN inputs — both orderings yield `false` / `true` consistently).
+/// `Less` / `LessEqual` are directional and intentionally excluded.
+pub(crate) fn is_commutative_float_cmp_op(op: FloatCmpOp) -> bool {
+    matches!(op, FloatCmpOp::Equal | FloatCmpOp::NotEqual)
 }

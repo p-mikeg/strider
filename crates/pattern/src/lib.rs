@@ -78,11 +78,16 @@
 //! ## Commutative matching
 //!
 //! Binary operations that are mathematically commutative (`add`, `mul`, `and`,
-//! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
-//! operand orderings.  Symmetric integer comparisons (`int_eq`, `int_carry`,
-//! `int_scarry`) and float comparisons (`float_eq`, `float_ne`) likewise
-//! retry with swapped operands.  Call `.ordered()` on the returned builder
-//! to opt out where the builder type supports it.
+//! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`, `float_add`, `float_mul`)
+//! automatically try both operand orderings.  Symmetric integer comparisons
+//! (`int_eq`, `int_carry`, `int_scarry`) and float comparisons (`float_eq`,
+//! `float_ne`) likewise retry with swapped operands.  Variant-agnostic
+//! constructors (`int_binary_any`, `bool_binary_any`, `float_binary_any`,
+//! `int_cmp_any`, `float_cmp_any`) inspect the matched op and apply the
+//! same rule per-match.  Call `.ordered()` on the returned builder to opt
+//! out — only the typed binary-op builders (`IntBinaryOpPat`,
+//! `BoolBinaryOpPat`, `FloatBinaryOpPat`) expose `.ordered()`; the bare
+//! `int_cmp` / `float_cmp` ctors return a `Pat` directly.
 //!
 //! ## Walk-through flags ([`MatcherOptions`])
 //!

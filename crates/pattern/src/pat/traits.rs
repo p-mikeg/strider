@@ -8,10 +8,11 @@
 //! work; any output of the target node is an acceptable match target.
 //!
 //! The trait has a second mode — [`Pattern::try_build`] — for the RHS of
-//! [`crate::build::rewrite_rule`]: materialize this pattern into fresh IR
-//! nodes, filling holes from captured bindings. The default impl returns
-//! [`Error::not_buildable`], so wildcards, guards, and other match-only
-//! patterns opt out automatically; buildable patterns override it.
+//! [`crate::rewrite_rule`]: materialize this pattern into fresh IR nodes,
+//! filling holes from captured bindings. The default impl returns a
+//! [`crate::error::NotBuildable`]-wrapped error, so wildcards, guards, and
+//! other match-only patterns opt out automatically; buildable patterns
+//! override it.
 
 use std::sync::Arc;
 

@@ -4,6 +4,7 @@ use ir::node::NodeKind;
 use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
+use crate::matcher::commutativity::is_commutative_float_cmp_op;
 use crate::pat::FloatBinaryOpPat;
 use crate::pat::Pat;
 use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
@@ -57,13 +58,18 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 ]);
 
 /// Matches a float comparison node with the given `op`.
+///
+/// For commutative ops (`Equal`, `NotEqual`), both operand orderings are
+/// tried automatically.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    NodePat::matcher(
-        KindSpec::Exact(NodeKind::FloatCmpOp(op)),
-        InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()]),
-    )
-    .with_build_exact(NodeKind::FloatCmpOp(op), BuildTy::Fixed(ir::node::NodeOutputType::Bool))
-    .into_pat()
+    let inputs = if is_commutative_float_cmp_op(op) {
+        InputsSpec::fixed_commutative(lhs.into(), rhs.into())
+    } else {
+        InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()])
+    };
+    NodePat::matcher(KindSpec::Exact(NodeKind::FloatCmpOp(op)), inputs)
+        .with_build_exact(NodeKind::FloatCmpOp(op), BuildTy::Fixed(ir::node::NodeOutputType::Bool))
+        .into_pat()
 }
 
 decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [

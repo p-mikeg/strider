@@ -48,7 +48,9 @@ pub struct MatcherOptions {
     ///
     /// Use case: x86 / x64 register-merge chains and width casts cause
     /// patterns like `add(mul(_,_), _)` to find `Add(Extend(Mul), arg)`
-    /// without re-shaping the source.  See BUG-19.
+    /// without re-shaping the source.  See the
+    /// `add_mul_pattern_does_not_match_through_extend_by_default`
+    /// regression test for the canonical case.
     pub ignore_cast_mask: CastMask,
     /// Walk through `ControlState` (region-join) nodes when traversing
     /// control chains.  Lets `ret(call(...))`, `if_node().true_branch(p)`
@@ -184,7 +186,7 @@ impl<'g> Matcher<'g> {
     /// otherwise.
     ///
     /// Unlike [`find_all`] which iterates every candidate root, this checks a
-    /// single root.  Used by [`crate::build::rewrite_rule`] and other callers
+    /// single root.  Used by [`crate::rewrite_rule`] and other callers
     /// that already know the candidate.
     pub fn match_at(&self, node: NodeId, pat: &Pat) -> Option<Match> {
         let mut bindings = Bindings::default();

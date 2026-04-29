@@ -11,8 +11,8 @@ use std::sync::Arc;
 use ir::node::NodeKind;
 
 use crate::matcher::commutativity::{
-    is_commutative_bool_op, is_commutative_float_op, is_commutative_int_cmp_op,
-    is_commutative_int_op,
+    is_commutative_bool_op, is_commutative_float_cmp_op, is_commutative_float_op,
+    is_commutative_int_cmp_op, is_commutative_int_op,
 };
 use crate::pat::Pat;
 use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
@@ -172,8 +172,8 @@ impl_variant_any!(
 );
 
 impl_variant_any!(
-    cmp, float_cmp_any, FloatCmpOp, ir::FloatCmpOp::Equal, FloatCmpOpVar,
+    binary, float_cmp_any, FloatCmpOp, ir::FloatCmpOp::Equal, FloatCmpOpVar,
     bind_float_cmp_op, get_float_cmp_op,
-    bool_ty(), "FloatCmpOpVar",
-    "Matches **any** float comparison and binds the actual operator variant to `op`.\n\nNo float comparison operators are currently treated as commutative, so no automatic operand-swap retry is attempted."
+    is_commutative_float_cmp_op, bool_ty(), "FloatCmpOpVar",
+    "Matches **any** float comparison and binds the actual operator variant to `op`.\n\nCommutative comparisons (`Equal`, `NotEqual`) try both operand orderings automatically."
 );

@@ -315,11 +315,11 @@ fn existing_pattern_unchanged_with_default_options() {
     );
 }
 
-// ── ignore_casts walk-through (Phase 4 integration) ──────────────────────────
+// ── ignore_casts walk-through ────────────────────────────────────────────────
 //
 // Build a small graph that contains an `Add(Extend(Mul), c)` shape — the
-// canonical BUG-19 problem.  Without `ignore_casts` the strict matcher
-// can't see the Mul through the Extend; with the flag set, it does.
+// canonical x86/x64 width-cast problem.  Without `ignore_casts` the strict
+// matcher can't see the Mul through the Extend; with the flag set, it does.
 
 /// Returns a graph whose return value is `Add(ZeroExt(Mul(2,3)), 4)` at U64,
 /// where the Mul is at U32.  Mirrors x64's IMUL register-merge chain in
@@ -352,7 +352,7 @@ fn add_mul_pattern_does_not_match_through_extend_by_default() {
 }
 
 /// `add(mul(_,_), _)` finds the Mul through an intervening ZeroExtend
-/// when `ignore_casts` is set.  This is the BUG-19 fix in miniature.
+/// when `ignore_casts` is set.
 #[test]
 fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
     let g = graph_add_zext_mul();

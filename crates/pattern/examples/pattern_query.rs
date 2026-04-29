@@ -188,12 +188,14 @@ fn example_calls_and_returns() {
             .len()
     ); // 1
 
-    // preceded_by walks the full backward chain, so earlier calls are found too
+    // preceded_by is a single-step direct-predecessor match — the
+    // earlier call(0x1000) is two control-flow steps away, so the
+    // pattern does NOT match.  See `RetPat::preceded_by` docs.
     println!(
         "ret preceded by call(0x1000): {}",
         m.find_all(&ret().preceded_by(call().at(0x1000)).into())
             .len()
-    ); // 1
+    ); // 0
 
     println!(
         "ret preceded by call(0xDEAD): {}",
@@ -573,8 +575,10 @@ fn example_initial_vars() {
     let hits = m.find_all(&add(phi_for(rax_vn), any()).into());
     println!("add(rax_phi, _): {}", hits.len()); // 1
 
-    let hits_wrong = m.find_all(&add(phi_for(rbx_vn), any()).into());
-    println!("add(rbx_phi, _): {}", hits_wrong.len()); // 0 — rax is lhs, rbx is rhs
+    // `add` commutes — the rbx-phi-second order matches the swapped
+    // operand attempt, so the pattern still finds 1 hit.
+    let hits_swapped = m.find_all(&add(phi_for(rbx_vn), any()).into());
+    println!("add(rbx_phi, _): {}", hits_swapped.len()); // 1 — commutative match
 
     // initial_var_for matches the deeper InitialVar node itself, which is an
     // input *inside* the phi — not the direct input to the add.

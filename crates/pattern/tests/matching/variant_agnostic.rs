@@ -125,8 +125,9 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
 }
 
 #[test]
-fn float_cmp_any_does_not_retry_swap() {
-    // `float_cmp_any` uses fixed_ordered — no commutativity retry at all.
+fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
+    // `Equal` and `NotEqual` are symmetric for IEEE 754 — the swap
+    // retry must succeed.
     let mut t = Tb::empty();
     let l = t.f64(1.0);
     let r = t.f64(2.0);
@@ -135,9 +136,23 @@ fn float_cmp_any_does_not_retry_swap() {
     let g = t.ret_val(cast);
 
     let ov = FloatCmpOpVar::new();
-    a::none(
+    a::matches(
         &g,
         float_cmp_any(ov, float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits())),
+        1,
+    );
+
+    // `Less` is directional — the swap must fail.
+    let mut t2 = Tb::empty();
+    let l2 = t2.f64(1.0);
+    let r2 = t2.f64(2.0);
+    let c2 = t2.fcmp(l2, r2, FloatCmpOp::Less);
+    let cast2 = t2.as_int(c2, NodeOutputType::U64);
+    let g2 = t2.ret_val(cast2);
+    let ov2 = FloatCmpOpVar::new();
+    a::none(
+        &g2,
+        float_cmp_any(ov2, float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits())),
     );
 }
 
