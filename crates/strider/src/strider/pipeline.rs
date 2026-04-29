@@ -68,7 +68,7 @@ pub struct AnalyzeOutcome {
     pub region_handles: Vec<RegionLiftHandles>,
 }
 
-/// W10 — single-line summary of an [`AnalyzeOutcome`] for diagnostics
+/// Single-line summary of an [`AnalyzeOutcome`] for diagnostics
 /// ("why didn't tier 2 resolve X?").  When a user runs the orchestrator
 /// and inspects the outcome, formatting the outcome with `{}` gives a
 /// quick readout of the data the outcome actually carries — unresolved-
@@ -269,13 +269,8 @@ impl Strider {
     /// (most per-arch fixture tests do this).  Tier-2-aware callers read
     /// `outcome.unresolved_branches` and `outcome.region_handles`.
     ///
-    /// W2 — single canonical entry point.  Replaces the pre-W2
-    /// `analyze_cfg` (returned `BuiltFunctionGraph`) and
-    /// `analyze_cfg_with_unresolved` (returned `AnalyzeOutcome`) pair —
-    /// having two near-identical methods invited drift on every
-    /// orchestrator change.  Callers that previously called
-    /// `analyze_cfg(&cfg)?` now write `analyze_cfg(&cfg)?.graph`; the
-    /// extra `.graph` field-access is the only caller-side change.
+    /// Single canonical entry point.  Callers that need only the
+    /// final graph write `analyze_cfg(&cfg)?.graph`.
     ///
     /// # Errors
     ///
@@ -502,17 +497,18 @@ impl Strider {
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests for [`AnalyzeOutcome`] formatting helpers (W10).
+    //! Unit tests for [`AnalyzeOutcome`] formatting helpers.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 
-    /// W10 — build a real (but minimal) `AnalyzeOutcome` by analysing
-    /// a one-instruction `ret` program, then assert the `Display`
-    /// readout contains the unresolved-branch and region counts.  Going
-    /// through the real `analyze_cfg` path keeps this test honest about
-    /// what the outcome's fields actually carry — synthesising a fake
-    /// `BuiltFunctionGraph` would lose that grounding.
+    /// Build a real (but minimal) `AnalyzeOutcome` by analysing a
+    /// one-instruction `ret` program, then assert the `Display`
+    /// readout contains the unresolved-branch and region counts.
+    /// Going through the real `analyze_cfg` path keeps this test
+    /// honest about what the outcome's fields actually carry —
+    /// synthesising a fake `BuiltFunctionGraph` would lose that
+    /// grounding.
     #[test]
     fn display_summarises_unresolved_branches_and_region_count() {
         // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so

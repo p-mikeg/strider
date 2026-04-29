@@ -1,4 +1,4 @@
-//! F5 integration tests for the [`opt::IndirectBranchResolve`] pass.
+//! Integration tests for the [`opt::IndirectBranchResolve`] pass.
 //!
 //! These tests live in `crates/opt/tests/` (rather than alongside the
 //! pass in `src/indirect_branch_resolve/`) so they exercise the pass
@@ -30,11 +30,11 @@ fn placeholder_graph_with_int_const(
     (built.graph, entry, anchor)
 }
 
-/// F5 integration 1 — the pass runs inside an
-/// [`OptimizerPipeline`] (the same harness every other opt pass uses)
-/// and applies the in-place edit.  Pins the integration contract: an
-/// `IndirectBranchResolve` instance is a drop-in `Optimizer` and the
-/// pipeline runs it without special-casing.
+/// The pass runs inside an [`OptimizerPipeline`] (the same harness
+/// every other opt pass uses) and applies the in-place edit.  Pins
+/// the integration contract: an `IndirectBranchResolve` instance is
+/// a drop-in `Optimizer` and the pipeline runs it without
+/// special-casing.
 #[test]
 fn pass_runs_inside_optimizer_pipeline() {
     let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
@@ -71,13 +71,13 @@ fn pass_runs_inside_optimizer_pipeline() {
     );
 }
 
-/// F5 integration 2 — running the pass twice (a no-op call after the
-/// first edit) does not corrupt the graph.  Pins the soundness
-/// contract: once an anchor's placeholder is replaced, the pass's
-/// re-classification yields no live anchor and the second run is a
-/// no-op.  Round-trips the orchestrator's "apply edits + re-run
-/// stable subset" iteration shape — the same anchor list cannot fire
-/// the same edit twice.
+/// Running the pass twice (a no-op call after the first edit) does
+/// not corrupt the graph.  Pins the soundness contract: once an
+/// anchor's placeholder is replaced, the pass's re-classification
+/// yields no live anchor and the second run is a no-op.  Round-
+/// trips the orchestrator's "apply edits + re-run stable subset"
+/// iteration shape — the same anchor list cannot fire the same edit
+/// twice.
 #[test]
 fn pass_round_trips_through_existing_orchestrator() {
     let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);

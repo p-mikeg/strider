@@ -76,10 +76,6 @@ impl Optimizer for ConstantFold {
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult> {
-        // F2 bridge: opt's pass internals still operate on `&mut BuiltFunctionGraph`
-        // via helper functions and the `pattern` crate's rewrite machinery.
-        // `with_built` wraps the caller's `(&mut Graph, NodeId)` into a
-        // temporary `BuiltFunctionGraph` for the duration of the pass.
         crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
     }
 }

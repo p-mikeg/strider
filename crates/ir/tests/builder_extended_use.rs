@@ -1,14 +1,13 @@
-//! F2 integration: `FunctionBuilder` exposes its inner `Graph` (via
-//! `graph_mut()`) and `entry()` so callers can run analysis passes
-//! (and arbitrary in-place mutations) WITHOUT consuming the builder
-//! via `build()`.  After such mutations, calling `build()` must still
-//! produce a valid `BuiltFunctionGraph`.
+//! `FunctionBuilder` exposes its inner `Graph` (via `graph_mut()`)
+//! and `entry()` so callers can run analysis passes (and arbitrary
+//! in-place mutations) WITHOUT consuming the builder via `build()`.
+//! After such mutations, calling `build()` must still produce a
+//! valid `BuiltFunctionGraph`.
 //!
-//! These tests pin the contract that opt-pass plumbing (and F5's
-//! tier-2-as-opt-pass refactor) depend on.  They don't import the
-//! `opt` crate (would create a dep cycle in tests) — instead they
-//! mutate the graph directly via the public `Graph` API the same way
-//! an opt pass would.
+//! These tests pin the contract that opt-pass plumbing depends on.
+//! They don't import the `opt` crate (would create a dep cycle in
+//! tests) — instead they mutate the graph directly via the public
+//! `Graph` API the same way an opt pass would.
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::expect_used)]
@@ -59,9 +58,8 @@ fn analysis_loop_without_build_round_trips() {
 
 /// After driving the builder through several rounds of in-place
 /// mutation, calling `build()` must still produce a valid
-/// `BuiltFunctionGraph` (i.e. one that passes `validate`).  This is
-/// the F2 acceptance condition for "build still works after extended
-/// use".
+/// `BuiltFunctionGraph` (i.e. one that passes `validate`).  Pins
+/// the "build still works after extended use" contract.
 #[test]
 fn final_build_after_extended_use_yields_valid_built() {
     let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();

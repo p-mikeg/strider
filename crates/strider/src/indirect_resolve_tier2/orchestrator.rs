@@ -136,13 +136,9 @@ where
     /// The Sleigh context, owned by the config and threaded through
     /// every iteration of the orchestrator's fixed-point loop.
     ///
-    /// W5 — pre-W5 this was a `Box<dyn FnMut() -> Sleigh>` factory
-    /// because the (now-superseded) round-1 orchestrator built a fresh
-    /// Sleigh per iteration.  After the Sleigh-persistence work the
-    /// closure was called exactly once at loop entry; W5 drops the
-    /// indirection and takes the owned `Sleigh<R>` directly so the
-    /// "constructed once, reused per iteration" contract is visible
-    /// at the type signature.
+    /// Owned by value (not behind a closure) so the "constructed once,
+    /// reused per iteration" contract is visible at the type
+    /// signature.
     ///
     /// CORRECTNESS — the orchestrator threads this Sleigh into the
     /// first `cfg::Builder::with_endianness` call (consumes by value),

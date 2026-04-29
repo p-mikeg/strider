@@ -36,8 +36,8 @@ pub mod error;
 pub mod indirect_resolve_tier2;
 pub mod rewrite;
 
-// W6: `ir_cache` is the historical name for what is now `cache::*`.  Keep
-// the alias so external callers continue to compile while we migrate.
+// `ir_cache` is the historical name for what is now `cache::*`.  Kept
+// as an alias so external callers continue to compile.
 #[doc(hidden)]
 pub use cache as ir_cache;
 pub use cache::{

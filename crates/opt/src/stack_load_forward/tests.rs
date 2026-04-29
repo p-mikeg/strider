@@ -849,7 +849,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     Ok(())
 }
 
-// ── F3 / BUG-30: public helper for the indirect-branch classifier ─────────
+// ── BUG-30: public helper for the indirect-branch classifier ─────────────
 //
 // `find_stack_stored_value_at_offset` walks the memory chain backward from
 // a given `mem` looking for a `StackStore { offset == requested }` whose

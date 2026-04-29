@@ -163,8 +163,8 @@ pub fn classify_anchor_with_rom_and_sp(
         // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
         // IntConst(stride))))` jump-table dispatch shape.
         //
-        // F3 / BUG-30: when the rodata jump-table arm doesn't match
-        // and an SP varnode is supplied, fall through to
+        // BUG-30: when the rodata jump-table arm doesn't match and
+        // an SP varnode is supplied, fall through to
         // `stack_array::classify_stack_array` which handles the
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
@@ -178,7 +178,7 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
-        // F3 / BUG-30: ARM / arm-thumb / arm-be lifters wrap the
+        // BUG-30: ARM / arm-thumb / arm-be lifters wrap the
         // dispatch target in `IntBinaryOp(And)` with a constant mask
         // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
         // stack_array classifier transparently strips the mask, so

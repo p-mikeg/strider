@@ -88,15 +88,14 @@ pub(crate) fn with_built<R>(
 pub trait Optimizer {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
-    /// # F2 contract
+    /// # Why `(&mut Graph, NodeId)` and not `&mut BuiltFunctionGraph`
     ///
-    /// The trait takes `(&mut Graph, NodeId)` rather than
-    /// `&mut BuiltFunctionGraph` so callers can run optimizer passes on a
-    /// graph that has not yet been packaged into a final
-    /// [`ir::BuiltFunctionGraph`] (e.g. on a live [`ir::FunctionBuilder`] via
+    /// Callers can run optimizer passes on a graph that has not yet
+    /// been packaged into a final [`ir::BuiltFunctionGraph`] (e.g. on
+    /// a live [`ir::FunctionBuilder`] via
     /// [`ir::FunctionBuilder::graph_mut`] + [`ir::FunctionBuilder::entry`]).
-    /// `BuiltFunctionGraph` becomes a final-output convenience type, no
-    /// longer required during analysis.
+    /// `BuiltFunctionGraph` is a final-output convenience type, not
+    /// a precondition for analysis.
     ///
     /// `entry` is the function's entry [`ir::node::NodeId`] — needed because
     /// several passes walk the reachable-node set (`graph.preorder(entry)`)
@@ -256,7 +255,7 @@ impl OptimizerPipeline {
 
 #[cfg(test)]
 mod tests {
-    //! F2 unit tests for the [`OptimizerPipeline::run`] /
+    //! Unit tests for the [`OptimizerPipeline::run`] /
     //! [`OptimizerPipeline::run_on_built`] equivalence contract.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
