@@ -1,5 +1,56 @@
 # crates/strider review — round 6 (2026-04-30)
 
+## Outcomes
+
+After the strider-restructure pass on `review/strider-restructure`:
+
+| Finding | Outcome | Notes |
+| --- | --- | --- |
+| F-001 | Applied (opt-side test pins arity) | Shim is now a pure `pub use opt::apply_link_register`; opt's tests pin slot-2-drop semantics. |
+| F-002, F-044 | Applied | `SpecialTerm` lifted to module level in `pipeline.rs` with `from_terminator`. |
+| F-003 | Applied | `RunConfig::sleigh: Sleigh` (no Option). |
+| F-004 | Applied | `unresolved` lives in `LoopState`; no per-iteration clone. |
+| F-005, F-013, F-027 | Obviated | Cache gone (Phase A). |
+| F-006 | Applied | `LoopState::stall_budget` bounds in-place-only iterations. |
+| F-007, F-008 | Obviated | `RegionIndex` keyed by `NodeOutputId` is O(1). |
+| F-009 | Applied | Per-call `vn → InitialVar` HashMap inside `build_anchor_calling_context`. |
+| F-010 | Applied | MultiEqual error message now attributes the contract to `rsleigh::lift_one`. |
+| F-011 | Applied | `bail!` on user-op id > u32::MAX. |
+| F-012 | Applied | SAFETY comment rewritten to cite the AddrSpace-pointer precondition. |
+| F-014 | Applied | `error.rs` deleted; `crate::Result` removed; anyhow used directly. |
+| F-015 | Applied | `ir_cache` alias dropped. |
+| F-016 | Applied | `rustc-hash` removed from `Cargo.toml`. |
+| F-017 | Obviated | Cache gone. |
+| F-018 | Applied | `IrStrider::build_entry` trampoline inlined. |
+| F-019 | Obviated | Cache gone. |
+| F-020 | Applied | `GraphRewriter::{new, from_builder, entry, graph}` dropped. |
+| F-021, F-022, F-023 | Obviated | Cache gone. |
+| F-024 | Applied | `Strider::arch()` is `pub(crate)`. |
+| F-025 | Obviated | Made non-Optional (F-003). |
+| F-026 | Skipped | `target` re-exports are used by external test fixtures and the example. |
+| F-028 | Applied | `current_anchor_after_opt` merged into `anchor_value_input`. |
+| F-029 | Applied | `tests::common::strider_x86_64()` / `strider_for(arch)` added. |
+| F-030 | Skipped | `RegionLiftHandles` shrunk (no `predecessor_count`); the snapshot/cache distinction is gone post-Phase A. |
+| F-031 | Applied | `first_input_or_err` helper. |
+| F-032 | Applied (partial) | Test helper unified (F-028); inline copies in `tests/` left as-is (cost > benefit). |
+| F-033 | Obviated | Cache gone (the size-dispatch dup lived in `cache/extend.rs`). |
+| F-034 | Obviated | Cache gone. |
+| F-035 | Skipped | Reviewer recommended no-change. |
+| F-036, F-045, F-049 | Applied | `Vec<Option<ir::RegionId>>` indexed by `RegionId.index()`; petgraph clone removed. |
+| F-037 | Applied | `apply_in_place_edit::Single` no longer re-walks placeholder inputs (no cache patch step). |
+| F-038 | Obviated | Doc rewritten with the move to `RunConfig`. |
+| F-039 | Applied | `is_tail_call` comment notes the `[start, start+max_size)` half-open range. |
+| F-040, F-041, F-042, F-043 | Applied | All `# Errors` docstrings rewritten for anyhow. |
+| F-046 | Applied | `RegionLiftHandles::predecessor_count` removed. |
+| F-047 | Skipped | Reviewer noted "no change needed". |
+| F-048 | Skipped | The `#[allow(unused_imports)]` on the flat re-export is correctly justified by the per-test compilation model. |
+| F-050 | Applied | `LoopState::lr_vn` / `sp_vn` cached at construction. |
+| F-051 | Skipped | `find_all_unique_vns` perf is a non-issue at current scale; reviewer's confidence was low. |
+| F-052 | Applied (partial) | `region_lookup_dyn` trait-object adapter is built only inside Branch/CondBranch arms now. |
+| F-053 | Applied | Skip Vec collection for arg-less CallOther. |
+| F-054 | Skipped | Three classify shims (`classify_anchor` / `_with_rom` / `_with_rom_and_sp`) form a clean parameter ladder; collapsing to a single options-struct call is a high-cost test rewrite for negligible benefit. |
+| F-055, F-056 | Applied | Both shims are now `pub use opt::{...}` re-exports. |
+
 ## Summary
 
 - Files reviewed: 47 (all `.rs` under `crates/strider/src`, `crates/strider/tests`, `crates/strider/examples`; `crates/strider/benches/` does not exist)
