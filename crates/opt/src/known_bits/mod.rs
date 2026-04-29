@@ -45,20 +45,29 @@ impl Kb {
         }
     }
 
-    /// Returns `true` if merging `other` into `self` changed anything.
+    /// Returns `Ok(true)` if merging `other` into `self` changed anything.
     ///
-    /// On conflict (a bit known 1 in one source and 0 in the other), the
-    /// `ones` set wins and the conflicting bit is cleared from `zeros`,
-    /// preserving the `ones & zeros == 0` invariant.
-    fn merge(&mut self, other: Kb) -> bool {
+    /// Returns `Err` on contradiction — a bit provably 1 in one source and
+    /// provably 0 in the other.  That can only happen if the analyzer's
+    /// inputs disagree: either KnownBits derived something wrong, or the
+    /// IR contains incompatible constants reaching the same output.  Both
+    /// are real bugs we want to surface rather than silently let `ones`
+    /// win and lose the conflicting `zeros` info.
+    fn merge(&mut self, other: Kb) -> Result<bool> {
+        if self.ones & other.zeros != 0 || self.zeros & other.ones != 0 {
+            return Err(anyhow::anyhow!(
+                "Kb::merge contradiction: self={{ones:{:#x}, zeros:{:#x}}} other={{ones:{:#x}, zeros:{:#x}}}",
+                self.ones, self.zeros, other.ones, other.zeros,
+            ));
+        }
         let new_ones = self.ones | other.ones;
-        let new_zeros = (self.zeros | other.zeros) & !new_ones;
+        let new_zeros = self.zeros | other.zeros;
         if new_ones != self.ones || new_zeros != self.zeros {
             self.ones = new_ones;
             self.zeros = new_zeros;
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
@@ -328,7 +337,7 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
         let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
             continue;
         };
-        let merged = known.entry(out).or_default().merge(kb);
+        let merged = known.entry(out).or_default().merge(kb)?;
         if !merged {
             continue;
         }

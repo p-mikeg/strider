@@ -237,20 +237,19 @@ fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
 }
 
 #[test]
-fn merge_preserves_invariant_under_conflict() {
-    // Bit 0 is ones in `a`, zeros in `b`. After merging both into `c`,
-    // ones & zeros must be 0 — `ones` wins on conflict.
+fn merge_returns_err_on_contradiction() {
+    // Bit 0 is provably 1 in `a`, provably 0 in `b`.  Merging a then b
+    // must surface the contradiction as an Err — silently letting `ones`
+    // win would mask a real soundness bug in either the analyzer or the
+    // IR shape that produced the conflicting verdicts.
     let mut c = super::Kb::default();
     let a = super::Kb { ones: 0b1, zeros: 0 };
     let b = super::Kb { ones: 0, zeros: 0b1 };
-    c.merge(a);
-    c.merge(b);
-    assert_eq!(
-        c.ones & c.zeros,
-        0,
-        "ones & zeros must be 0; got ones={:#b} zeros={:#b}",
-        c.ones,
-        c.zeros
+    c.merge(a).expect("first merge clean");
+    let err = c.merge(b);
+    assert!(
+        err.is_err(),
+        "expected Err on contradicting merge; got {err:?}",
     );
 }
 
