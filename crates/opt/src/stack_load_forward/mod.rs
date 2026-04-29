@@ -13,7 +13,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use target::Endianness;
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
 
 /// Store-to-load forwarding for SP-relative stack slots.
@@ -53,17 +53,7 @@ impl StackLoadForward {
     }
 }
 
-impl Optimizer for StackLoadForward {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl StackLoadForward {
+impl OptimizerOnBuilt for StackLoadForward {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let loads: Vec<NodeId> = function
             .preorder()

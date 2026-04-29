@@ -2,7 +2,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
 use reader::ReadOnlyMemory;
 
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -37,17 +37,7 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// ```
 pub struct LoadReadOnly<M>(pub M);
 
-impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl<M: ReadOnlyMemory + 'static> LoadReadOnly<M> {
+impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let nodes: Vec<_> = function.preorder().collect();
         let mut result = OptimizationResult::NoChange;

@@ -4,7 +4,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::worklist::WorkSet;
 
 #[cfg(test)]
@@ -349,17 +349,7 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
 /// information along data-dependency chains before deciding replacements.
 pub struct KnownBits;
 
-impl Optimizer for KnownBits {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl KnownBits {
+impl OptimizerOnBuilt for KnownBits {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller

@@ -2,7 +2,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::worklist::WorkSet;
 
 mod eval_float;
@@ -56,17 +56,7 @@ fn try_lower_cast_to_float(
 /// a & (C1 & C2)`.
 pub struct ConstantFold;
 
-impl Optimizer for ConstantFold {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl ConstantFold {
+impl OptimizerOnBuilt for ConstantFold {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;

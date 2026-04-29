@@ -123,10 +123,21 @@ pub fn classify_stack_array(
     }
 }
 
-/// Strip a top-level `IntBinaryOp(And)` whose mask is a constant —
-/// returns the underlying value-output and the (u64-truncated) mask.
-/// When the anchor isn't an `And`, returns `(anchor_output, !0u64)` so
-/// the caller's masking step is a no-op.
+/// Maximum number of `And` / `Or` mask layers stripped before we give up
+/// and pass the anchor through unchanged.
+///
+/// ARM-Thumb commonly nests `And(Or(load, 1), 0xFFFFFFFE)` (set LSB then
+/// mask it off) — that's 2 layers.  Cap at 4 to defend against
+/// pathologically deep wrappers from buggy lifter output without losing
+/// the ARM-Thumb idioms we actually care about.  Beyond this cap the
+/// classifier returns `None` (defer to `UnresolvedIndirectBranch`).
+const MAX_STRIP_LAYERS: usize = 4;
+
+/// Strip up to [`MAX_STRIP_LAYERS`] of `IntBinaryOp(And)`/`Or` wrappers
+/// whose constant operand is a static mask, and return the underlying
+/// value-output along with the surviving (u64-truncated) mask.  When the
+/// anchor isn't an `And`, returns `(anchor_output, !0u64)` so the caller's
+/// masking step is a no-op.
 ///
 /// Soundness: the mask is applied bit-wise to each enumerated
 /// IntConst stored value.  When the mask clears LSBs (e.g. ARM
@@ -137,6 +148,11 @@ pub fn classify_stack_array(
 /// addresses may not be valid — but that's a soundness-preserving
 /// over-approximation: extra targets produce dead CFG edges, no
 /// runtime target is omitted.
+///
+/// Stripping more than [`MAX_STRIP_LAYERS`] layers is treated as
+/// pathological — the function returns the partially-stripped state and
+/// the caller's downstream shape match (`match_stack_array_shape`) will
+/// fail closed when the residual isn't a Load.
 //
 // CORRECTNESS — the patterns below are sound-equivalent to the prior
 // hand-rolled commutative-operand checks.  `pattern::and` /
@@ -161,11 +177,7 @@ fn strip_target_mask(
     let matcher = Matcher::new(fg);
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
-    // Strip up to a fixed number of layers; ARM-Thumb commonly nests
-    // `And(Or(load, 1), 0xFFFFFFFE)` (set LSB then mask it off) — that's
-    // 2 layers.  Cap at 4 to defend against pathologically deep wrappers
-    // from buggy lifter output.
-    for _ in 0..4 {
+    for _ in 0..MAX_STRIP_LAYERS {
         let producer = graph.get_node_from_output(current);
 
         // And-with-constant: mask narrows.

@@ -113,6 +113,38 @@ pub trait Optimizer {
     ) -> crate::Result<OptimizationResult>;
 }
 
+/// Optimizer pass that operates on a [`ir::BuiltFunctionGraph`] rather than
+/// the lower-level `(&mut Graph, NodeId)` pair.  Most passes implement this
+/// instead of [`Optimizer`] directly: the blanket impl below wires the
+/// [`with_built`] adapter so the pass slots into the pipeline.
+///
+/// Passes that need direct `&mut Graph` access (e.g.
+/// [`crate::indirect_branch_resolve::IndirectBranchResolve`], whose
+/// in-place edits straddle `with_built` boundaries) implement
+/// [`Optimizer`] directly instead.
+pub trait OptimizerOnBuilt {
+    /// Run one sweep of this pass over the function graph.  See
+    /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error encountered by the pass.
+    fn optimize_built(
+        &self,
+        function: &mut ir::BuiltFunctionGraph,
+    ) -> crate::Result<OptimizationResult>;
+}
+
+impl<T: OptimizerOnBuilt> Optimizer for T {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        with_built(graph, entry, |function| self.optimize_built(function))
+    }
+}
+
 /// An ordered list of [`Optimizer`] passes that are run in a shared fixed-point
 /// loop.
 ///

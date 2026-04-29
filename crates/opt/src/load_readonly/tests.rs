@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::Optimizer;
 use crate::error::{ErrorKind, Result};
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};

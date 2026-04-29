@@ -35,7 +35,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
 
 /// Replaces register-passed and stack-passed argument reads with canonical
@@ -84,17 +84,7 @@ impl FunctionArgDetect {
     }
 }
 
-impl Optimizer for FunctionArgDetect {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl FunctionArgDetect {
+impl OptimizerOnBuilt for FunctionArgDetect {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
         changed |= detect_register_args(function, &self.arg_passing_regs)?;

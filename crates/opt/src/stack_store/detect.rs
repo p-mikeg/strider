@@ -7,7 +7,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
 /// Rewrites one `Store` node into the matching `StackStore` / `StackStorePhi`
@@ -92,17 +92,7 @@ impl StackStoreDetect {
     }
 }
 
-impl Optimizer for StackStoreDetect {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl StackStoreDetect {
+impl OptimizerOnBuilt for StackStoreDetect {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let nodes: Vec<NodeId> = function.preorder().collect();
         let mut memo: SpExprMemo = Default::default();

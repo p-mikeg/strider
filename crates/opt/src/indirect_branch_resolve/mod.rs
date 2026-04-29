@@ -126,6 +126,13 @@ pub struct IndirectBranchResolve {
     /// pinned at lift time.  The strider orchestrator populates this
     /// from `outcome.unresolved_branches`.
     ///
+    /// **Precondition:** each anchor must appear at most once.  The pass
+    /// walks the list and applies in-place edits per entry; a duplicate
+    /// would re-visit the same anchor, find the now-detached placeholder
+    /// (because the first visit already rewrote it), and silently no-op
+    /// — masking the duplicate.  The strider orchestrator populates this
+    /// from a deduplicated source.
+    ///
     /// Field is opaque: anchors are addr-tagged `NodeOutputId`s.  We
     /// store [`AnchorAddr`] rather than `cfg::PcodeInsnAddr` to keep
     /// the opt crate free of any cfg dependency.

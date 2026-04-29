@@ -2,7 +2,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::worklist::WorkSet;
 
 #[cfg(test)]
@@ -55,16 +55,12 @@ fn try_eliminate_dead_branch(
     };
 
     // ── Step 1: collect dead-ctrl uses before any mutation ────────────────────
-    // Each use is (ControlState node, input_index_in_that_node).
-    // Sort by `idx` descending so that if the same dead_ctrl is wired into one
-    // ControlState at multiple slots, removing the higher index first leaves
-    // lower indices pointing at their original slots. Removals at different
-    // consumers don't interact, so per-consumer descending is enough. The
-    // current `Graph` use-list is head-insertion (LIFO) so this sort is a
-    // no-op today, but depending on that implementation detail would silently
-    // miscompile if the use-list ever became insertion-order (FIFO).
-    let mut dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
-    dead_uses.sort_by(|a, b| b.1.cmp(&a.1));
+    // Each use is (ControlState node, input_index_in_that_node).  Removals at
+    // different consumers don't interact (each `remove_node_input` only shifts
+    // its own consumer's later indices), and the `dead_idx < cs_len` guard in
+    // step 3 catches any per-consumer index that was already shifted by an
+    // earlier removal.  No sort needed.
+    let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
 
     // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
     fg.replace_all_uses(live_ctrl, ctrl_in)?;
@@ -126,17 +122,7 @@ fn try_eliminate_dead_branch(
 /// and `ControlPhi` nodes, which `RedundantPhis` can then collapse.
 pub struct DeadBranchElimination;
 
-impl Optimizer for DeadBranchElimination {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl DeadBranchElimination {
+impl OptimizerOnBuilt for DeadBranchElimination {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns

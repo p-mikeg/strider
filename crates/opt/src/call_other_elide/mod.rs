@@ -24,7 +24,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 
 /// User-op names whose semantic effect is a true no-op in the IR's
 /// data-flow / control-flow / memory model.
@@ -54,17 +54,7 @@ pub const NO_OP_USER_OPS: &[&str] = &[
 /// single-predecessor `ControlState` nodes left behind.
 pub struct CallOtherElide;
 
-impl Optimizer for CallOtherElide {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl CallOtherElide {
+impl OptimizerOnBuilt for CallOtherElide {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         // Collect candidates first — we can't iterate while mutating the
         // graph, and `preorder` borrows `function` immutably.

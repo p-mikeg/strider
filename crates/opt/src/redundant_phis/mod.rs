@@ -1,7 +1,7 @@
 use rustc_hash::FxHashSet;
 
 use crate::error::{ErrorKind, Result};
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 /// If every output of `node_id` has no uses and the node still has inputs,
@@ -135,17 +135,7 @@ fn remove_phis(
 /// leaves single-input phis behind.
 pub struct RedundantPhis;
 
-impl Optimizer for RedundantPhis {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl RedundantPhis {
+impl OptimizerOnBuilt for RedundantPhis {
     fn optimize_built(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let reachable = ir::walk::cfg_reachable(&function.graph, function.entry);
         let mut res = OptimizationResult::NoChange;
