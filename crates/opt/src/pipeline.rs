@@ -28,6 +28,25 @@ impl OptimizationResult {
             OptimizationResult::NoChange
         }
     }
+
+    /// Replaces every use of `old` with `new` and folds the resulting
+    /// `Changed`/`NoChange` into `self`.  Equivalent to
+    /// `self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?)`
+    /// — extracted because that exact line is the most common rewrite-and-
+    /// escalate idiom in the constant_fold and known_bits passes.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from
+    /// [`ir::BuiltFunctionGraph::replace_all_uses`].
+    pub fn after_replace(
+        self,
+        fg: &mut ir::BuiltFunctionGraph,
+        old: ir::node::NodeOutputId,
+        new: ir::node::NodeOutputId,
+    ) -> crate::Result<Self> {
+        Ok(self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?))
+    }
 }
 
 impl std::ops::BitOr for OptimizationResult {

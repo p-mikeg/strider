@@ -388,7 +388,7 @@ impl OptimizerOnBuilt for KnownBits {
                     continue;
                 }
                 let new_out = function.make_int_const(kb.ones, ty)?;
-                result |= OptimizationResult::from_changed(function.replace_all_uses(out, new_out)?);
+                result = result.after_replace(function, out, new_out)?;
             }
         }
         Ok(result)

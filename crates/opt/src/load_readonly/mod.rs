@@ -9,6 +9,15 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 /// Resolves `Load` nodes with constant addresses against a
 /// [`ReadOnlyMemory`] image, replacing them with the loaded constant value.
 ///
+/// # Memory-space contract
+///
+/// The pass forwards the `Load`'s [`rsleigh::VnSpace`] to
+/// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] verbatim and trusts
+/// the impl to discriminate.  A rom that returns `Some(_)` for an unrelated
+/// space (e.g. a `Load(REGISTER, …)` request answered from rodata bytes)
+/// would produce wrong constants — implementations of `ReadOnlyMemory` MUST
+/// return `None` for any space they do not back.
+///
 /// # Endianness
 ///
 /// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] returns a `u64`
@@ -73,7 +82,7 @@ impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
                 continue;
             };
             let new_out = function.make_int_const(masked, ty)?;
-            result |= OptimizationResult::from_changed(function.replace_all_uses(data_out, new_out)?);
+            result = result.after_replace(function, data_out, new_out)?;
         }
         Ok(result)
     }
