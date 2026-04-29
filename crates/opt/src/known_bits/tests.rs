@@ -13,7 +13,7 @@ where
     b.set_region(region);
     let val = f(&mut b)?;
     b.build_return(Some(val), &[])?;
-    Ok(b.build()?)
+    b.build()
 }
 
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
@@ -36,7 +36,7 @@ fn known_bits_or_then_and() -> Result<()> {
         let c7 = b.build_int_const(7u64, NodeOutputType::U64);
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)?)
+        b.build_int_binary_operation(ored, c4, IntBinaryOp::And, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -54,7 +54,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
         let f0 = b.build_int_const(0xF0u64, NodeOutputType::U8);
         let f = b.build_int_const(0x0Fu64, NodeOutputType::U8);
         let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, NodeOutputType::U8)?;
-        Ok(b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(inner, f, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -81,7 +81,7 @@ fn known_bits_popcount_range() -> Result<()> {
         let x = b.build_int_const(0xFFu64, NodeOutputType::U8);
         let pc = b.build_popcount(x, NodeOutputType::U8)?;
         let mask = b.build_int_const(0xF0u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(pc, mask, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(pc, mask, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -103,7 +103,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
         let four = b.build_int_const(4u64, NodeOutputType::U8);
         let shr = b.build_int_binary_operation(x, four, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
         let mask_high = b.build_int_const(0xF0u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(shr, mask_high, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(shr, mask_high, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -122,7 +122,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
         let five = b.build_int_const(5u64, NodeOutputType::U8);
         let shl = b.build_int_binary_operation(x, five, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?;
         let mask_low = b.build_int_const(0x1Fu64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(shl, mask_low, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(shl, mask_low, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -143,7 +143,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
             acc = b.build_int_binary_operation(acc, bit, IntBinaryOp::Or, NodeOutputType::U64)?;
         }
         let mask = b.build_int_const(0xFFu64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(acc, mask, IntBinaryOp::And, NodeOutputType::U64)?)
+        b.build_int_binary_operation(acc, mask, IntBinaryOp::And, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -162,7 +162,7 @@ fn known_bits_lzcount_range() -> Result<()> {
         let x = b.build_int_const(0x01u64, NodeOutputType::U8);
         let lz = b.build_lzcount(x, NodeOutputType::U8)?;
         let mask = b.build_int_const(0xF0u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(lz, mask, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(lz, mask, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -183,7 +183,7 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
         // (x|0xFF) is statically all-ones; xoring with itself folds to 0.
         // (Note: this also exercises ConstantFold's `x ^ x → 0` identity, but
         // KnownBits-only would prove the result by the both-known-1 case.)
-        Ok(b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, NodeOutputType::U8)?)
+        b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -208,7 +208,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         // ~~(x|0xFF) — bitwise-NOT round-trip = identity.
         let n1 = b.build_int_unary_operation(or_, ir::IntUnaryOp::Neg, NodeOutputType::U8)?;
-        Ok(b.build_int_unary_operation(n1, ir::IntUnaryOp::Neg, NodeOutputType::U8)?)
+        b.build_int_unary_operation(n1, ir::IntUnaryOp::Neg, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -225,7 +225,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
 fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0xABCDu64, NodeOutputType::U16);
-        Ok(b.truncate_if_needed(v, NodeOutputType::U8)?)
+        b.truncate_if_needed(v, NodeOutputType::U8)
     })?;
     // The builder likely already folded this at construction; just verify
     // the final state matches.
@@ -288,7 +288,7 @@ where
     b.set_region(region);
     let val = f(&mut b, v)?;
     b.build_return(Some(val), &[])?;
-    Ok(b.build()?)
+    b.build()
 }
 
 /// `ShiftRight(x | 2, 1) & 1` for U8 must fold to `IntConst(1)`: the literal
@@ -305,7 +305,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
         let ored = b.build_int_binary_operation(x, two, IntBinaryOp::Or, NodeOutputType::U8)?;
         let shifted =
             b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
-        Ok(b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -330,7 +330,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
         let ored = b.build_int_binary_operation(x, one, IntBinaryOp::Or, NodeOutputType::U8)?;
         let shifted =
             b.build_int_binary_operation(ored, seven, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?;
-        Ok(b.build_int_binary_operation(shifted, mask80, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(shifted, mask80, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -363,7 +363,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let one = b.build_int_const(1u64, NodeOutputType::U8);
         let eight = b.build_int_const(8u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(one, eight, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?)
+        b.build_int_binary_operation(one, eight, IntBinaryOp::ShiftLeft, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {
@@ -387,7 +387,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0xFFu64, NodeOutputType::U32);
         let thirty_two = b.build_int_const(32u64, NodeOutputType::U32);
-        Ok(b.build_int_binary_operation(v, thirty_two, IntBinaryOp::ShiftRight, NodeOutputType::U32)?)
+        b.build_int_binary_operation(v, thirty_two, IntBinaryOp::ShiftRight, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -420,7 +420,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
         let ored = b.build_int_binary_operation(two, masked, IntBinaryOp::Or, NodeOutputType::U8)?;
         let shifted =
             b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, NodeOutputType::U8)?;
-        Ok(b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(shifted, one, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     let mut changed = true;
     while changed {

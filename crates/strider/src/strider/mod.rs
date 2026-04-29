@@ -53,6 +53,6 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     /// Emits the function entry node into the IR graph.
     fn build_entry(&mut self) -> Result<()> {
-        Ok(self.builder.build_entry()?)
+        self.builder.build_entry()
     }
 }

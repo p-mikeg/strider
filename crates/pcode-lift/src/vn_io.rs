@@ -213,7 +213,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 container_reg.size.try_into()?,
             )?
         };
-        Ok(self.builder.truncate_if_needed(shifted, reg_ty)?)
+        self.builder.truncate_if_needed(shifted, reg_ty)
     }
 
     /// Emits IR nodes to write `val` into a register varnode.
@@ -246,7 +246,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             // round-trip when both sides match.
             let reg_ty: ir::ValueType = reg.size.try_into()?;
             let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
-            return Ok(self.builder.write_variable(reg, coerced)?);
+            return self.builder.write_variable(reg, coerced);
         }
         let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;

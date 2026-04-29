@@ -1,5 +1,7 @@
 //! Edge-kind discriminator for node outputs.
 
+use anyhow::anyhow;
+
 use super::output_type::NodeOutputType;
 
 /// The kind of data carried by a node output edge.
@@ -47,7 +49,7 @@ impl NodeOutputKind {
     #[track_caller]
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
         self.as_value()
-            .ok_or_else(|| crate::ErrorKind::ExpectedValueOutput(self).into())
+            .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
 
     /// Returns the value type, asserting it is integer. Errors as
@@ -65,7 +67,7 @@ impl NodeOutputKind {
         if ty.is_integer() {
             Ok(ty)
         } else {
-            Err(crate::ErrorKind::ExpectedIntegerType(ty).into())
+            Err(anyhow!("type {ty:?} is not an integer type"))
         }
     }
 
@@ -84,7 +86,7 @@ impl NodeOutputKind {
         if ty.is_float() {
             Ok(ty)
         } else {
-            Err(crate::ErrorKind::ExpectedFloatType(ty).into())
+            Err(anyhow!("type {ty:?} is not a float type"))
         }
     }
 

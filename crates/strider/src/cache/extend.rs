@@ -111,11 +111,7 @@ pub fn extend_predecessors_with_handle(
     // in place, so the pinned NodeId in the cache stays valid.
     graph
         .graph
-        .add_node_input(cache_entry.entry_control_state, pred.exit_control)
-        .map_err(|e| {
-            // First append — nothing to roll back.
-            anyhow::Error::from(e)
-        })?;
+        .add_node_input(cache_entry.entry_control_state, pred.exit_control)?;
     appended.push(cache_entry.entry_control_state);
 
     // Step 2: append predecessor's exit memory to the MemPhi.
@@ -125,7 +121,7 @@ pub fn extend_predecessors_with_handle(
     {
         // Roll back step 1 before propagating.
         rollback_appends(&mut graph.graph, &appended);
-        return Err(e.into());
+        return Err(e);
     }
     appended.push(cache_entry.entry_mem_phi);
 
@@ -163,13 +159,13 @@ pub fn extend_predecessors_with_handle(
                 Ok(outs) => outs[0],
                 Err(e) => {
                     rollback_appends(&mut graph.graph, &appended);
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
         };
         if let Err(e) = graph.graph.add_node_input(phi_node_id, value_for_pred) {
             rollback_appends(&mut graph.graph, &appended);
-            return Err(e.into());
+            return Err(e);
         }
         appended.push(phi_node_id);
     }

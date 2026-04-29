@@ -1,5 +1,7 @@
 use core::{ops::Index, slice};
 
+use anyhow::anyhow;
+
 use super::graph::Graph;
 use super::node::{NodeId, NodeInputId, NodeOutputId};
 
@@ -168,7 +170,9 @@ impl InputCursor<'_> {
     }
 
     pub fn replace_current_with(&mut self, new_value: NodeOutputId) -> crate::error::Result<()> {
-        let current = self.current.ok_or(crate::error::ErrorKind::NullCursorUse)?;
+        let current = self
+            .current
+            .ok_or_else(|| anyhow!("attempted to replace a null cursor use"))?;
         self.move_next();
         self.graph.update_input(current, new_value);
         Ok(())

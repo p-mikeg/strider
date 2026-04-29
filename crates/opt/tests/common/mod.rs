@@ -28,7 +28,7 @@ where
     b.set_region(region);
     let val = f(&mut b)?;
     b.build_return(Some(val), &[])?;
-    Ok(b.build()?)
+    b.build()
 }
 
 /// Builds a single-region function with a tracked variable `vn`. The closure

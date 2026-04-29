@@ -479,6 +479,7 @@ dependencies = [
 name = "ir"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cranelift-bitset",
  "cranelift-entity",
  "dot",
@@ -489,7 +490,6 @@ dependencies = [
  "proptest",
  "rsleigh",
  "smallvec",
- "strider-error",
  "target",
  "thiserror",
 ]

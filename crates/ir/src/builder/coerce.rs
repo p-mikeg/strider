@@ -1,5 +1,7 @@
+use anyhow::anyhow;
+
 use super::FunctionBuilder;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputType};
 use crate::ops::ExtendOp;
 
@@ -16,7 +18,7 @@ impl FunctionBuilder {
     pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
         let kind = self.graph().output_kind(output_id);
         kind.as_value()
-            .ok_or_else(|| ErrorKind::ExpectedValue(output_id, kind).into())
+            .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
     }
 
     /// If `output_id` is a constant node, returns its value as a `bool`.
@@ -47,7 +49,9 @@ impl FunctionBuilder {
     pub fn convert_to_bool_if_needed(&mut self, output_id: NodeOutputId) -> Result<NodeOutputId> {
         let output_kind = self.graph().output_kind(output_id);
         if !output_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(output_id, output_kind).into());
+            return Err(anyhow!(
+                "output {output_id:?} is not a value edge (got {output_kind:?})"
+            ));
         }
 
         if let Some(bool_val) = self.get_as_bool(output_id)? {
@@ -187,7 +191,7 @@ impl FunctionBuilder {
         }
 
         if !output_type.is_integer() {
-            return Err(ErrorKind::ExpectedInteger(output_id).into());
+            return Err(anyhow!("output {output_id:?} is not an integer value"));
         }
 
         // Non-integer input (Bool / Float) into an integer extend: insert a

@@ -18,7 +18,7 @@ where
     b.set_region(region);
     let val = f(&mut b)?;
     b.build_return(Some(val), &[])?;
-    Ok(b.build()?)
+    b.build()
 }
 
 /// Returns the output id that the Return node receives as its value
@@ -44,7 +44,7 @@ fn fold_int_add_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c3 = b.build_int_const(3u64, NodeOutputType::U64);
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
@@ -56,7 +56,7 @@ fn fold_int_and_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xFFu64, NodeOutputType::U64);
         let zero = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(x, zero, IntBinaryOp::And, NodeOutputType::U64)?)
+        b.build_int_binary_operation(x, zero, IntBinaryOp::And, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -67,7 +67,7 @@ fn fold_int_and_zero() -> Result<()> {
 fn fold_int_xor_self() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xABu64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(x, x, IntBinaryOp::Xor, NodeOutputType::U64)?)
+        b.build_int_binary_operation(x, x, IntBinaryOp::Xor, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -78,7 +78,7 @@ fn fold_int_xor_self() -> Result<()> {
 fn fold_int_sub_self() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0xABu64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(x, x, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(x, x, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -93,7 +93,7 @@ fn fold_add_zero_identity() -> Result<()> {
         let c2 = b.build_int_const(2u64, NodeOutputType::U64);
         let x = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
         let zero = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(x, zero, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(x, zero, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     // After at least one fold pass x+0 should collapse to x, then x folds too.
     let mut changed = true;
@@ -109,7 +109,7 @@ fn fold_mul_by_one() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c5 = b.build_int_const(5u64, NodeOutputType::U64);
         let one = b.build_int_const(1u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(c5, one, IntBinaryOp::Mul, NodeOutputType::U64)?)
+        b.build_int_binary_operation(c5, one, IntBinaryOp::Mul, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
@@ -126,7 +126,7 @@ fn fold_and_and_masks() -> Result<()> {
         let c7 = b.build_int_const(7u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c4, IntBinaryOp::And, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c7, IntBinaryOp::And, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c7, IntBinaryOp::And, NodeOutputType::U64)
     })?;
     // Run to convergence (both-const fold + mask-merge may each fire once).
     let mut changed = true;
@@ -260,7 +260,7 @@ fn reassoc_add_add_consts() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -279,7 +279,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -298,7 +298,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -317,7 +317,7 @@ fn reassoc_sub_sub_consts() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Sub, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -336,7 +336,7 @@ fn reassoc_add_commuted_inner() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(c3, x, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -355,7 +355,7 @@ fn reassoc_add_commuted_outer() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let inner =
             b.build_int_binary_operation(x, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -374,7 +374,7 @@ fn reassoc_chain_three_subs() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let a = b.build_int_binary_operation(x, c4, IntBinaryOp::Sub, NodeOutputType::U64)?;
         let b_ = b.build_int_binary_operation(a, c4, IntBinaryOp::Sub, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     let mut changed = true;
     while changed {
@@ -392,7 +392,7 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U32);
         let a = b.build_int_binary_operation(x, c4, IntBinaryOp::Sub, NodeOutputType::U32)?;
         let b_ = b.build_int_binary_operation(a, c4, IntBinaryOp::Sub, NodeOutputType::U32)?;
-        Ok(b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U32)?)
+        b.build_int_binary_operation(b_, c4, IntBinaryOp::Sub, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -469,7 +469,7 @@ fn fold_truncate_const() -> Result<()> {
     // Verify that the return value is semantically 0x00 (0xFF00 & 0xFF).
     let fg = make_fn(|b| {
         let wide = b.build_int_const(0xFF00u64, NodeOutputType::U16);
-        Ok(b.truncate_if_needed(wide, NodeOutputType::U8)?)
+        b.truncate_if_needed(wide, NodeOutputType::U8)
     })?;
     let val = return_value(&fg)?;
     // Use int_const_val which masks to the declared type.
@@ -503,7 +503,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
         let b_ = b.build_int_const(0xFFFFu64, NodeOutputType::U16);
         // Non-const node so truncate_if_needed emits a real Truncate node.
         let or = b.build_int_binary_operation(a, b_, IntBinaryOp::Or, NodeOutputType::U16)?;
-        Ok(b.truncate_if_needed(or, NodeOutputType::U8)?)
+        b.truncate_if_needed(or, NodeOutputType::U8)
     })?;
     // Sanity: builder did emit a Truncate node.
     assert!(
@@ -557,7 +557,7 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
         let bb = b.build_int_const(0x55u64, NodeOutputType::U32);
         let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, NodeOutputType::U32)?;
         let widened = b.extend_if_needed(or, NodeOutputType::U64, ExtendOp::ZeroExtend)?;
-        Ok(b.truncate_if_needed(widened, NodeOutputType::U32)?)
+        b.truncate_if_needed(widened, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -595,7 +595,7 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
         let bb = b.build_int_const(0x01u64, NodeOutputType::U32);
         let or = b.build_int_binary_operation(a, bb, IntBinaryOp::Or, NodeOutputType::U32)?;
         let widened = b.extend_if_needed(or, NodeOutputType::U64, ExtendOp::SignExtend)?;
-        Ok(b.truncate_if_needed(widened, NodeOutputType::U32)?)
+        b.truncate_if_needed(widened, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -629,7 +629,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
         let lhs_ext = b.extend_if_needed(lhs_or, NodeOutputType::U64, ExtendOp::SignExtend)?;
         let rhs_ext = b.extend_if_needed(rhs_or, NodeOutputType::U64, ExtendOp::SignExtend)?;
         let mul = b.build_int_binary_operation(lhs_ext, rhs_ext, IntBinaryOp::Mul, NodeOutputType::U64)?;
-        Ok(b.truncate_if_needed(mul, NodeOutputType::U32)?)
+        b.truncate_if_needed(mul, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -668,7 +668,7 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
             high_mask, junk, IntBinaryOp::And, NodeOutputType::U64)?;
         let merged = b.build_int_binary_operation(
             low_or, high_part, IntBinaryOp::Or, NodeOutputType::U64)?;
-        Ok(b.truncate_if_needed(merged, NodeOutputType::U32)?)
+        b.truncate_if_needed(merged, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -699,7 +699,7 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
         let low_mask = b.build_int_const(0xFFFFFFFFu64, NodeOutputType::U64);
         let masked = b.build_int_binary_operation(
             low_mask, x, IntBinaryOp::And, NodeOutputType::U64)?;
-        Ok(b.truncate_if_needed(masked, NodeOutputType::U32)?)
+        b.truncate_if_needed(masked, NodeOutputType::U32)
     })?;
     let mut changed = true;
     while changed {
@@ -726,7 +726,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
         // round-trip rule must NOT fire.  Constant-fold can still collapse
         // the const-Or, but the truncate must remain (or its result must
         // still semantically be U16).
-        Ok(b.truncate_if_needed(widened, NodeOutputType::U16)?)
+        b.truncate_if_needed(widened, NodeOutputType::U16)
     })?;
     let mut changed = true;
     while changed {
@@ -749,7 +749,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
 fn fold_bool_neg_const() -> Result<()> {
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
-        Ok(b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)?)
+        b.build_boolean_unary_operation(t, BoolUnaryOp::Neg)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
@@ -761,7 +761,7 @@ fn fold_bool_and_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
         let f = b.build_boolean_const(false);
-        Ok(b.build_boolean_operation(t, f, BoolBinaryOp::And)?)
+        b.build_boolean_operation(t, f, BoolBinaryOp::And)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
@@ -775,7 +775,7 @@ fn no_fold_div_by_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(10u64, NodeOutputType::U64);
         let zero = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(x, zero, IntBinaryOp::Div, NodeOutputType::U64)?)
+        b.build_int_binary_operation(x, zero, IntBinaryOp::Div, NodeOutputType::U64)
     })?;
     // Should not fold (division by zero is undefined).
     assert!(!ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
@@ -791,7 +791,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c5 = b.build_int_const(5u64, NodeOutputType::U64);
         let c5b = b.build_int_const(5u64, NodeOutputType::U64);
-        Ok(b.build_int_cmp_operation(c5, c5b, IntCmpOp::Equal, NodeOutputType::U64)?)
+        b.build_int_cmp_operation(c5, c5b, IntCmpOp::Equal, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
@@ -803,7 +803,7 @@ fn fold_int_cmp_less_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c3 = b.build_int_const(3u64, NodeOutputType::U64);
         let c5 = b.build_int_const(5u64, NodeOutputType::U64);
-        Ok(b.build_int_cmp_operation(c3, c5, IntCmpOp::Less, NodeOutputType::U64)?)
+        b.build_int_cmp_operation(c3, c5, IntCmpOp::Less, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
@@ -817,7 +817,7 @@ fn fold_popcount_const() -> Result<()> {
     // popcount(0b10110101) = 5
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0b10110101u64, NodeOutputType::U8);
-        Ok(b.build_popcount(v, NodeOutputType::U8)?)
+        b.build_popcount(v, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(5));
@@ -828,7 +828,7 @@ fn fold_popcount_const() -> Result<()> {
 fn fold_popcount_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_popcount(v, NodeOutputType::U64)?)
+        b.build_popcount(v, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -840,7 +840,7 @@ fn fold_lzcount_msb_set() -> Result<()> {
     // lzcount(0x80u8) = 0 (MSB is set)
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0x80u64, NodeOutputType::U8);
-        Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+        b.build_lzcount(v, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -852,7 +852,7 @@ fn fold_lzcount_one() -> Result<()> {
     // lzcount(1u8) = 7 (only bit 0 set in an 8-bit value)
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(1u64, NodeOutputType::U8);
-        Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+        b.build_lzcount(v, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(7));
@@ -866,7 +866,7 @@ fn fold_lzcount_zero_u32() -> Result<()> {
     // masked was 0, ignoring the type's narrower width.
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0u64, NodeOutputType::U32);
-        Ok(b.build_lzcount(v, NodeOutputType::U32)?)
+        b.build_lzcount(v, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(32));
@@ -877,7 +877,7 @@ fn fold_lzcount_zero_u32() -> Result<()> {
 fn fold_lzcount_zero_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0u64, NodeOutputType::U8);
-        Ok(b.build_lzcount(v, NodeOutputType::U8)?)
+        b.build_lzcount(v, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(8));
@@ -890,7 +890,7 @@ fn fold_lzcount_zero_u64() -> Result<()> {
     // it with a regression test so the fix doesn't break it.
     let mut fg = make_fn(|b| {
         let v = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_lzcount(v, NodeOutputType::U64)?)
+        b.build_lzcount(v, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(64));
@@ -1003,7 +1003,7 @@ fn fold_f32_add_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F32)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1018,7 +1018,7 @@ fn fold_f32_mul_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F32)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1033,7 +1033,7 @@ fn fold_f32_div_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(10.0f32.to_bits() as u64, NodeOutputType::F32);
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F32)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1048,7 +1048,7 @@ fn fold_f64_add_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F64)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(7.0f64.to_bits()));
@@ -1060,7 +1060,7 @@ fn fold_f64_mul_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(3.0f64.to_bits(), NodeOutputType::F64);
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F64)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Mul, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(12.0f64.to_bits()));
@@ -1072,7 +1072,7 @@ fn fold_f64_div_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(10.0f64.to_bits(), NodeOutputType::F64);
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F64)?)
+        b.build_float_binary_op(a, c, FloatBinaryOp::Div, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
@@ -1084,7 +1084,7 @@ fn fold_f32_less_true() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(3.0f32.to_bits() as u64, NodeOutputType::F32);
         let c = b.build_float_const(4.0f32.to_bits() as u64, NodeOutputType::F32);
-        Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Less)?)
+        b.build_float_cmp_op(a, c, FloatCmpOp::Less)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
@@ -1096,7 +1096,7 @@ fn fold_f64_equal_true() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
         let c = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
+        b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(true));
@@ -1110,7 +1110,7 @@ fn fold_f64_equal_nan_false() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(nan, NodeOutputType::F64);
         let c = b.build_float_const(nan, NodeOutputType::F64);
-        Ok(b.build_float_cmp_op(a, c, FloatCmpOp::Equal)?)
+        b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::BoolConst(false));
@@ -1121,7 +1121,7 @@ fn fold_f64_equal_nan_false() -> Result<()> {
 fn fold_f32_neg_const() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_float_const(2.0f32.to_bits() as u64, NodeOutputType::F32);
-        Ok(b.build_float_unary_op(v, FloatUnaryOp::Neg, NodeOutputType::F32)?)
+        b.build_float_unary_op(v, FloatUnaryOp::Neg, NodeOutputType::F32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1135,7 +1135,7 @@ fn fold_f32_neg_const() -> Result<()> {
 fn fold_f64_abs_const() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_float_const((-3.0f64).to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_unary_op(v, FloatUnaryOp::Abs, NodeOutputType::F64)?)
+        b.build_float_unary_op(v, FloatUnaryOp::Abs, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(3.0f64.to_bits()));
@@ -1146,7 +1146,7 @@ fn fold_f64_abs_const() -> Result<()> {
 fn fold_f64_sqrt_const() -> Result<()> {
     let mut fg = make_fn(|b| {
         let v = b.build_float_const(4.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_unary_op(v, FloatUnaryOp::Sqrt, NodeOutputType::F64)?)
+        b.build_float_unary_op(v, FloatUnaryOp::Sqrt, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.0f64.to_bits()));
@@ -1158,7 +1158,7 @@ fn fold_float_mul_by_one_identity() -> Result<()> {
     let mut fg = make_fn(|b| {
         let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
         let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)?)
+        b.build_float_binary_op(x, one, FloatBinaryOp::Mul, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
@@ -1170,7 +1170,7 @@ fn fold_float_div_by_one_identity() -> Result<()> {
     let mut fg = make_fn(|b| {
         let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
         let x = b.build_float_const(2.5f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)?)
+        b.build_float_binary_op(x, one, FloatBinaryOp::Div, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::FloatConst(2.5f64.to_bits()));
@@ -1195,7 +1195,7 @@ fn fold_f64_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
     for &(input, expected) in cases {
         let mut fg = make_fn(|b| {
             let v = b.build_float_const(input.to_bits(), NodeOutputType::F64);
-            Ok(b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F64)?)
+            b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F64)
         })?;
         assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed(),
             "Round({input}) did not fold");
@@ -1220,7 +1220,7 @@ fn fold_f32_round_uses_ties_to_even_not_away_from_zero() -> Result<()> {
     for &(input, expected) in cases {
         let mut fg = make_fn(|b| {
             let v = b.build_float_const(input.to_bits() as u64, NodeOutputType::F32);
-            Ok(b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F32)?)
+            b.build_float_unary_op(v, FloatUnaryOp::Round, NodeOutputType::F32)
         })?;
         assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed(),
             "Round({input}) did not fold");
@@ -1322,7 +1322,7 @@ fn fold_shl_const_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(1u64, NodeOutputType::U32);
         let n = b.build_int_const(4u64, NodeOutputType::U32);
-        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)?)
+        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x10));
@@ -1335,7 +1335,7 @@ fn fold_shl_at_width_boundary_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(1u64, NodeOutputType::U32);
         let n = b.build_int_const(31u64, NodeOutputType::U32);
-        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)?)
+        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0x8000_0000));
@@ -1348,7 +1348,7 @@ fn fold_shr_const_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let x = b.build_int_const(0x80u64, NodeOutputType::U8);
         let n = b.build_int_const(7u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(x, n, IntBinaryOp::ShiftRight, NodeOutputType::U8)?)
+        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftRight, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(1));
@@ -1362,7 +1362,7 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(nan, NodeOutputType::F64);
         let one = b.build_float_const(1.0f64.to_bits(), NodeOutputType::F64);
-        Ok(b.build_float_binary_op(a, one, FloatBinaryOp::Add, NodeOutputType::F64)?)
+        b.build_float_binary_op(a, one, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
@@ -1381,7 +1381,7 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(inf, NodeOutputType::F64);
         let bb = b.build_float_const(inf, NodeOutputType::F64);
-        Ok(b.build_float_binary_op(a, bb, FloatBinaryOp::Sub, NodeOutputType::F64)?)
+        b.build_float_binary_op(a, bb, FloatBinaryOp::Sub, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
@@ -1403,7 +1403,7 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
         let b2 = b.build_float_const(1.5f32.to_bits() as u64, NodeOutputType::F32);
         let sum = b.build_float_binary_op(a, b2, FloatBinaryOp::Add, NodeOutputType::F32)?;
         let as_int = b.build_float_bits_to_int(sum, NodeOutputType::U32)?;
-        Ok(b.build_int_bits_to_float(as_int, NodeOutputType::F32)?)
+        b.build_int_bits_to_float(as_int, NodeOutputType::F32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
@@ -1428,7 +1428,7 @@ fn single_pass_propagates_through_chain() -> Result<()> {
         let four = b.build_int_const(4u64, NodeOutputType::U32);
         let c1 = b.build_int_binary_operation(one, two, IntBinaryOp::Add, NodeOutputType::U32)?;
         let c2 = b.build_int_binary_operation(c1, three, IntBinaryOp::Add, NodeOutputType::U32)?;
-        Ok(b.build_int_binary_operation(c2, four, IntBinaryOp::Add, NodeOutputType::U32)?)
+        b.build_int_binary_operation(c2, four, IntBinaryOp::Add, NodeOutputType::U32)
     })?;
 
     // Single optimize() call — must converge without the outer pipeline loop.
@@ -1629,7 +1629,7 @@ use ir::IntUnaryOp;
 fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(49u64, NodeOutputType::U32);
-        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)?)
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1647,7 +1647,7 @@ fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
 fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(50u64, NodeOutputType::U32);
-        Ok(b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U32)?)
+        b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1668,7 +1668,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
 fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0xAAu64, NodeOutputType::U8);
-        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U8)?)
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1685,7 +1685,7 @@ fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
 fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U64)?)
+        b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -1699,7 +1699,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, NodeOutputType::U32);
-        Ok(b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)?)
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
