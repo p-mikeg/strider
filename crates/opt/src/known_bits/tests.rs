@@ -1,21 +1,9 @@
 use crate::pipeline::Optimizer;
+use crate::test_support::make_fn;
 use super::*;
 use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
-
-fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
-where
-    F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
-{
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let val = f(&mut b)?;
-    b.build_return(Some(val), &[])?;
-    b.build()
-}
 
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg

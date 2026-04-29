@@ -45,6 +45,8 @@ mod load_readonly;
 mod redundant_phis;
 pub mod stack_load_forward;
 mod stack_store;
+#[cfg(test)]
+mod test_support;
 
 pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;

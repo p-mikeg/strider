@@ -7,20 +7,7 @@ use ir::{
     IntBinaryOp, IntCmpOp,
 };
 
-/// Builds a minimal single-region function whose return value is produced
-/// by `f`.  All nodes built by `f` are reachable from the entry.
-fn make_fn<F>(f: F) -> Result<ir::BuiltFunctionGraph>
-where
-    F: FnOnce(&mut FunctionBuilder) -> Result<ir::Value>,
-{
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let val = f(&mut b)?;
-    b.build_return(Some(val), &[])?;
-    b.build()
-}
+use crate::test_support::{make_fn, make_fn_with_var};
 
 /// Returns the output id that the Return node receives as its value
 /// argument (input[2]: input[0] is the control edge, input[1] is memory).
@@ -150,23 +137,6 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
             space: rsleigh::VnSpace::REGISTER,
         },
     }
-}
-
-/// Builds a minimal function exposing a single tracked variable via
-/// `read_variable` (which returns a `ControlPhi` output wrapping the
-/// entry's `InitialVar`). The closure receives that non-constant value.
-fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(ir::BuiltFunctionGraph, ir::Value)>
-where
-    F: FnOnce(&mut FunctionBuilder, ir::Value) -> Result<ir::Value>,
-{
-    let mut b = FunctionBuilder::new_raw(vec![vn], &[vn], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let x = b.read_variable(&vn)?;
-    let val = f(&mut b, x)?;
-    b.build_return(Some(val), &[])?;
-    Ok((b.build()?, x))
 }
 
 /// Asserts the return-value node is `expected_base + expected_const`
