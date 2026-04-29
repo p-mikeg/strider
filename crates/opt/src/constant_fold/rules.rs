@@ -301,7 +301,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let c = IntVar::new();
         let pat: Pat = and(var(x), any_int_const(c)).into();
         let pat = pat.when_match(move |_fg, ty, b| {
-            b.get_int(c) == ty.get_unsigned_int_u128(u128::MAX)
+            b.get_int(c) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -314,7 +314,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let c = IntVar::new();
         let pat: Pat = xor(var(x), any_int_const(c)).into();
         let pat = pat.when_match(move |_fg, ty, b| {
-            b.get_int(c) == ty.get_unsigned_int_u128(u128::MAX)
+            b.get_int(c) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, neg(var(x))))
     };
@@ -417,7 +417,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                         IntUnaryOp::Neg => !v,
                         IntUnaryOp::Not => v.wrapping_neg(),
                     };
-                    ty.get_unsigned_int_u128(raw).ok_or_else(pattern::skip)?
+                    ty.get_unsigned_int(raw).ok_or_else(pattern::skip)?
                 }),
             ))
         },
@@ -451,7 +451,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 truncate(any_int_const(v)),
                 int_const_with!([v, ty] =>
-                    ty.get_unsigned_int_u128(v).ok_or_else(pattern::skip)?
+                    ty.get_unsigned_int(v).ok_or_else(pattern::skip)?
                 ),
             ))
         },
@@ -465,8 +465,8 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         },
         // 6. SignExtend(IntConst(v)) =>
         //        int_const(sign_extend(v, in_ty) masked to ty, ty)
-        //    `in_ty` is the narrower input type; `get_signed_int_i128` produces
-        //    the sign-extended i128 value, which `get_unsigned_int_u128` then
+        //    `in_ty` is the narrower input type; `get_signed_int` produces
+        //    the sign-extended i128 value, which `get_unsigned_int` then
         //    masks to the wider output width.
         {
             let v = IntVar::new();
@@ -475,10 +475,10 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let signed = input_ty
-                        .get_signed_int_i128(v)
+                        .get_signed_int(v)
                         .ok_or_else(|| anyhow::anyhow!("expected integer type, got {input_ty:?}"))?
                         as u128;
-                    ty.get_unsigned_int_u128(signed).ok_or_else(pattern::skip)?
+                    ty.get_unsigned_int(signed).ok_or_else(pattern::skip)?
                 }),
             ))
         },
@@ -491,7 +491,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
-                        .get_unsigned_int_u128(v)
+                        .get_unsigned_int(v)
                         .ok_or_else(pattern::skip)?;
                     u128::from(masked.count_ones())
                 }),
@@ -509,7 +509,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_const_with!([v, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
-                        .get_unsigned_int_u128(v)
+                        .get_unsigned_int(v)
                         .ok_or_else(pattern::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     // Lzcount fold is only computable when the input type

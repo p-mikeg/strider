@@ -28,6 +28,25 @@ impl OptimizationResult {
             OptimizationResult::NoChange
         }
     }
+
+    /// Replaces every use of `old` with `new` and folds the resulting
+    /// `Changed`/`NoChange` into `self`.  Equivalent to
+    /// `self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?)`
+    /// — extracted because that exact line is the most common rewrite-and-
+    /// escalate idiom in the constant_fold and known_bits passes.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from
+    /// [`ir::BuiltFunctionGraph::replace_all_uses`].
+    pub fn after_replace(
+        self,
+        fg: &mut ir::BuiltFunctionGraph,
+        old: ir::node::NodeOutputId,
+        new: ir::node::NodeOutputId,
+    ) -> crate::Result<Self> {
+        Ok(self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?))
+    }
 }
 
 impl std::ops::BitOr for OptimizationResult {
@@ -111,6 +130,38 @@ pub trait Optimizer {
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult>;
+}
+
+/// Optimizer pass that operates on a [`ir::BuiltFunctionGraph`] rather than
+/// the lower-level `(&mut Graph, NodeId)` pair.  Most passes implement this
+/// instead of [`Optimizer`] directly: the blanket impl below wires the
+/// [`with_built`] adapter so the pass slots into the pipeline.
+///
+/// Passes that need direct `&mut Graph` access (e.g.
+/// [`crate::indirect_branch_resolve::IndirectBranchResolve`], whose
+/// in-place edits straddle `with_built` boundaries) implement
+/// [`Optimizer`] directly instead.
+pub trait OptimizerOnBuilt {
+    /// Run one sweep of this pass over the function graph.  See
+    /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error encountered by the pass.
+    fn optimize_built(
+        &self,
+        function: &mut ir::BuiltFunctionGraph,
+    ) -> crate::Result<OptimizationResult>;
+}
+
+impl<T: OptimizerOnBuilt> Optimizer for T {
+    fn optimize(
+        &self,
+        graph: &mut ir::Graph,
+        entry: ir::node::NodeId,
+    ) -> crate::Result<OptimizationResult> {
+        with_built(graph, entry, |function| self.optimize_built(function))
+    }
 }
 
 /// An ordered list of [`Optimizer`] passes that are run in a shared fixed-point
@@ -200,9 +251,10 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns the first [`crate::Error`] reported by any pass, or the
-    /// final-validate error from `ir::validate::validate` if the post-pass
-    /// run leaves an invalid graph.
+    /// Returns the first [`crate::Error`] reported by any pass.  If every
+    /// pass and post-pass succeeds, the graph is then re-validated and any
+    /// validation error is returned.  When a post-pass returns `Err`, the
+    /// final validation step is skipped — the pass error wins.
     pub fn run(
         &self,
         graph: &mut ir::Graph,

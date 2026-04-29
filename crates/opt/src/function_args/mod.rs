@@ -35,8 +35,8 @@ use ir::BuiltFunctionGraph;
 use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
 
 /// Replaces register-passed and stack-passed argument reads with canonical
 /// [`NodeKind::FunctionArg`][ir::node::NodeKind::FunctionArg] nodes.  Intended
@@ -84,17 +84,7 @@ impl FunctionArgDetect {
     }
 }
 
-impl Optimizer for FunctionArgDetect {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl FunctionArgDetect {
+impl OptimizerOnBuilt for FunctionArgDetect {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
         changed |= detect_register_args(function, &self.arg_passing_regs)?;
@@ -140,13 +130,15 @@ fn detect_register_args(
     fg: &mut BuiltFunctionGraph,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
-    // Single graph scan collects every InitialVar's Vn → NodeId.
+    // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
     // `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`),
     // so we still rely on the builder's invariant of at most one InitialVar
-    // per varnode.
+    // per varnode.  Walking `preorder()` rather than `all_node_ids()` skips
+    // detached zombies left by destructive passes (e.g. `RedundantPhis`),
+    // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    for n in fg.all_node_ids() {
+    for n in fg.preorder() {
         if let NodeKind::InitialVar(vn) = *fg.graph.node_kind(n) {
             initial_vars.insert(vn, n);
         }
@@ -376,7 +368,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// passes through; an SP-rooted `Terminal` address uses the same byte-range
 /// disjointness check as `StackStore`; an SP-rooted `Phi` address conservatively
 /// terminates (matches `stack_load_forward::probe`'s posture).  This is the
-/// `mem_chain_is_dirty` arm of BUG-28 cause #2 — gcc/clang at -O2 routinely
+/// `mem_chain_is_dirty` arm of cause #2 — gcc/clang at -O2 routinely
 /// interleave volatile global writes between function-entry stack-arg loads
 /// and the first uses, and without this branch they would all hit `_ => true`.
 ///
@@ -422,7 +414,8 @@ fn mem_chain_is_dirty(
             // StackStore inputs: [MEM, SP, DATA].
             if inputs.len() < 3 {
                 false
-            } else if let Some(store_size) = value_byte_size(fg, inputs[2]) {
+            } else {
+                let store_size = store_value_byte_size(&fg.graph, inputs[2]);
                 if !ranges_disjoint(k, store_size, offset, load_size) {
                     true
                 } else {
@@ -437,8 +430,6 @@ fn mem_chain_is_dirty(
                         memo,
                     )
                 }
-            } else {
-                true
             }
         }
         NodeKind::StackStorePhi { .. } => {
@@ -446,7 +437,8 @@ fn mem_chain_is_dirty(
             // StackStorePhi inputs: [PHI, MEM, DATA].
             if inputs.len() < 3 {
                 false
-            } else if let Some(store_size) = value_byte_size(fg, inputs[2]) {
+            } else {
+                let store_size = store_value_byte_size(&fg.graph, inputs[2]);
                 let any_overlap = fg
                     .graph
                     .stack_phi_offsets(node)
@@ -466,11 +458,9 @@ fn mem_chain_is_dirty(
                         memo,
                     )
                 }
-            } else {
-                true
             }
         }
-        // BUG-28 cause #2 (third instance): a plain `Store` (one
+        // a plain `Store` (one
         // `StackStoreDetect` did not rewrite, because its address did not
         // decompose to `sp + K`) used to fall through to `_ => true` and
         // mark the chain dirty unconditionally.  Mirror the resolution
@@ -502,16 +492,7 @@ fn mem_chain_is_dirty(
                     }
                     Some(SpExpr::Terminal { base: _, offset: store_off }) => {
                         // SP-rooted: same byte-range disjointness check
-                        // as the StackStore arm.  Store size taken from
-                        // the value's declared NodeOutputType; the
-                        // fallback (`i64::MAX`) is the soundness-preserving
-                        // answer — it forces `ranges_disjoint` to return
-                        // false and we conservatively terminate.  In
-                        // valid IR a Store's DATA slot is value-typed by
-                        // signature, so the fallback is unreachable; the
-                        // branch exists only as a defensive guardrail.
-                        let store_size =
-                            value_byte_size(fg, inputs[2]).unwrap_or(i64::MAX);
+                        let store_size = store_value_byte_size(&fg.graph, inputs[2]);
                         if ranges_disjoint(store_off, store_size, offset, load_size) {
                             mem_chain_is_dirty(
                                 fg,
@@ -568,12 +549,6 @@ fn mem_chain_is_dirty(
         memo.insert(key, result);
     }
     result
-}
-
-/// Byte size of a value output, or `None` if it is not a value-typed output
-/// (e.g. `Control` / `Memory`).
-fn value_byte_size(fg: &BuiltFunctionGraph, out: NodeOutputId) -> Option<i64> {
-    fg.graph.output_kind(out).as_value().map(|t| t.byte_size() as i64)
 }
 
 #[cfg(test)]

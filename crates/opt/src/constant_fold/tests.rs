@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::Optimizer;
 use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{
@@ -191,13 +192,13 @@ fn assert_add_with_const(
     let l = inputs[0];
     let r = inputs[1];
     let masked = ty
-        .get_unsigned_int(expected_const)
+        .get_unsigned_int(u128::from(expected_const))
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
             *fg.graph.kind_of_output(o),
             // IntConst stores u128; masked is u64, widen for comparison.
-            NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
+            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(u128::from(masked))
         )
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
@@ -234,12 +235,12 @@ fn assert_sub_with_const(
     let l = inputs[0];
     let r = inputs[1];
     let masked = ty
-        .get_unsigned_int(expected_const)
+        .get_unsigned_int(u128::from(expected_const))
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on_rhs = matches!(
         *fg.graph.kind_of_output(r),
         // IntConst stores u128; masked is u64, widen for comparison.
-        NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
+        NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(u128::from(masked))
     );
     assert!(
         l == expected_base && const_on_rhs,

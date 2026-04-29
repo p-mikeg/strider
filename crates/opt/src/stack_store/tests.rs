@@ -667,7 +667,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     Ok(())
 }
 
-// ── Walker: non-aliasing Store passthrough (BUG-28 cause #2) ──────────────
+// ── Walker: non-aliasing Store passthrough ──────────────
 
 /// Existing-behaviour pin: an in-frame stack-aliasing store (one that lands
 /// at an offset INSIDE the convention's stack-arg range) interleaved between
@@ -749,7 +749,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 /// should pass through them and continue collecting the upstream stack-args.
 ///
 /// Models the `volatile int g_sink_int = …;` barrier-pattern that gcc/clang
-/// at -O2 freely interleave with stack-arg pushes — the BUG-28 cause #2
+/// at -O2 freely interleave with stack-arg pushes — the cause #2
 /// reproducer.
 #[test]
 fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
@@ -819,7 +819,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
 
 /// NEW behaviour, multi-store stress: many stack-arg pushes interleaved with
 /// multiple non-aliasing global stores between every push.  Walker must
-/// collect all 4 stack args, mirroring the `forward_16` BUG-28 fixture.
+/// collect all 4 stack args, mirroring the `forward_16` fixture.
 #[test]
 fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     let sp = sp_vn();

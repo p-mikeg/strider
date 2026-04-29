@@ -101,8 +101,9 @@ pub fn sp_vn() -> rsleigh::Vn {
     reg_vn(0x20, 4)
 }
 
-/// Runs `pass.optimize` until it reports `NoChange` or `MAX_ITERS` is hit
-/// (panics on hit — indicates a non-converging pass).
+/// Runs `pass.optimize` until it reports `NoChange` or `MAX_ITERS` is hit.
+/// Returns `AssertionFailed` if `MAX_ITERS` is exceeded (a non-converging
+/// pass).
 pub fn run_to_fixed_point<P: opt::Optimizer>(
     pass: &P,
     fg: &mut BuiltFunctionGraph,

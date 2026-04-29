@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::Optimizer;
 use crate::{OptimizerPipeline, RedundantPhis};
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};

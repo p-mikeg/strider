@@ -2,12 +2,21 @@ use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
 use reader::ReadOnlyMemory;
 
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
 /// Resolves `Load` nodes with constant addresses against a
 /// [`ReadOnlyMemory`] image, replacing them with the loaded constant value.
+///
+/// # Memory-space contract
+///
+/// The pass forwards the `Load`'s [`rsleigh::VnSpace`] to
+/// [`ReadOnlyMemory::read`][reader::ReadOnlyMemory::read] verbatim and trusts
+/// the impl to discriminate.  A rom that returns `Some(_)` for an unrelated
+/// space (e.g. a `Load(REGISTER, …)` request answered from rodata bytes)
+/// would produce wrong constants — implementations of `ReadOnlyMemory` MUST
+/// return `None` for any space they do not back.
 ///
 /// # Endianness
 ///
@@ -37,17 +46,7 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 /// ```
 pub struct LoadReadOnly<M>(pub M);
 
-impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl<M: ReadOnlyMemory + 'static> LoadReadOnly<M> {
+impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         let nodes: Vec<_> = function.preorder().collect();
         let mut result = OptimizationResult::NoChange;
@@ -79,11 +78,11 @@ impl<M: ReadOnlyMemory + 'static> LoadReadOnly<M> {
                 continue;
             };
 
-            let Some(masked) = ty.get_unsigned_int(loaded) else {
+            let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
                 continue;
             };
             let new_out = function.make_int_const(masked, ty)?;
-            result |= OptimizationResult::from_changed(function.replace_all_uses(data_out, new_out)?);
+            result = result.after_replace(function, data_out, new_out)?;
         }
         Ok(result)
     }

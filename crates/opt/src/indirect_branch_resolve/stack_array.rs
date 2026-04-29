@@ -1,4 +1,4 @@
-//! BUG-30 — stack-array-of-labels arm of the tier-2 indirect-branch classifier.
+//! Stack-array-of-labels arm of the tier-2 indirect-branch classifier.
 //!
 //! At -O0, gcc and clang lower a C `goto *targets[idx]` to:
 //!
@@ -44,7 +44,7 @@
 //! Failing either gate returns `None`; the orchestrator defers the
 //! branch.  No panic, no partial commitment, no over-approximation.
 
-use super::ResolvedTargets;
+use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
@@ -53,13 +53,6 @@ use crate::stack_load_forward::find_stack_stored_value_at_offset;
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
 use pattern::{IntVar, Matcher, Var, and as and_pat, any_int_const, or as or_pat, var};
-
-/// Per-call enumeration cap.  Mirrors the rodata jump-table arm's
-/// `MAX_TABLE_ENTRIES` for the same reason: a buggy KnownBits result
-/// could otherwise force iteration through 4 GiB of slots.  Real
-/// `goto *targets[]` arrays are bounded by the source-level switch arm
-/// count, well under 4096.
-const MAX_TABLE_ENTRIES: u64 = 4096;
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor_with_rom_and_sp`] when the
@@ -130,10 +123,21 @@ pub fn classify_stack_array(
     }
 }
 
-/// Strip a top-level `IntBinaryOp(And)` whose mask is a constant —
-/// returns the underlying value-output and the (u64-truncated) mask.
-/// When the anchor isn't an `And`, returns `(anchor_output, !0u64)` so
-/// the caller's masking step is a no-op.
+/// Maximum number of `And` / `Or` mask layers stripped before we give up
+/// and pass the anchor through unchanged.
+///
+/// ARM-Thumb commonly nests `And(Or(load, 1), 0xFFFFFFFE)` (set LSB then
+/// mask it off) — that's 2 layers.  Cap at 4 to defend against
+/// pathologically deep wrappers from buggy lifter output without losing
+/// the ARM-Thumb idioms we actually care about.  Beyond this cap the
+/// classifier returns `None` (defer to `UnresolvedIndirectBranch`).
+const MAX_STRIP_LAYERS: usize = 4;
+
+/// Strip up to [`MAX_STRIP_LAYERS`] of `IntBinaryOp(And)`/`Or` wrappers
+/// whose constant operand is a static mask, and return the underlying
+/// value-output along with the surviving (u64-truncated) mask.  When the
+/// anchor isn't an `And`, returns `(anchor_output, !0u64)` so the caller's
+/// masking step is a no-op.
 ///
 /// Soundness: the mask is applied bit-wise to each enumerated
 /// IntConst stored value.  When the mask clears LSBs (e.g. ARM
@@ -144,6 +148,11 @@ pub fn classify_stack_array(
 /// addresses may not be valid — but that's a soundness-preserving
 /// over-approximation: extra targets produce dead CFG edges, no
 /// runtime target is omitted.
+///
+/// Stripping more than [`MAX_STRIP_LAYERS`] layers is treated as
+/// pathological — the function returns the partially-stripped state and
+/// the caller's downstream shape match (`match_stack_array_shape`) will
+/// fail closed when the residual isn't a Load.
 //
 // CORRECTNESS — the patterns below are sound-equivalent to the prior
 // hand-rolled commutative-operand checks.  `pattern::and` /
@@ -168,11 +177,7 @@ fn strip_target_mask(
     let matcher = Matcher::new(fg);
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
-    // Strip up to a fixed number of layers; ARM-Thumb commonly nests
-    // `And(Or(load, 1), 0xFFFFFFFE)` (set LSB then mask it off) — that's
-    // 2 layers.  Cap at 4 to defend against pathologically deep wrappers
-    // from buggy lifter output.
-    for _ in 0..4 {
+    for _ in 0..MAX_STRIP_LAYERS {
         let producer = graph.get_node_from_output(current);
 
         // And-with-constant: mask narrows.
@@ -294,7 +299,7 @@ fn match_stack_array_shape(
             }
             Some(SpExpr::Phi { .. }) => {
                 // SP through a phi-join — out of scope for the
-                // single-region BUG-30 shape.  Bail.
+                // single-region shape.  Bail.
                 return None;
             }
             None => {
@@ -626,7 +631,7 @@ mod tests {
         assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
     }
 
-    // ── strip_target_mask characterization tests (R2-1) ──────────────────
+    // ── strip_target_mask characterization tests ──────────────────
     //
     // These tests pin the contract of `strip_target_mask` before R2's
     // refactor migrates the manual NodeKind matching to `pattern::and` /

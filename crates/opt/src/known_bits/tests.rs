@@ -1,3 +1,4 @@
+use crate::pipeline::Optimizer;
 use super::*;
 use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};

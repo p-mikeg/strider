@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline};
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};

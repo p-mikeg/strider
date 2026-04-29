@@ -4,13 +4,23 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
+
+/// Returns the all-ones bit mask for `ty` as a `u64`, or `None` if `ty` is not
+/// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
+/// out U80/U128/U256 (and Bool/floats) from the u64-bounded analysis.
+fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
+    if !ty.is_integer() || !ty.fits_u64() {
+        return None;
+    }
+    u64::try_from(ty.bit_mask_u128()).ok()
+}
 
 /// Known-bit information for a single output.
 ///
@@ -25,12 +35,13 @@ pub struct Kb {
 }
 
 impl Kb {
-    fn from_const(val: u64, ty: NodeOutputType) -> Self {
+    fn from_const(val: u128, ty: NodeOutputType) -> Self {
         let masked = ty.get_unsigned_int(val).unwrap_or(0);
-        let type_mask = ty.get_unsigned_int(u64::MAX).unwrap_or(0);
+        let type_mask = u64_type_mask(ty).unwrap_or(0);
+        let masked_u64 = u64::try_from(masked).unwrap_or(0);
         Kb {
-            ones: masked,
-            zeros: type_mask ^ masked,
+            ones: masked_u64,
+            zeros: type_mask ^ masked_u64,
         }
     }
 
@@ -93,14 +104,12 @@ pub fn node_known_bits(
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
-    let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
+    let Some(type_mask) = u64_type_mask(ty) else {
         return Ok(None);
     };
 
     let kb = match kind {
-        // IntConst stores u128; the guard above skips U128/U256, so v fits in u64 here.
-        #[allow(clippy::cast_possible_truncation)]
-        NodeKind::IntConst(v) => Kb::from_const(v as u64, ty),
+        NodeKind::IntConst(v) => Kb::from_const(v, ty),
 
         NodeKind::IntBinaryOp(op) => {
             let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
@@ -137,7 +146,7 @@ pub fn node_known_bits(
                         .graph
                         .output_kind(rhs)
                         .as_value()
-                        .and_then(|t| t.get_unsigned_int(u64::MAX))
+                        .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
@@ -178,7 +187,7 @@ pub fn node_known_bits(
                         .graph
                         .output_kind(rhs)
                         .as_value()
-                        .and_then(|t| t.get_unsigned_int(u64::MAX))
+                        .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
@@ -240,7 +249,7 @@ pub fn node_known_bits(
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.graph.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
-            let input_mask = input_ty.get_unsigned_int(u64::MAX).unwrap_or(0);
+            let input_mask = u64_type_mask(input_ty).unwrap_or(0);
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
                 ones: kb.ones,
@@ -340,17 +349,7 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
 /// information along data-dependency chains before deciding replacements.
 pub struct KnownBits;
 
-impl Optimizer for KnownBits {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl KnownBits {
+impl OptimizerOnBuilt for KnownBits {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
@@ -377,7 +376,7 @@ impl KnownBits {
                     continue;
                 }
                 // Skip types KnownBits doesn't track (U128/U256).
-                let Some(type_mask) = ty.get_unsigned_int(u64::MAX) else {
+                let Some(type_mask) = u64_type_mask(ty) else {
                     continue;
                 };
                 let Some(&kb) = known.get(&out) else { continue };
@@ -389,7 +388,7 @@ impl KnownBits {
                     continue;
                 }
                 let new_out = function.make_int_const(kb.ones, ty)?;
-                result |= OptimizationResult::from_changed(function.replace_all_uses(out, new_out)?);
+                result = result.after_replace(function, out, new_out)?;
             }
         }
         Ok(result)

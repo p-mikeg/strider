@@ -793,7 +793,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BUG-28 cause #2 (third instance): `mem_chain_is_dirty` plain-`Store` arm.
+// `mem_chain_is_dirty` plain-`Store` arm.
 //
 // The two prior fixes (commit 57005b9) updated `CallStackArgCollect` and
 // `stack_load_forward::probe` so a plain `Store` whose address provably
@@ -855,7 +855,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 /// chain dirty.  Such a Store is provably non-stack-aliasing (its address
 /// does not decompose to `sp + K`), so the walker should pass through it.
 ///
-/// Models the BUG-28 cause #2 reproducer for `mem_chain_is_dirty`: gcc/clang
+/// Models the cause #2 reproducer for `mem_chain_is_dirty`: gcc/clang
 /// at -O2 freely interleave volatile global writes (`volatile int g = …;`
 /// barriers) between the function-entry stack-arg loads and the call.
 /// Without the fix, the global Store hits the `_ => true` catch-all and the

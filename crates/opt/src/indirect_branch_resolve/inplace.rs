@@ -23,22 +23,25 @@ use anyhow::anyhow;
 use crate::error::Result;
 
 /// Applies the `LinkRegister` resolution to a placeholder
-/// `Return(control, memory, target_value)` node by appending
-/// `ret_val_outputs` as additional value inputs.
+/// `Return(control, memory, target_value)` node, dropping the
+/// `target_value` slot (no longer meaningful — the LR-targeted branch
+/// IS the return) and appending `ret_val_outputs` as the actual return
+/// values.
 ///
 /// Pre-edit: `[control, memory, target_value]`
-/// Post-edit: `[control, memory, target_value, ret_val_0, …]`
+/// Post-edit: `[control, memory, ret_val_0, …]`
 ///
-/// The `target_value` slot is intentionally retained — removing it
-/// would require shifting subsequent input indices.  The IR's
-/// `validate` is robust to extra Return value inputs.
+/// Removing the `target_value` slot keeps `RetPat::ret_val(idx)` 0-indexed
+/// over actual return values, matching the pattern crate's documented
+/// contract.  Without this, downstream pattern queries that look at
+/// `ret_val(0)` would hit the dead anchor placeholder.
 ///
 /// # Errors
 ///
 /// * [`ErrorKind::ExpectedNodeNotFound`] if `placeholder_return` is
 ///   not a [`NodeKind::Return`].
 /// * [`ErrorKind::IrError`] propagating any failure from
-///   [`Graph::add_node_input`].
+///   [`Graph::add_node_input`] / [`Graph::remove_node_input`].
 pub fn apply_link_register(
     graph: &mut Graph,
     placeholder_return: NodeId,
@@ -50,6 +53,13 @@ pub fn apply_link_register(
     }
     for &ret in ret_val_outputs {
         graph.add_node_input(placeholder_return, ret)?;
+    }
+    // Drop the placeholder `target_value` at slot 2 (after [control, memory]).
+    // Done last so `add_node_input` above appended after the placeholder; the
+    // shift moves ret_val_0 from slot 3 to slot 2 and so on.
+    let inputs = graph.node_inputs(placeholder_return);
+    if inputs.len() > 2 && inputs.len() > ret_val_outputs.len() + 2 {
+        graph.remove_node_input(placeholder_return, 2)?;
     }
     Ok(())
 }
@@ -276,7 +286,9 @@ mod tests {
     #[test]
     fn apply_link_register_threads_ret_val_outputs_into_return() {
         // Two ret-val outputs supplied → resulting Return's inputs are
-        // `[ctrl, mem, target_value, ret_val_0, ret_val_1]`.
+        // `[ctrl, mem, ret_val_0, ret_val_1]` (the placeholder
+        // `target_value` slot is dropped so `RetPat::ret_val(idx)` stays
+        // 0-indexed over the real return values).
         let (mut graph, placeholder) = build_placeholder_graph();
         let inputs_before: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
@@ -286,11 +298,11 @@ mod tests {
         let inputs_after: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
             inputs_after.len(),
-            inputs_before.len() + 2,
-            "Return must gain one input per ret-val output",
+            2 + 2,
+            "Return inputs are [ctrl, mem, ret_val_0, ret_val_1] after target_value removal",
         );
-        assert_eq!(inputs_after[3], r0);
-        assert_eq!(inputs_after[4], r1);
+        assert_eq!(inputs_after[2], r0);
+        assert_eq!(inputs_after[3], r1);
     }
 
     #[test]

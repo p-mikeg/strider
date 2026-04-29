@@ -21,7 +21,7 @@ impl Graph {
         }
         match *self.kind_of_output(out) {
             // IntConst stores u128; narrow to u64 for callers that only need <=64-bit values.
-            NodeKind::IntConst(v) => ty.get_unsigned_int_u128(v).and_then(|w| u64::try_from(w).ok()),
+            NodeKind::IntConst(v) => ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok()),
             _ => None,
         }
     }

@@ -6,7 +6,7 @@ use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExprMemo, decompose_sp};
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
@@ -219,17 +219,7 @@ impl CallStackArgCollect {
     }
 }
 
-impl Optimizer for CallStackArgCollect {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl CallStackArgCollect {
+impl OptimizerOnBuilt for CallStackArgCollect {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let calls: Vec<NodeId> = function
             .preorder()

@@ -2,6 +2,7 @@ use super::*;
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
 
+use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 
 fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {

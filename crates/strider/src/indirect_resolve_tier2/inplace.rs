@@ -110,32 +110,31 @@ mod tests {
     #[test]
     fn apply_link_register_keeps_return_node_id() {
         // The Return's NodeId must not change — that's the whole
-        // point of an in-place edit.  We keep a snapshot of the id
-        // before and after and assert equality.
+        // point of an in-place edit.  After the edit the placeholder
+        // `target_value` slot is dropped and (with zero ret_vals)
+        // arity becomes `[ctrl, mem]`.
         let (mut graph, return_id_before) = build_placeholder_graph();
         let inputs_before: Vec<_> =
             graph.graph.node_inputs(return_id_before).into_iter().collect();
         assert_eq!(inputs_before.len(), 3); // [control, memory, target_value]
         apply_link_register(&mut graph, return_id_before, &[]).expect("apply");
-        // Confirm the same node id is still a Return with the same
-        // arity (since ret_val_outputs is empty, no inputs added).
         assert!(matches!(
             graph.graph.node_kind(return_id_before),
             NodeKind::Return
         ));
         let inputs_after: Vec<_> =
             graph.graph.node_inputs(return_id_before).into_iter().collect();
-        assert_eq!(inputs_after.len(), inputs_before.len());
+        assert_eq!(inputs_after.len(), 2);
     }
 
     #[test]
     fn apply_link_register_appends_ret_val_inputs() {
-        // With one ret_val, the Return's input count grows by 1; the
-        // first three inputs (ctrl, mem, target_value) are preserved.
+        // With one ret_val, the Return's inputs are
+        // `[ctrl, mem, ret_val]` after the placeholder `target_value`
+        // is dropped.
         let (mut graph, return_id) = build_placeholder_graph();
         let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
         let ret_val = {
-            // Add an IntConst to graph.graph directly:
             let nid = graph.graph.create_node(
                 NodeKind::IntConst(0x42u128),
                 [],
@@ -146,23 +145,22 @@ mod tests {
         };
         apply_link_register(&mut graph, return_id, &[ret_val]).expect("apply");
         let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-        assert_eq!(inputs_after.len(), inputs_before.len() + 1);
-        // Confirm the prefix matches (ctrl, mem, target_value).
-        for (i, before) in inputs_before.iter().enumerate() {
-            assert_eq!(*before, inputs_after[i], "input slot {i} changed");
-        }
-        // Confirm the appended slot is our ret_val.
-        assert_eq!(inputs_after[inputs_before.len()], ret_val);
+        // [ctrl, mem, ret_val] — same length as the placeholder pre-edit
+        // since target_value is dropped and ret_val takes its place.
+        assert_eq!(inputs_after.len(), inputs_before.len());
+        assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
+        assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
+        assert_eq!(inputs_after[2], ret_val);
     }
 
     #[test]
-    fn apply_link_register_zero_ret_vals_is_noop() {
-        // ret_val_outputs is empty → no inputs added.
+    fn apply_link_register_zero_ret_vals_drops_target_value() {
+        // ret_val_outputs is empty → only the placeholder `target_value`
+        // is dropped; the resulting Return is `[ctrl, mem]`.
         let (mut graph, return_id) = build_placeholder_graph();
-        let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
         apply_link_register(&mut graph, return_id, &[]).expect("apply");
         let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-        assert_eq!(inputs_after, inputs_before);
+        assert_eq!(inputs_after.len(), 2);
     }
 
     #[test]

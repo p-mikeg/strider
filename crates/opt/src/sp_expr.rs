@@ -23,7 +23,7 @@ use ir::{Graph, IntBinaryOp};
 /// Decomposed stack-pointer expression.
 ///
 /// `pub` so out-of-crate callers (e.g. the tier-2 indirect-branch classifier
-/// in `crates/strider`) can drive [`decompose_sp`] when matching the BUG-30
+/// in `crates/strider`) can drive [`decompose_sp`] when matching the 
 /// `Load[sp + base + idx*stride]` shape.
 #[derive(Clone, Debug)]
 pub enum SpExpr {
@@ -36,7 +36,7 @@ pub enum SpExpr {
 
 impl SpExpr {
     #[must_use]
-    pub fn shifted(self, delta: i64) -> Self {
+    pub(crate) fn shifted(self, delta: i64) -> Self {
         match self {
             SpExpr::Terminal { base, offset } => SpExpr::Terminal {
                 base,
@@ -72,12 +72,32 @@ pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool
     a_end <= b_off || b_end <= a_off
 }
 
-/// Reads an integer-constant output as signed, sign-extended from its declared
-/// bit width. Returns `None` for non-integer-constant or for U128/U256.
+/// Conservative byte size of a `Store`'s DATA slot, used as a range bound
+/// for [`ranges_disjoint`].  Returns the value type's byte size when the
+/// slot is value-typed (the IR signature guarantees this for any valid
+/// `Store`); otherwise returns `i64::MAX` so callers' `ranges_disjoint`
+/// checks fail closed (treat the unknown extent as effectively infinite,
+/// the soundness-preserving verdict).
+///
+/// The fallback branch is unreachable in valid IR but exists as a
+/// defensive guardrail — its rationale is duplicated across every caller
+/// otherwise, so it lives here.
+#[inline]
 #[must_use]
-pub fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
+pub(crate) fn store_value_byte_size(g: &Graph, store_data: NodeOutputId) -> i64 {
+    g.output_kind(store_data)
+        .as_value()
+        .map_or(i64::MAX, |t| t.byte_size() as i64)
+}
+
+/// Reads an integer-constant output as signed, sign-extended from its declared
+/// bit width. Returns `None` for non-integer-constant or when the
+/// sign-extended value does not fit in `i64`.
+#[must_use]
+pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     let c = g.int_const_val(out)?;
-    g.output_kind(out).as_value()?.get_signed_int(c)
+    let signed = g.output_kind(out).as_value()?.get_signed_int(u128::from(c))?;
+    i64::try_from(signed).ok()
 }
 
 /// Per-pass-call memo for `decompose_sp`.
