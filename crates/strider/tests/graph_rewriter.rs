@@ -1,17 +1,17 @@
-//! F6 integration tests for [`strider::GraphRewriter`].
+//! Integration tests for [`strider::GraphRewriter`].
 //!
 //! Each test exercises the `apply_rule` / `apply_rules` / `re_optimize`
 //! flow against a real Sleigh-lifted function (or a hand-built one),
 //! pinning the user-facing contract:
 //!
 //! 1. `replace_switch_selector_with_const_collapses_to_one_branch` —
-//!    user replaces the selector of a 3-target Switch (F7's If-ladder)
-//!    with `IntConst(K_0)`, then re-optimises; the optimizer collapses
-//!    the dispatch to a single branch.
+//!    user replaces the selector of a 3-target Switch (lifted via the
+//!    If-ladder) with `IntConst(K_0)`, then re-optimises; the optimizer
+//!    collapses the dispatch to a single branch.
 //! 2. `replace_jump_table_index_with_const_collapses_to_one_target` —
-//!    headline F6+F7 flow: tier-2-resolved jump table lifted via the
-//!    If-ladder; user replaces the index input with a constant; only
-//!    one target's branch survives.
+//!    tier-2-resolved jump table lifted via the If-ladder; user
+//!    replaces the index input with a constant; only one target's
+//!    branch survives.
 //! 3. `replace_input_then_reoptimize_then_replace_again_works` —
 //!    multiple edits compose without leaving the rewriter.
 //! 4. `re_optimize_without_changes_is_no_op` — calling re_optimize on
