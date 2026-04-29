@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::matcher::Bindings;
 use crate::matcher::walk;
 use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
@@ -307,7 +307,7 @@ impl Pattern for NodePat {
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
         let Some(build) = &self.build else {
-            return Err(Error::not_buildable(std::any::type_name::<Self>()));
+            return Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())));
         };
 
         // Recurse into inputs.  Only `Fixed` inputs are buildable — ordered
@@ -327,7 +327,7 @@ impl Pattern for NodePat {
                 out
             }
             InputsSpec::Indexed(_) => {
-                return Err(Error::not_buildable(std::any::type_name::<Self>()));
+                return Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())));
             }
         };
 

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pat::Pat;
 use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
 use crate::pat::traits::BuildCtx;
@@ -123,7 +123,7 @@ macro_rules! impl_from_ctx {
             fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
                 ctx.bindings
                     .$getter(*self)
-                    .ok_or_else(|| ErrorKind::MissingBinding($kind_name).into())
+                    .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($kind_name)))
             }
         }
     };

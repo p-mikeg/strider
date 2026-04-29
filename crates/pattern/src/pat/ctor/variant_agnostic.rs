@@ -47,7 +47,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,
@@ -75,7 +75,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,
@@ -103,7 +103,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,

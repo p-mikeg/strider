@@ -69,7 +69,7 @@ pub fn rewrite_rule(
             };
             match rhs.as_dyn().try_build(&mut ctx) {
                 Ok(o) => o,
-                Err(e) if e.is_skip() => return Ok(false),
+                Err(e) if crate::error::is_skip(&e) => return Ok(false),
                 Err(e) => return Err(e),
             }
         };
