@@ -90,6 +90,104 @@ pub(crate) fn store_value_byte_size(g: &Graph, store_data: NodeOutputId) -> i64 
         .map_or(i64::MAX, |t| t.byte_size() as i64)
 }
 
+/// Outcome of inspecting a memory-chain node for the byte range
+/// `[query_off, query_off + query_size)`: either the node may alias and
+/// further walking must terminate, or the prior memory output is safe to
+/// recurse on.
+pub(crate) enum AliasStep {
+    /// The node is provably non-aliasing with the query range — walk to
+    /// `prev_mem` to keep searching.
+    PassThrough { prev_mem: NodeOutputId },
+    /// The node may alias the query range (overlapping byte ranges, an
+    /// SP-rooted Phi address, or malformed inputs).  Caller must terminate.
+    MayAlias,
+}
+
+/// Decides whether walking past `node` (a `NodeKind::StackStore`) is safe
+/// for a search over `[query_off, query_off + query_size)`.
+pub(crate) fn step_through_stack_store(
+    graph: &Graph,
+    node: NodeId,
+    store_offset: i64,
+    query_off: i64,
+    query_size: i64,
+) -> AliasStep {
+    // StackStore inputs: [MEM, SP, DATA].
+    let inputs = graph.node_inputs(node);
+    if inputs.len() < 3 {
+        return AliasStep::MayAlias;
+    }
+    let store_size = store_value_byte_size(graph, inputs[2]);
+    if ranges_disjoint(store_offset, store_size, query_off, query_size) {
+        AliasStep::PassThrough { prev_mem: inputs[0] }
+    } else {
+        AliasStep::MayAlias
+    }
+}
+
+/// Decides whether walking past `node` (a `NodeKind::StackStorePhi`) is
+/// safe.  The phi disqualifies if any per-predecessor offset (stored in
+/// `Graph::stack_phi_offsets`) overlaps the query range.
+pub(crate) fn step_through_stack_store_phi(
+    graph: &Graph,
+    node: NodeId,
+    query_off: i64,
+    query_size: i64,
+) -> AliasStep {
+    // StackStorePhi inputs: [PHI, MEM, DATA].
+    let inputs = graph.node_inputs(node);
+    if inputs.len() < 3 {
+        return AliasStep::MayAlias;
+    }
+    let store_size = store_value_byte_size(graph, inputs[2]);
+    let any_overlap = graph
+        .stack_phi_offsets(node)
+        .iter()
+        .any(|&k| !ranges_disjoint(k, store_size, query_off, query_size));
+    if any_overlap {
+        AliasStep::MayAlias
+    } else {
+        AliasStep::PassThrough { prev_mem: inputs[1] }
+    }
+}
+
+/// Decides whether walking past `node` (a raw `NodeKind::Store`) is safe.
+/// Decomposes the store address: a non-SP-rooted address is provably
+/// non-aliasing with the SP-relative query range; an SP-rooted Terminal
+/// address uses the same disjointness check; an SP-rooted Phi address
+/// conservatively terminates.
+pub(crate) fn step_through_store(
+    graph: &Graph,
+    node: NodeId,
+    sp_vn: rsleigh::Vn,
+    sp_memo: &mut SpExprMemo,
+    query_off: i64,
+    query_size: i64,
+) -> AliasStep {
+    // Store inputs: [MEM, ADDR, DATA].
+    let inputs = graph.node_inputs(node);
+    if inputs.len() < 3 {
+        return AliasStep::MayAlias;
+    }
+    let mut sp_visiting = FxHashSet::default();
+    match decompose_sp(graph, inputs[1], sp_vn, sp_memo, &mut sp_visiting) {
+        // Non-SP-rooted address provably cannot alias the stack-arg byte
+        // range — walk through.
+        None => AliasStep::PassThrough { prev_mem: inputs[0] },
+        Some(SpExpr::Terminal { base: _, offset: store_off }) => {
+            let store_size = store_value_byte_size(graph, inputs[2]);
+            if ranges_disjoint(store_off, store_size, query_off, query_size) {
+                AliasStep::PassThrough { prev_mem: inputs[0] }
+            } else {
+                AliasStep::MayAlias
+            }
+        }
+        // SP-rooted Phi: per-predecessor range analysis would be needed to
+        // prove disjointness; conservatively terminate.
+        Some(SpExpr::Phi { .. }) => AliasStep::MayAlias,
+    }
+}
+
 /// Reads an integer-constant output as signed, sign-extended from its declared
 /// bit width. Returns `None` for non-integer-constant or when the
 /// sign-extended value does not fit in `i64`.

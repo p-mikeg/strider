@@ -14,7 +14,9 @@ use target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
+use crate::sp_expr::{
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
+};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -205,41 +207,14 @@ fn probe(
         // didn't rewrite to `StackStore` because its address didn't
         // resolve to `sp + K`) on the memory chain previously
         // terminated forwarding.  Mirror `CallStackArgCollect`'s
-        // resilience: probe the address, and if it provably is NOT
-        // `sp + K` aliasing the load's byte range, walk through.
-        NodeKind::Store(_) => {
-            // Store inputs: [MEM, ADDR, DATA].
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() < 3 {
-                return None;
+        // resilience: probe the address via the shared
+        // `step_through_store` and walk if non-aliasing.
+        NodeKind::Store(_) => match step_through_store(&fg.graph, node, sp_vn, memo, offset, load_size) {
+            AliasStep::MayAlias => None,
+            AliasStep::PassThrough { prev_mem } => {
+                probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
             }
-            let addr = inputs[1];
-            let mut sp_visiting = rustc_hash::FxHashSet::default();
-            match decompose_sp(&fg.graph, addr, sp_vn, memo, &mut sp_visiting) {
-                None => {
-                    // Address is not SP-rooted: provably non-aliasing
-                    // with the stack-arg byte range.  Continue.
-                    let prev_mem = inputs[0];
-                    probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
-                }
-                Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-                    // SP-rooted: only continue if the byte ranges are
-                    // provably disjoint.
-                    let store_size = store_value_byte_size(&fg.graph, inputs[2]);
-                    if ranges_disjoint(store_off, store_size, offset, load_size) {
-                        let prev_mem = inputs[0];
-                        probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
-                    } else {
-                        None
-                    }
-                }
-                // SpExpr::Phi (SP-rooted but flowing through a phi
-                // join): conservatively terminate, matching
-                // CallStackArgCollect's posture — handling phi-of-SP
-                // would require per-pred range analysis.
-                Some(SpExpr::Phi { .. }) => None,
-            }
-        }
+        },
         NodeKind::MemPhi => {
             // Cycle guard: loop-header MemPhis feed their own region
             // indirectly.  Guard only at MemPhi boundaries — other memory
@@ -392,6 +367,13 @@ fn realize(
 // narrow case shows up as a wide-typed IntConst-valued store that the
 // classifier can read directly.
 
+/// Per-call memo for [`find_stack_stored_value_at_offset`], keyed on
+/// `(memory_token, offset, value_type)`.  Threaded through tier-2
+/// classifier loops so repeated lookups across enumerated jump-table
+/// indices share their walks.
+pub type StackStoredValueMemo =
+    rustc_hash::FxHashMap<(NodeOutputId, i64, NodeOutputType), Option<NodeOutputId>>;
+
 /// Walks the memory chain backward from `mem` looking for a
 /// [`NodeKind::StackStore`] at SP-relative offset `offset` whose stored
 /// value has type `value_type`.  Returns the stored value's output id
@@ -410,9 +392,12 @@ fn realize(
 /// - `sp_vn` — the calling convention's stack-pointer varnode (used
 ///   to interpret raw `Store(_)` addresses; matches the pass's
 ///   [`StackLoadForward::stack_ptr_vn`] field).
-/// - `memo` — a per-call SP-decomposition memo.  Reuse the same memo
+/// - `sp_memo` — a per-call SP-decomposition memo.  Reuse the same memo
 ///   across multiple calls for the same graph to amortise the cost
 ///   of decomposing repeated SP expressions.
+/// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
+///   value_type)`.  Reuse it across multiple per-index lookups in the
+///   tier-2 classifier so shared chain prefixes pay O(1) per node.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     graph: &ir::Graph,
@@ -420,70 +405,61 @@ pub(crate) fn find_stack_stored_value_at_offset(
     offset: i64,
     value_type: NodeOutputType,
     sp_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
+    sp_memo: &mut SpExprMemo,
+    walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
+    let key = (mem, offset, value_type);
+    if let Some(&cached) = walk_memo.get(&key) {
+        return cached;
+    }
     let load_size = value_type.byte_size() as i64;
     let node = graph.get_node_from_output(mem);
-    match *graph.node_kind(node) {
+    let result = match *graph.node_kind(node) {
         NodeKind::StackStore { offset: k, space: _ } => {
             // StackStore inputs: [MEM, SP, DATA].  The signature pins
             // input arity; the < 3 guard is a defensive belt-and-braces
             // against malformed IR slipping past the validator.
             let inputs = graph.node_inputs(node);
             if inputs.len() < 3 {
-                return None;
-            }
-            let data = inputs[2];
-            let data_ty = graph.output_kind(data).as_value()?;
-            let store_size = data_ty.byte_size() as i64;
-            if k == offset {
-                // Exact-type match → return the stored value.  Mismatched
-                // types are a deliberate non-match here (see module notes).
-                if data_ty == value_type {
-                    Some(data)
-                } else {
-                    None
-                }
-            } else if ranges_disjoint(k, store_size, offset, load_size) {
-                // Non-aliasing intermediate store: skip past it.
-                find_stack_stored_value_at_offset(
-                    graph, inputs[0], offset, value_type, sp_vn, memo,
-                )
-            } else {
-                // Aliasing range with different offset → can't resolve.
                 None
+            } else {
+                let data = inputs[2];
+                let data_ty = graph.output_kind(data).as_value();
+                match data_ty {
+                    None => None,
+                    Some(data_ty) if k == offset => {
+                        // Exact-type match → return the stored value.
+                        // Mismatched types are a deliberate non-match here
+                        // (see module notes).
+                        if data_ty == value_type { Some(data) } else { None }
+                    }
+                    Some(data_ty) => {
+                        let store_size = data_ty.byte_size() as i64;
+                        if ranges_disjoint(k, store_size, offset, load_size) {
+                            find_stack_stored_value_at_offset(
+                                graph, inputs[0], offset, value_type, sp_vn, sp_memo, walk_memo,
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                }
             }
         }
         NodeKind::Store(_) => {
-            // Raw Store — same disjoint-or-bail rule as probe's Store
-            // arm.  See that arm for the rationale.
-            let inputs = graph.node_inputs(node);
-            if inputs.len() < 3 {
-                return None;
-            }
-            let addr = inputs[1];
-            let mut sp_visiting = rustc_hash::FxHashSet::default();
-            match decompose_sp(graph, addr, sp_vn, memo, &mut sp_visiting) {
-                None => find_stack_stored_value_at_offset(
-                    graph, inputs[0], offset, value_type, sp_vn, memo,
+            match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
+                AliasStep::MayAlias => None,
+                AliasStep::PassThrough { prev_mem } => find_stack_stored_value_at_offset(
+                    graph, prev_mem, offset, value_type, sp_vn, sp_memo, walk_memo,
                 ),
-                Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-                    let store_size = store_value_byte_size(graph, inputs[2]);
-                    if ranges_disjoint(store_off, store_size, offset, load_size) {
-                        find_stack_stored_value_at_offset(
-                            graph, inputs[0], offset, value_type, sp_vn, memo,
-                        )
-                    } else {
-                        None
-                    }
-                }
-                Some(SpExpr::Phi { .. }) => None,
             }
         }
         // MemPhi / InitialMemory / anything else: bail.  See module notes
         // for why MemPhi handling is intentionally future work.
         _ => None,
-    }
+    };
+    walk_memo.insert(key, result);
+    result
 }
 
 #[cfg(test)]

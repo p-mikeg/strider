@@ -901,6 +901,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
         &fg.graph,
         mem,
@@ -908,6 +909,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
         NodeOutputType::U64,
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     let value = result.expect("helper should find StackStore at offset -24");
     // The found value must be the stored constant 0xCAFE.
@@ -957,6 +959,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     // Look up offset -16: the chain has the latest store at -16 and an
     // earlier store at -24 (non-aliasing).  Helper must find -16's value.
     let v16 = find_stack_stored_value_at_offset(
@@ -966,6 +969,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         NodeOutputType::U64,
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
@@ -978,6 +982,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         NodeOutputType::U64,
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
@@ -1018,6 +1023,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
         &fg.graph,
         mem,
@@ -1025,6 +1031,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
         NodeOutputType::U64,
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     assert!(result.is_none(), "no store at -8 → helper returns None");
     Ok(())
@@ -1069,6 +1076,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
         &fg.graph,
         mem,
@@ -1076,6 +1084,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
         NodeOutputType::U64,
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
@@ -1120,6 +1129,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     let result = find_stack_stored_value_at_offset(
         &fg.graph,
         mem,
@@ -1127,6 +1137,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
         NodeOutputType::U64, // request U64 from a U32 store
         sp,
         &mut memo,
+        &mut walk_memo,
     );
     assert!(result.is_none(), "type mismatch at offset -24 → None");
     Ok(())
@@ -1180,6 +1191,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
     let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     // The classifier loop: for each i in 0..2, look up base + i*stride.
     let base = -24i64;
     let stride = 8i64;
@@ -1193,6 +1205,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
             NodeOutputType::U64,
             sp,
             &mut memo,
+            &mut walk_memo,
         )
         .unwrap_or_else(|| panic!("must find store at offset {off}"));
         let c = fg.int_const_val(v).expect("stored value is IntConst");

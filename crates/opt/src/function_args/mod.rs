@@ -36,7 +36,10 @@ use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
+use crate::sp_expr::{
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, step_through_stack_store,
+    step_through_stack_store_phi, step_through_store,
+};
 
 /// Replaces register-passed and stack-passed argument reads with canonical
 /// [`NodeKind::FunctionArg`][ir::node::NodeKind::FunctionArg] nodes.  Intended
@@ -407,144 +410,53 @@ fn mem_chain_is_dirty(
         return false;
     }
     let node = fg.graph.get_node_from_output(mem);
-    let result = match *fg.graph.node_kind(node) {
-        NodeKind::InitialMemory => false,
+    let step = match *fg.graph.node_kind(node) {
+        NodeKind::InitialMemory => return cache_and_return(memo, key, false, is_outermost),
         NodeKind::StackStore { offset: k, .. } => {
-            let inputs = fg.graph.node_inputs(node);
-            // StackStore inputs: [MEM, SP, DATA].
-            if inputs.len() < 3 {
-                false
-            } else {
-                let store_size = store_value_byte_size(&fg.graph, inputs[2]);
-                if !ranges_disjoint(k, store_size, offset, load_size) {
-                    true
-                } else {
-                    mem_chain_is_dirty(
-                        fg,
-                        inputs[0],
-                        offset,
-                        load_size,
-                        sp_vn,
-                        sp_memo,
-                        seen,
-                        memo,
-                    )
-                }
-            }
+            step_through_stack_store(&fg.graph, node, k, offset, load_size)
         }
         NodeKind::StackStorePhi { .. } => {
-            let inputs = fg.graph.node_inputs(node);
-            // StackStorePhi inputs: [PHI, MEM, DATA].
-            if inputs.len() < 3 {
-                false
-            } else {
-                let store_size = store_value_byte_size(&fg.graph, inputs[2]);
-                let any_overlap = fg
-                    .graph
-                    .stack_phi_offsets(node)
-                    .iter()
-                    .any(|&k| !ranges_disjoint(k, store_size, offset, load_size));
-                if any_overlap {
-                    true
-                } else {
-                    mem_chain_is_dirty(
-                        fg,
-                        inputs[1],
-                        offset,
-                        load_size,
-                        sp_vn,
-                        sp_memo,
-                        seen,
-                        memo,
-                    )
-                }
-            }
+            step_through_stack_store_phi(&fg.graph, node, offset, load_size)
         }
-        // a plain `Store` (one
-        // `StackStoreDetect` did not rewrite, because its address did not
-        // decompose to `sp + K`) used to fall through to `_ => true` and
-        // mark the chain dirty unconditionally.  Mirror the resolution
-        // already in `CallStackArgCollect` and `stack_load_forward::probe`:
-        // decompose the Store's address and discriminate by aliasability.
         NodeKind::Store(_) => {
-            // Store inputs: [MEM, ADDR, DATA].
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() < 3 {
-                // Malformed Store; conservative.
-                true
-            } else {
-                let addr = inputs[1];
-                let mut sp_visiting = rustc_hash::FxHashSet::default();
-                match decompose_sp(&fg.graph, addr, sp_vn, sp_memo, &mut sp_visiting) {
-                    None => {
-                        // Address is not SP-rooted: provably non-aliasing
-                        // with the stack-arg byte range.  Walk through.
-                        mem_chain_is_dirty(
-                            fg,
-                            inputs[0],
-                            offset,
-                            load_size,
-                            sp_vn,
-                            sp_memo,
-                            seen,
-                            memo,
-                        )
-                    }
-                    Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-                        // SP-rooted: same byte-range disjointness check
-                        let store_size = store_value_byte_size(&fg.graph, inputs[2]);
-                        if ranges_disjoint(store_off, store_size, offset, load_size) {
-                            mem_chain_is_dirty(
-                                fg,
-                                inputs[0],
-                                offset,
-                                load_size,
-                                sp_vn,
-                                sp_memo,
-                                seen,
-                                memo,
-                            )
-                        } else {
-                            true
-                        }
-                    }
-                    // SpExpr::Phi (SP-rooted but flowing through a phi
-                    // join): conservatively terminate, matching
-                    // `stack_load_forward::probe`'s posture — handling
-                    // phi-of-SP would require per-pred range analysis.
-                    Some(SpExpr::Phi { .. }) => true,
-                }
-            }
+            step_through_store(&fg.graph, node, sp_vn, sp_memo, offset, load_size)
         }
         NodeKind::MemPhi => {
             // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
             // clean for the phi to be clean.
             let inputs = fg.graph.node_inputs(node);
-            inputs.into_iter().skip(1).any(|pred| {
+            let any_dirty = inputs.into_iter().skip(1).any(|pred| {
                 mem_chain_is_dirty(fg, pred, offset, load_size, sp_vn, sp_memo, seen, memo)
-            })
+            });
+            return cache_and_return(memo, key, any_dirty, is_outermost);
         }
         NodeKind::Call | NodeKind::CallOther { .. } => {
             // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
             let inputs = fg.graph.node_inputs(node);
             if inputs.len() < 2 {
-                false
-            } else {
-                mem_chain_is_dirty(
-                    fg,
-                    inputs[1],
-                    offset,
-                    load_size,
-                    sp_vn,
-                    sp_memo,
-                    seen,
-                    memo,
-                )
+                return cache_and_return(memo, key, false, is_outermost);
             }
+            AliasStep::PassThrough { prev_mem: inputs[1] }
         }
         // Any other memory-producing node we don't recognise: be conservative.
-        _ => true,
+        _ => return cache_and_return(memo, key, true, is_outermost),
     };
+    let result = match step {
+        AliasStep::MayAlias => true,
+        AliasStep::PassThrough { prev_mem } => mem_chain_is_dirty(
+            fg, prev_mem, offset, load_size, sp_vn, sp_memo, seen, memo,
+        ),
+    };
+    cache_and_return(memo, key, result, is_outermost)
+}
+
+#[inline]
+fn cache_and_return(
+    memo: &mut ShadowMemo,
+    key: (NodeOutputId, i64, i64),
+    result: bool,
+    is_outermost: bool,
+) -> bool {
     if is_outermost {
         memo.insert(key, result);
     }

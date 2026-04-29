@@ -48,7 +48,7 @@ use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
-use crate::stack_load_forward::find_stack_stored_value_at_offset;
+use crate::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
@@ -97,6 +97,7 @@ pub fn classify_stack_array(
         return None;
     }
     let mut memo = SpExprMemo::default();
+    let mut walk_memo = StackStoredValueMemo::default();
     let mut targets: Vec<u64> = Vec::with_capacity(bound as usize);
     for i in 0..bound {
         let i_signed = i64::try_from(i).ok()?;
@@ -110,6 +111,7 @@ pub fn classify_stack_array(
             shape.value_type,
             stack_ptr_vn,
             &mut memo,
+            &mut walk_memo,
         )?;
         let c = graph.int_const_val(value)?;
         targets.push(c & target_mask);
