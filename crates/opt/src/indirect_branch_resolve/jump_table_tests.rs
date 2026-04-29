@@ -12,6 +12,7 @@
 use super::*;
 use ir::BuiltFunctionGraph;
 use ir::FunctionBuilder;
+use ir::IntBinaryOp;
 use ir::node::NodeOutputType;
 use std::sync::Mutex;
 
@@ -246,7 +247,7 @@ fn bound_via_known_bits_returns_max_plus_one() {
         fb.build_int_binary_operation(v, mask, IntBinaryOp::And, NodeOutputType::U32)
             .expect("and")
     });
-    let bound = bound_via_known_bits(&g.graph, idx).expect("must bound");
+    let bound = bound_via_known_bits(&g, idx).expect("must bound");
     assert_eq!(bound, 8);
 }
 
@@ -257,7 +258,7 @@ fn bound_via_known_bits_returns_none_when_unbounded() {
         let addr = fb.build_int_const(0x1000u64, NodeOutputType::U32);
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    assert_eq!(bound_via_known_bits(&g.graph, idx), None);
+    assert_eq!(bound_via_known_bits(&g, idx), None);
 }
 
 #[test]
@@ -267,7 +268,7 @@ fn bound_via_known_bits_with_int_const_input() {
     // this to a Single, but the local recurrence handles it
     // anyway.)
     let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, NodeOutputType::U32));
-    let bound = bound_via_known_bits(&g.graph, idx).expect("must bound a const");
+    let bound = bound_via_known_bits(&g, idx).expect("must bound a const");
     assert_eq!(bound, 6);
 }
 
@@ -275,23 +276,25 @@ fn bound_via_known_bits_with_int_const_input() {
 fn bound_via_known_bits_handles_zero_extend() {
     // idx = ZeroExtend(u8 value).  Bound = 256 from the
     // narrower-type mask, regardless of the wider U32's full
-    // range.  Build by hand via Graph::create_node because the
-    // public `extend_if_needed` short-circuits constant inputs
-    // to a folded IntConst, defeating the test's purpose.
+    // range.  We build the Extend by hand (post-`build()`) because
+    // the public `extend_if_needed` short-circuits constant inputs
+    // to a folded IntConst, which would defeat the test's purpose;
+    // we then route the Extend through the placeholder Return so
+    // it lands on the entry-reachable spine the analyzer scopes
+    // its worklist to.
     use ir::node::NodeOutputKind;
     let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
-    // We need a non-IntConst U8 producer to feed into the Extend.
-    // Use a U32 load truncated to U8 — both built via create_node
-    // so we don't depend on builder's truncate-fold path.
-    // Simpler: build a Load that produces U8.
     let addr = builder.build_int_const(0x9000u64, NodeOutputType::U32);
     let narrow = builder
         .build_load(addr, VnSpace::RAM, NodeOutputType::U8)
         .expect("u8 load");
-    // Build the Extend node directly so it isn't folded.
+    // Provide a placeholder return value so build() succeeds; we
+    // rewire the Return's value input to the new Extend below.
+    let placeholder = builder.build_int_const(0u64, NodeOutputType::U32);
+    builder.build_return(Some(placeholder), &[]).expect("build_return");
     let mut g = builder.build().expect("build");
     let extend_node = g.graph.create_node(
         NodeKind::Extend(ir::ExtendOp::ZeroExtend),
@@ -302,7 +305,10 @@ fn bound_via_known_bits_handles_zero_extend() {
         .graph
         .node_outputs_exact::<1>(extend_node)
         .expect("extend output");
-    let bound = bound_via_known_bits(&g.graph, idx).expect("bound from zero-extend");
+    // Replace the placeholder with the Extend so the Return
+    // depends on it; `walk_graph` then sweeps it into preorder.
+    g.graph.replace_all_uses(placeholder, idx).expect("rewire");
+    let bound = bound_via_known_bits(&g, idx).expect("bound from zero-extend");
     // U8 narrows to 0..255, so bound = 256.
     assert_eq!(bound, 256);
 }

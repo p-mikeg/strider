@@ -98,7 +98,7 @@ pub fn classify_stack_array(
     let (load_anchor, target_mask) = strip_target_mask(fg, anchor_output);
 
     let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
-    let bound = bound_via_known_bits(graph, shape.idx_output)
+    let bound = bound_via_known_bits(fg, shape.idx_output)
         .or_else(|| bound_via_predecessor_if(graph, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;

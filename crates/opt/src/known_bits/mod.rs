@@ -17,11 +17,11 @@ mod tests;
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
-struct Kb {
+pub struct Kb {
     /// Bits that are definitely 1.
-    ones: u64,
+    pub ones: u64,
     /// Bits that are definitely 0.
-    zeros: u64,
+    pub zeros: u64,
 }
 
 impl Kb {
@@ -55,6 +55,17 @@ impl Kb {
     fn all_known(self, type_mask: u64) -> bool {
         (self.ones | self.zeros) & type_mask == type_mask
     }
+
+    /// Upper bound on the runtime value of an output with these known bits.
+    ///
+    /// `(!zeros) & type_mask` is the OR of every bit position that *could*
+    /// be 1, so the runtime value is `<=` this number.  Used by analyses
+    /// that need a single-number bound rather than separate ones/zeros
+    /// (e.g. the jump-table classifier's index-bound check).
+    #[must_use]
+    pub fn max_value(self, type_mask: u64) -> u64 {
+        (!self.zeros) & type_mask
+    }
 }
 
 // ── Per-node known-bits computation ───────────────────────────────────────────
@@ -62,7 +73,7 @@ impl Kb {
 /// Computes the known bits contributed by `node_id` toward its single integer
 /// value output.  Returns `(output_id, Kb)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
-fn node_known_bits(
+pub fn node_known_bits(
     fg: &BuiltFunctionGraph,
     node_id: NodeId,
     known: &FxHashMap<NodeOutputId, Kb>,
@@ -266,6 +277,59 @@ fn node_known_bits(
     Ok(Some((out, kb)))
 }
 
+// ── Read-only analyzer ────────────────────────────────────────────────────────
+
+/// Runs the known-bits worklist analysis to fixed point and returns the
+/// resulting [`Kb`] map keyed by [`NodeOutputId`].  Pure — does not mutate
+/// the graph; the [`KnownBits`] optimizer pass is layered on top of this
+/// to perform constant-replacement rewrites.
+///
+/// Other passes (e.g. the indirect-branch jump-table classifier) call this
+/// directly when they need a non-mutating bit-knowledge query rather than
+/// a graph-rewriting optimizer pass.  The fixed-point analysis is at least
+/// as tight as any single-pass local recurrence: it propagates across more
+/// node kinds and follows data-dependency chains farther.
+///
+/// Outputs absent from the returned map have no statically-proven bit
+/// information; treat them as the all-unknown default `Kb { ones: 0,
+/// zeros: 0 }`.
+///
+/// # Errors
+///
+/// Returns an `Err` if a per-node Kb derivation fails — e.g. a node
+/// whose recorded output type is wider than 64 bits combined with a
+/// shape that requires `node_inputs_exact` to read a fixed input
+/// arity.  In practice the only path to error is malformed IR;
+/// well-formed graphs always converge.
+pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, Kb>> {
+    // Seed with every reachable node; consumers re-enqueue on input
+    // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
+    // worklist used by ConstantFold and DeadBranchElimination — no
+    // local re-implementation.
+    //
+    // Detached "zombie" nodes (left behind by RedundantPhis,
+    // DeadBranchElimination, etc.) are deliberately excluded:
+    // `node_known_bits` calls `node_inputs_exact::<N>` which would
+    // surface a hard error on a zero-input zombie.  Reachability is
+    // the validator's existing scope-of-correctness boundary
+    // (Layer A in `ir::validate`), so it's the right scope here too.
+    let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
+    let mut work = WorkSet::seeded(function.preorder());
+    while let Some(node_id) = work.pop() {
+        let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
+            continue;
+        };
+        let merged = known.entry(out).or_default().merge(kb);
+        if !merged {
+            continue;
+        }
+        for (consumer, _idx) in function.graph.output_uses(out) {
+            work.push(consumer);
+        }
+    }
+    Ok(known)
+}
+
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
 /// Propagates known-bit information and replaces outputs whose every bit is
@@ -292,31 +356,15 @@ impl Optimizer for KnownBits {
 
 impl KnownBits {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        // Collect once; mutations only add new nodes (never change existing ones).
+        // Phase 1 — propagate known bits to fixed point.  Read-only;
+        // shared with the jump-table classifier (and any other caller
+        // that needs bit-knowledge without graph rewrites).
+        let known = analyze(function)?;
+
+        // Phase 2 — replace fully-determined outputs with constants.
+        // Snapshot reachable nodes so we can mutate the graph below
+        // without holding a borrow on the preorder iterator.
         let nodes: Vec<_> = function.preorder().collect();
-
-        // ── Phase 1: propagate known bits via worklist ────────────────────────
-        // Re-evaluate a node only when one of its inputs' Kb just changed.
-        // `WorkSet` is the shared dedup-FIFO worklist used by ConstantFold
-        // and DeadBranchElimination — same FIFO + dedup semantics, no
-        // local re-implementation.
-        let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
-        let mut work = WorkSet::seeded(nodes.iter().copied());
-        while let Some(node_id) = work.pop() {
-            let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
-                continue;
-            };
-            let merged = known.entry(out).or_default().merge(kb);
-            if !merged {
-                continue;
-            }
-            // Re-queue every consumer of `out`.
-            for (consumer, _idx) in function.graph.output_uses(out) {
-                work.push(consumer);
-            }
-        }
-
-        // ── Phase 2: replace fully-determined outputs with constants ──────────
         let mut result = OptimizationResult::NoChange;
         // Reused across iterations: snapshot of `node_outputs` so the body can
         // call `replace_all_uses` (which mutates `function.graph`) without

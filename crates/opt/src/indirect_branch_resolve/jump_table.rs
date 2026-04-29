@@ -45,7 +45,7 @@ use std::collections::HashSet;
 
 use super::ResolvedTargets;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
-use ir::{BuiltFunctionGraph, Graph, IntBinaryOp, IntCmpOp};
+use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
 use crate::ReadOnlyMemory;
 use rsleigh::VnSpace;
 
@@ -93,7 +93,7 @@ pub fn classify_jump_table(
     //       control path leading to the dispatch's region.  Slower
     //       but covers the gcc-emitted "compare-and-branch then
     //       indirect" pattern that has no AND-mask.
-    let bound = bound_via_known_bits(graph, shape.idx_output)
+    let bound = bound_via_known_bits(fg, shape.idx_output)
         .or_else(|| bound_via_predecessor_if(graph, anchor_output, shape.idx_output))?;
 
     // Step 3: enforce the per-call enumeration cap.  Returning None
@@ -230,29 +230,32 @@ fn match_jump_table_shape(
 
 // ── Bound via KnownBits ──────────────────────────────────────────────────────
 
-/// Walks `idx_output`'s producer-shape using a *local* known-bits
-/// computation to compute an upper bound on `idx`'s runtime value.
+/// Returns an upper bound on `idx_output`'s runtime value, derived from the
+/// crate-shared [`opt::analyze_known_bits`](crate::analyze_known_bits)
+/// fixed-point analyzer.
 ///
-/// Semantics: a known-bits mask of `M` (the OR of all bits that
-/// could be 1) means `idx <= M`, so the count of distinct values is
-/// at most `M + 1`.  Returns `Some(M + 1)` when known-bits proves
-/// any non-trivial upper bound (i.e. some bits are known zero), and
-/// None otherwise.
+/// Semantics: if the analyzer proves bit `i` of `idx_output` is always
+/// zero, the runtime value cannot have that bit set.  The maximum value is
+/// therefore `(!zeros) & type_mask`, and the count of distinct values in
+/// `[0, max]` is `max + 1`.  Returns `Some(max + 1)` whenever the analyzer
+/// proves at least one upper bit is known zero; otherwise `None` so the
+/// caller's predecessor-If fallback gets a chance.
 ///
-/// We don't reuse the [`opt::KnownBits`] pass directly because that
-/// pass mutates the graph (replacing fully-determined outputs with
-/// IntConst); our caller is non-mutating.  The local recurrence
-/// here is the same propagation rules pared down to the cases that
-/// actually narrow an index value: `IntConst`, `And` with a const,
-/// `Truncate`, `Extend(ZeroExtend)`, and `ShiftRight` by a const.
+/// Replaces a previous local recurrence that re-implemented a stripped-down
+/// version of the analyzer's `IntConst` / `And` / `Truncate` /
+/// `ZeroExtend` / `ShiftRight` rules.  The fixed-point analyzer covers
+/// every node kind those rules covered — and several more (`Or`, `Xor`,
+/// `Not`, `Popcount`, `Lzcount`, `ShiftLeft`) — so any bound this function
+/// previously returned is still proved, and some previously-unbounded
+/// shapes now resolve.
 #[must_use]
 pub fn bound_via_known_bits(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     idx_output: NodeOutputId,
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
-    let ty = graph.output_kind(idx_output).as_value()?;
+    let ty = fg.graph.output_kind(idx_output).as_value()?;
     if !ty.is_integer() {
         return None;
     }
@@ -262,101 +265,19 @@ pub fn bound_via_known_bits(
     // chance.
     let type_mask = ty.get_unsigned_int(u64::MAX)?;
 
-    let mask = compute_max_mask(graph, idx_output, type_mask, &mut HashSet::new())?;
-    // mask + 1 is the count of distinct values in [0, mask].
-    // Saturating to u64::MAX covers the pathological mask == u64::MAX
-    // case (no narrowing); in that case we conservatively report
-    // None so the caller falls back rather than try to enumerate
-    // 2^64 entries.
-    if mask == type_mask {
+    // Outputs absent from `analyze`'s map have no proven bit info; treat
+    // them as the all-unknown default.  An analyzer error propagates as
+    // None — the caller falls back to the predecessor-If walk and the
+    // orchestrator surfaces UnresolvedIndirectBranch at fixed point.
+    let known = crate::analyze_known_bits(fg).ok()?;
+    let kb = known.get(&idx_output).copied().unwrap_or_default();
+    let max = kb.max_value(type_mask);
+    if max == type_mask {
+        // No narrowing — fall back rather than try to enumerate
+        // 2^bit_width entries.
         return None;
     }
-    mask.checked_add(1)
-}
-
-/// Computes a conservative upper-bound mask on the value of `out`'s
-/// runtime contents — i.e. a `M` such that `value <= M` always.
-/// Returns the input type's full mask when no narrowing applies.
-///
-/// Recursive on producer kind.  Visited-set protects against IR
-/// cycles (Phi-of-itself shapes the validator otherwise allows
-/// across loop back-edges).
-fn compute_max_mask(
-    graph: &Graph,
-    out: NodeOutputId,
-    type_mask: u64,
-    visited: &mut HashSet<NodeOutputId>,
-) -> Option<u64> {
-    if !visited.insert(out) {
-        // Cycle: return the most permissive bound (no narrowing).
-        // Sound: an over-approximation here can only widen the
-        // final mask, not under-approximate it.
-        return Some(type_mask);
-    }
-    let node = graph.get_node_from_output(out);
-    match *graph.node_kind(node) {
-        // Constant: the mask is exactly the constant's value.
-        NodeKind::IntConst(k) => {
-            #[allow(clippy::cast_possible_truncation)]
-            let k64 = k as u64;
-            Some(k64 & type_mask)
-        }
-        // AND with a const masks the value below the const.
-        // CORRECTNESS: max(a & m) <= m for any non-negative a, regardless
-        // of `a`'s own bound — that's the whole point of using AND as a
-        // mask.  We take the min of the two operand bounds so e.g.
-        // `(x & 0xff) & 0x7` correctly bounds at 0x7.
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            let inputs = graph.node_inputs_exact::<2>(node).ok()?;
-            let l = compute_max_mask(graph, inputs[0], type_mask, visited).unwrap_or(type_mask);
-            let r = compute_max_mask(graph, inputs[1], type_mask, visited).unwrap_or(type_mask);
-            Some(l.min(r))
-        }
-        // Truncate: upper bits are dropped, narrowing to the output type.
-        NodeKind::Truncate => {
-            // The truncate's output mask is already type_mask; nothing
-            // beyond what type_mask captured.  Returning type_mask is
-            // the conservative answer.
-            Some(type_mask)
-        }
-        // ZeroExtend: upper bits are explicitly zero; the bound on the
-        // wider value is the bound on the narrower value.  We don't
-        // have access to the input's narrower mask here, but the
-        // wider-type mask still narrows to it because we mask with
-        // type_mask at every step.
-        NodeKind::Extend(ir::ExtendOp::ZeroExtend) => {
-            let inputs = graph.node_inputs_exact::<1>(node).ok()?;
-            let inner_kind = graph.output_kind(inputs[0]).as_value()?;
-            if !inner_kind.is_integer() {
-                return None;
-            }
-            let inner_mask = inner_kind.get_unsigned_int(u64::MAX)?;
-            // The extend zeros bits above inner_mask, so the result is
-            // bounded by inner_mask intersected with our outer
-            // type_mask.
-            let inner_bound =
-                compute_max_mask(graph, inputs[0], inner_mask, visited).unwrap_or(inner_mask);
-            Some(inner_bound & type_mask)
-        }
-        // Logical right-shift by a const: the upper `shift` bits become
-        // zero.  CORRECTNESS: `(a >> s) <= type_mask >> s` for any
-        // non-negative `a`, so the post-shift mask is `type_mask >> s`.
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
-            let inputs = graph.node_inputs_exact::<2>(node).ok()?;
-            let shift = graph.int_const_val(inputs[1])?;
-            if shift >= 64 {
-                // Pathological — shift out everything; result is 0.
-                return Some(0);
-            }
-            // Combine with the lhs's own bound for tighter results
-            // when the lhs already has known zeros in the upper bits.
-            let lhs_bound =
-                compute_max_mask(graph, inputs[0], type_mask, visited).unwrap_or(type_mask);
-            Some((lhs_bound >> shift) & (type_mask >> shift))
-        }
-        // Anything else: don't narrow.
-        _ => Some(type_mask),
-    }
+    max.checked_add(1)
 }
 
 // ── Bound via predecessor-If walk ────────────────────────────────────────────

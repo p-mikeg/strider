@@ -56,7 +56,7 @@ pub use indirect_branch_resolve::{
     classify_anchor_with_rom_and_sp, classify_jump_table, classify_stack_array,
     find_placeholder_return_for_anchor,
 };
-pub use known_bits::KnownBits;
+pub use known_bits::{KnownBits, Kb, analyze as analyze_known_bits};
 pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;
 pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
