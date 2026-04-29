@@ -1089,7 +1089,6 @@ dependencies = [
  "pcode-lift",
  "reader",
  "rsleigh",
- "rustc-hash",
  "target",
 ]
 

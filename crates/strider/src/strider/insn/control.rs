@@ -1,15 +1,12 @@
-use anyhow::{anyhow, bail};
-
-use crate::error::Result;
+use anyhow::{anyhow, bail, Result};
 
 use super::super::IrStrider;
 
-/// F7 — emit an If-ladder dispatching `idx` against `targets_and_regions`.
+/// Emits an If-ladder dispatching `idx` against `targets_and_regions`.
 ///
 /// Builds a chain of `IntCmpOp::Equal + If` nodes, one per case, using
 /// only the existing `FunctionBuilder::build_if` /
-/// `build_int_const` / `build_int_cmp_operation` primitives.  No new
-/// IR builder primitives are introduced.
+/// `build_int_const` / `build_int_cmp_operation` primitives.
 ///
 /// Layout (forward iteration over the slice):
 ///
@@ -37,24 +34,20 @@ use super::super::IrStrider;
 /// folds `idx` to a constant in a single-target case.
 ///
 /// Special cases:
-/// - `targets_and_regions.len() == 0` — returns
-///   [`ErrorKind::SwitchHasNoTargets`].  Defensive; the cfg builder
-///   rejects empty `Multiple` upstream.
+/// - `targets_and_regions.len() == 0` — returns an error.  Defensive;
+///   the cfg builder rejects empty `Multiple` upstream.
 /// - `targets_and_regions.len() == 1` — emits a plain
 ///   `build_branch(target_0)` with no comparison.
 ///
-/// `caller_region` is only used for the error-arm carrying it back to
-/// the caller; it isn't read for any IR construction.
+/// `caller_region` appears in the empty-targets error for diagnostics
+/// only.
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::SwitchHasNoTargets`] when `targets_and_regions` is
-///   empty.
-/// - Propagates the variants from `FunctionBuilder::build_if` /
-///   `build_branch` / `build_int_cmp_operation` /
-///   `build_int_const` / `create_region` — primarily IR-shape
-///   errors that would also surface from the existing `handle_branch`
-///   / `handle_cond_branch` paths.
+/// Propagates the IR-shape errors from `FunctionBuilder::build_if` /
+/// `build_branch` / `build_int_cmp_operation` / `build_int_const` /
+/// `create_region`, plus an explicit error when `targets_and_regions`
+/// is empty.
 pub(crate) fn build_switch_if_ladder(
     builder: &mut ir::FunctionBuilder,
     idx: ir::Value,
@@ -118,15 +111,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
     ) -> Result<()> {
         // Most unconditional p-code `Branch` ops correspond to a `Branch`
-        // CFG edge, which we lower into an explicit IR branch.  Per
-        // BUG-25 the cfg builder reclassifies a `Branch` whose target is
-        // the next machine instruction (clang -O0 idiom on aarch64be /
-        // ppc32le — see `crates/cfg/src/cfg/builder/region_builder.rs`)
-        // as a `Fallthrough` edge.  In that case the IR-level fallthrough
-        // linker (`pipeline.rs`, post-loop pass) will wire the edge using
-        // `cur_ctrl` / `cur_memory`, so we must skip emitting an explicit
-        // IR branch here — otherwise we'd either fail to find the
-        // (non-existent) Branch edge, or double-link the successor.
+        // CFG edge, which we lower into an explicit IR branch.  The cfg
+        // builder reclassifies a `Branch` whose target is the next
+        // machine instruction (clang -O0 idiom on aarch64be / ppc32le)
+        // as a `Fallthrough` edge.  In that case the IR-level
+        // fallthrough linker in `pipeline.rs` wires the edge using
+        // `cur_ctrl` / `cur_memory`; we skip the explicit IR branch
+        // here to avoid double-linking the successor.
         if let Some(branch_region) = self.cfg.region_branch(region_id)? {
             let dest_block = region_lookup(branch_region)?;
             self.builder.build_branch(dest_block)?;
@@ -139,18 +130,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         Err(anyhow!("invalid region index {region_id:?}"))
     }
 
-    /// F7 — lifts a region whose CFG terminator is
+    /// Lifts a region whose CFG terminator is
     /// [`cfg::RegionTerminator::Switch`] into an If-ladder of
     /// `IntCmpOp::Equal + If` nodes against each target.
-    ///
-    /// This is the IR encoding of a tier-2-resolved jump table.
-    /// The cfg builder constructs `Switch { target_vn, targets,
-    /// target_value }` from `ResolvedTargets::Multiple`; this lifter
-    /// reads `target_vn` (or uses the W9-pinned `target_value` when
-    /// `Some`), then composes
-    /// [`build_switch_if_ladder`] over the existing `build_if` /
-    /// `build_int_const` / `build_int_cmp_operation` primitives.
-    /// No new IR builder primitives are introduced.
     ///
     /// `region_id` is the dispatch region (the one terminated by
     /// the Switch).  For each target machine address in `targets`,
@@ -160,16 +142,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::SwitchHasNoTargets`] when `targets` is empty
-    ///   (defensive — the cfg builder rejects empty `Multiple`).
-    /// - [`ErrorKind::SwitchTargetMissing`] when a target machine
-    ///   address has no matching CFG region (defensive — the cfg
-    ///   builder enqueues each target for exploration as it
-    ///   constructs the Switch).
-    /// - Propagates `read_vn` / `build_if` / `build_branch` /
-    ///   `build_int_const` / `build_int_cmp_operation` /
-    ///   `create_region` errors (IR-shape failures that would also
-    ///   surface from `handle_cond_branch`).
+    /// Returns an error when `targets` is empty, when a target
+    /// machine address has no matching CFG region, or propagates IR
+    /// construction failures from `read_vn` / `build_if` /
+    /// `build_branch` / `build_int_const` / `build_int_cmp_operation` /
+    /// `create_region`.
     pub(crate) fn handle_switch(
         &mut self,
         region_id: cfg::RegionId,
@@ -197,11 +174,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             let ir_region = region_lookup(cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
-        // W9: prefer the orchestrator's pinned NodeOutputId when
-        // available — pins the soundness contract that the
-        // comparison value is the SAME value tier 2 classified.
-        // Falls back to a fresh `read_vn` when the cfg builder
-        // didn't (or couldn't) populate `target_value`.
+        // Prefer the orchestrator's pinned NodeOutputId when available
+        // — the dispatch must compare the SAME value tier 2 classified.
+        // Falls back to a fresh `read_vn` when the cfg builder didn't
+        // populate `target_value`.
         let idx = match target_value {
             Some(v) => v,
             None => self.read_vn(target_vn)?,
@@ -270,25 +246,19 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     /// Lifts a region whose CFG terminator is
     /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] by emitting
-    /// a synthetic single-input `Return(target_value)` that anchors
-    /// `target_vn`'s lifted value in the IR.  This is the placeholder
-    /// the strider-level outer loop's tier-2 resolver inspects after
-    /// the optimiser has run on the full graph.
+    /// a single-input `Return(target_value)` that anchors `target_vn`'s
+    /// lifted value in the IR.  This is the placeholder the tier-2
+    /// resolver inspects after the optimiser runs.
     ///
-    /// We deliberately use a *single-input* Return (no
-    /// calling-convention `ret_val_regs` appended) so tier 2 has a
-    /// stable anchor for `target_value` at slot 2.  When tier 2
-    /// resolves to `LinkRegister`, the in-place edit (lands in R3)
-    /// promotes the placeholder into the convention's full ABI
-    /// Return; for `Single` tail-call targets it splices a Call+Return
-    /// pair.  For both rewrites the placeholder shape is the
-    /// canonical "before" state.
+    /// The single-input shape (no `ret_val_regs` appended) gives the
+    /// resolver a stable anchor at input slot 2.  Tier 2 promotes the
+    /// placeholder into the convention's full ABI Return for
+    /// `LinkRegister` resolutions, or splices in a Call+Return pair
+    /// for `Single` tail-call resolutions.
     ///
     /// The `(addr, target_value)` pair is recorded on
-    /// `IrStrider::unresolved_branches` so tier 2 can walk the table
-    /// and correlate each placeholder with the offending pcode
-    /// address.  No-op if the table is later consumed (R2/R3); R1.4
-    /// just populates it.
+    /// `IrStrider::unresolved_branches` so tier 2 can correlate each
+    /// placeholder with the offending pcode address.
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,
         target_vn: &rsleigh::Vn,
@@ -299,13 +269,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // correctly via the same Piece/Insert chain the rest of the
         // lifter uses.
         let target_value = self.read_vn(target_vn)?;
-        // SINGLE-input Return — no `ret_val_regs`.  Tier 2 reads the
+        // Single-input Return — no `ret_val_regs`.  Tier 2 reads the
         // value at slot 2 of this Return and inspects its producer.
         self.builder.build_return(Some(target_value), &[])?;
-        // Track for tier 2.  Pushing here (rather than at the
-        // call-site in pipeline.rs) keeps the side-table population
-        // local to the lifting step and avoids leaking the lifter's
-        // ir::Value out into the orchestrator.
         self.unresolved_branches.push((addr, target_value));
         Ok(())
     }
@@ -313,8 +279,8 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
 #[cfg(test)]
 mod tests {
-    //! F7 unit tests for `build_switch_if_ladder`.  Cover the IR
-    //! construction primitive in isolation (no Cfg required) — the
+    //! Unit tests for `build_switch_if_ladder`.  Cover the IR
+    //! construction primitive in isolation (no Cfg required); the
     //! integration coverage that drives the full
     //! `handle_switch` → `analyze_cfg` path lives in
     //! `crates/strider/tests/jump_table_lifting.rs`.

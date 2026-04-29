@@ -1,4 +1,4 @@
-//! F6 unit tests for the [`GraphRewriter`] façade.
+//! Unit tests for the [`GraphRewriter`] façade.
 //!
 //! These tests exercise the façade's contract directly using a
 //! synthetic [`FunctionBuilder`] — no Sleigh/CFG roundtrip.  Each
@@ -111,7 +111,7 @@ fn count_subs(g: &ir::BuiltFunctionGraph) -> usize {
 }
 
 #[test]
-fn apply_rule_with_no_match_returns_zero_applications() -> crate::Result<()> {
+fn apply_rule_with_no_match_returns_zero_applications() -> anyhow::Result<()> {
     // Function returns a bare IntConst — no Add nodes anywhere.
     // `add(x, 0) → x` cannot fire; `apply_rule` must return 0.
     let mut built = one_const_fn(7);
@@ -124,7 +124,7 @@ fn apply_rule_with_no_match_returns_zero_applications() -> crate::Result<()> {
 }
 
 #[test]
-fn apply_rule_with_one_match_returns_one_application() -> crate::Result<()> {
+fn apply_rule_with_one_match_returns_one_application() -> anyhow::Result<()> {
     // Function returns `Add(7, 0)`.  Exactly one Add reachable;
     // `add(x, 0) → x` must fire exactly once.  After the rewrite,
     // the Return's value-input is rewired to the `7` constant
@@ -149,7 +149,7 @@ fn apply_rule_with_one_match_returns_one_application() -> crate::Result<()> {
 }
 
 #[test]
-fn apply_rules_round_robin_reaches_fixed_point() -> crate::Result<()> {
+fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
     // Function: `Sub(Add(a, 0), Add(b, 0))` (two distinct Adds).
     // Run two rules round-robin to a fixed point:
     //   1. `add(x, 0) → x`  — fires twice (once per subtree).
@@ -194,7 +194,7 @@ fn apply_rules_round_robin_reaches_fixed_point() -> crate::Result<()> {
 }
 
 #[test]
-fn re_optimize_is_idempotent() -> crate::Result<()> {
+fn re_optimize_is_idempotent() -> anyhow::Result<()> {
     // After running the default pipeline once on `Add(7, 0)`,
     // ConstantFold has already collapsed the Add to a bare
     // IntConst.  A second run must produce the same graph state
@@ -215,7 +215,7 @@ fn re_optimize_is_idempotent() -> crate::Result<()> {
 }
 
 #[test]
-fn apply_rule_preserves_use_list_integrity() -> crate::Result<()> {
+fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     // The rewriter goes through `pattern::rewrite_rule` →
     // `replace_all_uses`, which uses the bidirectional use-list.
     // After the rewrite, `ir::validate::validate` must pass —

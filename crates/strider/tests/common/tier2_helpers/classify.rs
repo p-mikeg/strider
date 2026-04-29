@@ -239,23 +239,7 @@ pub fn build_value_phi_target_scenario(
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");
 
-    // Resolve the placeholder anchor by walking the unique 3-input
-    // Return.  Same contract as `current_anchor_after_opt`, copied
-    // inline because that helper hard-codes the
-    // analyze_cfg-driven path.
-    let mut found: Option<ir::Value> = None;
-    for nid in fg.preorder() {
-        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
-        assert!(found.is_none(), "multiple 3-input Returns");
-        found = Some(inputs[2]);
-    }
-    let anchor = found.expect("no placeholder Return");
+    let anchor = anchor_value_input(&fg).expect("no placeholder Return");
     (fg, anchor)
 }
 
@@ -767,6 +751,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         1,
         "bx lr fixture must have exactly one tier-2 placeholder",
     );
-    let anchor = super::orchestrator::current_anchor_after_opt(&graph);
+    let anchor = anchor_value_input(&graph)
+        .expect("bx lr fixture must have one placeholder Return after optimisation");
     (graph, anchor, lr_vn)
 }

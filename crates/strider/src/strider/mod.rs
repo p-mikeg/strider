@@ -1,4 +1,4 @@
-use crate::error::Result;
+use anyhow::Result;
 
 mod insn;
 mod pipeline;
@@ -15,17 +15,11 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
     pub(crate) strider: &'a Strider,
     pub(crate) builder: ir::FunctionBuilder,
     pub(crate) cfg: &'a cfg::Cfg<R>,
-    /// Anchors for the strider-level fixed-point loop's tier-2
-    /// resolver.  Each entry maps a `BranchIndirect`'s pcode address
-    /// (the key the cfg builder stamps onto the deferred terminator)
-    /// to the IR `NodeOutputId` whose producer represents
-    /// `target_vn`'s value at that BranchIndirect site.
-    ///
-    /// Populated by `handle_unresolved_indirect_branch` at lift time
-    /// and consumed by tier 2 (lands in R2) after the optimiser has
-    /// run on the full graph.  Empty if the function contains no
-    /// `RegionTerminator::UnresolvedIndirectBranch` regions, which is
-    /// the common case.
+    /// Anchors for the tier-2 resolver.  Each entry maps a
+    /// `BranchIndirect`'s pcode address to the IR `NodeOutputId` whose
+    /// producer represents `target_vn`'s value at that BranchIndirect
+    /// site.  Populated by `handle_unresolved_indirect_branch` at lift
+    /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
     pub(crate) unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
 }
 
@@ -36,23 +30,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// constructs the IR [`FunctionBuilder`] with calling-convention
     /// information from `strider`.
     fn new(strider: &'a Strider, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
-        // Find all variables
         let all_vns = strider.find_all_unique_vns(cfg);
-
-        // Create the builder to create the ir graph
         let builder = ir::FunctionBuilder::new(all_vns, &strider.calling_convention)?;
-
         Ok(Self {
             strider,
             builder,
             cfg,
-            // R1.4: empty until a deferred BranchIndirect is lifted.
             unresolved_branches: Vec::new(),
         })
-    }
-
-    /// Emits the function entry node into the IR graph.
-    fn build_entry(&mut self) -> Result<()> {
-        self.builder.build_entry()
     }
 }

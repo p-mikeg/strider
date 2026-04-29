@@ -13,7 +13,7 @@ per_arch_test!("abi", "eight_int_args",  eight_args_has_seven_adds);
 per_arch_test!("abi", "mixed_args",      mixed_has_loads_and_adds);
 per_arch_test!("abi", "point_sum",       point_sum_has_add);
 per_arch_test!("abi", "make_pair",       make_pair_has_return);
-// tail_caller: BUG-5 closed under the indirect-branch fixed-point
+// tail_caller: closed under the indirect-branch fixed-point
 // design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`).
 // Tier 2's `LinkRegister` arm classifies arm `pop {pc}` (load + bx)
 // once `StackLoadForward` simplifies the loaded target back to

@@ -1,18 +1,18 @@
-//! R1.4: strider lifts a `RegionTerminator::UnresolvedIndirectBranch`
+//! strider lifts a `RegionTerminator::UnresolvedIndirectBranch`
 //! region by emitting a placeholder `Return(target_value)` that
 //! anchors the dispatch varnode in the IR for tier-2 resolution.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
 //! function-entry value, not constant, so cfg-tier-1 cannot classify
-//! the target).  Pre-R1.4, `analyze_cfg` either errored or emitted an
-//! ABI Return that discarded the dispatch value.  Post-R1.4, it
+//! the target).  Pre-fix, `analyze_cfg` either errored or emitted an
+//! ABI Return that discarded the dispatch value.  Post-fix, it
 //! succeeds and produces an IR with exactly one Return node whose
 //! single value-input is `target_vn`'s value at the BranchIndirect
 //! site.
 //!
 //! These tests intentionally do NOT use the per-arch fixture suite —
 //! that infrastructure runs the full optimizer pipeline against a real
-//! ELF.  R1.4 is a per-region lifting concern; we use a direct
+//! ELF.  This is a per-region lifting concern; we use a direct
 //! `Builder + Strider::new + analyze_cfg` call sequence so the test
 //! exercises *only* the strider IR-lift step.
 
@@ -48,12 +48,12 @@ fn make_unresolved_indirect_branch_cfg(
     (cfg, arch)
 }
 
-/// R1.4 contract: a region terminated with
+/// Placeholder contract: a region terminated with
 /// `UnresolvedIndirectBranch` lifts to an IR that is well-formed
-/// (no error, one Return node).  Pre-R1.4, the strider lifter
+/// (no error, one Return node).  Pre-restructure, the strider lifter
 /// dispatched the `BranchIndirect` opcode to `handle_return`, which
 /// produced an ABI Return whose inputs were the convention's
-/// `ret_val_regs` — NOT the dispatch varnode.  Post-R1.4, strider
+/// `ret_val_regs` — NOT the dispatch varnode.  Post-fix, strider
 /// inspects the region's terminator and emits a single-input
 /// `Return(target_value)` that anchors `target_vn` in the IR.
 ///
@@ -77,7 +77,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 
     // Exactly one Return node — strider emitted the placeholder, did
     // not double-emit, and did not lift the BranchIndirect via the
-    // pre-R1.4 ABI handle_return path (which would also produce a
+    // pre-fix ABI handle_return path (which would also produce a
     // Return, but with different inputs).
     let return_count = graph
         .preorder()
@@ -101,7 +101,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     );
 }
 
-/// R1.4 anchor-tracking contract: the strider exposes a side-table
+/// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `NodeOutputId`
 /// that anchors `target_vn`.  Tier 2 (R2) walks this table.
 ///

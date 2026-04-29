@@ -179,16 +179,8 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     // panic or return malformed IR.
     use rsleigh::Sleigh;
     use rsleigh::mem_readers::BufMemReader;
-    use strider::indirect_resolve_tier2::{run_orchestrator, OrchestratorConfig};
-    use strider::{CallingConvention, SleighArch, Strider};
-    let arch = SleighArch::x86_64();
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
-    let strider =
-        Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).expect("strider");
+    use strider::{run, RunConfig, SleighArch};
+    let strider = common::strider_x86_64();
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![
@@ -198,18 +190,18 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     let arch_ref = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes.clone(), 0x1000);
     let sleigh = Sleigh::new(arch_ref.sla_spec, arch_ref.pspec, reader).expect("sleigh");
-    let config = OrchestratorConfig {
+    let config = RunConfig {
         strider: &strider,
         start_addr: 0x1000,
-        sleigh: Some(sleigh),
+        sleigh,
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
     };
-    // Tolerate the round-1 fallback (optimiser failed to fold the
-    // push+pop sequence to IntConst); the contract we pin is that
-    // the orchestrator returns a typed result, never panics.
-    let _ = run_orchestrator(config);
+    // The contract pinned here: `run` returns a typed result, never
+    // panics, regardless of whether the optimiser folds the
+    // push+pop+jmp into a Single tail call.
+    let _ = run(config);
 }
 
 #[test]

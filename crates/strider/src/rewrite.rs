@@ -1,4 +1,4 @@
-//! F6 — `GraphRewriter`, a thin façade over [`pattern::rewrite_rule`] that
+//! `GraphRewriter`, a thin façade over [`pattern::rewrite_rule`] that
 //! lets users replace any node's input with a constant (or any other built
 //! pattern) and re-run the optimizer to collapse jump tables / switches.
 //!
@@ -18,17 +18,18 @@
 //!    chain "rewrite → re-optimize → rewrite again" without leaving the
 //!    rewriter.
 //!
-//! Per the F6 spec (Q5), the rewriter API is **constants + input
-//! replacement only**: callers compose patterns with the existing
-//! `pattern` builder constructors (`int_const`, `var`, `add`, `load`, …)
-//! and pass the resulting closure (built via [`pattern::rewrite_rule`])
-//! into [`GraphRewriter::apply_rule`].
+//! The rewriter API is constants + input replacement only: callers
+//! compose patterns with the existing `pattern` builder constructors
+//! (`int_const`, `var`, `add`, `load`, …) and pass the resulting
+//! closure (built via [`pattern::rewrite_rule`]) into
+//! [`GraphRewriter::apply_rule`].
 //!
 //! # Use case — collapse a jump table
 //!
 //! ```ignore
 //! // After Strider::analyze_cfg lifted a function with a tier-2-resolved
-//! // jump table (F7's If-ladder) into `built`:
+//! // jump table (the If-ladder lifted from `RegionTerminator::Switch`)
+//! // into `built`:
 //! let mut built: ir::BuiltFunctionGraph = strider.analyze_cfg(&cfg)?.graph;
 //!
 //! // Pattern that matches the switch's index-input slot, then replace it
@@ -45,29 +46,22 @@
 //! rewriter.re_optimize(&pipeline)?;  // collapses the now-constant if-ladder
 //! ```
 
+use anyhow::Result;
 use ir::node::NodeId;
-use ir::{BuiltFunctionGraph, FunctionBuilder, Graph};
-
-use crate::error::Result;
+use ir::{BuiltFunctionGraph, Graph};
 
 /// Thin façade over [`pattern::rewrite_rule`] / [`pattern::apply_rules_in_order`]
 /// that lets users replace any node's input with a constant (or any other
 /// built pattern) and re-run the optimizer pipeline on the rewritten graph.
 ///
 /// See module-level docs for the architecture and intended use case.
-///
-/// `GraphRewriter` borrows the wrapped graph + entry mutably for its
-/// lifetime; [`Self::apply_rule`] / [`Self::apply_rules`] / [`Self::re_optimize`]
-/// can be called any number of times in any order on the same rewriter
-/// instance.
 pub struct GraphRewriter<'a> {
     /// The graph to rewrite.  Held as `&mut Graph` rather than
-    /// `&mut BuiltFunctionGraph` to align with the F2 contract that
-    /// optimizer passes operate on `(&mut Graph, NodeId)`.  The
-    /// `pattern::rewrite_rule` closure expects `&mut BuiltFunctionGraph`
-    /// internally, so [`Self::apply_rule`] swaps the graph into a
-    /// short-lived `BuiltFunctionGraph` for each call (using `mem::take`
-    /// — same trick as `opt::with_built`).
+    /// `&mut BuiltFunctionGraph` to align with the optimizer pass
+    /// contract `(&mut Graph, NodeId)`.  `pattern::rewrite_rule`'s
+    /// closure expects `&mut BuiltFunctionGraph`, so [`Self::apply_rule`]
+    /// swaps the graph into a short-lived `BuiltFunctionGraph` per
+    /// call (via `mem::take` — same trick as `opt::with_built`).
     graph: &'a mut Graph,
     /// The function's entry [`NodeId`] — needed by the validator's
     /// reachable-set walk and by [`opt::OptimizerPipeline::run`].
@@ -75,55 +69,13 @@ pub struct GraphRewriter<'a> {
 }
 
 impl<'a> GraphRewriter<'a> {
-    /// Wraps `(graph, entry)` directly.  The graph is borrowed for the
-    /// lifetime of the returned rewriter.
-    ///
-    /// Most callers hold a [`BuiltFunctionGraph`] (the output of
-    /// [`crate::Strider::analyze_cfg`]); for those, prefer the
-    /// [`Self::wrap_built`] convenience constructor.  This raw
-    /// constructor exists for callers that already operate in the F2
-    /// `(&mut Graph, NodeId)` regime.
-    #[must_use]
-    pub fn new(graph: &'a mut Graph, entry: NodeId) -> Self {
-        Self { graph, entry }
-    }
-
-    /// Wraps a [`BuiltFunctionGraph`].  Convenience constructor — the
-    /// most common callsite shape.
+    /// Wraps a [`BuiltFunctionGraph`].
     pub fn wrap_built(built: &'a mut BuiltFunctionGraph) -> Self {
         let entry = built.entry;
         Self {
             graph: &mut built.graph,
             entry,
         }
-    }
-
-    /// Wraps a [`FunctionBuilder`] without consuming it.  F2's
-    /// non-consuming builder API exposes [`FunctionBuilder::graph_mut`]
-    /// and [`FunctionBuilder::entry`]; this constructor wires them
-    /// together.
-    pub fn from_builder(builder: &'a mut FunctionBuilder) -> Self {
-        let entry = builder.entry();
-        Self {
-            graph: builder.graph_mut(),
-            entry,
-        }
-    }
-
-    /// Returns the graph entry [`NodeId`] this rewriter is anchored at.
-    /// Same id [`Self::new`] / [`Self::wrap_built`] / [`Self::from_builder`]
-    /// captured at construction time; never changes.
-    #[must_use]
-    pub fn entry(&self) -> NodeId {
-        self.entry
-    }
-
-    /// Returns a shared reference to the wrapped graph.  Useful for
-    /// pattern matching (via [`pattern::Matcher`]) before / after a
-    /// rewrite without giving up the rewriter borrow.
-    #[must_use]
-    pub fn graph(&self) -> &Graph {
-        &*self.graph
     }
 
     /// Walks every reachable node in the graph and invokes `rule` once
@@ -152,21 +104,15 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// # Errors
     ///
-    /// Propagates the rule closure's first non-skip error, wrapped in
-    /// [`crate::ErrorKind::PatternError`] via the `pattern::Error` →
-    /// `crate::Error` bridge.
+    /// Propagates the rule closure's first non-skip error via `anyhow`.
     ///
     /// # Validation
     ///
     /// `apply_rule` does **NOT** call [`ir::validate::validate`] after
-    /// the rule fires.  The rule's substitution mechanics
-    /// ([`pattern::rewrite_rule`]) preserve use-list integrity by
-    /// construction (`replace_all_uses` + bookkeeping), so common
-    /// cases produce a valid graph.  But callers building unusual
-    /// rules should run `re_optimize` (which validates as the last
-    /// step of the optimizer pipeline) or call
-    /// [`ir::validate::validate`] explicitly before relying on the
-    /// graph being well-formed.  Code-review M2.
+    /// the rule fires.  Callers building unusual rules should run
+    /// `re_optimize` (which validates as the last step of the optimizer
+    /// pipeline) or call [`ir::validate::validate`] explicitly before
+    /// relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
         F: Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>,

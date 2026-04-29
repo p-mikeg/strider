@@ -150,7 +150,7 @@ fn count_adds(g: &BuiltFunctionGraph) -> usize {
 /// false-branch becomes dead, and DeadBranchElim collapses the
 /// remaining ladder to nothing.  We pin the post-rewrite If count.
 #[test]
-fn replace_switch_selector_with_const_collapses_to_one_branch() -> strider::Result<()> {
+fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(3);
     let (mut g, strider) = analyze_with_known_targets(bytes, base, ba, targets.clone());
     let if_count_pre = count_if_nodes(&g);
@@ -197,7 +197,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> strider::Resu
 /// equality cmp; re-optimize; the dispatch collapses to a single
 /// branch (zero Ifs reachable post-fold).
 #[test]
-fn replace_jump_table_index_with_const_collapses_to_one_target() -> strider::Result<()> {
+fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(3);
     let (mut g, strider) = analyze_with_known_targets(bytes, base, ba, targets.clone());
     assert_eq!(count_if_nodes(&g), 2, "3-target Switch lifts to 2 Ifs");
@@ -233,7 +233,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> strider::Res
 // ── Test 3 — multi-edit: rewrite, re-optimize, rewrite again ────────────────
 
 #[test]
-fn replace_input_then_reoptimize_then_replace_again_works() -> strider::Result<()> {
+fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()> {
     // Hand-built fixture: two Adds, one in the entry, one downstream
     // via a second IntConst.  After rewrite + re-optimize, run a
     // second rewrite — the rewriter must support being called again
@@ -281,7 +281,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> strider::Result<(
 // ── Test 4 — re_optimize without changes is a no-op ─────────────────────────
 
 #[test]
-fn re_optimize_without_changes_is_no_op() -> strider::Result<()> {
+fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     // Already-optimised graph.  Calling re_optimize must not change
     // the reachable-node count.
     let mut g = add_k_plus_zero(7);
@@ -305,7 +305,7 @@ fn re_optimize_without_changes_is_no_op() -> strider::Result<()> {
 // ── Test 5 — manual rewrite does not break validate ─────────────────────────
 
 #[test]
-fn manual_rewrite_does_not_break_validate() -> strider::Result<()> {
+fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     // After every rewrite, `ir::validate::validate` must pass.
     // Layer A (local typing) + Layer B (use-list) + Layer C
     // (graph-level invariants) — a broken use-list would only
@@ -325,7 +325,7 @@ fn manual_rewrite_does_not_break_validate() -> strider::Result<()> {
 // ── Test 6 — pattern var capture via rewrite_rule ───────────────────────────
 
 #[test]
-fn apply_rule_using_pattern_var_capture() -> strider::Result<()> {
+fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     // End-to-end exercise of the `pattern::rewrite_rule(lhs, rhs)`
     // flow with a non-trivial Capture capture on both sides.  Pattern:
     // `add(var(x), int_const(0)) -> var(x)`.  The capture binds the

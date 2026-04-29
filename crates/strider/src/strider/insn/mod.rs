@@ -1,8 +1,6 @@
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use ir::node::NodeOutputType;
 use rsleigh::Opcode;
-
-use crate::error::Result;
 
 use super::IrStrider;
 
@@ -26,65 +24,51 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     where
         F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
     {
-        // Coerce the generic closure to a trait object so control-flow helpers
-        // in sibling modules don't need to be generic on `F`.
-        let region_lookup_dyn: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
         // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
-        // value-producing opcodes (and is responsible for the IR-builder
-        // calls); `Ok(false)` for control-flow / call / store ops which the
-        // match arm below handles.
+        // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
+        // for control-flow / call / store ops the match arm below handles.
         if self.value_lifter().lift(insn)? {
             return Ok(());
         }
+        // Coerce the generic closure to a trait object only on the
+        // control-flow paths that actually need it; arithmetic/memory
+        // arms above never see it.
         match insn.opcode {
             Opcode::Nop => {}
-            Opcode::Branch => self.handle_branch(region_id, region_lookup_dyn)?,
-            Opcode::CondBranch => self.handle_cond_branch(region_id, insn, region_lookup_dyn)?,
+            Opcode::Branch => {
+                let lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
+                self.handle_branch(region_id, lookup)?
+            }
+            Opcode::CondBranch => {
+                let lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId> = &region_lookup;
+                self.handle_cond_branch(region_id, insn, lookup)?
+            }
             Opcode::Store => self.handle_store(insn)?,
-            // `Return` and `BranchIndirect` share a handler.  The
-            // BranchIndirect classification is **only correct for the
-            // function-return case** (target = link register, e.g. ARM
-            // `bx lr` / `pop {pc}`, MIPS `jr ra`).  Other BranchIndirect
-            // sources are misclassified — the analyzer here treats them
-            // all as Returns:
-            //
-            //   * Real tail call (`bx <target>` after computing target):
-            //     should be Call + Return.  Our fixtures suppress real
-            //     tail calls via `-fno-optimize-sibling-calls`, so this
-            //     case doesn't fire here, but external binaries will
-            //     lose the call site information.
-            //   * Jump table (`ldr pc, [tbl + idx*4]`): should produce
-            //     N successor edges, one per case label.  Our fixtures
-            //     don't compile any switch as a jump table, so this
-            //     case doesn't fire either.
-            //   * Computed goto (`goto *ptr`): should be an intra-
-            //     function indirect dispatch.  Not present in fixtures.
-            //
-            // A cleaner future refinement would inspect `insn.inputs[0]`
-            // to detect link-register reads vs other targets, but
-            // distinguishing the four cases requires data-flow analysis
-            // that the per-instruction handler doesn't have.  Left as a
-            // known limitation — see `analyzer-known-issues` BUG-5.
+            // `Return` and `BranchIndirect` share a handler that emits a
+            // calling-convention `Return`.  This is correct for the
+            // link-register-return case (e.g. ARM `bx lr`); the cfg
+            // builder's tier-1 indirect-branch resolver detects tail
+            // calls / jump tables / computed gotos and routes them via
+            // dedicated terminators (`Switch`, `UnresolvedIndirectBranch`),
+            // both handled in the special-terminator post-pass.
             Opcode::Return | Opcode::BranchIndirect => self.handle_return(insn)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
-
-            // ── remaining Sleigh opcodes ──────────────────────────────────────
-
-            // MultiEqual is a decompiler-internal phi; raw p-code should not
-            // contain it.  Report instead of guessing semantics.
+            // GHIDRA's MULTIEQUAL is a decompiler-internal phi that
+            // `rsleigh::Sleigh::lift_one` does not emit.  Surfacing it
+            // here means rsleigh's contract changed; surface as an
+            // error rather than guessing semantics.
             Opcode::MultiEqual => {
-                bail!("opcode {:?} is decompiler-internal and should not appear in raw p-code", insn.opcode);
+                bail!(
+                    "opcode {:?} is a decompiler-internal phi; rsleigh::lift_one is contracted not to emit it",
+                    insn.opcode
+                );
             }
-
             // CallOther: user-defined CPU intrinsic (cpuid, rdtsc, syscall, …).
             // inputs[0] is a CONST user-op id; remaining inputs are arguments.
             // Clobbers memory.  The instruction's output varnode, if present,
-            // receives the intrinsic's result value.  Stays in strider (not
-            // pcode-lift) because it touches the memory chain and resolves
-            // user-op names against the sleigh context strider owns.
+            // receives the intrinsic's result value.
             Opcode::CallOther => self.handle_call_other(insn)?,
-
             _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),
         }
         Ok(())
@@ -99,18 +83,26 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        if insn.inputs.is_empty() {
-            bail!("opcode {:?} has too few inputs: expected at least 1, got 0", insn.opcode);
-        }
-        let id_vn = &insn.inputs[0];
+        let id_vn = first_input_or_err(insn)?;
         if id_vn.addr.space != rsleigh::VnSpace::CONST {
             bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
         let user_op_id = id_vn.addr.off;
-        let args: Vec<ir::Value> = insn.inputs[1..]
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
+        // Sleigh's native user-op id width is u32; an offset that
+        // doesn't fit signals malformed input.  `set_call_other_name`
+        // would silently no-op below; surface explicitly so the error
+        // is attributable to the lift, not to a downstream
+        // `CallOtherElide` miss.
+        let user_op_id_u32 = u32::try_from(user_op_id)
+            .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
+        let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
+            insn.inputs[1..]
+                .iter()
+                .map(|vn| self.read_vn(vn))
+                .collect::<Result<_>>()?
+        } else {
+            Vec::new()
+        };
         let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
             Some(out_vn) => Some(out_vn.size.try_into()?),
             None => None,
@@ -118,14 +110,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let (node_id, result) = self
             .builder
             .build_call_other(user_op_id, &args, output_ty)?;
-        // Resolve the user-op id to its Sleigh-defined name (e.g.
-        // `setISAMode`, `LOCK`, `cpuid`) and stash it in the graph's
-        // side-table.  Used by `opt::CallOtherElide` to drop CallOthers
-        // whose effect is a true no-op in the IR's value/memory model.
-        // u32 is sleigh's native id width — anything wider is malformed.
-        if let Ok(id_u32) = u32::try_from(user_op_id)
-            && let Some(name) = self.cfg.sleigh.user_op_name(id_u32)
-        {
+        if let Some(name) = self.cfg.sleigh.user_op_name(user_op_id_u32) {
             self.builder
                 .body_mut()
                 .graph
@@ -138,23 +123,32 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 }
 
+/// Returns `insn.inputs[0]` or a typed "too few inputs" error.  Shared
+/// by `handle_call_other` and `decode_space_id`, both of which expect a
+/// distinguished input at slot 0.
+fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
+    insn.inputs.first().ok_or_else(|| {
+        anyhow!(
+            "opcode {:?} has too few inputs: expected at least 1, got 0",
+            insn.opcode
+        )
+    })
+}
+
 /// Decodes the target address space of a p-code `LOAD`/`STORE`.
 ///
 /// P-code encodes the target space as a CONST-space varnode at `inputs[0]`
-/// whose offset is a pointer to the Sleigh `AddrSpace` object. Reading
-/// `.addr.space` directly yields `CONST` (the space of that encoding varnode),
-/// not the actual target space — callers that care about the target must
-/// decode via [`rsleigh::VnSpace::by_id`].
+/// whose offset is a pointer to a Sleigh `AddrSpace` object.
 fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
-    let space_id_vn = *insn
-        .inputs
-        .first()
-        .ok_or_else(|| anyhow!("opcode {:?} has too few inputs: expected at least 1, got 0", insn.opcode))?;
+    let space_id_vn = *first_input_or_err(insn)?;
     if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
         bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
     }
-    // SAFETY: `space_id_vn` is the `inputs[0]` of a LOAD/STORE p-code insn and
-    // was just verified to live in CONST space, which is the precondition of
-    // `VnSpace::by_id`.
+    // SAFETY: `VnSpace::by_id`'s precondition is that `space_id_vn`'s
+    // offset is a valid pointer to a Sleigh `AddrSpace`.  This holds
+    // because the pcode comes from `rsleigh::Sleigh::lift_one`, which
+    // only emits LOAD/STORE with a valid space-pointer encoding.  The
+    // CONST-space tag check above is a structural sanity gate, not the
+    // safety condition itself.
     Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
 }

@@ -26,26 +26,19 @@
 //! # Key types
 //!
 //! - [`Strider`] — wraps a Sleigh lifter and a [`CallingConvention`]; call
-//!   `analyze_function` to obtain a [`ir::BuiltFunctionGraph`]
+//!   `analyze_cfg` to obtain a [`ir::BuiltFunctionGraph`]
 //! - [`SleighArch`] — architecture selection for the Sleigh lifter
 //! - [`CallingConvention`] — describes which registers are caller-saved
+//! - [`run`] — top-level orchestrator: builds the CFG, lifts to IR, runs
+//!   the optimiser pipeline, and resolves indirect branches via the
+//!   tier-2 fixed-point loop
 
-pub mod cache;
+mod orchestrator;
 mod strider;
-pub mod error;
 pub mod indirect_resolve_tier2;
 pub mod rewrite;
 
-// `ir_cache` is the historical name for what is now `cache::*`.  Kept
-// as an alias so external callers continue to compile.
-#[doc(hidden)]
-pub use cache as ir_cache;
-pub use cache::{
-    cache_key_for_region, count_uncached_regions, extend_predecessors_into,
-    extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
-    predecessor_diffs, PredecessorHandles, RegionIrCache, RegionIrEntry,
-};
-pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
+pub use orchestrator::{run, RunConfig};
 pub use rewrite::GraphRewriter;
-pub use error::Result;
+pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

@@ -13,7 +13,6 @@ cfg.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true
 pattern.workspace = true
-rustc-hash = { workspace = true }
 reader.workspace = true
 object.workspace = true
 

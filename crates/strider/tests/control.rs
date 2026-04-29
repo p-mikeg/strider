@@ -20,7 +20,7 @@ per_arch_test!("control", "select_three",   select_three_has_two_ifs);
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
-// nested_loops: BUG-5 closed under the indirect-branch fixed-point
+// nested_loops: closed under the indirect-branch fixed-point
 // design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`).
 // arm's `pop {pc}` resolves via tier 2's `LinkRegister` arm once
 // `StackLoadForward` simplifies the loaded target back to

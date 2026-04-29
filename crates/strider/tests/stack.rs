@@ -8,7 +8,7 @@ use common::*;
 per_arch_test!("stack", "volatile_three_writes", volatile_preserves_three_stores);
 // escape_via_ptr: BUG-12 (call elided) is fixed by an asm-volatile barrier
 // in external_take_ptr's body — see fixtures/cases/stack.c.
-// BUG-5 (arm `pop {pc}` placeholder) is closed under the indirect-branch
+// (arm `pop {pc}` placeholder) is closed under the indirect-branch
 // fixed-point design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`):
 // tier 2's `LinkRegister` arm classifies the load-from-sp-then-bx pattern
 // once `StackLoadForward` simplifies the loaded target back to

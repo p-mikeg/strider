@@ -16,15 +16,15 @@ use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, SleighArch, Strider};
 
 /// Walk every reachable Return node's inputs and return the value-input
-/// (slot 2) of the unique placeholder Return whose pcode-address-keyed
-/// anchor was registered in `unresolved_branches`.
+/// (slot 2) of the unique placeholder Return.  Returns `None` if no
+/// such Return exists; panics if more than one is found (every fixture
+/// in this module has exactly one indirect branch).
 ///
-/// The placeholder Return has exactly 3 inputs: `[control, memory,
-/// target_value]` (R1.4's lift contract).  All other Return nodes —
-/// the function's real ABI returns — have either 2 inputs or
-/// `2 + ret_val_regs.len()` inputs.  Filtering by `inputs.len() == 3`
-/// uniquely picks out the placeholder.
-pub(super) fn current_anchor_after_opt(graph: &BuiltFunctionGraph) -> ir::Value {
+/// The placeholder Return has exactly 3 inputs:
+/// `[control, memory, target_value]`.  Real ABI Returns have either
+/// 2 inputs or `2 + ret_val_regs.len()` inputs; filtering by
+/// `inputs.len() == 3` uniquely picks out the placeholder.
+pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
     let mut found: Option<ir::Value> = None;
     for nid in graph.preorder() {
         if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
@@ -32,18 +32,15 @@ pub(super) fn current_anchor_after_opt(graph: &BuiltFunctionGraph) -> ir::Value 
         }
         let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
         if inputs.len() != 3 {
-            // Not a tier-2 placeholder: real ABI Returns have 2
-            // (no value) or 2 + ret_val_regs.len() inputs.
             continue;
         }
         assert!(
             found.is_none(),
             "fixture must have exactly one placeholder Return; found a second",
         );
-        // Slot layout: [control, memory, target_value].
         found = Some(inputs[2]);
     }
-    found.expect("fixture must have one placeholder Return after optimisation")
+    found
 }
 
 /// Run `Strider::analyze_cfg` on a hand-assembled byte
@@ -100,25 +97,7 @@ pub fn run_pipeline_x86_64(
     // `replace_all_uses`-rewrote the placeholder's input slot
     // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
     // IntConst).  See module-level docs for the full contract.
-    let anchor = current_anchor_after_opt(&graph);
+    let anchor = anchor_value_input(&graph)
+        .expect("fixture must have one placeholder Return after optimisation");
     (graph, anchor, lr_vn)
-}
-
-/// Walk every reachable Return and return the value-input (slot 2)
-/// of the unique 3-input Return — the placeholder shape strider's
-/// R1.4 lift produces.  `None` when there's no such Return (caller
-/// asserts).  Local copy of the helper at the top of this module
-/// because the existing `current_anchor_after_opt` is private.
-pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
-    for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
-        return Some(inputs[2]);
-    }
-    None
 }

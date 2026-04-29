@@ -117,6 +117,27 @@ impl Arch {
     }
 }
 
+// ── Synthetic-fixture Strider builders ───────────────────────────────────────
+
+/// Construct a `Strider` for x86_64 SystemV.  Used by tests that build
+/// hand-assembled byte sequences and don't care about ELF loading.
+pub fn strider_x86_64() -> strider::Strider {
+    strider_for(Arch::X64)
+}
+
+/// Construct a `Strider` for `arch` using its preset calling
+/// convention.  Probes Sleigh against an empty memory reader to
+/// extract the register list.
+pub fn strider_for(arch: Arch) -> strider::Strider {
+    let sleigh_arch = arch.sleigh();
+    let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+        .expect("probe sleigh new")
+        .regs()
+        .expect("probe sleigh regs");
+    strider::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
+}
+
 // ── Binary path resolution ───────────────────────────────────────────────────
 
 pub fn binary_path(arch: Arch, case: &str) -> PathBuf {

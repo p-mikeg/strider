@@ -7,7 +7,7 @@
 //! reuse them; this module's only job is to construct a `ValueLifter`
 //! around `IrStrider`'s existing borrows and delegate.
 
-use crate::error::Result;
+use anyhow::Result;
 
 use super::IrStrider;
 

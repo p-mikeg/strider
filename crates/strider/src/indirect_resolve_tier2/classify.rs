@@ -36,7 +36,7 @@ pub fn classify_anchor_with_rom(
 
 /// Classify a placeholder anchor with both an optional
 /// [`ReadOnlyMemory`] (for the rodata jump-table arm) and an optional
-/// stack-pointer varnode (for the BUG-30 stack-array-of-labels arm).
+/// stack-pointer varnode (for the stack-array-of-labels arm).
 /// Delegates to [`opt::classify_anchor_with_rom_and_sp`].
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
@@ -418,8 +418,8 @@ mod tests {
 
     #[test]
     fn classify_value_phi_empty_returns_none() {
-        // M1 (review fix): a ValuePhi with no value inputs MUST NOT
-        // classify as Multiple(vec![]).  An empty target set would
+        // A ValuePhi with no value inputs must not classify as
+        // Multiple(vec![]).  An empty target set would
         // silently feed the orchestrator a Switch{targets:[]}
         // terminator with no successor edges, making the dispatch
         // site appear unreachable.  We treat the degenerate case as
