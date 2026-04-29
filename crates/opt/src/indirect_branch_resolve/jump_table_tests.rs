@@ -563,6 +563,37 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
 }
 
 #[test]
+fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
+    // CURRENT BEHAVIOR (intentional, with caveat): `IntCmpOp::Sless`
+    // (signed `<`) on the true branch yields bound = N — the same
+    // result as unsigned `Less`.  This is sound when the dispatch
+    // path also proves `idx >= 0` (typical compiler output is
+    // `cmp idx, 0; jl default` followed by `cmp idx, N; jae default`,
+    // or the equivalent `cmp idx, N; jge default` after a prior
+    // signed-zero test).  When the signed-positive precondition is
+    // missing, this bound is unsound — runtime idx ∈ [-1, N-1] but
+    // we'd enumerate [0, N-1] and miss the negative case.
+    //
+    // Pin the current behavior so any tightening (e.g. requiring a
+    // dominating `Sless 0` test, or limiting to types where the
+    // signed/unsigned ranges coincide) surfaces here.  Documented
+    // limitation; flagged in R5 for follow-up.
+    let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let region = builder.create_region().unwrap();
+    builder.set_entry_region(region).unwrap();
+    builder.set_region(region);
+    let idx = builder.build_int_const(0u64, NodeOutputType::U32);
+    let n = builder.build_int_const(8u64, NodeOutputType::U32);
+    let cmp = builder
+        .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
+        .unwrap();
+    builder.build_return(Some(idx), &[]).unwrap();
+    let g = builder.build().unwrap();
+    let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ true);
+    assert_eq!(bound, Some(8), "Sless bounds via N (current behavior)");
+}
+
+#[test]
 fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     // idx <= 4 (taken-true) → bound = 5.
     let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
