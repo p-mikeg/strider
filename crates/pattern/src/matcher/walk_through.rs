@@ -46,9 +46,13 @@ pub(crate) fn try_walk_through_cast(
     if bit.is_empty() || !ctx.matcher.options.ignore_cast_mask.contains(bit) {
         return false;
     }
-    // Casts have exactly one input; treat any unexpected shape as
-    // "can't walk through" rather than panicking.
+    // Casts have exactly one input by IR signature; if the IR ever
+    // produces a malformed cast (validator regression), treat it as
+    // "can't walk through" rather than walking into garbage.
     let inputs = ctx.graph.graph.node_inputs(producer);
+    if inputs.len() != 1 {
+        return false;
+    }
     let Some(value_input) = inputs.into_iter().next() else {
         return false;
     };

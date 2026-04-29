@@ -55,7 +55,7 @@ pub(crate) type NodeKindCheck =
 /// access (`StackStorePhi` offsets) uses a [`NodePat::post_match`] hook on
 /// top of a `VariantWith` kind spec.
 #[derive(Clone)]
-pub enum KindSpec {
+pub(crate) enum KindSpec {
     /// Accepts any `NodeKind`.  Used by wildcards and by the match-only-false
     /// `*_const_with_fn` builders (whose `try_match` never succeeds anyway).
     Any,
@@ -145,7 +145,7 @@ pub(crate) type NodeKindBuilder =
     Arc<dyn Fn(&BuildCtx<'_>) -> Result<NodeKind> + Send + Sync>;
 
 /// How to pick the output type of a node built by [`NodePat::try_build`].
-pub enum BuildTy {
+pub(crate) enum BuildTy {
     /// Use the root-type parameter threaded through `try_build`.
     InheritRoot,
     /// Use a specific type regardless of root (cmps, bool ops, bool const).
@@ -180,7 +180,7 @@ pub(crate) struct BuildSpec {
 /// [`Self::post_match`], which runs after the inputs/outputs/consumers
 /// pass — so the commutative retry path can safely snapshot-restore
 /// without worrying about bindings made during the kind check.
-pub struct NodePat {
+pub(crate) struct NodePat {
     /// Kind-level constraint consulted by both [`crate::matcher::Matcher::find_all`]
     /// (prefilter, discriminant-only) and [`Self::try_match_common`] (full
     /// check, discriminant + payload).  Every ctor sets this; wildcards
@@ -203,7 +203,7 @@ pub struct NodePat {
     pub(crate) post_match: Option<NodeKindCheck>,
 }
 
-pub enum InputsSpec {
+pub(crate) enum InputsSpec {
     /// Arity 0: constants, `InitialVar`, `FunctionArg`.
     None,
     /// Arity N with ordered operand matching. When `commutative(ctx, node)`
@@ -253,7 +253,7 @@ impl InputsSpec {
 
 /// Constraints on output slots by position.  Each entry's sub-pattern is
 /// matched against the `NodeOutputId` at that output index.
-pub enum OutputsSpec {
+pub(crate) enum OutputsSpec {
     None,
     Indexed(Vec<(usize, crate::pat::Pat)>),
 }
@@ -262,7 +262,7 @@ pub enum OutputsSpec {
 /// entry, the helper finds the single consumer of `outputs[i]` (via
 /// [`walk::next_control_node`]) and matches the sub-pattern as a node.  If
 /// the output has zero or multiple consumers, the match fails.
-pub enum ConsumersSpec {
+pub(crate) enum ConsumersSpec {
     None,
     Indexed(Vec<(usize, crate::pat::Pat)>),
 }
@@ -446,12 +446,9 @@ fn try_once(
             if inputs.len() != pats.len() {
                 return false;
             }
-            // `swap` is only ever true when `pats.len() == 2` (enforced by
-            // caller) — but re-assert defensively: the swapped arm would
-            // otherwise read stale pat indices.
-            if swap && pats.len() != 2 {
-                return false;
-            }
+            // Caller (`try_match_common`) enforces `pats.len() == 2`
+            // before setting `swap = true`; the `inputs.get(inp_idx)?`
+            // bound check below catches any contract regression.
             for (pat_idx, sub_pat) in pats.iter().enumerate() {
                 let inp_idx = if swap { 1 - pat_idx } else { pat_idx };
                 let Some(&inp) = inputs.get(inp_idx) else {
