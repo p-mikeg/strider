@@ -83,34 +83,23 @@ decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
     (float_le, LessEqual),
 ]);
 
-/// Helper for the five unit-variant float conversions (IntToFloat,
-/// FloatToInt, FloatToFloat, IntBitsToFloat, FloatBitsToInt).
-fn unit_conv(build_kind: NodeKind, operand: impl Into<Pat>) -> Pat {
-    NodePat::matcher(
-        KindSpec::Exact(build_kind),
-        InputsSpec::fixed_ordered(vec![operand.into()]),
-    )
-    .with_build_exact(build_kind, BuildTy::InheritRoot)
-    .into_pat()
-}
-
 /// Matches an `IntToFloat` value-conversion node.
 pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
-    unit_conv(NodeKind::IntToFloat, operand)
+    super::casts::unary_node(NodeKind::IntToFloat, BuildTy::InheritRoot, operand)
 }
 /// Matches a `FloatToInt` value-conversion node.
 pub fn float_to_int(operand: impl Into<Pat>) -> Pat {
-    unit_conv(NodeKind::FloatToInt, operand)
+    super::casts::unary_node(NodeKind::FloatToInt, BuildTy::InheritRoot, operand)
 }
 /// Matches a `FloatToFloat` precision-conversion node.
 pub fn float_to_float(operand: impl Into<Pat>) -> Pat {
-    unit_conv(NodeKind::FloatToFloat, operand)
+    super::casts::unary_node(NodeKind::FloatToFloat, BuildTy::InheritRoot, operand)
 }
 /// Matches an `IntBitsToFloat` bitcast node.
 pub fn int_bits_to_float(operand: impl Into<Pat>) -> Pat {
-    unit_conv(NodeKind::IntBitsToFloat, operand)
+    super::casts::unary_node(NodeKind::IntBitsToFloat, BuildTy::InheritRoot, operand)
 }
 /// Matches a `FloatBitsToInt` bitcast node.
 pub fn float_bits_to_int(operand: impl Into<Pat>) -> Pat {
-    unit_conv(NodeKind::FloatBitsToInt, operand)
+    super::casts::unary_node(NodeKind::FloatBitsToInt, BuildTy::InheritRoot, operand)
 }

@@ -301,6 +301,36 @@ fn rhs_closure_error_propagates_through_anyhow() {
     assert!(err.downcast_ref::<CustomErr>().is_some(), "got {err:?}");
 }
 
+// ── Error paths: multi-value-output LHS root (F-012) ────────────────────────
+
+/// Pin the documented `node_outputs_exact::<1>` constraint: rewriting on
+/// a multi-output node (here, a `Call` whose outputs are
+/// `[Control, Memory, ret-val0...]`) must surface an Err rather than
+/// a silent rewire-of-the-wrong-slot.
+#[test]
+fn rewrite_rule_on_call_root_returns_err() {
+    use ir::{FunctionBuilder, node::NodeOutputType};
+    let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let region = fb.create_region().unwrap();
+    fb.set_entry_region(region).unwrap();
+    fb.set_region(region);
+    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::U64);
+    fb.build_call(tgt).unwrap();
+    fb.build_return(None, &[]).unwrap();
+    let mut g = fb.build().unwrap();
+
+    let rule = rewrite_rule(call(), int_const(0));
+    let call_node = g
+        .preorder()
+        .find(|n| matches!(g.graph.node_kind(*n), NodeKind::Call))
+        .expect("Call node");
+    let err = rule(&mut g, call_node).expect_err("multi-output root must error");
+    assert!(
+        format!("{err:?}").contains("output") || format!("{err:?}").contains("exactly"),
+        "expected node_outputs_exact failure, got {err:?}"
+    );
+}
+
 // ── `apply_rules_in_order` ───────────────────────────────────────────────────
 
 #[test]

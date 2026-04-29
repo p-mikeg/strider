@@ -9,8 +9,9 @@ use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 /// Helper: build a unary-input NodePat whose kind is determined by
 /// `build_kind` (match via `KindSpec::Exact`) and whose build side emits
 /// the same literal kind.  Covers the unit-variant casts (`CastToBool`,
-/// `Truncate`, `Popcount`, …) and the `Extend`-with-op variants.
-fn unary_node(build_kind: NodeKind, build_ty: BuildTy, operand: impl Into<Pat>) -> Pat {
+/// `Truncate`, `Popcount`, …), the `Extend`-with-op variants, and the
+/// float conversions in `float.rs`.
+pub(super) fn unary_node(build_kind: NodeKind, build_ty: BuildTy, operand: impl Into<Pat>) -> Pat {
     NodePat::matcher(
         KindSpec::Exact(build_kind),
         InputsSpec::fixed_ordered(vec![operand.into()]),
