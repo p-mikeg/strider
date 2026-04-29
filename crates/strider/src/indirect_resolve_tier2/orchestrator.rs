@@ -51,7 +51,9 @@ use cfg::{Builder, Cfg, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Resolved
 use ir::node::NodeId;
 use opt::ReadOnlyMemory;
 
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 use crate::strider::Strider;
 use crate::{cache_key_for_region, lift_new_regions_into, RegionIrCache};
 
@@ -78,7 +80,7 @@ fn take_split_snapshot<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> Result<CfgSplitSn
         let region = cfg
             .graph
             .node_weight(region_id)
-            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+            .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))?;
         snapshot.insert(key, region.insns.len());
     }
     Ok(snapshot)
@@ -109,7 +111,7 @@ fn apply_split_invalidation<R: rsleigh::MemReader>(
         let new_region = new_cfg
             .graph
             .node_weight(region_id)
-            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+            .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))?;
         let new_insn_count = new_region.insns.len();
         let Some(&old_insn_count) = prev_snapshot.get(&key) else {
             continue;
@@ -221,8 +223,8 @@ where
     // by the rest of the loop (which still reads `config.strider`,
     // `config.rom`, etc).
     let mut sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>> =
-        config.sleigh.take().ok_or_else(|| ErrorKind::Unimplemented(
-            "OrchestratorConfig::sleigh was None — caller must supply an owned Sleigh".to_string(),
+        config.sleigh.take().ok_or_else(|| anyhow!(
+            "not yet implemented: OrchestratorConfig::sleigh was None — caller must supply an owned Sleigh"
         ))?;
 
     // Iteration 0: build the CFG, lift to IR, run the stable subset.
@@ -368,7 +370,7 @@ where
                     .map(|(addr, _)| *addr)
                     .next();
                 if let Some(addr) = some_addr {
-                    return Err(ErrorKind::UnresolvedIndirectBranch(addr).into());
+                    bail!("indirect branch at {addr:?} could not be resolved at fixed point");
                 }
             }
             // Run the destructive subset exactly once at the fixed
@@ -424,7 +426,7 @@ where
 
     // Cap exceeded — soundness bug.  Surface as typed error rather
     // than panicking.
-    Err(ErrorKind::IndirectResolutionDidNotConverge(cap).into())
+    Err(anyhow!("indirect-branch resolver did not converge after {cap} iterations"))
 }
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
@@ -540,10 +542,9 @@ where
             // routes it through a CFG rebuild instead.  Reaching this
             // arm is a logic bug in the dispatch; surface as a typed
             // error rather than silently mis-applying.
-            Err(ErrorKind::Unimplemented(
-                "apply_in_place_edit called with ResolvedTargets::Multiple".to_string(),
-            )
-            .into())
+            Err(anyhow!(
+                "not yet implemented: apply_in_place_edit called with ResolvedTargets::Multiple"
+            ))
         }
     }
 }

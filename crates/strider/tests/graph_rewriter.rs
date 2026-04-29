@@ -317,9 +317,8 @@ fn manual_rewrite_does_not_break_validate() -> strider::Result<()> {
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     rewriter.apply_rule(rule)?;
 
-    ir::validate::validate(&g.graph, g.entry).map_err(|e| {
-        strider::ErrorKind::AssertionFailed(format!("validate failed after rewrite: {e}"))
-    })?;
+    ir::validate::validate(&g.graph, g.entry)
+        .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }
 

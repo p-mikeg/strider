@@ -7,7 +7,7 @@
 mod common;
 use common::{addr, make_builder, make_region};
 
-use cfg::{test_api, ErrorKind, RegionEdgeKind};
+use cfg::{test_api, RegionEdgeKind};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 #[test]
@@ -118,8 +118,7 @@ fn split_addr_not_in_region_insns_returns_failed_splitting_region() {
     let mut b = make_builder(0x1000);
     let id = test_api::add_region(&mut b, make_region(&[(0x1000, 0), (0x1010, 0)])).unwrap();
     let err = test_api::split_region(&mut b, id, addr(0x1008, 0)).unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        ErrorKind::FailedSplitingRegion(_, a) if *a == addr(0x1008, 0)
-    ));
+    let msg = err.to_string();
+    assert!(msg.contains("failed spliting region"), "got: {msg}");
+    assert!(msg.contains(&format!("{:?}", addr(0x1008, 0))), "got: {msg}");
 }

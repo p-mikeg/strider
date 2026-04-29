@@ -264,7 +264,10 @@ fn as_value_or_err_value_case() {
 fn as_value_or_err_control_case() {
     let kind = NodeOutputKind::Control;
     let err = kind.as_value_or_err().unwrap_err();
-    assert!(matches!(err.kind(), crate::ErrorKind::ExpectedValueOutput(_)));
+    assert!(
+        err.to_string().contains("expected value output"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -277,7 +280,10 @@ fn as_integer_or_err_int_case() {
 fn as_integer_or_err_float_case() {
     let kind = NodeOutputKind::OutputType(NodeOutputType::F32);
     let err = kind.as_integer_or_err().unwrap_err();
-    assert!(matches!(err.kind(), crate::ErrorKind::ExpectedIntegerType(_)));
+    assert!(
+        err.to_string().contains("is not an integer type"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -290,7 +296,10 @@ fn as_float_or_err_float_case() {
 fn as_float_or_err_int_case() {
     let kind = NodeOutputKind::OutputType(NodeOutputType::U32);
     let err = kind.as_float_or_err().unwrap_err();
-    assert!(matches!(err.kind(), crate::ErrorKind::ExpectedFloatType(_)));
+    assert!(
+        err.to_string().contains("is not a float type"),
+        "got: {err}"
+    );
 }
 
 // ── is_phi ───────────────────────────────────────────────────────────
@@ -353,9 +362,10 @@ fn try_from_u32_size_to_node_output_type() {
     assert_eq!(NodeOutputType::try_from(32u32).unwrap(), NodeOutputType::U256);
     for bad in [0u32, 3, 5, 7, 9, 15, 17, 33, 64] {
         let err = NodeOutputType::try_from(bad).expect_err("invalid size");
+        let msg = err.to_string();
         assert!(
-            matches!(err.kind(), crate::error::ErrorKind::UnsupportedOutputSize(n) if *n == bad),
-            "wrong error kind for {bad}: {err:?}"
+            msg.contains(&format!("unsupported node output size: {bad} bytes")),
+            "wrong error for {bad}: {err:?}"
         );
     }
 }

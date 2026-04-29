@@ -84,6 +84,7 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 name = "cfg"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dot",
  "ir",
  "object",
@@ -92,9 +93,7 @@ dependencies = [
  "petgraph",
  "reader",
  "rsleigh",
- "strider-error",
  "target",
- "thiserror",
 ]
 
 [[package]]
@@ -272,8 +271,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 name = "dot"
 version = "0.1.0"
 dependencies = [
- "strider-error",
- "thiserror",
+ "anyhow",
 ]
 
 [[package]]
@@ -481,6 +479,7 @@ dependencies = [
 name = "ir"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cranelift-bitset",
  "cranelift-entity",
  "dot",
@@ -491,7 +490,6 @@ dependencies = [
  "proptest",
  "rsleigh",
  "smallvec",
- "strider-error",
  "target",
  "thiserror",
 ]
@@ -621,6 +619,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 name = "opt"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "criterion",
  "ethnum",
  "ir",
@@ -628,9 +627,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "rustc-hash",
- "strider-error",
  "target",
- "thiserror",
 ]
 
 [[package]]
@@ -653,12 +650,12 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 name = "pattern"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bitflags",
  "ethnum",
  "ir",
  "opt",
  "rsleigh",
- "strider-error",
  "thiserror",
 ]
 
@@ -666,11 +663,10 @@ dependencies = [
 name = "pcode-lift"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ir",
  "rsleigh",
- "strider-error",
  "target",
- "thiserror",
 ]
 
 [[package]]
@@ -859,11 +855,10 @@ dependencies = [
 name = "reader"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "object",
  "rsleigh",
- "strider-error",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -1082,6 +1077,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 name = "strider"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cfg",
  "dot",
  "expect-test",
@@ -1094,16 +1090,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "rustc-hash",
- "strider-error",
  "target",
- "thiserror",
-]
-
-[[package]]
-name = "strider-error"
-version = "0.1.0"
-dependencies = [
- "thiserror",
 ]
 
 [[package]]
@@ -1121,9 +1108,8 @@ dependencies = [
 name = "target"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "rsleigh",
- "strider-error",
- "thiserror",
 ]
 
 [[package]]

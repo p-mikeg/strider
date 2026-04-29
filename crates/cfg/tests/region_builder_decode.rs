@@ -11,7 +11,6 @@
 mod common;
 use common::{addr, fake_lift_res, fake_lift_res_with_len, make_builder, make_region_builder};
 
-use cfg::ErrorKind;
 use rsleigh::{Vn, VnAddr, VnSpace};
 
 fn const_vn(offset: u64) -> Vn {
@@ -83,7 +82,7 @@ fn register_space_returns_invalid_branch_target_error() {
     let err = rb
         .decode_branch_target(register_vn(0x20), addr(0x1000, 0), &lift)
         .unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)));
+    assert!(err.to_string().contains("invalid branch target variable"), "got: {err}");
 }
 
 #[test]
@@ -99,7 +98,7 @@ fn unknown_space_returns_invalid_branch_target_error() {
     let err = rb
         .decode_branch_target(vn, addr(0x1000, 0), &lift)
         .unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)));
+    assert!(err.to_string().contains("invalid branch target variable"), "got: {err}");
 }
 
 #[test]
@@ -114,7 +113,7 @@ fn unique_space_returns_invalid_branch_target_error() {
     let err = rb
         .decode_branch_target(vn, addr(0x1000, 0), &lift)
         .unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)));
+    assert!(err.to_string().contains("invalid branch target variable"), "got: {err}");
 }
 
 /// Pinned contract: a CONST-space relative branch target with a negative
@@ -164,10 +163,7 @@ fn decode_branch_target_const_space_underflow_errors() {
     let err = rb
         .decode_branch_target(vn, addr(0x1000, 2), &lift)
         .unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        ErrorKind::InvalidBranchTargetVaErr(_, _)
-    ));
+    assert!(err.to_string().contains("invalid branch target variable"), "got: {err}");
 }
 
 /// Pinned contract: a CONST-space relative branch target whose computed pcode
@@ -196,9 +192,8 @@ fn decode_branch_target_const_space_index_past_end_errors() {
         .decode_branch_target(vn, addr(0x1000, 0), &lift)
         .unwrap_err();
     assert!(
-        matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)),
-        "expected InvalidBranchTargetVaErr; got {:?}",
-        err.kind()
+        err.to_string().contains("invalid branch target variable"),
+        "expected InvalidBranchTargetVaErr; got {err}"
     );
 }
 
@@ -214,9 +209,8 @@ fn next_pcode_addr_machine_address_overflow_errors() {
     let cur = addr(u64::MAX - 8, 0);
     let err = cfg::test_api::next_pcode_addr(cur, &lift).unwrap_err();
     assert!(
-        matches!(err.kind(), ErrorKind::MachineAddrOverflow(_)),
-        "expected MachineAddrOverflow; got {:?}",
-        err.kind()
+        err.to_string().contains("machine-address overflow"),
+        "expected MachineAddrOverflow; got {err}"
     );
 }
 
@@ -303,5 +297,5 @@ fn decode_branch_target_const_space_index_past_pcode_count_errors() {
     let err = rb
         .decode_branch_target(vn, addr(0x1000, 0), &lift)
         .unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidBranchTargetVaErr(_, _)));
+    assert!(err.to_string().contains("invalid branch target variable"), "got: {err}");
 }

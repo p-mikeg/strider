@@ -67,7 +67,7 @@ fn known_bits_then_constant_fold() -> opt::Result<()> {
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
         let masked = b.build_int_binary_operation(or_, ff, IntBinaryOp::And, NodeOutputType::U8)?;
         let five = b.build_int_const(5u64, NodeOutputType::U8);
-        Ok(b.build_int_binary_operation(masked, five, IntBinaryOp::Add, NodeOutputType::U8)?)
+        b.build_int_binary_operation(masked, five, IntBinaryOp::Add, NodeOutputType::U8)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     // 0xFF + 5 = 0x104 → wrap to 0x04 in U8.
@@ -124,7 +124,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let eight = b.build_int_const(8u64, NodeOutputType::U64);
         let plus = b.build_int_binary_operation(x, eight, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(plus, eight, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(plus, eight, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     // After full collapse, the return-value-producing node must NOT be an
@@ -203,7 +203,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
         .map(|n| fg.graph.node_inputs(n)[2])
-        .ok_or(opt::ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow::anyhow!("no return node found in function"))?;
     let ret_node = fg.graph.get_node_from_output(ret_val);
     let kind = *fg.graph.node_kind(ret_node);
     assert!(
@@ -340,7 +340,7 @@ fn pipeline_keeps_zero_sub_x() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let zero = b.build_int_const(0u64, NodeOutputType::U64);
-        Ok(b.build_int_binary_operation(zero, x, IntBinaryOp::Sub, NodeOutputType::U64)?)
+        b.build_int_binary_operation(zero, x, IntBinaryOp::Sub, NodeOutputType::U64)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     let kind = return_kind(&fg)?;

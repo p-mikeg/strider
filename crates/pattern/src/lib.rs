@@ -124,7 +124,7 @@
 //! ```
 
 pub mod error;
-pub use error::{Error, ErrorKind, Result};
+pub use error::{is_skip, skip, MissingBinding, NotBuildable, Result, RewriteSkip};
 
 mod macros;
 mod matcher;

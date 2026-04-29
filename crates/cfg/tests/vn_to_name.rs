@@ -6,7 +6,7 @@
 mod common;
 use common::{binary, build_cfg};
 
-use cfg::{test_api::vn_to_name, ErrorKind};
+use cfg::test_api::vn_to_name;
 use rsleigh::{Vn, VnAddr, VnSpace};
 
 fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
@@ -76,7 +76,7 @@ fn register_unknown_offset_returns_invalid_reg_vn_error() {
         size: 1,
     };
     let err = vn_to_name(&cfg, &bogus).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidRegVn(_)));
+    assert!(err.to_string().contains("invalid register vn"), "got: {err}");
 }
 
 // ── unsupported space ─────────────────────────────────────────────────────────
@@ -91,5 +91,5 @@ fn unsupported_space_returns_unsupported_error() {
         size: 1,
     };
     let err = vn_to_name(&cfg, &exotic).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::UnsupportedVnSpaceDisplay(_)));
+    assert!(err.to_string().contains("unsupported varnode space"), "got: {err}");
 }

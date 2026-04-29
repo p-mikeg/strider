@@ -1,4 +1,6 @@
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 
 use super::super::IrStrider;
 
@@ -61,7 +63,7 @@ pub(crate) fn build_switch_if_ladder(
 ) -> Result<()> {
     let n = targets_and_regions.len();
     if n == 0 {
-        return Err(ErrorKind::SwitchHasNoTargets(caller_region).into());
+        bail!("switch terminator at region {caller_region:?} has no targets");
     }
     if n == 1 {
         // Single target — degenerate ladder is just an unconditional
@@ -134,7 +136,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // Fallthrough successor — leave to the post-loop linker.
             return Ok(());
         }
-        Err(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)).into())
+        Err(anyhow!("invalid region index {region_id:?}"))
     }
 
     /// F7 — lifts a region whose CFG terminator is
@@ -177,7 +179,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
     ) -> Result<()> {
         if targets.is_empty() {
-            return Err(ErrorKind::SwitchHasNoTargets(region_id).into());
+            bail!("switch terminator at region {region_id:?} has no targets");
         }
         // Resolve every target machine address to its IR region.
         // The cfg builder enqueues each target with a `Branch` edge
@@ -191,7 +193,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)
-                .ok_or(ErrorKind::SwitchTargetMissing(target))?;
+                .ok_or_else(|| anyhow!("switch target machine address {target:#x} has no CFG region"))?;
             let ir_region = region_lookup(cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
@@ -223,10 +225,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let res = self.cfg.region_if(region_id)?;
         let if_true_region = res
             .if_true_region
-            .ok_or(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)))?;
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let if_false_region = res
             .if_false_region
-            .ok_or(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)))?;
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let true_block = region_lookup(if_true_region)?;
         let false_block = region_lookup(if_false_region)?;
         self.builder.build_if(cond, true_block, false_block)?;

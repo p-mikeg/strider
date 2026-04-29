@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 
 pub mod error;
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 
 pub mod elf;
 pub use elf::{ElfFileMemReader, load_elf};
@@ -67,7 +67,7 @@ impl MemRegion {
         let len = data.len() as u64;
         start_addr
             .checked_add(len)
-            .ok_or(error::ErrorKind::RegionOverflow { start_addr, len })?;
+            .ok_or_else(|| anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64"))?;
         Ok(Self { start_addr, data })
     }
 

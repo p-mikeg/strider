@@ -1,4 +1,6 @@
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 use super::IrStrider;
 
@@ -299,7 +301,7 @@ impl Strider {
             let ir_region = ir_strider.builder.create_region()?;
             *cfg_ir_graph
                 .node_weight_mut(region_id)
-                .ok_or(ErrorKind::CfgNoRegion(region_id))? = Some(ir_region);
+                .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))? = Some(ir_region);
         }
 
         // Helper closure: map a CFG region id to its IR region id via the graph.
@@ -308,7 +310,7 @@ impl Strider {
                 .node_weight(region_id)
                 .copied()
                 .flatten()
-                .ok_or_else(|| ErrorKind::CfgNoRegion(region_id).into())
+                .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))
         };
 
         // Set entry region.
@@ -323,7 +325,7 @@ impl Strider {
             let region = cfg
                 .graph
                 .node_weight(node_idx)
-                .ok_or(ErrorKind::CfgNoRegion(node_idx))?;
+                .ok_or_else(|| anyhow!("no region {node_idx:?} in cfg"))?;
             // R1.4: regions whose terminator is
             // `UnresolvedIndirectBranch` need their final
             // `BranchIndirect` insn lifted via the placeholder path
@@ -436,7 +438,7 @@ impl Strider {
             let region = cfg
                 .graph
                 .node_weight(cfg_region_id)
-                .ok_or(ErrorKind::CfgNoRegion(cfg_region_id))?;
+                .ok_or_else(|| anyhow!("no region {cfg_region_id:?} in cfg"))?;
             let predecessor_count = cfg.predecessor_count(cfg_region_id);
 
             // Per-var phi node IDs, keyed by Vn.  We resolve each

@@ -27,9 +27,10 @@
 //! - [`load_elf`] — reads an ELF from disk and returns a `'static`-lifetime
 //!   parsed `object::File` (intentionally leaks the backing bytes).
 
+use anyhow::Context as _;
 use object::{Object, ObjectSection, ObjectSegment};
 
-use crate::{MemRegion, MemRegionsLookupTable, Result, error};
+use crate::{MemRegion, MemRegionsLookupTable, Result};
 
 // ── ELF → MemRegion converters ────────────────────────────────────────────────
 
@@ -43,7 +44,8 @@ use crate::{MemRegion, MemRegionsLookupTable, Result, error};
 /// - `ErrorKind::RegionOverflow` if `segment.address() + data.len()` would
 ///   exceed `u64::MAX`.
 pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
-    MemRegion::new(segment.address(), segment.data()?.to_vec())
+    let data = segment.data().context("failed to parse ELF")?;
+    MemRegion::new(segment.address(), data.to_vec())
 }
 
 /// Converts a single ELF section into a [`MemRegion`].
@@ -56,7 +58,8 @@ pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Res
 /// - `ErrorKind::RegionOverflow` if `section.address() + data.len()` would
 ///   exceed `u64::MAX`.
 pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
-    MemRegion::new(section.address(), section.data()?.to_vec())
+    let data = section.data().context("failed to parse ELF")?;
+    MemRegion::new(section.address(), data.to_vec())
 }
 
 /// Collects ELF segments into [`MemRegion`]s, keeping only those for which
@@ -88,7 +91,7 @@ pub fn elf_segments_to_mem_regions(
         if !filter(&seg) {
             continue;
         }
-        let data = seg.data()?;
+        let data = seg.data().context("failed to parse ELF")?;
         if data.is_empty() {
             continue;
         }
@@ -126,7 +129,7 @@ pub fn elf_sections_to_mem_regions(
         if !filter(&sec) {
             continue;
         }
-        let data = sec.data()?;
+        let data = sec.data().context("failed to parse ELF")?;
         if data.is_empty() {
             continue;
         }
@@ -257,7 +260,7 @@ impl ElfFileMemReader {
     /// Returns `ErrorKind::Object` if the bytes fail to parse as a valid
     /// ELF, or any error produced by [`from_object`](Self::from_object).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let obj = object::File::parse(bytes)?;
+        let obj = object::File::parse(bytes).context("failed to parse ELF")?;
         Self::from_object(&obj)
     }
 
@@ -268,18 +271,18 @@ impl ElfFileMemReader {
     /// Returns `ErrorKind::Io` if the file cannot be read from disk, or
     /// any error produced by [`from_bytes`](Self::from_bytes).
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let bytes = std::fs::read(path)?;
+        let bytes = std::fs::read(path).context("failed to read file")?;
         Self::from_bytes(&bytes)
     }
 }
 
 impl rsleigh::MemReader for ElfFileMemReader {
-    type Err = crate::Error;
+    type Err = anyhow::Error;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize> {
         self.lookup
             .read(addr.off, out_buf)
-            .ok_or_else(|| error::ErrorKind::NotMapped(addr.off).into())
+            .ok_or_else(|| anyhow::anyhow!("address {:#x} is not mapped", addr.off))
     }
 }
 
@@ -334,16 +337,16 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 /// Returns `ErrorKind::Io` if the file cannot be read from disk, or
 /// `ErrorKind::Object` if the bytes fail to parse as a valid ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
-    let data = std::fs::read(path)?;
+    let data = std::fs::read(path).context("failed to read file")?;
     // Validate the parse on a borrowed view BEFORE leaking. If the bytes
     // don't parse as ELF, we drop `data` normally instead of leaking it
     // onto the heap forever for nothing — the leak only pays for itself
     // when we actually return an `object::File<'static>`.
-    object::File::parse(&data[..])?;
+    object::File::parse(&data[..]).context("failed to parse ELF")?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
     // Re-parse the (now `'static`) bytes. Identical bytes parse identically,
     // so this `?` cannot fail in practice; we still propagate via `?` to
     // avoid `expect`/`unwrap` (forbidden in this crate).
-    Ok(object::File::parse(leaked)?)
+    object::File::parse(leaked).context("failed to parse ELF")
 }
 

@@ -7,6 +7,7 @@
 //! graph. Cacheable nodes have their stale dedup-cache entry evicted before
 //! the mutation (via `evict_cache_entry_if_cacheable` in `store`).
 
+use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use crate::iterators::InputCursor;
@@ -78,16 +79,18 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::ErrorKind::AddInputToCacheableNode`] if `node_id`
-    /// has a cacheable kind — adding inputs after creation would invalidate
-    /// the dedup cache key inserted by [`Graph::create_node`].
+    /// Returns an error if `node_id` has a cacheable kind — adding inputs
+    /// after creation would invalidate the dedup cache key inserted by
+    /// [`Graph::create_node`].
     pub fn add_node_input(
         &mut self,
         node_id: NodeId,
         output_id: NodeOutputId,
     ) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
-            return Err(crate::error::ErrorKind::AddInputToCacheableNode(node_id).into());
+            return Err(anyhow!(
+                "attempted to add input to cacheable node {node_id:?}"
+            ));
         }
 
         // Get the last input index to know the index for the new input
@@ -112,27 +115,23 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// - [`crate::error::ErrorKind::RemoveInputFromCacheableNode`] if `node_id`
-    ///   has a cacheable kind.
-    /// - [`crate::error::ErrorKind::InputIndexOutOfBounds`] if `index` is past
-    ///   the node's current input count.
+    /// - Returns an error if `node_id` has a cacheable kind.
+    /// - Returns an error if `index` is past the node's current input count.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
-            return Err(crate::error::ErrorKind::RemoveInputFromCacheableNode(node_id).into());
+            return Err(anyhow!(
+                "attempted to remove input from cacheable node {node_id:?}"
+            ));
         }
         let index = index as usize;
         let inputs = &mut self.nodes[node_id].inputs;
         let slice = inputs.as_slice(&self.input_pool);
-        let delete_input_id =
-            *slice
-                .get(index)
-                .ok_or_else(|| crate::error::Error::from(
-                    crate::error::ErrorKind::InputIndexOutOfBounds {
-                        node: node_id,
-                        index,
-                        len: slice.len(),
-                    },
-                ))?;
+        let len = slice.len();
+        let delete_input_id = *slice.get(index).ok_or_else(|| {
+            anyhow!(
+                "input index {index} out of bounds for node {node_id:?} (len={len})"
+            )
+        })?;
 
         inputs.remove(index, &mut self.input_pool);
         for &input_id in &inputs.as_slice(&self.input_pool)[index..] {

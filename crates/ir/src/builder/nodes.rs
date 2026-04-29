@@ -1,5 +1,8 @@
+use anyhow::anyhow;
+use smallvec::SmallVec;
+
 use super::FunctionBuilder;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::function::FunctionGraph;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::{
@@ -7,7 +10,6 @@ use crate::ops::{
     IntUnaryOp,
 };
 use crate::region::RegionId;
-use smallvec::SmallVec;
 
 impl FunctionBuilder {
     /// Emits a boolean constant node and returns its output id.
@@ -29,11 +31,15 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         let lhs_kind = self.graph().output_kind(lhs_id);
         if !lhs_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(lhs_id, lhs_kind).into());
+            return Err(anyhow!(
+                "output {lhs_id:?} is not a value edge (got {lhs_kind:?})"
+            ));
         }
         let rhs_kind = self.graph().output_kind(rhs_id);
         if !rhs_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(rhs_id, rhs_kind).into());
+            return Err(anyhow!(
+                "output {rhs_id:?} is not a value edge (got {rhs_kind:?})"
+            ));
         }
         let converted_lhs_id = self.convert_to_bool_if_needed(lhs_id)?;
         let converted_rhs_id = self.convert_to_bool_if_needed(rhs_id)?;
@@ -57,7 +63,9 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         let kind = self.graph().output_kind(input_id);
         if !kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(input_id, kind).into());
+            return Err(anyhow!(
+                "output {input_id:?} is not a value edge (got {kind:?})"
+            ));
         }
         let converted_input_id = self.convert_to_bool_if_needed(input_id)?;
         Ok(self.build_single_output_pure(
@@ -287,10 +295,10 @@ impl FunctionBuilder {
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         if !self.get_output_type(input)?.is_integer() {
-            return Err(ErrorKind::ExpectedInteger(input).into());
+            return Err(anyhow!("output {input:?} is not an integer value"));
         }
         if !float_type.is_float() {
-            return Err(ErrorKind::ExpectedFloatType(float_type).into());
+            return Err(anyhow!("type {float_type:?} is not a float type"));
         }
         Ok(self.build_single_output_pure(NodeKind::IntToFloat, [input], float_type))
     }
@@ -309,10 +317,10 @@ impl FunctionBuilder {
         int_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         if !self.get_output_type(input)?.is_float() {
-            return Err(ErrorKind::ExpectedFloat(input).into());
+            return Err(anyhow!("output {input:?} is not a float value"));
         }
         if !int_type.is_integer() {
-            return Err(ErrorKind::ExpectedIntegerType(int_type).into());
+            return Err(anyhow!("type {int_type:?} is not an integer type"));
         }
         Ok(self.build_single_output_pure(NodeKind::FloatToInt, [input], int_type))
     }
@@ -330,10 +338,10 @@ impl FunctionBuilder {
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         if !self.get_output_type(input)?.is_float() {
-            return Err(ErrorKind::ExpectedFloat(input).into());
+            return Err(anyhow!("output {input:?} is not a float value"));
         }
         if !float_type.is_float() {
-            return Err(ErrorKind::ExpectedFloatType(float_type).into());
+            return Err(anyhow!("type {float_type:?} is not a float type"));
         }
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [input], float_type))
     }
@@ -353,10 +361,10 @@ impl FunctionBuilder {
         float_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
         if !self.get_output_type(input)?.is_integer() {
-            return Err(ErrorKind::ExpectedInteger(input).into());
+            return Err(anyhow!("output {input:?} is not an integer value"));
         }
         if !float_type.is_float() {
-            return Err(ErrorKind::ExpectedFloatType(float_type).into());
+            return Err(anyhow!("type {float_type:?} is not a float type"));
         }
         // Immediate fold: IntConst → FloatConst (same bits).  F80 is
         // 80-bit and `FloatConst`'s payload is `u64`, so the bit pattern
@@ -390,10 +398,10 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         let input_ty = self.get_output_type(input)?;
         if !input_ty.is_float() {
-            return Err(ErrorKind::ExpectedFloat(input).into());
+            return Err(anyhow!("output {input:?} is not a float value"));
         }
         if !int_type.is_integer() {
-            return Err(ErrorKind::ExpectedIntegerType(int_type).into());
+            return Err(anyhow!("type {int_type:?} is not an integer type"));
         }
         // Immediate fold: FloatConst → IntConst (same bits).  F80 input
         // is skipped because `FloatConst` only stores 64 bits — even if a
@@ -457,11 +465,19 @@ impl FunctionBuilder {
 
         let ctrl_kind = self.graph().output_kind(res.control);
         if !ctrl_kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(res.control, ctrl_kind).into());
+            return Err(anyhow!(
+                "output {:?} is not a control edge (got {:?})",
+                res.control,
+                ctrl_kind
+            ));
         }
         let mem_kind = self.graph().output_kind(res.memory);
         if !mem_kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(res.memory, mem_kind).into());
+            return Err(anyhow!(
+                "output {:?} is not a memory edge (got {:?})",
+                res.memory,
+                mem_kind
+            ));
         }
         self.validate_value_inputs(&ret_inputs)?;
 
@@ -485,11 +501,19 @@ impl FunctionBuilder {
         let res = self.terminate_cur_region()?;
         let ctrl_kind = self.graph().output_kind(res.control);
         if !ctrl_kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(res.control, ctrl_kind).into());
+            return Err(anyhow!(
+                "output {:?} is not a control edge (got {:?})",
+                res.control,
+                ctrl_kind
+            ));
         }
         let mem_kind = self.graph().output_kind(res.memory);
         if !mem_kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(res.memory, mem_kind).into());
+            return Err(anyhow!(
+                "output {:?} is not a memory edge (got {:?})",
+                res.memory,
+                mem_kind
+            ));
         }
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
@@ -513,11 +537,15 @@ impl FunctionBuilder {
 
         let cond_kind = self.graph().output_kind(cond);
         if !cond_kind.is_bool() {
-            return Err(ErrorKind::ExpectedBool(cond).into());
+            return Err(anyhow!("output {cond:?} is not a bool value"));
         }
         let ctrl_kind = self.graph().output_kind(res.control);
         if !ctrl_kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(res.control, ctrl_kind).into());
+            return Err(anyhow!(
+                "output {:?} is not a control edge (got {:?})",
+                res.control,
+                ctrl_kind
+            ));
         }
 
         let brcond = self.create_node(
@@ -547,11 +575,15 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         let seg_kind = self.graph().output_kind(segment);
         if !seg_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(segment, seg_kind).into());
+            return Err(anyhow!(
+                "output {segment:?} is not a value edge (got {seg_kind:?})"
+            ));
         }
         let off_kind = self.graph().output_kind(offset);
         if !off_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(offset, off_kind).into());
+            return Err(anyhow!(
+                "output {offset:?} is not a value edge (got {off_kind:?})"
+            ));
         }
         Ok(self.build_single_output_pure(
             NodeKind::SegmentOp { op_id },
@@ -623,15 +655,21 @@ impl FunctionBuilder {
         let memory = self.cur_region_memory()?;
         let mem_kind = self.graph().output_kind(memory);
         if !mem_kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(memory, mem_kind).into());
+            return Err(anyhow!(
+                "output {memory:?} is not a memory edge (got {mem_kind:?})"
+            ));
         }
         let addr_kind = self.graph().output_kind(addr);
         if !addr_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(addr, addr_kind).into());
+            return Err(anyhow!(
+                "output {addr:?} is not a value edge (got {addr_kind:?})"
+            ));
         }
         let data_kind = self.graph().output_kind(data);
         if !data_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(data, data_kind).into());
+            return Err(anyhow!(
+                "output {data:?} is not a value edge (got {data_kind:?})"
+            ));
         }
 
         let node_id = self.create_node(
@@ -661,11 +699,15 @@ impl FunctionBuilder {
         let memory = self.cur_region_memory()?;
         let mem_kind = self.graph().output_kind(memory);
         if !mem_kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(memory, mem_kind).into());
+            return Err(anyhow!(
+                "output {memory:?} is not a memory edge (got {mem_kind:?})"
+            ));
         }
         let addr_kind = self.graph().output_kind(addr);
         if !addr_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(addr, addr_kind).into());
+            return Err(anyhow!(
+                "output {addr:?} is not a value edge (got {addr_kind:?})"
+            ));
         }
         Ok(self.build_single_output_pure(NodeKind::Load(space), [memory, addr], output_type))
     }
@@ -683,12 +725,14 @@ impl FunctionBuilder {
     ) -> Result<NodeOutputId> {
         let phi_token_kind = self.graph().output_kind(phi_token);
         if !phi_token_kind.is_control_phi() {
-            return Err(ErrorKind::ExpectedControlPhi(phi_token).into());
+            return Err(anyhow!(
+                "output {phi_token:?} is not a control-phi edge"
+            ));
         }
         for &v in incoming_values {
             let kind = self.graph().output_kind(v);
             if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(v, kind).into());
+                return Err(anyhow!("output {v:?} is not a value edge (got {kind:?})"));
             }
         }
         let output_type = var.size.try_into()?;

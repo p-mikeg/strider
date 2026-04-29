@@ -18,7 +18,9 @@ use petgraph::graph::NodeIndex;
 use crate::cfg::options::Options;
 use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionGraph};
 use crate::cfg::Cfg;
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
 ///
@@ -42,7 +44,7 @@ use crate::error::{ErrorKind, Result};
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
 /// let cfg = Builder::new(sleigh, fn_addr, opts).build()?;
-/// # Ok::<(), cfg::Error>(())
+/// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
 /// See `crates/cfg/tests/build_end_to_end.rs` for runnable end-to-end examples.
@@ -109,7 +111,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Returns [`ErrorKind::EmptyRegion`] if `region.insns` is empty.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty() {
-            return Err(ErrorKind::EmptyRegion(region.start_addr).into());
+            bail!("region at {:?} has no instructions", region.start_addr);
         }
 
         let start_addr = region.start_addr;
@@ -159,7 +161,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         if let Some((region_id, region)) = existing_region {
             // This is the case that someone just referenced our region - add an edge between them.
             let (parent_region_id, edge_kind) =
-                parent_region.ok_or(ErrorKind::MissingParentEdge)?;
+                parent_region.ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if region.start_addr == addr {
                 // The address lands on the start of an existing region — wire an edge.
                 self.graph.add_edge(parent_region_id, region_id, edge_kind);
@@ -214,7 +216,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
         let (starting_region, _) = self
             .find_region_containing_addr(self.start_pcode_addr())
-            .ok_or(ErrorKind::FailedCreatingStartRegion)?;
+            .ok_or_else(|| anyhow!("cfg failed accessing starting region"))?;
 
         Ok(Cfg {
             graph: self.graph,

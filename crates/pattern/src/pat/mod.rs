@@ -90,7 +90,7 @@ macro_rules! decl_any_const {
                         let v = ctx
                             .bindings
                             .$get(tv)
-                            .ok_or(crate::error::ErrorKind::MissingBinding($missing))?;
+                            .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
                         Ok(NodeKind::$variant(v))
                     }),
                     $build_ty,

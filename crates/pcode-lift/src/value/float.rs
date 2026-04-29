@@ -10,7 +10,9 @@
 use ir::node::NodeOutputType;
 use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 use crate::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
@@ -22,7 +24,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             4 => Ok(NodeOutputType::F32),
             8 => Ok(NodeOutputType::F64),
             10 => Ok(NodeOutputType::F80),
-            n => Err(ErrorKind::UnsupportedFloatSize(n).into()),
+            n => Err(anyhow!("unsupported float varnode size {n} bytes (expected 4 or 8)")),
         }
     }
 

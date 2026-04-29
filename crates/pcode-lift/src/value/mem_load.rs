@@ -3,7 +3,9 @@
 //! `Store` lives in strider — it advances the memory chain in a way the
 //! value lifter doesn't model.
 
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 use crate::ValueLifter;
 
 /// Decodes the target address space of a p-code `LOAD`.
@@ -17,9 +19,9 @@ fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *insn
         .inputs
         .first()
-        .ok_or(ErrorKind::TooFewInputs(insn.opcode, 1, 0))?;
+        .ok_or_else(|| anyhow!("opcode {:?} has too few inputs: expected at least 1, got 0", insn.opcode))?;
     if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
-        return Err(ErrorKind::ExpectedConstInput(insn.opcode, 0).into());
+        bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
     }
     // SAFETY: `space_id_vn` is the `inputs[0]` of a LOAD p-code insn and
     // was just verified to live in CONST space, which is the precondition

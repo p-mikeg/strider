@@ -234,7 +234,7 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Propagates the first error from any pass in `pipeline`.
     pub fn re_optimize(&mut self, pipeline: &opt::OptimizerPipeline) -> Result<()> {
-        Ok(pipeline.run(&mut *self.graph, self.entry)?)
+        pipeline.run(&mut *self.graph, self.entry)
     }
 }
 

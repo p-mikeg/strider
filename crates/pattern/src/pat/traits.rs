@@ -18,7 +18,7 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId, NodeOutputType};
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::matcher::{Bindings, Matcher};
 
 /// Context passed through every [`Pattern::try_match`] call. Carries the
@@ -95,7 +95,7 @@ pub trait Pattern: Send + Sync {
     /// pattern type.  Buildable patterns (`NodePat`, `CapturePat`, and any
     /// future build-only leaf) override this.
     fn try_build(&self, _ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
-        Err(Error::not_buildable(std::any::type_name::<Self>()))
+        Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())))
     }
 }
 

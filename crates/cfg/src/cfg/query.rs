@@ -3,7 +3,9 @@ use petgraph::visit::EdgeRef;
 
 use super::types::{Region, RegionEdgeKind};
 use super::{Cfg, RegionId};
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 /// The two successors of a conditional-branch region.
 ///
@@ -29,7 +31,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
                 continue;
             }
             if found.is_some() {
-                return Err(ErrorKind::DuplicateEdgeKind(region_id, kind).into());
+                return Err(anyhow!("region {region_id:?} has more than one outgoing edge of kind {kind:?}"));
             }
             found = Some(edge.target());
         }

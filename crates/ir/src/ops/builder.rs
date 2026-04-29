@@ -76,7 +76,7 @@ impl BuiltFunctionGraph {
     /// let n = g.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
     /// let [out] = g.node_outputs_exact::<1>(n)?;
     /// # let _ = out;
-    /// # Ok::<(), ir::Error>(())
+    /// # Ok::<(), anyhow::Error>(())
     /// ```
     ///
     /// # Errors

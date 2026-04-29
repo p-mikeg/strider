@@ -41,7 +41,7 @@
 use std::{fmt::Debug, io::Write, path::Path};
 
 pub mod error;
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 
 const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
@@ -49,7 +49,7 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
-    type Error: Debug;
+    type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     type State;
 
     /// Creates the mutable state threaded through all [`Self::dump_as_dot`] calls.
@@ -333,13 +333,13 @@ impl<G: GraphDotDumper> GraphDot<G> {
         self
     }
 
-    fn build_dot(&self) -> Result<String, G::Error> {
+    fn build_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
             self.dumper
                 .dump_as_dot(node, &mut dot, &mut state)
-                .map_err(|e| Error::from(ErrorKind::DotDumpError(e)))?;
+                .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))?;
         }
 
         Ok(dot.finish())
@@ -350,7 +350,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// Forwards any `Self::Error` returned by the underlying
     /// [`GraphDotDumper::dump_as_dot`] for any node.
-    pub fn as_dot(&self) -> Result<String, G::Error> {
+    pub fn as_dot(&self) -> anyhow::Result<String> {
         self.build_dot()
     }
 
@@ -359,15 +359,14 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Returns an error if `dot` is not installed or the conversion fails.
     ///
     /// # Errors
-    /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
-    /// - [`ErrorKind::SvgConversionError`] if the system `dot` binary cannot
+    /// - dot dump error propagated from the dumper.
+    /// - svg conversion error if the system `dot` binary cannot
     ///   be spawned, returns a non-zero exit status, or its stdin/stdout
     ///   pipes cannot be opened.
-    pub fn as_svg(&self) -> Result<String, G::Error> {
+    pub fn as_svg(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
 
-        let svg_err =
-            |msg: String| -> Error<G::Error> { ErrorKind::SvgConversionError(msg).into() };
+        let svg_err = |msg: String| -> anyhow::Error { anyhow::anyhow!("svg conversion error {msg:?}") };
 
         let mut child = std::process::Command::new("dot")
             .arg("-Tsvg")
@@ -417,7 +416,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     ///
     /// # Errors
     /// Same as [`Self::as_svg`].
-    pub fn as_html_from_svg(&self) -> Result<String, G::Error> {
+    pub fn as_html_from_svg(&self) -> anyhow::Result<String> {
         let mut svg = self.as_svg()?;
         // Strip the XML declaration and DOCTYPE that `dot` emits — they can
         // confuse HTML parsers when the SVG is inlined in a <body>.
@@ -436,7 +435,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     ///
     /// # Errors
     /// Same as [`Self::as_dot`].
-    pub fn as_html_from_dot(&self) -> Result<String, G::Error> {
+    pub fn as_html_from_dot(&self) -> anyhow::Result<String> {
         let dot_src = self.as_dot()?;
         Ok(HTML_DOT_TEMPLATE.replace("__DOT_JSON__", &json_quote(&dot_src)))
     }
@@ -448,7 +447,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// # Errors
     /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
     /// - [`ErrorKind::IoError`] if writing `out_path` fails.
-    pub fn dump_as_html(&self, out_path: impl AsRef<Path>) -> Result<(), G::Error> {
+    pub fn dump_as_html(&self, out_path: impl AsRef<Path>) -> anyhow::Result<()> {
         std::fs::write(out_path, self.as_html_from_dot()?)?;
         Ok(())
     }
@@ -457,7 +456,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     ///
     /// # Errors
     /// Same as [`Self::dump_as_html`].
-    pub fn dump_as_dot(&self, out_path: impl AsRef<Path>) -> Result<(), G::Error> {
+    pub fn dump_as_dot(&self, out_path: impl AsRef<Path>) -> anyhow::Result<()> {
         std::fs::write(out_path, self.as_dot()?)?;
         Ok(())
     }

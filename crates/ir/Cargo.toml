@@ -13,7 +13,7 @@ graphwalk.workspace = true
 entity-utils.workspace = true
 itertools.workspace = true
 dot.workspace = true
-strider-error.workspace = true
+anyhow.workspace = true
 thiserror.workspace = true
 ethnum.workspace = true
 

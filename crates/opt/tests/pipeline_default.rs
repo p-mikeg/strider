@@ -26,7 +26,7 @@ fn default_pipeline_folds_int_chain() -> opt::Result<()> {
         let c4 = b.build_int_const(4u64, NodeOutputType::U64);
         let a = b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, NodeOutputType::U64)?;
         let bb = b.build_int_binary_operation(a, c3, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(bb, c4, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(bb, c4, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(10));
@@ -84,7 +84,7 @@ fn default_pipeline_known_bits_cooperates_with_constant_fold() -> opt::Result<()
         let ff = b.build_int_const(0xFFu64, NodeOutputType::U8);
         let f0 = b.build_int_const(0xF0u64, NodeOutputType::U8);
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, NodeOutputType::U8)?;
-        Ok(b.build_int_binary_operation(or_, f0, IntBinaryOp::And, NodeOutputType::U8)?)
+        b.build_int_binary_operation(or_, f0, IntBinaryOp::And, NodeOutputType::U8)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xF0));

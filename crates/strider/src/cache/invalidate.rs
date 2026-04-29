@@ -65,7 +65,7 @@ pub fn invalidate_split_regions<R: rsleigh::MemReader>(
         let new_region = new_cfg
             .graph
             .node_weight(region_id)
-            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+            .ok_or_else(|| anyhow::anyhow!("no region {region_id:?} in cfg"))?;
         let new_insn_count = new_region.insns.len();
         // Find the old region with the same start_addr.  If none exists
         // (rare — would mean the new key was never in the old CFG, but
@@ -83,7 +83,7 @@ pub fn invalidate_split_regions<R: rsleigh::MemReader>(
         let old_region = old_cfg
             .graph
             .node_weight(old_region_id)
-            .ok_or(crate::error::ErrorKind::CfgNoRegion(old_region_id))?;
+            .ok_or_else(|| anyhow::anyhow!("no region {old_region_id:?} in cfg"))?;
         let old_insn_count = old_region.insns.len();
         if new_insn_count < old_insn_count {
             // CORRECTNESS: shrunk insn count — split detected.  Evict

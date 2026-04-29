@@ -229,7 +229,6 @@ fn apply_rule_preserves_use_list_integrity() -> crate::Result<()> {
     rewriter.apply_rule(rule)?;
     // Run validate directly (Layer A + B + C).  If any layer
     // fails we surface the bundle as a strider error.
-    ir::validate::validate(&built.graph, built.entry).map_err(|e| {
-        crate::ErrorKind::AssertionFailed(format!("validate failed: {e}")).into()
-    })
+    ir::validate::validate(&built.graph, built.entry)
+        .map_err(|e| anyhow::anyhow!("assertion failed: validate failed: {e}"))
 }

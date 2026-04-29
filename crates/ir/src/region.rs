@@ -1,8 +1,10 @@
+use anyhow::anyhow;
+use cranelift_entity::{SecondaryMap, entity_impl};
+
 use crate::builder::FunctionBuilder;
 use crate::builder::VarId;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::node::{NodeId, NodeOutputId};
-use cranelift_entity::{SecondaryMap, entity_impl};
 
 /// A unique identifier for a basic-block region in the IR graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +53,9 @@ impl FunctionBuilder {
     fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_control() {
-            return Err(ErrorKind::ExpectedControl(output, kind).into());
+            return Err(anyhow!(
+                "output {output:?} is not a control edge (got {kind:?})"
+            ));
         }
         Ok(())
     }
@@ -61,7 +65,9 @@ impl FunctionBuilder {
     fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_memory() {
-            return Err(ErrorKind::ExpectedMemory(output, kind).into());
+            return Err(anyhow!(
+                "output {output:?} is not a memory edge (got {kind:?})"
+            ));
         }
         Ok(())
     }
@@ -69,9 +75,12 @@ impl FunctionBuilder {
     /// Returns the id of the current region, or an error if no region is set
     /// or if the region has already been terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
-        let region_id = self.cur_region.ok_or(ErrorKind::NoCurrentRegion)?;
+        let region_id = self
+            .cur_region
+            .ok_or_else(|| anyhow!("no current region is set"))?;
         if self.regions[region_id].terminated {
-            return Err(ErrorKind::RegionTerminated(region_id.as_u32()).into());
+            let id = region_id.as_u32();
+            return Err(anyhow!("attempted to insert into terminated region {id}"));
         }
         Ok(region_id)
     }
@@ -289,11 +298,11 @@ impl FunctionBuilder {
                 return Ok(out);
             }
         }
-        Err(ErrorKind::ExpectedControl(
-            *outputs.first().unwrap_or(&NodeOutputId::from_u32(0)),
-            self.graph().output_kind(*outputs.first().unwrap_or(&NodeOutputId::from_u32(0))),
-        )
-        .into())
+        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
+        let kind = self.graph().output_kind(first);
+        Err(anyhow!(
+            "output {first:?} is not a control edge (got {kind:?})"
+        ))
     }
 
     /// Returns the entry-boundary memory output (the `Memory`
@@ -312,7 +321,10 @@ impl FunctionBuilder {
                 return Ok(out);
             }
         }
-        Err(ErrorKind::ExpectedMemory(first, self.graph().output_kind(first)).into())
+        let kind = self.graph().output_kind(first);
+        Err(anyhow!(
+            "output {first:?} is not a memory edge (got {kind:?})"
+        ))
     }
 
     /// Returns an iterator over `(VarId, ControlPhi NodeOutputId)`

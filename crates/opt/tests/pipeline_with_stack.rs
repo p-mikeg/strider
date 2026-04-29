@@ -50,7 +50,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
-        .ok_or(opt::ErrorKind::NoReturnNode)?;
+        .ok_or_else(|| anyhow::anyhow!("no return node found in function"))?;
     let val = fg.graph.node_inputs(ret)[2];
     let kind = *fg.graph.kind_of_output(val);
     assert!(
@@ -89,7 +89,7 @@ fn full_call_pipeline_collects_args() -> opt::Result<()> {
     let call = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Call))
-        .ok_or(opt::ErrorKind::ExpectedNodeNotFound("Call", NodeKind::Call))?;
+        .ok_or_else(|| anyhow::anyhow!("expected Call node, got {:?}", NodeKind::Call))?;
     let inputs = fg.graph.node_inputs(call);
     assert_eq!(inputs.len(), 5, "ctrl + mem + target + 2 args");
     Ok(())

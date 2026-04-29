@@ -263,7 +263,7 @@ impl NodeOutputType {
 }
 
 impl TryFrom<u32> for NodeOutputType {
-    type Error = crate::error::Error;
+    type Error = anyhow::Error;
 
     fn try_from(value: u32) -> crate::error::Result<Self> {
         match value {
@@ -274,7 +274,7 @@ impl TryFrom<u32> for NodeOutputType {
             10 => Ok(Self::U80),
             16 => Ok(Self::U128),
             32 => Ok(Self::U256),
-            n => Err(crate::error::ErrorKind::UnsupportedOutputSize(n).into()),
+            n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
         }
     }
 }

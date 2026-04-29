@@ -9,8 +9,7 @@ pattern.workspace = true
 reader.workspace = true
 rsleigh.workspace = true
 target.workspace = true
-strider-error.workspace = true
-thiserror = { workspace = true }
+anyhow.workspace = true
 ethnum.workspace = true
 rustc-hash = { workspace = true }
 

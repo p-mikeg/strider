@@ -26,7 +26,7 @@ fn default_pipeline_idempotent() -> opt::Result<()> {
         let c1 = b.build_int_const(1u64, NodeOutputType::U64);
         let c2 = b.build_int_const(2u64, NodeOutputType::U64);
         let a = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, NodeOutputType::U64)?;
-        Ok(b.build_int_binary_operation(a, c2, IntBinaryOp::Add, NodeOutputType::U64)?)
+        b.build_int_binary_operation(a, c2, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
 
     default_pipeline().run(&mut fg.graph, fg.entry)?;
@@ -77,12 +77,12 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     pipeline.add(AlwaysChanged);
 
     match pipeline.run(&mut fg.graph, fg.entry) {
-        Ok(()) => Err(opt::Error::from(opt::ErrorKind::AssertionFailed(
-            "expected the pipeline to bail out, got Ok".to_string(),
-        ))),
+        Ok(()) => Err(anyhow::anyhow!(
+            "assertion failed: expected the pipeline to bail out, got Ok"
+        )),
         Err(err) => {
             assert!(
-                matches!(err.kind(), opt::ErrorKind::FixedPointLimitExceeded(_)),
+                err.to_string().contains("did not converge"),
                 "expected FixedPointLimitExceeded, got {err:?}"
             );
             Ok(())

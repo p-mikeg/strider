@@ -20,4 +20,4 @@ pub mod error;
 
 pub use arch::{Endianness, SleighArch};
 pub use calling_convention::{BuiltCallingConvention, CallingConvention};
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;

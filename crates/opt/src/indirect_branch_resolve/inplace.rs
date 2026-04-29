@@ -18,7 +18,9 @@
 use ir::Graph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 /// Applies the `LinkRegister` resolution to a placeholder
 /// `Return(control, memory, target_value)` node by appending
@@ -44,7 +46,7 @@ pub fn apply_link_register(
 ) -> Result<()> {
     let kind = *graph.node_kind(placeholder_return);
     if !matches!(kind, NodeKind::Return) {
-        return Err(ErrorKind::ExpectedNodeNotFound("Return", kind).into());
+        return Err(anyhow!("expected Return node, got {kind:?}"));
     }
     for &ret in ret_val_outputs {
         graph.add_node_input(placeholder_return, ret)?;
@@ -91,17 +93,15 @@ pub fn apply_tail_call(
 ) -> Result<NodeId> {
     let kind = *graph.node_kind(placeholder_return);
     if !matches!(kind, NodeKind::Return) {
-        return Err(ErrorKind::ExpectedNodeNotFound("Return", kind).into());
+        return Err(anyhow!("expected Return node, got {kind:?}"));
     }
     let inputs: Vec<NodeOutputId> = graph.node_inputs(placeholder_return).into_iter().collect();
     if inputs.len() != 3 {
         // Not a placeholder Return.  Surface as a typed error so
         // callers don't silently mis-apply.
-        return Err(ErrorKind::ExpectedNodeNotFound(
-            "Return with [control, memory, target_value] (3 inputs)",
-            kind,
-        )
-        .into());
+        return Err(anyhow!(
+            "expected Return with [control, memory, target_value] (3 inputs) node, got {kind:?}"
+        ));
     }
     let control_in = inputs[0];
     let memory_in = inputs[1];

@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use ir::node::NodeId;
 use ir::{BuiltFunctionGraph, IntUnaryOp};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::pipeline::OptimizationResult;
 
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
@@ -388,7 +388,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //        int_const(eval_int_binary(op, l, r, ty)?, ty)
         //    `eval_int_binary` returns `None` for div-by-zero / signed
         //    overflow / U128+ masking failures; the closure opts out of the
-        //    rewrite in that case via `pattern::Error::skip()`.
+        //    rewrite in that case via `pattern::skip()`.
         {
             let op = IntBinaryOpVar::new();
             let l = IntVar::new();
@@ -397,7 +397,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 int_binary_any(op, any_int_const(l), any_int_const(r)),
                 int_const_with!([op, l, r, ty] =>
                     eval_int_binary(op, l, r, ty)
-                        .ok_or_else(pattern::Error::skip)?
+                        .ok_or_else(pattern::skip)?
                 ),
             ))
         },
@@ -417,7 +417,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                         IntUnaryOp::Neg => !v,
                         IntUnaryOp::Not => v.wrapping_neg(),
                     };
-                    ty.get_unsigned_int_u128(raw).ok_or_else(pattern::Error::skip)?
+                    ty.get_unsigned_int_u128(raw).ok_or_else(pattern::skip)?
                 }),
             ))
         },
@@ -434,9 +434,8 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 int_cmp_any(op, any_int_const(l), any_int_const(r)),
                 bool_const_with!([op, l, r, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
-                    eval_int_cmp(op, l, r, input_ty)
-                        .map_err(pattern::Error::rewrite_closure)?
+                    let input_ty = in_ty.ok_or_else(pattern::skip)?;
+                    eval_int_cmp(op, l, r, input_ty)?
                 }),
             ))
         },
@@ -452,7 +451,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 truncate(any_int_const(v)),
                 int_const_with!([v, ty] =>
-                    ty.get_unsigned_int_u128(v).ok_or_else(pattern::Error::skip)?
+                    ty.get_unsigned_int_u128(v).ok_or_else(pattern::skip)?
                 ),
             ))
         },
@@ -474,15 +473,12 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 sign_extend(any_int_const(v)),
                 int_const_with!([v, in_ty, ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let signed = input_ty
                         .get_signed_int_i128(v)
-                        .ok_or_else(|| {
-                            pattern::Error::rewrite_closure(ErrorKind::ExpectedIntegerType(
-                                input_ty,
-                            ))
-                        })? as u128;
-                    ty.get_unsigned_int_u128(signed).ok_or_else(pattern::Error::skip)?
+                        .ok_or_else(|| anyhow::anyhow!("expected integer type, got {input_ty:?}"))?
+                        as u128;
+                    ty.get_unsigned_int_u128(signed).ok_or_else(pattern::skip)?
                 }),
             ))
         },
@@ -493,10 +489,10 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 popcount(any_int_const(v)),
                 int_const_with!([v, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int_u128(v)
-                        .ok_or_else(pattern::Error::skip)?;
+                        .ok_or_else(pattern::skip)?;
                     u128::from(masked.count_ones())
                 }),
             ))
@@ -511,17 +507,17 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 lzcount(any_int_const(v)),
                 int_const_with!([v, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int_u128(v)
-                        .ok_or_else(pattern::Error::skip)?;
+                        .ok_or_else(pattern::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     // Lzcount fold is only computable when the input type
                     // fits in u128.  Wider widths (U256) skip cleanly — the
                     // rule simply doesn't fire and the IR keeps the Lzcount
                     // node as opaque.
                     if bits > 128 {
-                        return Err(pattern::Error::skip());
+                        return Err(pattern::skip());
                     }
                     if masked == 0 {
                         u128::from(bits)
@@ -644,7 +640,7 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 float_binary_any(op, any_float_const(l), any_float_const(r)),
                 float_const_with!([op, l, r, ty] =>
                     eval_float_binary(op, l, r, ty)
-                        .ok_or_else(pattern::Error::skip)?
+                        .ok_or_else(pattern::skip)?
                 ),
             ))
         },
@@ -656,7 +652,7 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 float_unary_any(op, any_float_const(v)),
                 float_const_with!([op, v, ty] =>
                     eval_float_unary(op, v, ty)
-                        .ok_or_else(pattern::Error::skip)?
+                        .ok_or_else(pattern::skip)?
                 ),
             ))
         },
@@ -670,9 +666,9 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 float_cmp_any(op, any_float_const(l), any_float_const(r)),
                 bool_const_with!([op, l, r, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(pattern::Error::skip)?;
+                    let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     eval_float_cmp(op, l, r, input_ty)
-                        .ok_or_else(pattern::Error::skip)?
+                        .ok_or_else(pattern::skip)?
                 }),
             ))
         },

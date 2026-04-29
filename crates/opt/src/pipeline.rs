@@ -222,7 +222,7 @@ impl OptimizerPipeline {
             }
             iters += 1;
             if iters >= MAX_ITERS {
-                return Err(crate::error::ErrorKind::FixedPointLimitExceeded(MAX_ITERS).into());
+                anyhow::bail!("optimizer pipeline did not converge after {MAX_ITERS} iterations");
             }
         }
         for opt in &self.post_passes {

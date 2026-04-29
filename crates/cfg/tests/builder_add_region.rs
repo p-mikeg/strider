@@ -7,7 +7,7 @@ mod common;
 use common::{addr, make_builder, make_region};
 
 use cfg::test_api::Region;
-use cfg::{test_api, ErrorKind, RegionTerminator};
+use cfg::{test_api, RegionTerminator};
 
 #[test]
 fn inserts_into_graph_and_map() {
@@ -31,7 +31,7 @@ fn empty_region_returns_error() {
         terminator: RegionTerminator::Fallthrough,
     };
     let err = test_api::add_region(&mut b, empty).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));
+    assert!(err.to_string().contains("has no instructions"), "got: {err}");
 }
 
 #[test]

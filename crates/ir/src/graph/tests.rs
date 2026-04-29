@@ -873,10 +873,10 @@ fn node_outputs_exact_errors_on_wrong_count() {
         [NodeOutputKind::OutputType(NodeOutputType::U8)],
     );
     let err = graph.node_outputs_exact::<2>(node).unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        crate::error::ErrorKind::WrongOutputCount(_, 2, 1)
-    ));
+    assert!(
+        err.to_string().contains("does not have exactly 2 outputs"),
+        "got: {err}"
+    );
 }
 
 /// `node_inputs_exact` must return `Err(WrongInputCount)` when asked for
@@ -895,10 +895,10 @@ fn node_inputs_exact_errors_on_wrong_count() {
     graph.add_node_input(sink, out).unwrap(); // exactly 1 input
 
     let err = graph.node_inputs_exact::<2>(sink).unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        crate::error::ErrorKind::WrongInputCount(_, 2, 1)
-    ));
+    assert!(
+        err.to_string().contains("does not have exactly 2 inputs"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -944,11 +944,11 @@ fn remove_node_input_returns_error_on_out_of_bounds() {
         [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
     );
     let err = graph.remove_node_input(cs, 7).expect_err("oob expected");
+    let msg = err.to_string();
     assert!(
-        matches!(
-            err.kind(),
-            crate::error::ErrorKind::InputIndexOutOfBounds { node, index: 7, len: 0 } if *node == cs
-        ),
+        msg.contains("input index 7 out of bounds")
+            && msg.contains(&format!("{cs:?}"))
+            && msg.contains("len=0"),
         "wrong error: {err:?}"
     );
 }
@@ -964,11 +964,10 @@ fn remove_node_input_on_cacheable_uses_dedicated_error() {
     let err = graph
         .remove_node_input(c, 0)
         .expect_err("cacheable expected");
+    let msg = err.to_string();
     assert!(
-        matches!(
-            err.kind(),
-            crate::error::ErrorKind::RemoveInputFromCacheableNode(n) if *n == c
-        ),
+        msg.contains("attempted to remove input from cacheable node")
+            && msg.contains(&format!("{c:?}")),
         "wrong error: {err:?}"
     );
 }
@@ -980,11 +979,12 @@ fn node_input_id_at_returns_error_on_out_of_bounds() {
     let err = graph
         .node_input_id_at(n, 0)
         .expect_err("Entry has no inputs");
-    let crate::error::ErrorKind::InputIndexOutOfBounds { node, index, len } = err.kind() else {
-        panic!("wrong error kind: {err:?}");
-    };
-    assert_eq!(*node, n);
-    assert_eq!(*index, 0);
-    assert_eq!(*len, 0);
+    let msg = err.to_string();
+    assert!(
+        msg.contains("input index 0 out of bounds")
+            && msg.contains(&format!("{n:?}"))
+            && msg.contains("len=0"),
+        "wrong error: {err:?}"
+    );
 }
 

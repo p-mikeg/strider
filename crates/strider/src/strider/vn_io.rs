@@ -25,12 +25,12 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Reads any varnode into an IR value.  Delegates to
     /// [`pcode_lift::ValueLifter::read_vn`].
     pub(super) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ir::Value> {
-        Ok(self.value_lifter().read_vn(vn)?)
+        self.value_lifter().read_vn(vn)
     }
 
     /// Writes an IR value into any writable varnode.  Delegates to
     /// [`pcode_lift::ValueLifter::write_vn`].
     pub(super) fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) -> Result<()> {
-        Ok(self.value_lifter().write_vn(vn, val)?)
+        self.value_lifter().write_vn(vn, val)
     }
 }

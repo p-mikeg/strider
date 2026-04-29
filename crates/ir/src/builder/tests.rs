@@ -1,5 +1,7 @@
 use super::*;
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 
@@ -520,7 +522,7 @@ fn build_call_other_with_output_returns_typed_value() -> Result<()> {
     let arg = b.build_int_const(0x42u64, NodeOutputType::U64);
     let (_node_id, out) = b.build_call_other(3, &[arg], Some(NodeOutputType::U32))?;
     let out = out
-        .ok_or_else(|| ErrorKind::AssertionFailed("output_ty = Some → value output".into()))?;
+        .ok_or_else(|| anyhow!("assertion failed: output_ty = Some → value output"))?;
     assert_eq!(
         b.graph().output_kind(out),
         NodeOutputKind::OutputType(NodeOutputType::U32)
@@ -538,10 +540,11 @@ fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
     let res = b.build_call_other(0, &[mem], None);
-    assert!(matches!(
-        res.as_ref().map_err(|e| e.kind()),
-        Err(ErrorKind::ExpectedValue(_, _))
-    ));
+    let err = res.expect_err("expected ExpectedValue error");
+    assert!(
+        err.to_string().contains("is not a value edge"),
+        "got: {err}"
+    );
     Ok(())
 }
 

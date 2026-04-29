@@ -1,6 +1,8 @@
 use rustc_hash::FxHashSet;
 
-use crate::error::{ErrorKind, Result};
+use anyhow::bail;
+
+use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
@@ -91,7 +93,7 @@ fn remove_phis(
                     let ctrl_inputs2 = function.graph.node_inputs(control_state_id);
                     let Some(j) = ctrl_inputs2.into_iter().position(|c| c == unique_ctrl)
                     else {
-                        return Err(ErrorKind::UniqueCtrlNotFound.into());
+                        bail!("unique control edge not found in control-state inputs");
                     };
                     let value = function.graph.node_inputs(node_id)[j + 1];
                     let [output] = function.graph.node_outputs_exact::<1>(node_id)?;

@@ -1,8 +1,10 @@
+use anyhow::anyhow;
+use cranelift_entity::SecondaryMap;
+
 use super::FunctionBuilder;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind};
 use crate::region::RegionId;
-use cranelift_entity::SecondaryMap;
 
 impl FunctionBuilder {
     /// Returns the current `NodeOutputId` for `var` in the active region, or
@@ -33,7 +35,7 @@ impl FunctionBuilder {
         let &id = self
             .variable_to_id
             .get(variable)
-            .ok_or(ErrorKind::VariableNotFound(*variable))?;
+            .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.read_variable_from_id(id)
     }
 
@@ -48,7 +50,7 @@ impl FunctionBuilder {
         let var_id = *self
             .variable_to_id
             .get(variable)
-            .ok_or(ErrorKind::VariableNotFound(*variable))?;
+            .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
         self.write_variable_from_id(var_id, value)
     }
 

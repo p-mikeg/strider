@@ -1,4 +1,6 @@
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 /// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
 /// [`ErrorKind::UnknownRegName`] if the name is not known.  Single source of
@@ -6,7 +8,7 @@ use crate::error::{ErrorKind, Result};
 fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
-        .ok_or_else(|| ErrorKind::UnknownRegName(name.to_string()).into())
+        .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
 }
 
 /// Resolves a slice of Sleigh register names to varnodes in the same order.
@@ -832,12 +834,11 @@ mod tests {
                 link_register_reg_name: None,
             };
             let result = cc.build(&regs);
+            let err = result.expect_err("expected UnknownRegName error");
+            let msg = err.to_string();
             assert!(
-                matches!(
-                    result.as_ref().map_err(|e| e.kind()),
-                    Err(ErrorKind::UnknownRegName(n)) if n == bad_name
-                ),
-                "expected UnknownRegName({bad_name:?}), got {result:?}"
+                msg.contains("unknown sleigh register name") && msg.contains(bad_name),
+                "expected UnknownRegName({bad_name:?}), got {err}"
             );
         }
     }
@@ -1078,12 +1079,11 @@ mod tests {
             link_register_reg_name: None,
         };
         let result = cc.build(&regs);
+        let err = result.expect_err("expected UnknownRegName error");
+        let msg = err.to_string();
         assert!(
-            matches!(
-                result.as_ref().map_err(|e| e.kind()),
-                Err(ErrorKind::UnknownRegName(n)) if n == "NOT_A_SP"
-            ),
-            "expected UnknownRegName(\"NOT_A_SP\"), got {result:?}"
+            msg.contains("unknown sleigh register name") && msg.contains("NOT_A_SP"),
+            "expected UnknownRegName(\"NOT_A_SP\"), got {err}"
         );
     }
 #[test]

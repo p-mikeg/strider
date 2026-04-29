@@ -52,7 +52,7 @@ mod region;
 pub mod validate;
 pub mod walk;
 
-pub use crate::error::{Error, ErrorKind, Result};
+pub use crate::error::Result;
 pub use builder::{FunctionBuilder, VarId};
 pub use node_signature::ExpectedOutputKind;
 pub use ops::{

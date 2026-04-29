@@ -1,10 +1,12 @@
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+use cranelift_entity::{PrimaryMap, entity_impl};
+use std::collections::HashMap;
+
+use crate::error::Result;
 use crate::function::FunctionGraph;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::region::Region;
-use cranelift_entity::{PrimaryMap, entity_impl};
-use std::collections::HashMap;
 
 mod call;
 mod coerce;
@@ -170,7 +172,7 @@ impl FunctionBuilder {
         for &v in inputs {
             let kind = self.graph().output_kind(v);
             if !kind.is_value() {
-                return Err(ErrorKind::ExpectedValue(v, kind).into());
+                return Err(anyhow!("output {v:?} is not a value edge (got {kind:?})"));
             }
         }
         Ok(())

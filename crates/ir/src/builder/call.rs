@@ -1,8 +1,10 @@
+use anyhow::anyhow;
+use smallvec::SmallVec;
+
 use super::FunctionBuilder;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::IntBinaryOp;
-use smallvec::SmallVec;
 
 impl FunctionBuilder {
     /// Terminates the current region with a `Call` node.
@@ -37,14 +39,16 @@ impl FunctionBuilder {
             let out = self.read_variable(var)?;
             let k = self.graph().output_kind(out);
             if !k.is_value() {
-                return Err(ErrorKind::ExpectedValue(out, k).into());
+                return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
             }
             cloberred_kinds.push(k);
         }
 
         let addr_kind = self.graph().output_kind(call_address);
         if !addr_kind.is_value() {
-            return Err(ErrorKind::ExpectedValue(call_address, addr_kind).into());
+            return Err(anyhow!(
+                "output {call_address:?} is not a value edge (got {addr_kind:?})"
+            ));
         }
 
         // Snapshot the pre-call SP before creating the `Call` node, so the

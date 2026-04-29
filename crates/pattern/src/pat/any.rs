@@ -2,7 +2,7 @@
 
 use ir::node::NodeOutputId;
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 use crate::matcher::Bindings;
 use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 use crate::var::Var;
@@ -38,7 +38,7 @@ impl Pattern for VarPat {
         let out = ctx
             .bindings
             .get(self.var)
-            .ok_or(ErrorKind::MissingBinding("Var"))?;
+            .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding("Var")))?;
         Ok(BuildOutcome::Out(out))
     }
 }
@@ -93,7 +93,7 @@ impl Pattern for CapturePat {
         let out = ctx
             .bindings
             .get(self.var)
-            .ok_or(ErrorKind::MissingBinding("Var"))?;
+            .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding("Var")))?;
         Ok(BuildOutcome::Out(out))
     }
 }

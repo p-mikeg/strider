@@ -1,6 +1,7 @@
 //! Rewrite-rule engine tests: `rewrite_rule`, `apply_rules_in_order`,
-//! `boxed_rule`, `*_const_with!` macros, and the four error paths
-//! (`NotBuildable`, `MissingBinding`, `RewriteSkip`, `RewriteClosure`).
+//! `boxed_rule`, `*_const_with!` macros, and the error paths
+//! (`NotBuildable`, `MissingBinding`, `RewriteSkip`, custom-closure errors
+//! propagated through anyhow).
 //!
 //! Every happy-path test verifies the post-rewrite graph structure, not just
 //! the `Ok(bool)` return value — a rule that "fires" but leaves consumers
@@ -194,9 +195,8 @@ fn rhs_wildcard_is_not_buildable() {
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("any() on RHS must error");
     assert!(
-        matches!(err.kind(), ErrorKind::NotBuildable(_)),
-        "expected NotBuildable, got {:?}",
-        err.kind()
+        err.downcast_ref::<pattern::NotBuildable>().is_some(),
+        "expected NotBuildable, got {err:?}"
     );
 }
 
@@ -210,7 +210,7 @@ fn rhs_predicate_is_not_buildable() {
 
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("predicate RHS must error");
-    assert!(matches!(err.kind(), ErrorKind::NotBuildable(_)));
+    assert!(err.downcast_ref::<pattern::NotBuildable>().is_some(), "got {err:?}");
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn rhs_control_pattern_is_not_buildable() {
 
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("ret() RHS must error");
-    assert!(matches!(err.kind(), ErrorKind::NotBuildable(_)));
+    assert!(err.downcast_ref::<pattern::NotBuildable>().is_some(), "got {err:?}");
 }
 
 // ── Error paths: MissingBinding ─────────────────────────────────────────────
@@ -239,11 +239,10 @@ fn rhs_unbound_capture_raises_missing_binding() {
 
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("missing binding expected");
-    let kind = err.kind();
+    let mb = err.downcast_ref::<pattern::MissingBinding>();
     assert!(
-        matches!(kind, ErrorKind::MissingBinding(n) if n == &"IntVar"),
-        "expected MissingBinding(\"IntVar\"), got {:?}",
-        kind
+        matches!(mb, Some(pattern::MissingBinding("IntVar"))),
+        "expected MissingBinding(\"IntVar\"), got {err:?}"
     );
 }
 
@@ -260,7 +259,7 @@ fn rhs_skip_sentinel_returns_false_without_mutation() {
         // out via `?` when None.
         int_const_with!([a_v, b_v, ty] => {
             let _ = (a_v, b_v, ty);
-            None::<u128>.ok_or_else(pattern::Error::skip)?
+            None::<u128>.ok_or_else(pattern::skip)?
         }),
     );
 
@@ -275,10 +274,10 @@ fn rhs_skip_sentinel_returns_false_without_mutation() {
     ));
 }
 
-// ── Error paths: RewriteClosure ─────────────────────────────────────────────
+// ── Error paths: arbitrary closure error propagates through anyhow ─────────
 
 #[test]
-fn rhs_closure_error_wraps_as_rewrite_closure() {
+fn rhs_closure_error_propagates_through_anyhow() {
     #[derive(Debug, thiserror::Error)]
     #[error("custom")]
     struct CustomErr;
@@ -292,14 +291,14 @@ fn rhs_closure_error_wraps_as_rewrite_closure() {
         // form bails before the type check matters.
         int_const_with!([a_v, b_v] => {
             let _ = (a_v, b_v);
-            let res: pattern::Result<u128> = Err(pattern::Error::rewrite_closure(CustomErr));
+            let res: pattern::Result<u128> = Err(anyhow::Error::new(CustomErr));
             res?
         }),
     );
 
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("closure error must propagate");
-    assert!(matches!(err.kind(), ErrorKind::RewriteClosure(_)));
+    assert!(err.downcast_ref::<CustomErr>().is_some(), "got {err:?}");
 }
 
 // ── `apply_rules_in_order` ───────────────────────────────────────────────────

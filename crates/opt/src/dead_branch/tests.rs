@@ -44,7 +44,7 @@ fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
     let false_val = b.build_int_const(2u64, ir::ValueType::U64);
     b.build_return(Some(false_val), &[])?;
 
-    Ok(b.build()?)
+    b.build()
 }
 
 // ── Original tests ────────────────────────────────────────────────────────────

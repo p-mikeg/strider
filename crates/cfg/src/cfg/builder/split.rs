@@ -3,7 +3,9 @@ use petgraph::visit::EdgeRef;
 
 use super::Builder;
 use crate::cfg::types::{PcodeInsnAddr, Region, RegionEdgeKind, RegionTerminator};
-use crate::error::{ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 impl<R: rsleigh::MemReader> Builder<R> {
     /// Splits the region identified by `region_id` at `addr`, creating two
@@ -33,12 +35,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
         let second_region = self
             .graph
             .node_weight_mut(region_id)
-            .ok_or(ErrorKind::InvalidRegion(region_id))?;
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let split_index = second_region
             .insns
             .iter()
             .position(|insn| insn.addr == addr)
-            .ok_or(ErrorKind::FailedSplitingRegion(region_id, addr))?;
+            .ok_or_else(|| anyhow!("failed spliting region {region_id:?} into 2 parts at {addr:?}"))?;
 
         if split_index == 0 {
             return Ok(region_id);

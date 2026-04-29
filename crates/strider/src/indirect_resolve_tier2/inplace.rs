@@ -14,36 +14,7 @@
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId};
 
-use crate::error::{ErrorKind, Result};
-
-/// Bridge: opt's classifier emits its own [`opt::Error`] that wraps
-/// either an `ir::ErrorKind` (round-trippable) or an
-/// `ExpectedNodeNotFound` (which strider models as `WrongNodeKind`).
-/// Translate so callers see the strider error variants they expect.
-fn opt_to_strider_err(e: opt::Error) -> crate::error::Error {
-    match e.into_kind() {
-        // Round-trip through the existing IR-error bridge so the
-        // backtrace + location chain are preserved.
-        opt::ErrorKind::IrError(ir_kind) => ir::Error::from(ir_kind).into(),
-        // The two cases we surface in the in-place editors:
-        // wrong-kind / wrong-arity Returns.
-        opt::ErrorKind::ExpectedNodeNotFound(expected, _kind) => {
-            ErrorKind::WrongNodeKind {
-                node: NodeId::from_u32(0), // arity diagnostics don't need the id
-                expected,
-            }
-            .into()
-        }
-        // No other opt::ErrorKind variants escape the in-place editors
-        // today.  Reroute defensively as Unimplemented so a future
-        // opt-side change surfaces as a typed strider error rather
-        // than silently dropping context.
-        other => ErrorKind::Unimplemented(format!(
-            "unexpected opt error from indirect_branch_resolve in-place editor: {other:?}"
-        ))
-        .into(),
-    }
-}
+use crate::error::Result;
 
 /// Apply the `LinkRegister` resolution.  Delegates to
 /// [`opt::apply_link_register`].
@@ -60,7 +31,7 @@ pub fn apply_link_register(
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
     opt::apply_link_register(&mut fg.graph, placeholder_return, ret_val_outputs)
-        .map_err(opt_to_strider_err)
+        // opt is now anyhow-based; ? lifts directly via identity From.
 }
 
 /// Apply the `Single`-tail-call resolution.  Delegates to
@@ -93,7 +64,7 @@ pub fn apply_tail_call(
         clobbered_kinds,
         ret_val_outputs,
     )
-    .map_err(opt_to_strider_err)
+    // opt is now anyhow-based; ? lifts directly via identity From.
 }
 #[cfg(test)]
 mod tests {

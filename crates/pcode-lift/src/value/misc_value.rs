@@ -8,7 +8,9 @@
 //! strider owns; `MultiEqual` because we currently raise it as an error
 //! and that's a strider-level concern.
 
-use crate::error::{ErrorKind, Result};
+use anyhow::bail;
+
+use crate::error::Result;
 use crate::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
@@ -16,11 +18,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// inputs[0] = CONST op id, inputs[1] = segment, inputs[2] = offset.
     pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         if insn.inputs.len() < 3 {
-            return Err(ErrorKind::TooFewInputs(insn.opcode, 3, insn.inputs.len()).into());
+            bail!("opcode {:?} has too few inputs: expected at least 3, got {}", insn.opcode, insn.inputs.len());
         }
         let id_vn = &insn.inputs[0];
         if id_vn.addr.space != rsleigh::VnSpace::CONST {
-            return Err(ErrorKind::ExpectedConstInput(insn.opcode, 0).into());
+            bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
         let op_id = id_vn.addr.off;
         let segment = self.read_vn(&insn.inputs[1])?;

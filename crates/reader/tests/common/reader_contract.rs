@@ -7,7 +7,7 @@
 
 #![allow(dead_code)]
 
-use reader::{Error, ErrorKind, ReadOnlyMemory};
+use reader::ReadOnlyMemory;
 use rsleigh::{MemReader, VnAddr, VnSpace};
 
 // ── MemReader ────────────────────────────────────────────────────────────
@@ -27,22 +27,23 @@ where
     assert_eq!(&buf[..], expected, "MemReader read returned unexpected bytes");
 }
 
-/// Asserts that a read at an unmapped address fails with
-/// `ErrorKind::NotMapped(addr)`.
+/// Asserts that a read at an unmapped address fails with an error whose
+/// message identifies it as a "not mapped" failure carrying the
+/// requested address in hex.
 pub fn assert_mem_reader_unmapped_is_not_mapped_error<R>(r: &R, addr: u64)
 where
-    R: MemReader<Err = Error>,
+    R: MemReader<Err = anyhow::Error>,
 {
     let mut buf = [0u8; 1];
     let err = r
         .read(VnAddr { off: addr, space: VnSpace::RAM }, &mut buf)
         .expect_err("read at unmapped addr must error");
-    match err.kind() {
-        ErrorKind::NotMapped(got) => {
-            assert_eq!(*got, addr, "NotMapped should carry the requested addr")
-        }
-        other => panic!("expected NotMapped({addr:#x}), got {other:?}"),
-    }
+    let msg = err.to_string();
+    let expected_addr = format!("{addr:#x}");
+    assert!(
+        msg.contains("is not mapped") && msg.contains(&expected_addr),
+        "expected `not mapped` error for {expected_addr}, got: {err}",
+    );
 }
 
 /// Asserts that a partial read (buf larger than region suffix) returns

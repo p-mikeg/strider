@@ -6,6 +6,8 @@
 //! return `Result<[…; N]>` rather than panicking so callers in production
 //! code don't have to defend against shape errors with `unwrap`.
 
+use anyhow::anyhow;
+
 use crate::iterators::{Inputs, Outputs};
 use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
 
@@ -47,9 +49,10 @@ impl Graph {
     ) -> crate::error::Result<[NodeOutputId; N]> {
         let outputs = self.node_outputs(node_id);
         if outputs.len() != N {
-            return Err(
-                crate::error::ErrorKind::WrongOutputCount(node_id, N, outputs.len()).into(),
-            );
+            let actual = outputs.len();
+            return Err(anyhow!(
+                "node {node_id:?} does not have exactly {N} outputs (has {actual})"
+            ));
         }
         let mut result = [NodeOutputId::default(); N];
         for (i, v) in outputs.into_iter().enumerate() {
@@ -81,7 +84,10 @@ impl Graph {
     ) -> crate::error::Result<[NodeOutputId; N]> {
         let inputs = self.node_inputs(node_id);
         if inputs.len() != N {
-            return Err(crate::error::ErrorKind::WrongInputCount(node_id, N, inputs.len()).into());
+            let actual = inputs.len();
+            return Err(anyhow!(
+                "node {node_id:?} does not have exactly {N} inputs (has {actual})"
+            ));
         }
         let mut result = [NodeOutputId::default(); N];
         for (i, v) in inputs.into_iter().enumerate() {
@@ -121,13 +127,9 @@ impl Graph {
         idx: usize,
     ) -> crate::error::Result<NodeInputId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
+        let len = slice.len();
         slice.get(idx).copied().ok_or_else(|| {
-            crate::error::ErrorKind::InputIndexOutOfBounds {
-                node,
-                index: idx,
-                len: slice.len(),
-            }
-            .into()
+            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
         })
     }
 

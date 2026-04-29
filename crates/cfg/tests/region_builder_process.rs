@@ -10,7 +10,7 @@ use common::{
 };
 
 use cfg::test_api::{self, ProcessInsnRes, RegionInstruction};
-use cfg::{ErrorKind, RegionEdgeKind, RegionTerminator};
+use cfg::{RegionEdgeKind, RegionTerminator};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
 /// Lift one x86-64 machine instruction at `at` from `bytes` starting at `base`.
@@ -267,7 +267,7 @@ fn finish_current_region_empty_insns_returns_error() {
     let err = rb
         .finish_current_region(RegionTerminator::Return)
         .unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::EmptyRegion(_)));
+    assert!(err.to_string().contains("has no instructions"), "got: {err}");
 }
 
 // ── empty-inputs branch / condbranch rejection ──────────────────────────────
@@ -293,9 +293,8 @@ fn process_new_insn_branch_with_empty_inputs_errors() {
         .process_new_insn(&bad_insn, addr(0x1000, 0), &lift)
         .unwrap_err();
     assert!(
-        matches!(err.kind(), ErrorKind::MissingBranchTarget(_)),
-        "expected MissingBranchTarget; got {:?}",
-        err.kind()
+        err.to_string().contains("no target operand"),
+        "expected MissingBranchTarget; got {err}"
     );
 }
 
@@ -316,8 +315,7 @@ fn process_new_insn_condbranch_with_empty_inputs_errors() {
         .process_new_insn(&bad_insn, addr(0x1000, 0), &lift)
         .unwrap_err();
     assert!(
-        matches!(err.kind(), ErrorKind::MissingBranchTarget(_)),
-        "expected MissingBranchTarget; got {:?}",
-        err.kind()
+        err.to_string().contains("no target operand"),
+        "expected MissingBranchTarget; got {err}"
     );
 }

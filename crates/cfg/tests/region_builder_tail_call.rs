@@ -6,7 +6,7 @@
 mod common;
 use common::{addr, make_builder, make_builder_opts, make_region_builder};
 
-use cfg::{ErrorKind, OptionsBuilder};
+use cfg::OptionsBuilder;
 
 #[test]
 fn nocheck_below_start_default_opts_is_tail_call() {
@@ -52,7 +52,7 @@ fn check_invalid_insn_index_nonzero_returns_error() {
     let mut b = make_builder(0x1000);
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
     let err = rb.is_branch_tail_call(addr(0x0800, 3)).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::InvalidTailCall(_)));
+    assert!(err.to_string().contains("invalid tail call"), "got: {err}");
 }
 
 #[test]

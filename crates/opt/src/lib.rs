@@ -34,7 +34,7 @@ pub mod error;
 mod pipeline;
 pub mod sp_expr;
 mod worklist;
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
