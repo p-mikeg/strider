@@ -5,7 +5,9 @@
 use ir::node::NodeOutputType;
 use ir::IntBinaryOp;
 
-use crate::error::{ErrorKind, Result};
+use anyhow::bail;
+
+use crate::error::Result;
 use crate::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
@@ -29,12 +31,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let input_vn = &insn.inputs[0];
         let byte_offset = insn.inputs[1].addr.off;
         if byte_offset >= u64::from(input_vn.size) {
-            return Err(ErrorKind::SubpieceOffsetOutOfRange {
-                opcode: insn.opcode,
-                byte_offset,
-                input_size: input_vn.size,
-            }
-            .into());
+            bail!(
+                "Subpiece byte_offset {byte_offset} out of range for input size {} (opcode {:?})",
+                input_vn.size, insn.opcode
+            );
         }
         let input = self.read_vn(input_vn)?;
         let out_vn = crate::require_output_vn(insn)?;

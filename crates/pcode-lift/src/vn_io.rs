@@ -11,7 +11,9 @@
 
 use ir::{ExtendOp, IntBinaryOp};
 
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 use crate::ValueLifter;
 
 /// Returns a bitmask that covers all bits for a varnode's width in bytes.
@@ -34,7 +36,7 @@ pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
         8 => Ok(u128::from(u64::MAX)),
         10 => Ok((1u128 << 80) - 1),
         16 => Ok(u128::MAX),
-        _ => Err(ErrorKind::UnsupportedRegSize(reg.size).into()),
+        _ => Err(anyhow!("unsupported register size {} bytes", reg.size)),
     }
 }
 
@@ -71,7 +73,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                     .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
                 Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
             }
-            _ => Err(ErrorKind::UnsupportedVnSpace(space).into()),
+            _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
     }
 
@@ -94,7 +96,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let default_code_space = self.sleigh.default_code_space();
         let space = vn.addr.space;
         match space {
-            rsleigh::VnSpace::CONST => Err(ErrorKind::WriteToConstSpace(space).into()),
+            rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.write_reg_vn(vn, val),
             space if space == default_code_space => {
                 let space_info = self.sleigh.space_info(space);
@@ -103,7 +105,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                     .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
                 Ok(self.builder.build_store(addr, val, space)?)
             }
-            _ => Err(ErrorKind::UnsupportedVnSpace(space).into()),
+            _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
     }
 
@@ -130,7 +132,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<rsleigh::Vn> {
         let space = reg.addr.space;
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
-            return Err(ErrorKind::UnsupportedVnSpace(space).into());
+            bail!("unsupported varnode space {space:?}");
         }
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
@@ -149,7 +151,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 best = Some(*sleigh_reg);
             }
         }
-        best.ok_or_else(|| ErrorKind::NoRegisterContainer(*reg).into())
+        best.ok_or_else(|| anyhow!("register {reg:?} has no enclosing container in variable set"))
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their
@@ -540,10 +542,10 @@ mod vn_mask_tests {
         for &bad in &[0u32, 3, 5, 6, 7, 9, 32, 64, u32::MAX] {
             let r = vn_mask(&reg(bad));
             match r {
-                Err(e) => match e.kind() {
-                    ErrorKind::UnsupportedRegSize(s) => assert_eq!(*s, bad),
-                    other => panic!("size {bad}: expected UnsupportedRegSize, got {other:?}"),
-                },
+                Err(e) => assert!(
+                    e.to_string().contains(&format!("unsupported register size {bad}")),
+                    "size {bad}: expected UnsupportedRegSize, got {e}"
+                ),
                 Ok(_) => panic!("size {bad}: expected error, got Ok"),
             }
         }

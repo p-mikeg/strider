@@ -663,11 +663,10 @@ dependencies = [
 name = "pcode-lift"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ir",
  "rsleigh",
- "strider-error",
  "target",
- "thiserror",
 ]
 
 [[package]]

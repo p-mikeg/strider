@@ -28,7 +28,7 @@ pub mod error;
 pub mod value;
 pub mod vn_io;
 
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 
 /// Lifts a single value-producing pcode instruction into IR nodes.
 ///
@@ -91,5 +91,5 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
     insn.output
         .as_ref()
-        .ok_or_else(|| ErrorKind::MissingOutputVn(insn.opcode).into())
+        .ok_or_else(|| anyhow::anyhow!("instruction has no output varnode for opcode {:?}", insn.opcode))
 }

@@ -459,10 +459,7 @@ fn lift_subpiece_out_of_range_errors() {
     let res = lifter.lift(&insn);
     assert!(res.is_err(), "out-of-range Subpiece should error");
     if let Err(e) = res {
-        assert!(matches!(
-            e.kind(),
-            pcode_lift::ErrorKind::SubpieceOffsetOutOfRange { .. }
-        ));
+        assert!(e.to_string().contains("Subpiece byte_offset"), "got: {e}");
     }
 }
 
@@ -479,7 +476,7 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
     let res = lifter.lift(&insn);
     assert!(res.is_err(), "Copy without output_vn should error");
     if let Err(e) = res {
-        assert!(matches!(e.kind(), pcode_lift::ErrorKind::MissingOutputVn(_)));
+        assert!(e.to_string().contains("instruction has no output varnode"), "got: {e}");
     }
 }
 
