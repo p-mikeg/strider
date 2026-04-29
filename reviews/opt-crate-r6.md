@@ -1050,3 +1050,58 @@ The crate is in good shape overall. The mid-iteration vs fixed-point pass split 
 - `opt::Error` / `opt::ErrorKind` payload shapes are out of scope per the brief. I did note that the `ExpectedNodeNotFound("Call", NodeKind::Call)` invocation in `tests/pipeline_with_stack.rs:92` constructs the error with the same kind as the "expected" — in effect saying "expected Call, found Call". That is a test cosmetic, not actionable, but reads strangely.
 - Pre-existing `#[allow(clippy::*)]` attributes — most are scoped to test modules where the lib-level `cfg_attr(test, allow(...))` already covers them. Some duplication (e.g. `#![allow(clippy::unwrap_used, ...)]` at the top of tests/common/mod.rs) is consistent with the test-mod pattern.
 - `crates/strider-error/` machinery (out of scope per the brief).
+
+## Outcomes (2026-04-29 implementation pass)
+
+In addition to the listed findings, the implementation pass also widened
+`NodeOutputType::get_unsigned_int` / `get_signed_int` to take/return
+`u128`/`i128` (dropping the `_u128`/`_i128` suffixed companions and the
+unused `sign_extend` wrapper).  This obviates **F-002** and **F-020** at
+the API level.
+
+| ID | Outcome | Commit / Notes |
+| --- | --- | --- |
+| F-001 / F-043 | Applied — sort dropped | b6ee986 |
+| F-002 | Obviated by u128 widening | 6255d10 |
+| F-003 | **Deferred** — soundness-policy change (Err on contradiction) overlaps with the in-flight anyhow migration's error model; revisit after |
+| F-004 | Applied — `all_node_ids()` → `preorder()` | b6ee986 |
+| F-005 | Applied — memory-space contract documented | 020aa59 |
+| F-006 | Applied — pipeline.rs docstring | 6255d10 |
+| F-007 | Applied — dead re-exports dropped | 6255d10 |
+| F-008 / F-009 / F-010 | Applied — visibility demoted | 6255d10 |
+| F-011 | Applied — `MAX_TABLE_ENTRIES` hoisted | 6255d10 |
+| F-012 | Applied — `OptimizerOnBuilt` blanket impl | b6ee986 |
+| F-013 | Applied — local copy dropped | 6255d10 |
+| F-014 / F-015 | **Deferred** — three-way memory-chain walker dedup is a multi-file refactor with subtle per-site bail semantics; size warrants its own PR |
+| F-016 | **Deferred (Batch 4 perf)** — visited-set save-restore needs DFS restructure |
+| F-017 | **Deferred (Batch 4 perf)** — `same_value` root memo modest in practice (budget capped at 64) |
+| F-018 | **Deferred (Batch 4 perf)** — `analyze_known_bits` cache; threading the result through 4 functions sprawled the parameter lists |
+| F-019 | **Deferred (Batch 4 perf)** — snapshot-vs-WorkSet design call |
+| F-020 | Obviated by u128 widening | 6255d10 |
+| F-021 | **Deferred (Batch 4 perf)** — adds a 7th parameter to `find_stack_stored_value_at_offset`; defer to a focused perf PR |
+| F-022 | Applied — `target_value` slot dropped, `RetPat::ret_val(idx)` is now 0-indexed over real return values | b6ee986 |
+| F-023 | **Skipped** — strider-side test contract pins `apply_tail_call` to return `NodeId`; marginal cost-benefit |
+| F-024 | Applied — `Changed | x` redundancy removed | 6255d10 |
+| F-025 / F-042 | **Skipped** — purely cosmetic rename of `cleanup_if_dead`; downstream readability gain marginal |
+| F-026 | Applied — folded into F-040's hoisted-rationale change | 6255d10 |
+| F-027 | **Deferred** — wrap-once for `IndirectBranchResolve::optimize` requires reworking `apply_link_register` / `apply_tail_call` to take `&mut BuiltFunctionGraph`; medium risk, separate PR |
+| F-028 | Applied — single tail-replace | 6255d10 |
+| F-029 | Applied — dead `bits == 0` closure removed | 6255d10 |
+| F-030 | **Skipped** — float arms unification rated marginal by the reviewer |
+| F-031 | **Deferred** — `match_value!` adoption needs site-by-site judgement (not all sites benefit); separate PR |
+| F-032 | Applied — `store_value_byte_size` extracted | 6255d10 |
+| F-033 | Applied — `MAX_STRIP_LAYERS` const + doc | b6ee986 |
+| F-034 | **Deferred** — `flatten_add_tree` budget unit test pending; current behaviour fails closed (verified) |
+| F-035 | **Skipped** — `node_known_bits` Option-vs-enum split rated cosmetic |
+| F-036 | **Skipped** — subagent's own recommendation was "no change needed" |
+| F-037 | Applied — codename labels stripped across opt | 6255d10 |
+| F-038 | **Skipped** — `is_tail_call` boxed-predicate refactor rated low-confidence |
+| F-039 | Applied — `OptimizationResult::after_replace` helper + 2 call-site rewrites | 020aa59 |
+| F-040 | Applied — rationale hoisted into `detach_unreachable_nodes` doc | b6ee986 |
+| F-041 | Applied — `WorkSet::pop` docstring | 6255d10 |
+| F-044 | Applied — `run_to_fixed_point` doc fix | 6255d10 |
+| F-045 | **Skipped** — test-helper unification rated marginal by the reviewer |
+| F-046 | Applied — `unresolved_anchors` precondition documented | b6ee986 |
+| F-047 | Applied — switched to `into_iter().next()` (`.first()` is not on `Inputs<'a>`) | 6255d10 |
+
+**Tally:** 32 applied (incl. obviations), 9 skipped/deferred design calls, 5 deferred Batch-4 performance items, 0 regressions.  All commits land with `cargo test --workspace` + `cargo clippy --workspace --all-targets` clean.

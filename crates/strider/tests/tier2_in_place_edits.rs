@@ -42,17 +42,19 @@ fn locate_placeholder_return(graph: &ir::BuiltFunctionGraph) -> NodeId {
 }
 
 #[test]
-fn apply_link_register_to_real_lift_zero_ret_vals_keeps_shape() {
+fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     // A live x86_64 lift of `jmp rax`: the placeholder Return has 3
     // inputs ([ctrl, mem, InitialVar(rax)] after optimisation).
-    // apply_link_register with no ret_vals must leave the input
-    // count unchanged and keep the same NodeId.
+    // apply_link_register drops the placeholder `target_value` slot,
+    // so with zero ret_vals the resulting Return is `[ctrl, mem]`.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     apply_link_register(&mut graph, return_id, &[]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    assert_eq!(inputs_after, inputs_before);
+    assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
+    assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
+    assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
     // ir::validate::validate must still pass on the mutated graph.
     ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
 }
@@ -61,14 +63,15 @@ fn apply_link_register_to_real_lift_zero_ret_vals_keeps_shape() {
 fn apply_link_register_to_real_lift_appends_one_ret_val() {
     // Append one ret_val output (the existing target_value's
     // NodeOutputId — value-typed and reachable from the entry).
-    // The Return's input arity must grow by 1.
+    // After apply_link_register the placeholder `target_value` is
+    // dropped and `anchor` takes its place, so the input count is
+    // unchanged but slot 2 is now the ret_val.
     let (mut graph, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     apply_link_register(&mut graph, return_id, &[anchor]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    assert_eq!(inputs_after.len(), inputs_before.len() + 1);
-    // The appended slot is `anchor`.
+    assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
     ir::validate::validate(&graph.graph, graph.entry).expect("validate after edit");
 }

@@ -286,7 +286,9 @@ mod tests {
     #[test]
     fn apply_link_register_threads_ret_val_outputs_into_return() {
         // Two ret-val outputs supplied → resulting Return's inputs are
-        // `[ctrl, mem, target_value, ret_val_0, ret_val_1]`.
+        // `[ctrl, mem, ret_val_0, ret_val_1]` (the placeholder
+        // `target_value` slot is dropped so `RetPat::ret_val(idx)` stays
+        // 0-indexed over the real return values).
         let (mut graph, placeholder) = build_placeholder_graph();
         let inputs_before: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
@@ -296,11 +298,11 @@ mod tests {
         let inputs_after: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
             inputs_after.len(),
-            inputs_before.len() + 2,
-            "Return must gain one input per ret-val output",
+            2 + 2,
+            "Return inputs are [ctrl, mem, ret_val_0, ret_val_1] after target_value removal",
         );
-        assert_eq!(inputs_after[3], r0);
-        assert_eq!(inputs_after[4], r1);
+        assert_eq!(inputs_after[2], r0);
+        assert_eq!(inputs_after[3], r1);
     }
 
     #[test]
