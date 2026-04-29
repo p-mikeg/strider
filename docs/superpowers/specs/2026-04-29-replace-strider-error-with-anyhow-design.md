@@ -120,16 +120,18 @@ The production dependency graph among error-bearing crates (verified by reading 
 
 (Note: `cfg` depends on `opt` in production, contrary to what `CLAUDE.md` implies. The Cargo.toml is authoritative and the spec uses the actual graph.)
 
-The work proceeds leaves-first so each crate's downstream consumers are already on `anyhow` when their turn comes. Each crate's `?` continues to compile against its upstream regardless of order — anyhow's `From<E: Error + Send + Sync + 'static>` blanket impl lifts any source error into `anyhow::Error` — so leaves-first is for cleanliness of progression, not correctness.
+The work proceeds **top-down** (L4 first, leaves last) so the build stays green at every commit. Anyhow's `From<E: Error + Send + Sync + 'static>` blanket impl lifts typed errors into `anyhow::Error`, but **does not** provide the reverse (`From<anyhow::Error>` for typed crates). When an upstream crate converts to `anyhow::Result`, every still-typed downstream consumer's `?` on the new `anyhow::Error` would fail to compile. Top-down avoids this: when an upstream converts, every downstream is already on `anyhow::Result`, so `?` lifts via anyhow's identity `From<anyhow::Error>` impl.
 
 1. **Workspace setup.** Add `anyhow = "1"` to `[workspace.dependencies]` in root `Cargo.toml`.
-2. **Tier L0.** Convert `target`, `reader`, `ir`, `dot` (any order; the worker does them sequentially).
-3. **Tier L1.** Convert `pcode-lift`, `pattern`.
+2. **Tier L4.** Convert `strider`.
+3. **Tier L3.** Convert `cfg`.
 4. **Tier L2.** Convert `opt`.
-5. **Tier L3.** Convert `cfg`.
-6. **Tier L4.** Convert `strider`.
+5. **Tier L1.** Convert `pattern`, then `pcode-lift`.
+6. **Tier L0.** Convert `ir`, `dot`, `target`, `reader` (any order — all leaves now).
 7. **Delete `strider-error/`** directory; remove its `[workspace.dependencies]` entry.
 8. **Final verification.** `cargo build --workspace`, `cargo test --workspace`, `cargo clippy --workspace --all-targets`, `cargo run --example strider`. All must pass with zero warnings.
+
+The implementation plan refines this further: `pattern` converts before `pcode-lift` because `opt` calls `pattern::Error::skip()` / `pattern::Error::rewrite_closure()` (real public API used at multiple sites), and the API change in `pattern` requires call-site updates in `opt` that are easier to absorb when `opt` has just converted. See [`docs/superpowers/plans/2026-04-29-replace-strider-error-with-anyhow.md`](../plans/2026-04-29-replace-strider-error-with-anyhow.md) Tasks 5 and 6 for the boundary handling.
 
 Each crate's conversion follows the same template: replace `define_error!` block + `bridge_error!` calls in `src/error.rs` (the file may delete entirely if it had no other content), then sweep all `Err(ErrorKind::X.into())` / `.ok_or(ErrorKind::X)?` / `.ok_or_else(|| ErrorKind::X(...).into())?` sites in that crate to `bail!` / `anyhow!`, then in `Cargo.toml`: replace `strider-error.workspace = true` with `anyhow.workspace = true`, and drop `thiserror.workspace = true` unless the crate still has a `thiserror`-derived type (only `ir`'s `ValidationErrors` should). After each crate, `cargo test --package <crate>` runs and must pass before moving to the next crate.
 
