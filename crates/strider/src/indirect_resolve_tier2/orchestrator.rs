@@ -31,8 +31,7 @@
 //! the resolver violated monotonicity (every legal classification
 //! transition strictly grows the induced edge set, so the loop
 //! must terminate within the cap).  Surfaces as a typed
-//! [`crate::ErrorKind::IndirectResolutionDidNotConverge`] — never
-//! a panic.
+//! a "did not converge" error — never a panic.
 //!
 //! # Tail-call detection
 //!
@@ -170,10 +169,10 @@ where
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::IndirectResolutionDidNotConverge`] when the cap is hit.
-/// * [`ErrorKind::UnresolvedIndirectBranch`] at fixed point with
-///   unresolved branches remaining.
-/// * Propagates strider / cfg / opt errors verbatim.
+/// Returns an error when the iteration cap is hit
+/// ("did not converge"), when unresolved branches remain at fixed
+/// point ("could not be resolved at fixed point"), or any error
+/// propagated from strider / cfg / opt.
 pub fn run<B>(mut config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,

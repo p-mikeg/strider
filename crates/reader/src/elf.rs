@@ -38,11 +38,9 @@ use crate::{MemRegion, MemRegionsLookupTable, Result};
 ///
 /// # Errors
 ///
-/// Returns:
-/// - `ErrorKind::Object` wrapping the underlying `object::Error` if the
-///   segment's file-backed data cannot be read.
-/// - `ErrorKind::RegionOverflow` if `segment.address() + data.len()` would
-///   exceed `u64::MAX`.
+/// Returns an error when the segment's file-backed data cannot be
+/// read, or when `segment.address() + data.len()` would exceed
+/// `u64::MAX`.
 pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Result<MemRegion> {
     let data = segment.data().context("failed to parse ELF")?;
     MemRegion::new(segment.address(), data.to_vec())
@@ -52,11 +50,9 @@ pub fn elf_segment_to_mem_region(segment: &object::read::Segment<'_, '_>) -> Res
 ///
 /// # Errors
 ///
-/// Returns:
-/// - `ErrorKind::Object` wrapping the underlying `object::Error` if the
-///   section's file-backed data cannot be read.
-/// - `ErrorKind::RegionOverflow` if `section.address() + data.len()` would
-///   exceed `u64::MAX`.
+/// Returns an error when the section's file-backed data cannot be
+/// read, or when `section.address() + data.len()` would exceed
+/// `u64::MAX`.
 pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Result<MemRegion> {
     let data = section.data().context("failed to parse ELF")?;
     MemRegion::new(section.address(), data.to_vec())
@@ -72,13 +68,11 @@ pub fn elf_section_to_mem_region(section: &object::read::Section<'_, '_>) -> Res
 ///
 /// # Errors
 ///
-/// Returns:
-/// - `ErrorKind::Object` wrapping the underlying `object::Error` if a
-///   segment accepted by `filter` has file-backed data that cannot be
-///   read. Segments rejected by `filter` are never read, so malformed
-///   rejected segments do not surface as errors.
-/// - `ErrorKind::RegionOverflow` if an accepted segment's
-///   `address() + data.len()` would exceed `u64::MAX`.
+/// Returns an error when a segment accepted by `filter` has
+/// file-backed data that cannot be read (segments rejected by
+/// `filter` are never read, so malformed rejected segments do not
+/// surface), or when an accepted segment's `address() + data.len()`
+/// would exceed `u64::MAX`.
 ///
 /// Accepted empty-data segments (e.g. `p_filesz == 0`) are skipped rather
 /// than reported.
@@ -110,13 +104,11 @@ pub fn elf_segments_to_mem_regions(
 ///
 /// # Errors
 ///
-/// Returns:
-/// - `ErrorKind::Object` wrapping the underlying `object::Error` if a
-///   section accepted by `filter` has file-backed data that cannot be
-///   read. Sections rejected by `filter` are never read, so malformed
-///   rejected sections do not surface as errors.
-/// - `ErrorKind::RegionOverflow` if an accepted section's
-///   `address() + data.len()` would exceed `u64::MAX`.
+/// Returns an error when a section accepted by `filter` has
+/// file-backed data that cannot be read (sections rejected by
+/// `filter` are never read, so malformed rejected sections do not
+/// surface), or when an accepted section's `address() + data.len()`
+/// would exceed `u64::MAX`.
 ///
 /// Accepted empty-data sections (e.g. `SHT_NOBITS`-equivalents) are
 /// skipped rather than reported.
@@ -257,8 +249,8 @@ impl ElfFileMemReader {
     ///
     /// # Errors
     ///
-    /// Returns `ErrorKind::Object` if the bytes fail to parse as a valid
-    /// ELF, or any error produced by [`from_object`](Self::from_object).
+    /// Returns an error if the bytes fail to parse as a valid ELF,
+    /// or any error produced by [`from_object`](Self::from_object).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let obj = object::File::parse(bytes).context("failed to parse ELF")?;
         Self::from_object(&obj)
@@ -268,7 +260,7 @@ impl ElfFileMemReader {
     ///
     /// # Errors
     ///
-    /// Returns `ErrorKind::Io` if the file cannot be read from disk, or
+    /// Returns an error if the file cannot be read from disk, or
     /// any error produced by [`from_bytes`](Self::from_bytes).
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let bytes = std::fs::read(path).context("failed to read file")?;
@@ -334,8 +326,8 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 ///
 /// # Errors
 ///
-/// Returns `ErrorKind::Io` if the file cannot be read from disk, or
-/// `ErrorKind::Object` if the bytes fail to parse as a valid ELF.
+/// Returns an error if the file cannot be read from disk or if
+/// the bytes fail to parse as a valid ELF.
 pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'static>> {
     let data = std::fs::read(path).context("failed to read file")?;
     // Validate the parse on a borrowed view BEFORE leaking. If the bytes

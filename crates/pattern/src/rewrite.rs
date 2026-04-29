@@ -21,11 +21,15 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 /// `Ok(false)` if the match failed, the RHS produced a skip, or
 /// `replace_all_uses` found nothing to redirect.
 ///
-/// Errors from the graph layer (`make_value_node`, `replace_all_uses`) are
-/// wrapped in [`crate::error::ErrorKind::IrError`]; errors from user closures
-/// inside `*_const_with!` macros are wrapped in
-/// [`crate::error::ErrorKind::RewriteClosure`] (via
-/// [`crate::error::Error::rewrite_closure`]).
+/// Errors from the graph layer (`make_value_node`, `replace_all_uses`)
+/// propagate as [`anyhow::Error`].  Errors from user closures inside
+/// `*_const_with!` macros also propagate as [`anyhow::Error`] —
+/// anyhow's blanket `From<E: Error + Send + Sync + 'static>` wraps any
+/// custom error type the closure returns, and tests can downcast to
+/// recover the original.  Use [`crate::error::skip`] inside a closure
+/// to opt out of the rewrite without a hard error; the interpreter
+/// detects the [`crate::error::RewriteSkip`] sentinel via
+/// [`crate::error::is_skip`] and returns `Ok(false)`.
 ///
 /// # Single-value-output constraint
 ///

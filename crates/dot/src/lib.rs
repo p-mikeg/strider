@@ -49,6 +49,12 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node;
+    // Bound is `Debug + Display + Send + Sync + 'static`, NOT
+    // `std::error::Error + Send + Sync + 'static`, so impls can pick
+    // `type Error = anyhow::Error` (anyhow's `Error` does not
+    // implement `std::error::Error`, by design).  `build_dot` wraps
+    // any returned error via `anyhow::anyhow!("dot dump error: {e}")`,
+    // which only needs `Display`.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     type State;
 

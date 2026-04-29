@@ -198,7 +198,7 @@ fn assert_add_with_const(
         matches!(
             *fg.graph.kind_of_output(o),
             // IntConst stores u128; masked is u64, widen for comparison.
-            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(u128::from(masked))
+            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
         )
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
@@ -240,7 +240,7 @@ fn assert_sub_with_const(
     let const_on_rhs = matches!(
         *fg.graph.kind_of_output(r),
         // IntConst stores u128; masked is u64, widen for comparison.
-        NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(u128::from(masked))
+        NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
     );
     assert!(
         l == expected_base && const_on_rhs,

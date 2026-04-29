@@ -58,11 +58,10 @@ impl MemRegion {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::RegionOverflow`](error::ErrorKind::RegionOverflow)
-    /// when `start_addr + data.len()` would exceed `u64::MAX`. This guarantees
-    /// that downstream methods ([`end_addr`](Self::end_addr),
-    /// [`contains`](Self::contains), [`read`](Self::read)) can treat the
-    /// region's end as a plain `u64`.
+    /// Returns an error when `start_addr + data.len()` would exceed
+    /// `u64::MAX`. This guarantees that downstream methods
+    /// ([`end_addr`](Self::end_addr), [`contains`](Self::contains),
+    /// [`read`](Self::read)) can treat the region's end as a plain `u64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
         start_addr

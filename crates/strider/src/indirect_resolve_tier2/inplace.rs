@@ -1,13 +1,11 @@
 //! In-place IR edits — F5 shim.  The canonical implementation is in
 //! [`opt::indirect_branch_resolve::inplace`].  This module preserves
 //! the original strider-level API (`BuiltFunctionGraph` argument,
-//! strider's [`crate::error::Error`] return) for back-compat with the
+//! strider's [`crate::error::Result`] return) for back-compat with the
 //! orchestrator and existing tests.
 //!
-//! The opt-side functions return [`opt::Error`].  We bridge into
-//! strider's error enum via the existing `IrError` route — opt errors
-//! that wrap an `ir::ErrorKind` round-trip cleanly through
-//! `strider::ErrorKind::IrError`.
+//! Both crates return `anyhow::Result`; opt-side errors propagate
+//! through `?` via anyhow's identity `From<anyhow::Error>` impl.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -21,10 +19,9 @@ use crate::error::Result;
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::WrongNodeKind`] when `placeholder_return` is not a
-///   [`ir::node::NodeKind::Return`].
-/// * [`ErrorKind::IrError`] propagating IR errors from the opt-side
-///   `add_node_input` call.
+/// Returns an error when `placeholder_return` is not a
+/// [`ir::node::NodeKind::Return`], or when the opt-side
+/// `add_node_input` call fails.
 pub fn apply_link_register(
     fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
@@ -45,9 +42,9 @@ pub fn apply_link_register(
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::WrongNodeKind`] when `placeholder_return` is not a
-///   [`ir::node::NodeKind::Return`] or has unexpected input arity.
-/// * [`ErrorKind::IrError`] propagating IR construction errors.
+/// Returns an error when `placeholder_return` is not a
+/// [`ir::node::NodeKind::Return`] or has unexpected input arity, or
+/// when the opt-side IR construction fails.
 pub fn apply_tail_call(
     fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,

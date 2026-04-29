@@ -49,7 +49,7 @@ fn vn_to_name_with_regs(regs: &rsleigh::SleighRegs, vn: &rsleigh::Vn) -> Result<
 
 /// Render `vn` for non-REGISTER spaces. REGISTER input is a caller-routing
 /// bug (the caller should have gone through [`vn_to_name_with_regs`])
-/// and yields [`ErrorKind::InvalidRegVn`].
+/// and yields an "invalid register vn" error.
 fn vn_to_name_non_register(vn: &rsleigh::Vn) -> Result<String> {
     let offset = vn.addr.off;
     let size = vn.size;

@@ -38,10 +38,9 @@ use crate::error::Result;
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::ExpectedNodeNotFound`] if `placeholder_return` is
-///   not a [`NodeKind::Return`].
-/// * [`ErrorKind::IrError`] propagating any failure from
-///   [`Graph::add_node_input`] / [`Graph::remove_node_input`].
+/// Returns an error when `placeholder_return` is not a
+/// [`NodeKind::Return`], or when the IR mutation calls
+/// ([`Graph::add_node_input`] / [`Graph::remove_node_input`]) fail.
 pub fn apply_link_register(
     graph: &mut Graph,
     placeholder_return: NodeId,
@@ -89,10 +88,10 @@ pub fn apply_link_register(
 ///
 /// # Errors
 ///
-/// * [`ErrorKind::ExpectedNodeNotFound`] if `placeholder_return` is
-///   not a [`NodeKind::Return`] node, or if its input arity isn't
-///   the expected 3 (i.e. not a placeholder shape).
-/// * [`ErrorKind::IrError`] propagating IR construction errors.
+/// Returns an error when `placeholder_return` is not a
+/// [`NodeKind::Return`] node, when its input arity isn't the
+/// expected 3 (i.e. not a placeholder shape), or when IR
+/// construction fails.
 pub fn apply_tail_call(
     graph: &mut Graph,
     placeholder_return: NodeId,
