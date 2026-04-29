@@ -313,6 +313,69 @@ fn bound_via_known_bits_handles_zero_extend() {
     assert_eq!(bound, 256);
 }
 
+#[test]
+fn bound_via_known_bits_returns_none_for_unreachable_output() {
+    // `analyze_known_bits` deliberately scopes its worklist to
+    // entry-reachable nodes (Layer A's reachability boundary).
+    // An output whose producer is not in the preorder traversal
+    // gets `Kb::default()` (all-unknown), which yields `max ==
+    // type_mask` and `bound_via_known_bits` returns None.
+    //
+    // This test pins the documented contract: callers may safely
+    // pass any NodeOutputId — unreachable producers degrade to the
+    // None-fallback rather than panic or return spurious bounds.
+    use ir::node::NodeOutputKind;
+    let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let region = builder.create_region().unwrap();
+    builder.set_entry_region(region).unwrap();
+    builder.set_region(region);
+    // Build a placeholder Return so build() succeeds.
+    let placeholder = builder.build_int_const(0u64, NodeOutputType::U64);
+    builder.build_return(Some(placeholder), &[]).unwrap();
+    let mut g = builder.build().unwrap();
+
+    // Build a detached AND that's narrower than U64 — definitely a
+    // narrowing kb result IF the analyzer reached it.  Wire its
+    // input to a fresh IntConst that is also detached so the AND is
+    // truly unreachable from entry.
+    let detached_const = g.graph.create_node(
+        NodeKind::IntConst(0xffff_ffffu128),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let detached_const_out = g
+        .graph
+        .node_outputs_exact::<1>(detached_const)
+        .expect("output")[0];
+    let mask_const = g.graph.create_node(
+        NodeKind::IntConst(0x7u128),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let mask_const_out = g
+        .graph
+        .node_outputs_exact::<1>(mask_const)
+        .expect("output")[0];
+    let detached_and = g.graph.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        [detached_const_out, mask_const_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let detached_idx = g
+        .graph
+        .node_outputs_exact::<1>(detached_and)
+        .expect("output")[0];
+
+    // The detached AND's output isn't in the entry preorder, so
+    // `analyze_known_bits` never visits it.  Its kb defaults to
+    // all-unknown and `bound_via_known_bits` returns None.
+    let bound = bound_via_known_bits(&g, detached_idx);
+    assert_eq!(
+        bound, None,
+        "unreachable output must yield None (default Kb, no narrowing)",
+    );
+}
+
 // ── Read-table-entries tests ─────────────────────────────────────────────
 
 #[test]
@@ -677,6 +740,66 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
 }
 
 #[test]
+fn bound_from_if_condition_idx_equal_n_true_returns_none() {
+    // CORRECTNESS — H2: `idx == N` taken-true constrains idx to
+    // the single value `{N}`, not `[0, N]`.  The `0..bound`
+    // enumeration shape this fn feeds into would mis-resolve, so
+    // the helper *must* return None for `IntCmpOp::Equal` even on
+    // the true branch.  Pin this here so any "let's tighten the
+    // pattern" change surfaces as a unit-test failure.
+    let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let region = builder.create_region().unwrap();
+    builder.set_entry_region(region).unwrap();
+    builder.set_region(region);
+    let idx = builder.build_int_const(0u64, NodeOutputType::U32);
+    let n = builder.build_int_const(4u64, NodeOutputType::U32);
+    let cmp = builder
+        .build_int_cmp_operation(idx, n, IntCmpOp::Equal, NodeOutputType::U32)
+        .unwrap();
+    builder.build_return(Some(idx), &[]).unwrap();
+    let g = builder.build().unwrap();
+    assert_eq!(
+        bound_from_if_condition(&g, cmp, idx, /* on_true */ true),
+        None,
+        "Equal must NOT yield a 0..N bound — see H2 fix",
+    );
+    // Same on the false branch (the negation idx != N — also no bound).
+    assert_eq!(bound_from_if_condition(&g, cmp, idx, false), None);
+}
+
+#[test]
+fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
+    // `IntCmpOp::Less` is non-commutative; the pattern only binds
+    // when `idx_var` is on the LHS.  Compilers occasionally emit
+    // `IntCmp(N, idx)` (i.e. `N < idx`, equivalent to `idx > N`)
+    // which on the *false* branch would imply `idx <= N`.  That
+    // shape is currently NOT recognised — the pattern simply
+    // doesn't bind and the helper returns None.  Pin it so a
+    // future tightening (or refactor of `int_cmp_any`) surfaces
+    // any behaviour change here.
+    let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let region = builder.create_region().unwrap();
+    builder.set_entry_region(region).unwrap();
+    builder.set_region(region);
+    let idx = builder.build_int_const(0u64, NodeOutputType::U32);
+    let n = builder.build_int_const(4u64, NodeOutputType::U32);
+    // N on LHS, idx on RHS — `N < idx` shape.
+    let cmp = builder
+        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
+        .unwrap();
+    builder.build_return(Some(idx), &[]).unwrap();
+    let g = builder.build().unwrap();
+    // True branch of `N < idx` ↔ `idx > N` — no upper bound (and
+    // the pattern wouldn't bind to the desired `idx_var` anyway).
+    assert_eq!(bound_from_if_condition(&g, cmp, idx, true), None);
+    // False branch of `N < idx` ↔ `idx <= N` — *would* be
+    // soundly bounded by N+1 if the helper looked through the
+    // swapped operands, but the current implementation returns
+    // None.  Documented limitation.
+    assert_eq!(bound_from_if_condition(&g, cmp, idx, false), None);
+}
+
+#[test]
 fn bound_from_if_condition_unrelated_idx_returns_none() {
     // The cmp is on `other`, not `idx`.  Must return None.
     let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
@@ -693,4 +816,202 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, true);
     assert_eq!(bound, None);
+}
+
+// ── ControlState multi-predecessor join behaviour ────────────────────────
+//
+// `walk_control_for_if_bound` takes the **max** over every predecessor's
+// proved bound at a `ControlState` join.  If even one predecessor cannot
+// prove a bound, the join's combined bound is `None` (fail closed).  The
+// tests below pin both directions:
+//
+//   * positive: two `If`s on the same `idx` flow into a common dispatch
+//     region.  Both prove `idx < N` for different N — combined = max(N).
+//   * negative: only one path proves a bound, the other reaches Entry
+//     unbounded — combined = None.
+//
+// Builds the diamond shape:
+//
+//        entry
+//        /   \
+//       v     v
+//   path_a  path_b
+//        \   /
+//        v   v
+//        dispatch
+//
+// where `path_a` is reached via `if (idx < bound_a)` (taken-true) and
+// `path_b` via `if (idx < bound_b)` (taken-true).  Both paths
+// `build_branch` to `dispatch`, giving `dispatch`'s `ControlState` two
+// control inputs.
+
+/// Build a diamond where both predecessors of the dispatch region prove
+/// `idx < bound` via separate `If` nodes.  Returns the graph, the
+/// placeholder anchor (Return.inputs[2]), and the dispatch's view of idx.
+fn build_diamond_two_bounds(
+    bound_a: u64,
+    bound_b: u64,
+) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
+    use ir::{FunctionBuilder, IntCmpOp};
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit_a = b.create_region().unwrap();
+    let exit_b = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: split on a non-idx-related boolean so both arms proceed.
+    // We use `idx == 0` as a dummy so both paths exist.
+    b.set_region(entry);
+    let idx_at_entry = b.read_variable(&idx_var).unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::U32);
+    let dummy = b
+        .build_int_cmp_operation(idx_at_entry, zero, IntCmpOp::Equal, NodeOutputType::U32)
+        .unwrap();
+    b.build_if(dummy, path_a, path_b).unwrap();
+
+    // path_a: `if (idx < bound_a) goto dispatch else goto exit_a`
+    b.set_region(path_a);
+    let idx_a = b.read_variable(&idx_var).unwrap();
+    let bound_a_c = b.build_int_const(bound_a, NodeOutputType::U32);
+    let cond_a = b
+        .build_int_cmp_operation(idx_a, bound_a_c, IntCmpOp::Less, NodeOutputType::U32)
+        .unwrap();
+    b.build_if(cond_a, dispatch, exit_a).unwrap();
+
+    // path_b: `if (idx < bound_b) goto dispatch else goto exit_b`
+    b.set_region(path_b);
+    let idx_b = b.read_variable(&idx_var).unwrap();
+    let bound_b_c = b.build_int_const(bound_b, NodeOutputType::U32);
+    let cond_b = b
+        .build_int_cmp_operation(idx_b, bound_b_c, IntCmpOp::Less, NodeOutputType::U32)
+        .unwrap();
+    b.build_if(cond_b, dispatch, exit_b).unwrap();
+
+    // dispatch: placeholder Return on idx.
+    b.set_region(dispatch);
+    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+
+    b.set_region(exit_a);
+    b.build_return(None, &[]).unwrap();
+    b.set_region(exit_b);
+    b.build_return(None, &[]).unwrap();
+
+    let g = b.build().unwrap();
+    let mut anchor = None;
+    for nid in g.preorder() {
+        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() == 3 {
+            anchor = Some(inputs[2]);
+        }
+    }
+    (g, anchor.expect("placeholder return"), idx_in_dispatch)
+}
+
+#[test]
+fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
+    // Diamond: both predecessors *could* prove `idx < bound` against
+    // the dispatch's own `idx` reading.  But the dispatch region
+    // joins two control predecessors, so its `idx` read is a
+    // ControlPhi with two value inputs (one per path) — `same_value`
+    // only walks through *trivial* (single-input) phis, so the
+    // predecessor `If`s' `idx` LHS does not unify with the
+    // dispatch's `idx_in_dispatch` and `bound_from_if_condition`
+    // returns None for each path.  The join's combined bound is
+    // therefore None.
+    //
+    // This pins a documented limitation of the predecessor-If walk:
+    // it cannot prove a max-bound across a multi-input join unless a
+    // later optimization pass (`RedundantPhis`) collapses the phi
+    // first or `same_value` is taught to look through multi-value
+    // phis.  See the `same_value` rationale in `jump_table.rs`.
+    let (g, anchor, idx_in_dispatch) = build_diamond_two_bounds(4, 8);
+    let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
+    assert_eq!(
+        bound, None,
+        "multi-input join phi blocks predecessor-If walk's bound proof",
+    );
+}
+
+#[test]
+fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
+    // Diamond where path_a proves `idx < 4` but path_b sets up a
+    // dummy If that doesn't bound idx — the walk reaches Entry on
+    // path_b.  Per the documented contract: any unbounded
+    // predecessor → join's bound = None.
+    use ir::{FunctionBuilder, IntCmpOp};
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit_a = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: dummy split so both paths start.
+    b.set_region(entry);
+    let idx_e = b.read_variable(&idx_var).unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::U32);
+    let dummy = b
+        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, NodeOutputType::U32)
+        .unwrap();
+    b.build_if(dummy, path_a, path_b).unwrap();
+
+    // path_a: `if (idx < 4) goto dispatch else goto exit_a`
+    b.set_region(path_a);
+    let idx_a = b.read_variable(&idx_var).unwrap();
+    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let cond_a = b
+        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, NodeOutputType::U32)
+        .unwrap();
+    b.build_if(cond_a, dispatch, exit_a).unwrap();
+
+    // path_b: unconditional branch to dispatch — no idx bound proved.
+    b.set_region(path_b);
+    b.build_branch(dispatch).unwrap();
+
+    b.set_region(dispatch);
+    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+
+    b.set_region(exit_a);
+    b.build_return(None, &[]).unwrap();
+
+    let g = b.build().unwrap();
+    let mut anchor = None;
+    for nid in g.preorder() {
+        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+            continue;
+        }
+        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() == 3 {
+            anchor = Some(inputs[2]);
+        }
+    }
+    let anchor = anchor.expect("anchor");
+    let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
+    assert_eq!(
+        bound, None,
+        "any unbounded predecessor must collapse the join's bound to None",
+    );
 }
