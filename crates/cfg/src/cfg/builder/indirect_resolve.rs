@@ -50,28 +50,13 @@ use opt::ReadOnlyMemory;
 use crate::cfg::types::{PcodeInsnAddr, RegionInstruction};
 use crate::error::Result;
 
-// Promoted to `pub` so the cfg crate's top-level re-export
-// (`pub use cfg::ResolvedTargets`) makes the enum part of the public
-// API that the strider orchestrator can use.
-
-/// The set of statically-known targets of a single `BranchIndirect`.
-///
-/// Exposed publicly via `cfg::ResolvedTargets` so the strider
-/// fixed-point orchestrator can construct `known_targets` maps and
-/// thread them back into [`crate::Builder::with_known_targets`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedTargets {
-    /// Target value is the function-entry value of the calling
-    /// convention's link register (`InitialVar(lr)` in the resolved
-    /// mini-graph).  Equivalent to `Return`.
-    LinkRegister,
-    /// Target value is the constant `addr`.
-    Single(u64),
-    /// FUTURE.  N statically-known targets (jump tables).  Not produced
-    /// by this round; reserved so adding jump-table support is purely
-    /// additive.
-    Multiple(Vec<u64>),
-}
+/// Re-export of the canonical [`opt::ResolvedTargets`].  Kept under the
+/// `cfg::ResolvedTargets` path so the strider orchestrator can build
+/// `known_targets` maps without importing both crates' types — the
+/// enum is defined in `opt` because cfg → opt is the workspace dep
+/// direction (cfg's mini-graph runs the opt pipeline) and a reverse
+/// dep would form a cycle.
+pub use opt::ResolvedTargets;
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
 ///

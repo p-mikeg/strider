@@ -391,7 +391,7 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
     };
     let result = classify_jump_table(&g, anchor, Some(&rom), None);
     match result {
-        Some(BranchResolution::Multiple(ts)) => {
+        Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
         }
         other => panic!("expected Multiple([0x10..0x80]); got {other:?}"),

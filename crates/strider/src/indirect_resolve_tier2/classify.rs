@@ -1,29 +1,13 @@
-//! Producer-shape classifier shim — F5 relocates the canonical
-//! implementation into [`opt::indirect_branch_resolve`].  This module
-//! preserves the original strider-level API surface
-//! (`BuiltFunctionGraph` argument, `cfg::ResolvedTargets` return) for
-//! back-compat with existing tests and orchestrator code.
-//!
-//! Internally each function delegates to the opt-side classifier and
-//! converts the returned [`opt::BranchResolution`] into the
-//! cfg-side [`cfg::test_api::ResolvedTargets`] enum.  Both enums are
-//! structurally identical; the conversion is mechanical.
+//! Producer-shape classifier shim.  Delegates to
+//! [`opt::indirect_branch_resolve`].  Retained as a strider-side entry
+//! point so the orchestrator and integration tests can call into the
+//! classifier under a stable strider path; the underlying logic
+//! lives in `opt`.
 
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
 use ir::node::NodeOutputId;
 use opt::ReadOnlyMemory;
-
-/// Convert opt's local resolution enum into cfg's
-/// canonical [`ResolvedTargets`].  Hoisted out of every shim so the
-/// mapping is a single source of truth.
-fn from_opt(r: opt::BranchResolution) -> ResolvedTargets {
-    match r {
-        opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
-        opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),
-        opt::BranchResolution::Multiple(ts) => ResolvedTargets::Multiple(ts),
-    }
-}
 
 /// Classify a placeholder anchor's producer node into a
 /// [`ResolvedTargets`].  Delegates to
@@ -34,7 +18,7 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    opt::classify_anchor(graph, anchor_output, link_register_vn).map(from_opt)
+    opt::classify_anchor(graph, anchor_output, link_register_vn)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -48,7 +32,6 @@ pub fn classify_anchor_with_rom(
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
     opt::classify_anchor_with_rom(graph, anchor_output, link_register_vn, rom)
-        .map(from_opt)
 }
 
 /// Classify a placeholder anchor with both an optional
@@ -70,7 +53,6 @@ pub fn classify_anchor_with_rom_and_sp(
         rom,
         stack_ptr_vn,
     )
-    .map(from_opt)
 }
 #[cfg(test)]
 mod tests {

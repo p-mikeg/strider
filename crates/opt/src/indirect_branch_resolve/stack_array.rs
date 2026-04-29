@@ -23,7 +23,7 @@
 //!     [`opt::stack_load_forward::find_stack_stored_value_at_offset`]
 //!     helper.
 //!   * Each stored value must be `IntConst`; collect into
-//!     `BranchResolution::Multiple([c0, c1, ...])`.
+//!     `ResolvedTargets::Multiple([c0, c1, ...])`.
 //!
 //! ## Soundness
 //!
@@ -44,7 +44,7 @@
 //! Failing either gate returns `None`; the orchestrator defers the
 //! branch.  No panic, no partial commitment, no over-approximation.
 
-use super::BranchResolution;
+use super::ResolvedTargets;
 use ir::node::{NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
@@ -85,7 +85,7 @@ pub fn classify_stack_array(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
-) -> Option<BranchResolution> {
+) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
@@ -126,7 +126,7 @@ pub fn classify_stack_array(
     if targets.is_empty() {
         None
     } else {
-        Some(BranchResolution::Multiple(targets))
+        Some(ResolvedTargets::Multiple(targets))
     }
 }
 
@@ -540,7 +540,7 @@ mod tests {
         let result = classify_stack_array(&fg, load_out, sp64());
         let mut expected = targets.to_vec();
         expected.sort_unstable();
-        assert_eq!(result, Some(BranchResolution::Multiple(expected)));
+        assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
     }
 
     #[test]

@@ -1,24 +1,24 @@
 //! Producer-shape classifier for tier-2 indirect-branch resolution.
 //!
 //! Walks the producer node of a placeholder anchor's value-input and
-//! classifies it into a [`BranchResolution`].  The arms here are the
+//! classifies it into a [`ResolvedTargets`].  The arms here are the
 //! soundness-checked subset originally implemented in strider's
 //! tier-2 resolver — F5 relocates the logic into the opt crate so it
 //! can be invoked from an [`crate::Optimizer`] pass.
 //!
-//! Strider's `indirect_resolve_tier2::classify` shim re-exports these
-//! functions with the original `cfg::ResolvedTargets` return type for
-//! back-compat.
+//! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
+//! results from the classifier directly into
+//! `cfg::Builder::with_known_targets`.
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId};
 
-use super::BranchResolution;
+use super::ResolvedTargets;
 use super::jump_table::classify_jump_table;
 use crate::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
-/// [`BranchResolution`].  Returns `None` when the producer doesn't
+/// [`ResolvedTargets`].  Returns `None` when the producer doesn't
 /// match any of the known sound shapes — the orchestrator interprets
 /// `None` as "still unresolved at this iteration; try again or
 /// surface as `UnresolvedIndirectBranch` at fixed point."
@@ -50,7 +50,7 @@ pub fn classify_anchor(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
-) -> Option<BranchResolution> {
+) -> Option<ResolvedTargets> {
     classify_anchor_with_rom(fg, anchor_output, link_register_vn, None)
 }
 
@@ -73,7 +73,7 @@ pub fn classify_anchor_with_rom(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> Option<BranchResolution> {
+) -> Option<ResolvedTargets> {
     classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None)
 }
 
@@ -93,7 +93,7 @@ pub fn classify_anchor_with_rom(
 /// # Soundness
 ///
 /// Both new arms preserve the classifier's overall contract: the
-/// resulting `BranchResolution::Multiple` enumerates the *full* set of
+/// resulting `ResolvedTargets::Multiple` enumerates the *full* set of
 /// possible runtime targets.  Failing closed (returning `None`) on
 /// any partial proof defers the branch to a later iteration or to
 /// `UnresolvedIndirectBranch` at fixed point — never under-
@@ -105,7 +105,7 @@ pub fn classify_anchor_with_rom_and_sp(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
-) -> Option<BranchResolution> {
+) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
@@ -120,7 +120,7 @@ pub fn classify_anchor_with_rom_and_sp(
         NodeKind::IntConst(k) => {
             #[allow(clippy::cast_possible_truncation)]
             let truncated = k as u64;
-            Some(BranchResolution::Single(truncated))
+            Some(ResolvedTargets::Single(truncated))
         }
         // SOUND: `InitialVar(vn)` is the function-entry value of
         // varnode `vn`.  When `vn == lr_vn`, the indirect branch
@@ -128,7 +128,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // standard return.  This is the shape `StackLoadForward`
         // produces for properly-popped return addresses.
         NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
-            Some(BranchResolution::LinkRegister)
+            Some(ResolvedTargets::LinkRegister)
         }
         // SOUND: `ValuePhi`'s output is the merge of one
         // per-predecessor value input (slot 0 is the phi token,
@@ -157,7 +157,7 @@ pub fn classify_anchor_with_rom_and_sp(
             if targets.is_empty() {
                 None
             } else {
-                Some(BranchResolution::Multiple(targets))
+                Some(ResolvedTargets::Multiple(targets))
             }
         }
         // Jump-table arm.  Producer is a Load — a candidate for

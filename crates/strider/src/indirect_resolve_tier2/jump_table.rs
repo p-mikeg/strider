@@ -1,8 +1,8 @@
-//! Jump-table arm — F5 shim.  The canonical implementation lives in
-//! [`opt::indirect_branch_resolve::jump_table`].  This module
-//! preserves the original strider-level API
-//! (`BuiltFunctionGraph` argument, `cfg::ResolvedTargets` return)
-//! for back-compat with existing tests and shims.
+//! Jump-table arm — F5 shim.  Delegates to
+//! [`opt::classify_jump_table`].  Retained as a strider-side entry
+//! point so the orchestrator and the integration tests can call into
+//! the classifier under a stable strider path; the underlying logic
+//! lives in [`opt::indirect_branch_resolve::jump_table`].
 
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
@@ -18,11 +18,5 @@ pub fn classify_jump_table(
     rom: Option<&dyn ReadOnlyMemory>,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    opt::classify_jump_table(graph, anchor_output, rom, link_register_vn).map(|r| {
-        match r {
-            opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
-            opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),
-            opt::BranchResolution::Multiple(ts) => ResolvedTargets::Multiple(ts),
-        }
-    })
+    opt::classify_jump_table(graph, anchor_output, rom, link_register_vn)
 }

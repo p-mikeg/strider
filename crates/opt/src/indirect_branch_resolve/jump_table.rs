@@ -5,7 +5,7 @@
 //! and its commutative variants — proves an upper bound `N` on the
 //! index `idx`, reads the `N` table entries from a caller-supplied
 //! [`ReadOnlyMemory`], and returns
-//! [`BranchResolution::Multiple([table[0], …, table[N-1]])`].
+//! [`ResolvedTargets::Multiple([table[0], …, table[N-1]])`].
 //!
 //! ## Soundness
 //!
@@ -43,7 +43,7 @@
 
 use std::collections::HashSet;
 
-use super::BranchResolution;
+use super::ResolvedTargets;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntBinaryOp, IntCmpOp};
 use crate::ReadOnlyMemory;
@@ -77,7 +77,7 @@ pub fn classify_jump_table(
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
-) -> Option<BranchResolution> {
+) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     // Step 1: structural shape match.  `match_jump_table_shape`
     // returns the `idx` value and the `(base, stride, space)` triple
@@ -117,7 +117,7 @@ pub fn classify_jump_table(
     let mut targets = targets;
     targets.sort_unstable();
     targets.dedup();
-    Some(BranchResolution::Multiple(targets))
+    Some(ResolvedTargets::Multiple(targets))
 }
 
 // ── Shape match ──────────────────────────────────────────────────────────────

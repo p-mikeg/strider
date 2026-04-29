@@ -11,7 +11,7 @@
 //!
 //! - `classify_anchor` / `classify_anchor_with_rom` /
 //!   `classify_anchor_with_rom_and_sp` ([`classify`]) — producer-shape
-//!   classifier returning [`BranchResolution`].
+//!   classifier returning [`ResolvedTargets`].
 //! - `apply_link_register` / `apply_tail_call` ([`inplace`]) — in-place
 //!   IR edits for resolutions that don't require a CFG rebuild.
 //! - `classify_jump_table` ([`jump_table`]) — rodata jump-table arm.
@@ -21,18 +21,15 @@
 //!
 //! - The orchestrator's outer fixed-point loop (CFG rebuild, cache
 //!   invalidation, iteration cap).
-//! - The `cfg::ResolvedTargets` ↔ [`BranchResolution`] conversion shims
-//!   in `strider::indirect_resolve_tier2::*`.
 //!
-//! ## Why a local [`BranchResolution`] rather than reusing
-//! [`cfg::ResolvedTargets`]
+//! ## Where [`ResolvedTargets`] lives
 //!
-//! The `cfg` crate already depends on `opt` (cfg's
-//! `indirect_resolve` mini-graph runs the opt pipeline).  Adding a
-//! reverse dep `opt` → `cfg` would create a cycle.  Instead, opt
-//! owns its own [`BranchResolution`] enum — structurally identical to
-//! `cfg::ResolvedTargets` — and strider's shims convert between the
-//! two at the layer where both crates are visible.
+//! Defined here in `opt` and re-exported as `cfg::ResolvedTargets`.
+//! `cfg` already depends on `opt` (cfg's `indirect_resolve` mini-graph
+//! runs the opt pipeline), so opt is the upstream crate where the type
+//! must live; the reverse direction would form a dep cycle.  R3
+//! collapsed an earlier two-enum mirror into this single canonical
+//! type.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -57,11 +54,12 @@ pub use inplace::{apply_link_register, apply_tail_call};
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;
 
-/// Opt-local mirror of `cfg::ResolvedTargets`.
+/// The set of statically-known targets of a single `BranchIndirect`.
 ///
-/// Carries the classifier's verdict on a placeholder anchor.  Strider
-/// shims convert this to/from `cfg::ResolvedTargets` at the boundary
-/// where both crates are visible.
+/// The classifier's verdict on a placeholder anchor.  Re-exported from
+/// `cfg` so callers that build `known_targets` maps for
+/// [`cfg::Builder::with_known_targets`] use the same type the
+/// classifier returns.
 ///
 /// ## Variants
 ///
@@ -76,7 +74,7 @@ pub use stack_array::classify_stack_array;
 ///   of constant targets (jump table).  Always requires a CFG rebuild;
 ///   the opt pass leaves these alone for the orchestrator.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BranchResolution {
+pub enum ResolvedTargets {
     /// The indirect branch dispatches to the link register's
     /// caller-provided value (i.e. a function return via LR).
     LinkRegister,
@@ -100,8 +98,8 @@ pub enum BranchResolution {
 /// On each [`Optimizer::optimize`] invocation, the pass walks
 /// [`Self::unresolved_anchors`], classifies each via
 /// [`classify_anchor_with_rom_and_sp`], and applies in-place edits
-/// for [`BranchResolution::LinkRegister`] and tail-call
-/// [`BranchResolution::Single`].  The pass returns
+/// for [`ResolvedTargets::LinkRegister`] and tail-call
+/// [`ResolvedTargets::Single`].  The pass returns
 /// [`OptimizationResult::Changed`] iff any in-place edit fired.
 ///
 /// `is_tail_call` is a caller-supplied predicate so the pass doesn't
@@ -266,7 +264,7 @@ impl Optimizer for IndirectBranchResolve {
             };
             let ctx = self.anchor_contexts.get(addr).unwrap_or(&empty_ctx);
             match resolved {
-                BranchResolution::LinkRegister => {
+                ResolvedTargets::LinkRegister => {
                     inplace::apply_link_register(
                         graph,
                         placeholder,
@@ -274,7 +272,7 @@ impl Optimizer for IndirectBranchResolve {
                     )?;
                     changed = true;
                 }
-                BranchResolution::Single(target) => {
+                ResolvedTargets::Single(target) => {
                     if !(self.is_tail_call)(target) {
                         // Intra-function Single — orchestrator handles
                         // it via CFG rebuild.
@@ -290,7 +288,7 @@ impl Optimizer for IndirectBranchResolve {
                     )?;
                     changed = true;
                 }
-                BranchResolution::Multiple(_) => {
+                ResolvedTargets::Multiple(_) => {
                     // Multiple always requires a CFG rebuild —
                     // orchestrator's territory.  Do nothing here.
                 }

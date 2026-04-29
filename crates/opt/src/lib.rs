@@ -51,7 +51,7 @@ pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use function_args::FunctionArgDetect;
 pub use indirect_branch_resolve::{
-    AnchorAddr, AnchorCallingContext, BranchResolution, IndirectBranchResolve,
+    AnchorAddr, AnchorCallingContext, IndirectBranchResolve, ResolvedTargets,
     apply_link_register, apply_tail_call, classify_anchor, classify_anchor_with_rom,
     classify_anchor_with_rom_and_sp, classify_jump_table, classify_stack_array,
     find_placeholder_return_for_anchor,

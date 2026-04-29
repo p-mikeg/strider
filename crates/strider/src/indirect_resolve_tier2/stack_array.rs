@@ -1,6 +1,8 @@
-//! BUG-30 stack-array arm — F5 shim.  The canonical implementation
-//! lives in [`opt::indirect_branch_resolve::stack_array`].  This
-//! module preserves the original strider-level API for back-compat.
+//! BUG-30 stack-array arm — F5 shim.  Delegates to
+//! [`opt::classify_stack_array`].  Retained as a strider-side entry
+//! point so the orchestrator and integration tests can call into the
+//! classifier under a stable strider path; the underlying logic lives
+//! in [`opt::indirect_branch_resolve::stack_array`].
 
 use cfg::test_api::ResolvedTargets;
 use ir::BuiltFunctionGraph;
@@ -14,9 +16,5 @@ pub fn classify_stack_array(
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<ResolvedTargets> {
-    opt::classify_stack_array(graph, anchor_output, stack_ptr_vn).map(|r| match r {
-        opt::BranchResolution::LinkRegister => ResolvedTargets::LinkRegister,
-        opt::BranchResolution::Single(k) => ResolvedTargets::Single(k),
-        opt::BranchResolution::Multiple(ts) => ResolvedTargets::Multiple(ts),
-    })
+    opt::classify_stack_array(graph, anchor_output, stack_ptr_vn)
 }
