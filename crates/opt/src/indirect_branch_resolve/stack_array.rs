@@ -52,6 +52,8 @@ use crate::stack_load_forward::find_stack_stored_value_at_offset;
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
+use pattern::{IntVar, Matcher, Var, and as and_pat, any_int_const, or as or_pat, var};
+
 /// Per-call enumeration cap.  Mirrors the rodata jump-table arm's
 /// `MAX_TABLE_ENTRIES` for the same reason: a buggy KnownBits result
 /// could otherwise force iteration through 4 GiB of slots.  Real
@@ -93,7 +95,7 @@ pub fn classify_stack_array(
     // through the wrapper, run the rest of the classification on the
     // underlying Load, and `& mask` each enumerated target before
     // returning.  Non-And anchors take the path with `mask = !0`.
-    let (load_anchor, target_mask) = strip_target_mask(graph, anchor_output);
+    let (load_anchor, target_mask) = strip_target_mask(fg, anchor_output);
 
     let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
     let bound = bound_via_known_bits(graph, shape.idx_output)
@@ -142,10 +144,28 @@ pub fn classify_stack_array(
 /// addresses may not be valid — but that's a soundness-preserving
 /// over-approximation: extra targets produce dead CFG edges, no
 /// runtime target is omitted.
+//
+// CORRECTNESS — the patterns below are sound-equivalent to the prior
+// hand-rolled commutative-operand checks.  `pattern::and` /
+// `pattern::or` auto-try both orderings, so a single match per layer
+// covers the prior `int_const_val(rhs)` / `int_const_val(lhs)`
+// fallback chain.  The `IntVar` capture binds the const value, and
+// the `Var` capture binds the surviving non-const operand — the same
+// disambiguation the prior code performed by trying `int_const_val`
+// on each operand in turn.
+//
+// The walk is transitive (cap of 4 layers) so we cannot express it
+// as a single tree pattern; instead we run one pattern match per
+// iteration, mirroring the prior loop's per-layer scope.  The
+// truncating `as u64` is preserved verbatim — the prior
+// `int_const_val` returned `u64`, and `IntVar` stores `u128`.  Real
+// dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
+    let graph = &fg.graph;
+    let matcher = Matcher::new(fg);
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     // Strip up to a fixed number of layers; ARM-Thumb commonly nests
@@ -154,53 +174,44 @@ fn strip_target_mask(
     // from buggy lifter output.
     for _ in 0..4 {
         let producer = graph.get_node_from_output(current);
-        match graph.node_kind(producer) {
-            // And-with-constant: mask narrows.
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(producer) {
-                    if let Some(m) = graph.int_const_val(rhs) {
-                        mask &= m;
-                        current = lhs;
-                        continue;
-                    }
-                    if let Some(m) = graph.int_const_val(lhs) {
-                        mask &= m;
-                        current = rhs;
-                        continue;
-                    }
-                }
-                break;
-            }
-            // Or-with-constant: when the OR's constant is fully covered
-            // by the bits we'll later mask off (i.e. `or_const & mask
-            // == 0`), the OR is a no-op for the dispatch target — strip
-            // it transparently.  Common in ARM-Thumb: `Or(load, 1)`
-            // followed by `And(_, 0xFFFFFFFE)` — the OR sets bit 0, the
-            // AND clears it.  When the OR's constant overlaps with
-            // surviving mask bits, leave the wrapper in place (the
-            // shape match below will fail and we defer to the
-            // orchestrator).
-            NodeKind::IntBinaryOp(IntBinaryOp::Or) => {
-                if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(producer) {
-                    let or_const = graph
-                        .int_const_val(rhs)
-                        .map(|c| (c, lhs))
-                        .or_else(|| graph.int_const_val(lhs).map(|c| (c, rhs)));
-                    if let Some((or_c, other)) = or_const {
-                        // Strip iff every set bit of `or_c` is already
-                        // cleared by `mask`.  This is precisely the
-                        // case where the OR has no observable effect on
-                        // the masked result.
-                        if or_c & mask == 0 {
-                            current = other;
-                            continue;
-                        }
-                    }
-                }
-                break;
-            }
-            _ => break,
+
+        // And-with-constant: mask narrows.
+        let c_var = IntVar::new();
+        let other_var = Var::new();
+        let and_p = and_pat(any_int_const(c_var), var(other_var));
+        if let Some(m) = matcher.match_at(producer, &and_p.into())
+            && let (Some(c128), Some(other)) = (m.get_int(c_var), m.get(other_var))
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let c = c128 as u64;
+            mask &= c;
+            current = other;
+            continue;
         }
+
+        // Or-with-constant: when the OR's constant is fully covered by
+        // the bits we'll later mask off (`or_const & mask == 0`), the
+        // OR is a no-op for the dispatch target — strip it
+        // transparently.  Common in ARM-Thumb: `Or(load, 1)` followed
+        // by `And(_, 0xFFFFFFFE)` — the OR sets bit 0, the AND clears
+        // it.  When the OR's constant overlaps surviving mask bits,
+        // leave the wrapper in place (the shape match below will fail
+        // and we defer to the orchestrator).
+        let c_var = IntVar::new();
+        let other_var = Var::new();
+        let or_p = or_pat(any_int_const(c_var), var(other_var));
+        if let Some(m) = matcher.match_at(producer, &or_p.into())
+            && let (Some(or_c128), Some(other)) = (m.get_int(c_var), m.get(other_var))
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            let or_c = or_c128 as u64;
+            if or_c & mask == 0 {
+                current = other;
+                continue;
+            }
+        }
+
+        break;
     }
     (current, mask)
 }
@@ -613,5 +624,162 @@ mod tests {
             .unwrap();
         let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
         assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
+    }
+
+    // ── strip_target_mask characterization tests (R2-1) ──────────────────
+    //
+    // These tests pin the contract of `strip_target_mask` before R2's
+    // refactor migrates the manual NodeKind matching to `pattern::and` /
+    // `pattern::or`.  The pre-refactor implementation hand-rolled
+    // commutative operand checks; pattern's auto-commutative `and` /
+    // `or` express the same shape with auto-handled operand swapping.
+    // We therefore pin both operand orderings explicitly so the
+    // refactor cannot accidentally narrow what we accept.
+    //
+    // The target shapes covered:
+    //   * Bare anchor — no wrapper, returns `(anchor, !0)`.
+    //   * `And(load, K)` and `And(K, load)` — both orderings, mask narrows.
+    //   * `And(Or(load, 1), 0xFFFE)` — ARM-Thumb interworking idiom; the
+    //     OR is stripped because its set bit (`1`) is fully cleared by
+    //     the surviving `mask` (`0xFFFE`).
+    //   * `Or(load, 0xFF)` not stripped when it wouldn't be masked off
+    //     downstream — preserves the wrapper so the outer shape match
+    //     fails closed.
+    //   * Multi-And nesting — nested AND-masks compose by intersection.
+
+    /// Build a minimal graph whose return-value anchor is a non-const
+    /// value — specifically the output of a `Load` from `InitialVar(reg)`.
+    /// Returns `(graph, anchor_output)`.  The anchor must NOT itself be
+    /// an `IntConst`, because `strip_target_mask`'s commutative-And
+    /// handling captures the const operand on either side; an IntConst
+    /// inner would incorrectly pin the captured "non-const" side.
+    fn build_load_anchor() -> (ir::BuiltFunctionGraph, NodeOutputId) {
+        let reg = rsleigh::Vn {
+            addr: rsleigh::VnAddr {
+                space: rsleigh::VnSpace::REGISTER,
+                off: 0x10,
+            },
+            size: 8,
+        };
+        let mut b =
+            FunctionBuilder::new_raw(vec![reg], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let addr = b.read_variable(&reg).unwrap();
+        let v = b
+            .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(v), &[]).unwrap();
+        let fg = b.build().unwrap();
+        (fg, v)
+    }
+
+    /// Wraps `inner` in `IntBinaryOp(op)` with the given side-ordering of
+    /// the constant `c`.  `swap=false` produces `op(inner, IntConst(c))`;
+    /// `swap=true` produces `op(IntConst(c), inner)`.  `ty` is the output
+    /// type of both operands and the result.
+    fn build_binop_wrapped(
+        graph: &mut ir::Graph,
+        inner: NodeOutputId,
+        op: IntBinaryOp,
+        c: u64,
+        ty: NodeOutputType,
+        swap: bool,
+    ) -> NodeOutputId {
+        let const_node = graph.create_node(
+            NodeKind::IntConst(u128::from(c)),
+            [],
+            [ir::node::NodeOutputKind::OutputType(ty)],
+        );
+        let const_out = graph.node_outputs_exact::<1>(const_node).unwrap()[0];
+        let (lhs, rhs) = if swap { (const_out, inner) } else { (inner, const_out) };
+        let n = graph.create_node(
+            NodeKind::IntBinaryOp(op),
+            [lhs, rhs],
+            [ir::node::NodeOutputKind::OutputType(ty)],
+        );
+        graph.node_outputs_exact::<1>(n).unwrap()[0]
+    }
+
+    #[test]
+    fn strip_target_mask_no_wrapper_returns_all_ones() {
+        let (fg, anchor) = build_load_anchor();
+        let (out, mask) = strip_target_mask(&fg, anchor);
+        assert_eq!(out, anchor, "no wrapper: anchor passes through");
+        assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
+    }
+
+    #[test]
+    fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
+        let (mut fg, inner) = build_load_anchor();
+        let wrapped = build_binop_wrapped(
+            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+        );
+        let (out, mask) = strip_target_mask(&fg, wrapped);
+        assert_eq!(out, inner, "And(load, K) strips to load");
+        assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
+    }
+
+    #[test]
+    fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
+        let (mut fg, inner) = build_load_anchor();
+        let wrapped = build_binop_wrapped(
+            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
+        );
+        let (out, mask) = strip_target_mask(&fg, wrapped);
+        assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
+        assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
+    }
+
+    #[test]
+    fn strip_target_mask_arm_thumb_or_then_and_strips_both_layers() {
+        // Canonical ARM-Thumb interworking shape:
+        //   And(Or(inner, 1), 0xFFFE)
+        // After strip, both wrappers must be gone (the OR's set bit `1`
+        // is fully cleared by the surviving mask `0xFFFE`).
+        let (mut fg, inner) = build_load_anchor();
+        let or_layer = build_binop_wrapped(
+            &mut fg.graph, inner, IntBinaryOp::Or, 1, NodeOutputType::U64, false,
+        );
+        let and_layer = build_binop_wrapped(
+            &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+        );
+        let (out, mask) = strip_target_mask(&fg, and_layer);
+        assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
+        assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
+    }
+
+    #[test]
+    fn strip_target_mask_or_overlapping_mask_stops_at_or() {
+        // The Or's constant overlaps with surviving mask bits, so the
+        // strip must NOT pass through it.  The Or stays in place;
+        // the surrounding And contributes its mask.
+        let (mut fg, inner) = build_load_anchor();
+        let or_layer = build_binop_wrapped(
+            &mut fg.graph, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::U64, false,
+        );
+        let and_layer = build_binop_wrapped(
+            &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
+        );
+        let (out, mask) = strip_target_mask(&fg, and_layer);
+        assert_eq!(out, or_layer, "overlapping Or is preserved");
+        assert_eq!(mask, 0xFFFE, "And's mask still applies");
+    }
+
+    #[test]
+    fn strip_target_mask_nested_ands_compose_via_intersection() {
+        // And(And(inner, 0xFFFF), 0xFF) — the second And narrows further.
+        // Both layers strip; surviving mask is the intersection.
+        let (mut fg, inner) = build_load_anchor();
+        let inner_and = build_binop_wrapped(
+            &mut fg.graph, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::U64, false,
+        );
+        let outer_and = build_binop_wrapped(
+            &mut fg.graph, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
+        );
+        let (out, mask) = strip_target_mask(&fg, outer_and);
+        assert_eq!(out, inner, "nested Ands strip down to innermost");
+        assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }
 }
