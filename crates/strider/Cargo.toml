@@ -5,8 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rsleigh.workspace = true
-strider-error.workspace = true
-thiserror.workspace = true
+anyhow.workspace = true
 target.workspace = true
 ir.workspace = true
 dot.workspace = true

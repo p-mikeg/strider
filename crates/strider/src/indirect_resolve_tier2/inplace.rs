@@ -14,34 +14,32 @@
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId};
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 
 /// Bridge: opt's classifier emits its own [`opt::Error`] that wraps
 /// either an `ir::ErrorKind` (round-trippable) or an
-/// `ExpectedNodeNotFound` (which strider models as `WrongNodeKind`).
-/// Translate so callers see the strider error variants they expect.
-fn opt_to_strider_err(e: opt::Error) -> crate::error::Error {
+/// `ExpectedNodeNotFound` (which strider models as a wrong-kind
+/// diagnostic).  Translate so callers see the message wording they
+/// expect.
+fn opt_to_strider_err(e: opt::Error) -> anyhow::Error {
     match e.into_kind() {
-        // Round-trip through the existing IR-error bridge so the
-        // backtrace + location chain are preserved.
+        // Round-trip through the existing IR-error bridge.
         opt::ErrorKind::IrError(ir_kind) => ir::Error::from(ir_kind).into(),
         // The two cases we surface in the in-place editors:
         // wrong-kind / wrong-arity Returns.
         opt::ErrorKind::ExpectedNodeNotFound(expected, _kind) => {
-            ErrorKind::WrongNodeKind {
-                node: NodeId::from_u32(0), // arity diagnostics don't need the id
-                expected,
-            }
-            .into()
+            anyhow::anyhow!(
+                "node {:?} does not have expected kind {expected}",
+                NodeId::from_u32(0)
+            )
         }
         // No other opt::ErrorKind variants escape the in-place editors
         // today.  Reroute defensively as Unimplemented so a future
-        // opt-side change surfaces as a typed strider error rather
-        // than silently dropping context.
-        other => ErrorKind::Unimplemented(format!(
-            "unexpected opt error from indirect_branch_resolve in-place editor: {other:?}"
-        ))
-        .into(),
+        // opt-side change surfaces with context rather than silently
+        // dropping it.
+        other => anyhow::anyhow!(
+            "not yet implemented: unexpected opt error from indirect_branch_resolve in-place editor: {other:?}"
+        ),
     }
 }
 

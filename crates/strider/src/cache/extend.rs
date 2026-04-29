@@ -114,7 +114,7 @@ pub fn extend_predecessors_with_handle(
         .add_node_input(cache_entry.entry_control_state, pred.exit_control)
         .map_err(|e| {
             // First append — nothing to roll back.
-            crate::error::Error::from(e)
+            anyhow::Error::from(e)
         })?;
     appended.push(cache_entry.entry_control_state);
 
@@ -151,7 +151,7 @@ pub fn extend_predecessors_with_handle(
                 32 => ir::node::NodeOutputType::U256,
                 other => {
                     rollback_appends(&mut graph.graph, &appended);
-                    return Err(crate::error::ErrorKind::UnsupportedRegSize(other).into());
+                    return Err(anyhow::anyhow!("unsupported register size {other} bytes"));
                 }
             };
             let iv = graph.graph.create_node(

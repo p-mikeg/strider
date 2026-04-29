@@ -88,7 +88,7 @@ pub fn cache_key_for_region<R: rsleigh::MemReader>(
     let region = cfg
         .graph
         .node_weight(region_id)
-        .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
+        .ok_or_else(|| anyhow::anyhow!("no region {region_id:?} in cfg"))?;
     Ok(region.start_addr.machine_addr)
 }
 

@@ -1,7 +1,8 @@
+use anyhow::{anyhow, bail};
 use ir::node::NodeOutputType;
 use rsleigh::Opcode;
 
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 
 use super::IrStrider;
 
@@ -73,7 +74,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // MultiEqual is a decompiler-internal phi; raw p-code should not
             // contain it.  Report instead of guessing semantics.
             Opcode::MultiEqual => {
-                return Err(ErrorKind::UnexpectedDecompilerOpcode(insn.opcode).into());
+                bail!("opcode {:?} is decompiler-internal and should not appear in raw p-code", insn.opcode);
             }
 
             // CallOther: user-defined CPU intrinsic (cpuid, rdtsc, syscall, …).
@@ -84,7 +85,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // user-op names against the sleigh context strider owns.
             Opcode::CallOther => self.handle_call_other(insn)?,
 
-            _ => return Err(ErrorKind::UnimplementedOpcode(insn.opcode).into()),
+            _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),
         }
         Ok(())
     }
@@ -99,11 +100,11 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         if insn.inputs.is_empty() {
-            return Err(ErrorKind::TooFewInputs(insn.opcode, 1, 0).into());
+            bail!("opcode {:?} has too few inputs: expected at least 1, got 0", insn.opcode);
         }
         let id_vn = &insn.inputs[0];
         if id_vn.addr.space != rsleigh::VnSpace::CONST {
-            return Err(ErrorKind::ExpectedConstInput(insn.opcode, 0).into());
+            bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
         let user_op_id = id_vn.addr.off;
         let args: Vec<ir::Value> = insn.inputs[1..]
@@ -148,9 +149,9 @@ fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *insn
         .inputs
         .first()
-        .ok_or(ErrorKind::TooFewInputs(insn.opcode, 1, 0))?;
+        .ok_or_else(|| anyhow!("opcode {:?} has too few inputs: expected at least 1, got 0", insn.opcode))?;
     if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
-        return Err(ErrorKind::ExpectedConstInput(insn.opcode, 0).into());
+        bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
     }
     // SAFETY: `space_id_vn` is the `inputs[0]` of a LOAD/STORE p-code insn and
     // was just verified to live in CONST space, which is the precondition of

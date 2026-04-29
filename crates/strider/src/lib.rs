@@ -47,5 +47,5 @@ pub use cache::{
 };
 pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
 pub use rewrite::GraphRewriter;
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};

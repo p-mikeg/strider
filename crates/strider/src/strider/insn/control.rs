@@ -1,4 +1,6 @@
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 
 use super::super::IrStrider;
 
@@ -61,7 +63,7 @@ pub(crate) fn build_switch_if_ladder(
 ) -> Result<()> {
     let n = targets_and_regions.len();
     if n == 0 {
-        return Err(ErrorKind::SwitchHasNoTargets(caller_region).into());
+        bail!("switch terminator at region {caller_region:?} has no targets");
     }
     if n == 1 {
         // Single target — degenerate ladder is just an unconditional
@@ -177,7 +179,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         region_lookup: &dyn Fn(cfg::RegionId) -> Result<ir::RegionId>,
     ) -> Result<()> {
         if targets.is_empty() {
-            return Err(ErrorKind::SwitchHasNoTargets(region_id).into());
+            bail!("switch terminator at region {region_id:?} has no targets");
         }
         // Resolve every target machine address to its IR region.
         // The cfg builder enqueues each target with a `Branch` edge
@@ -191,7 +193,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)
-                .ok_or(ErrorKind::SwitchTargetMissing(target))?;
+                .ok_or_else(|| anyhow!("switch target machine address {target:#x} has no CFG region"))?;
             let ir_region = region_lookup(cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
