@@ -4,10 +4,10 @@ use ir::node::NodeKind;
 use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::macros::{decl_pat_binary_ops, decl_pat_cmp_ops, decl_pat_unary_ops};
-use crate::matcher::commutativity::is_commutative_float_cmp_op;
+use crate::pat::builders::{BinaryOpPat, cmp_pat, unary_pat};
 use crate::pat::FloatBinaryOpPat;
 use crate::pat::Pat;
-use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
+use crate::pat::node_pat::BuildTy;
 
 /// Matches a float binary operation with the given `op`.
 ///
@@ -18,7 +18,7 @@ pub fn float_binary(
     lhs: impl Into<Pat>,
     rhs: impl Into<Pat>,
 ) -> FloatBinaryOpPat {
-    FloatBinaryOpPat::new(op, lhs.into(), rhs.into())
+    BinaryOpPat::new(op, lhs.into(), rhs.into())
 }
 
 decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
@@ -34,12 +34,7 @@ decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
 
 /// Matches a float unary operation with the given `op`.
 pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
-    NodePat::matcher(
-        KindSpec::Exact(NodeKind::FloatUnaryOp(op)),
-        InputsSpec::fixed_ordered(vec![operand.into()]),
-    )
-    .with_build_exact(NodeKind::FloatUnaryOp(op), BuildTy::InheritRoot)
-    .into_pat()
+    unary_pat(op, operand.into())
 }
 
 decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
@@ -62,14 +57,7 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 /// For commutative ops (`Equal`, `NotEqual`), both operand orderings are
 /// tried automatically.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
-    let inputs = if is_commutative_float_cmp_op(op) {
-        InputsSpec::fixed_commutative(lhs.into(), rhs.into())
-    } else {
-        InputsSpec::fixed_ordered(vec![lhs.into(), rhs.into()])
-    };
-    NodePat::matcher(KindSpec::Exact(NodeKind::FloatCmpOp(op)), inputs)
-        .with_build_exact(NodeKind::FloatCmpOp(op), BuildTy::Fixed(ir::node::NodeOutputType::Bool))
-        .into_pat()
+    cmp_pat(op, lhs.into(), rhs.into())
 }
 
 decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [

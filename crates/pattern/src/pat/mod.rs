@@ -16,6 +16,9 @@ pub use builders::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat, IfPat,
     IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat, StackStorePhiPat, StorePat,
 };
+// `BinaryOpPat<Op>` underlies the three aliases above; not re-exported
+// directly because the crate-private `BinaryOpKind` bound has no
+// outside-the-crate impls.
 pub use ctor::*;
 
 /// Predicate function type used by the [`guards::GuardPat`] combinator

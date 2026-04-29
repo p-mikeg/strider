@@ -19,15 +19,19 @@
 mod binary_op;
 mod branch;
 mod call;
+mod cmp_op;
 mod function_arg;
 mod memory;
 mod phi;
 mod ret;
+mod unary_op;
 
-pub use binary_op::{BoolBinaryOpPat, FloatBinaryOpPat, IntBinaryOpPat};
+pub use binary_op::{BinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat, IntBinaryOpPat};
 pub use branch::IfPat;
 pub use call::{CallOtherPat, CallPat};
+pub(crate) use cmp_op::cmp_pat;
 pub use function_arg::FunctionArgPat;
 pub use memory::{LoadPat, StackStorePat, StackStorePhiPat, StorePat};
 pub use phi::PhiPat;
 pub use ret::RetPat;
+pub(crate) use unary_op::unary_pat;
