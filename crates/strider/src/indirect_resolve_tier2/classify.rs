@@ -453,14 +453,4 @@ mod tests {
         );
         assert_eq!(classify_anchor(&graph, anchor, None), None);
     }
-    // Note: NodeOutputKind is unused at the unit-test level because
-    // every node we synthesise here goes through the high-level
-    // `FunctionBuilder` API which takes a `NodeOutputType` directly.
-    // The `use` above keeps the import path documented for future
-    // unit tests that hand-construct `Graph::create_node` calls
-    // (e.g. R4's jump-table arm).
-    #[allow(dead_code)]
-    fn _unused_to_keep_imports() {
-        let _ = NodeOutputKind::Memory;
-    }
 }

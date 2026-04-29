@@ -117,9 +117,5 @@ pub fn run_to_fixed_point<P: opt::Optimizer>(
     )))
 }
 
-/// Conventional unused suppressions for tests that don't use every helper.
-#[allow(dead_code)]
-fn _unused() {}
-
 // Re-export commonly used IR types so test files don't need long use-paths.
 pub use ir::node::NodeOutputType as Type;

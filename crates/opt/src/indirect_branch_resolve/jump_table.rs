@@ -79,9 +79,10 @@ pub fn classify_jump_table(
     _link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
     // Step 1: structural shape match.  `match_jump_table_shape`
-    // returns the `idx` value and the `(base, stride, space)` triple
-    // — everything we need to enumerate entries.  Falls through to
-    // None for every shape that isn't an honest jump-table dispatch.
+    // returns the `idx` value and the `(base, stride, entry_size)`
+    // triple — everything we need to enumerate entries.  Falls
+    // through to None for every shape that isn't an honest
+    // jump-table dispatch.
     let shape = match_jump_table_shape(fg, anchor_output)?;
 
     // Step 2: bound the index.  Two strategies, tried in order:
@@ -139,12 +140,6 @@ struct JumpTableShape {
     /// padding between entries (`stride > entry_size`); we read
     /// `entry_size` bytes at each `base + i * stride`.
     entry_size: usize,
-    /// The Load's address space (almost always `VnSpace::RAM` /
-    /// `default`; preserved verbatim should a future round need to
-    /// pass it through to the rom read instead of the current hard-
-    /// coded `VnSpace::RAM`).
-    #[allow(dead_code)]
-    space: VnSpace,
 }
 
 /// Recognises the canonical jump-table address shape on the producer
@@ -174,7 +169,7 @@ fn match_jump_table_shape(
     // matched node up-front; the pattern-DSL match below then handles
     // the structural shape only.
     let load_node = graph.get_node_from_output(anchor_output);
-    let NodeKind::Load(space) = *graph.node_kind(load_node) else {
+    let NodeKind::Load(_space) = *graph.node_kind(load_node) else {
         return None;
     };
     // Load output's type tells us the per-entry byte size.  Reject
@@ -223,7 +218,6 @@ fn match_jump_table_shape(
         stride,
         idx_output,
         entry_size,
-        space,
     })
 }
 
