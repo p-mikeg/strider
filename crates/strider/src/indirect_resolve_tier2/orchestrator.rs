@@ -300,7 +300,7 @@ where
             // rebuild.  See spec's "In-place IR edits vs CFG rebuild"
             // section table.
             let placeholder_return =
-                find_placeholder_return_for_anchor(&graph, *anchor_output);
+                opt::find_placeholder_return_for_anchor(&graph.graph, *anchor_output);
             let can_inplace = match (&resolved, placeholder_return) {
                 // LinkRegister: always in-place — placeholder Return
                 // already has the right shape.
@@ -350,7 +350,7 @@ where
             unresolved
                 .iter()
                 .filter(|(_, anchor)| {
-                    find_placeholder_return_for_anchor(&graph, *anchor).is_some()
+                    opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
                 })
                 .cloned()
                 .collect()
@@ -450,28 +450,6 @@ where
         }
     }
     false
-}
-
-/// Locate the unique placeholder Return whose value-input slot points
-/// at `anchor_output`.  The placeholder shape is `Return(control,
-/// memory, target_value)` — input #2 is the anchor.
-///
-/// Returns `None` if no placeholder Return references `anchor_output`
-/// (e.g. an earlier in-place edit already replaced it, or the anchor
-/// has been `replace_all_uses`-rewritten by an opt pass).  Callers
-/// treat `None` as "skip this anchor this iteration."
-fn find_placeholder_return_for_anchor(
-    graph: &ir::BuiltFunctionGraph,
-    anchor_output: ir::Value,
-) -> Option<NodeId> {
-    // Delegate to the opt-side single source of truth — same use-list
-    // walk + 3-input-Return shape filter, takes `&Graph` instead of
-    // `&BuiltFunctionGraph`.  Code-review M1: deletes a duplicated
-    // private copy that drifted from the public opt-side version.
-    opt::indirect_branch_resolve::find_placeholder_return_for_anchor(
-        &graph.graph,
-        anchor_output,
-    )
 }
 
 /// Dispatch on the resolution variant: LinkRegister → append ABI
