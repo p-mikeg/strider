@@ -499,7 +499,7 @@ fn try_once(
             let Some(consumer) = walk::next_control_node(ctx.matcher, out) else {
                 return false;
             };
-            if !ctx.matcher.match_node_id(consumer, p, b) {
+            if !match_consumer_node(ctx, consumer, p, b) {
                 return false;
             }
         }
@@ -522,4 +522,44 @@ fn try_once(
 /// ControlState walk-through.
 fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pat::Pat, b: &mut Bindings) -> bool {
     ctx.matcher.match_output_with_walk_through(out, pat, b)
+}
+
+/// Match `pat` against a forward-step consumer node (used by
+/// `ConsumersSpec::Indexed` for `IfPat::true_branch` /
+/// `false_branch`).  Honors
+/// [`crate::matcher::MatcherOptions::ignore_control_states`]: if the
+/// direct match fails and the consumer is a `ControlState`, retry
+/// against the single consumer of the ControlState's control output.
+fn match_consumer_node(ctx: &MatchCtx, node: NodeId, pat: &crate::pat::Pat, b: &mut Bindings) -> bool {
+    let mark = b.mark();
+    if ctx.matcher.match_node_id(node, pat, b) {
+        return true;
+    }
+    b.restore(mark);
+    if !ctx.matcher.options.ignore_control_states {
+        return false;
+    }
+    // ControlState's outputs are [Control, ControlPhi]; the Control
+    // output is the one consumed by the next region's body.
+    if !matches!(ctx.graph.graph.node_kind(node), NodeKind::ControlState) {
+        return false;
+    }
+    let outputs = ctx.graph.graph.node_outputs(node);
+    let Some(ctrl_out) = outputs.into_iter().find(|out| {
+        matches!(
+            ctx.graph.graph.output_kind(*out),
+            ir::node::NodeOutputKind::Control
+        )
+    }) else {
+        return false;
+    };
+    let Some(next) = walk::next_control_node(ctx.matcher, ctrl_out) else {
+        return false;
+    };
+    if match_consumer_node(ctx, next, pat, b) {
+        true
+    } else {
+        b.restore(mark);
+        false
+    }
 }

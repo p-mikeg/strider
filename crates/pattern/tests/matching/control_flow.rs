@@ -213,6 +213,27 @@ fn call_only_matches_present_branch_via_find_all() {
     a::none(&g, call().at(0xDEAD));
 }
 
+/// Regression for F-003: `if_node().false_branch(p)` traverses the
+/// `ControlState` join when the matcher's `ignore_control_states`
+/// flag is set.  Without the walk-through, the strict matcher fails
+/// because the If's false-branch output feeds the ControlState
+/// header of the false region, not the Call directly.
+#[test]
+fn if_node_branch_walks_through_control_state_when_flag_set() {
+    let g = graph_if_with_call_in_false_branch();
+    let pat: pattern::Pat = if_node().false_branch(call().at(0x9999)).into();
+    // Strict semantics: the False-branch consumer is a ControlState,
+    // not the Call — direct match should fail.
+    let strict = pattern::Matcher::new(&g);
+    assert!(strict.find_all(&pat).is_empty(),
+            "without ignore_control_states the strict if_node().false_branch(call) match must fail");
+    // With ignore_control_states, the matcher walks through the
+    // ControlState region-join and finds the Call.
+    let lenient = pattern::Matcher::new(&g).ignore_control_states();
+    assert_eq!(lenient.find_all(&pat).len(), 1,
+               "ignore_control_states must let if_node().false_branch(call) reach the Call");
+}
+
 // ── CallOther ────────────────────────────────────────────────────────────────
 
 /// `return(call_other(user_op_id, [IntConst(7)]))` — reused across CallOther
