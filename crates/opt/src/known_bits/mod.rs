@@ -114,6 +114,14 @@ fn node_known_bits(
                     // Lower bits of a left-shifted value are known zero;
                     // surviving lhs bits move up by `shift` positions and
                     // carry their `ones`/`zeros` with them.
+                    //
+                    // Sleigh's `OpBehaviorIntLeft::evaluateBinary` returns 0
+                    // when the shift amount is `>= bit_width` (sleigh/src/
+                    // opbehavior.cc:411).  Mirror that here — pre-fix the
+                    // arm masked the shift with `(bit_width - 1)` and
+                    // wrapped large literal shifts back into range,
+                    // producing the wrong known-bits result for any
+                    // literal shift at-or-past the type width.
                     let rhs_mask = fg
                         .graph
                         .output_kind(rhs)
@@ -122,7 +130,17 @@ fn node_known_bits(
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
-                        let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
+                        let bit_width = ty.bit_width() as u64;
+                        if rhs_kb.ones >= bit_width {
+                            return Ok(Some((
+                                out,
+                                Kb {
+                                    ones: 0,
+                                    zeros: type_mask,
+                                },
+                            )));
+                        }
+                        let shift = rhs_kb.ones as u32;
                         let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
                         let shifted_ones = (l.ones << shift) & type_mask;
                         let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
@@ -140,6 +158,11 @@ fn node_known_bits(
                     // Logical right-shift: upper bits become 0; lhs bits
                     // shift down by `shift` positions and bring their
                     // known-bit information with them.
+                    //
+                    // Sleigh `OpBehaviorIntRight::evaluateBinary`: shift
+                    // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
+                    // Mirror that here — see the ShiftLeft arm for the
+                    // pre-fix bug rationale.
                     let rhs_mask = fg
                         .graph
                         .output_kind(rhs)
@@ -148,7 +171,17 @@ fn node_known_bits(
                         .unwrap_or(u64::MAX);
                     let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
                     if rhs_kb.all_known(rhs_mask) {
-                        let shift = (rhs_kb.ones & (ty.bit_width() as u64 - 1)) as u32;
+                        let bit_width = ty.bit_width() as u64;
+                        if rhs_kb.ones >= bit_width {
+                            return Ok(Some((
+                                out,
+                                Kb {
+                                    ones: 0,
+                                    zeros: type_mask,
+                                },
+                            )));
+                        }
+                        let shift = rhs_kb.ones as u32;
                         let upper_mask = !(type_mask >> shift) & type_mask;
                         let shifted_ones = (l.ones & type_mask) >> shift;
                         let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;

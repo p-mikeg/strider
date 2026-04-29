@@ -341,6 +341,68 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     Ok(())
 }
 
+// ── Sleigh INT_LEFT/INT_RIGHT out-of-range shift semantics in KnownBits ──
+//
+// KnownBits's `IntBinaryOp::ShiftLeft` / `ShiftRight` arms compute a
+// shift via `rhs_kb.ones & (ty.bit_width() - 1)` — i.e. mask the shift
+// amount to the low log2(bit_width) bits.  Sleigh's
+// `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
+// returns 0 when the shift is `>= bit_width`; the masked-shift form
+// instead loops back to the low bits and produces a wrong known-bits
+// result.  E.g. `IntConst(0xFF, U8) << 8` should be 0 (Sleigh) but
+// the pre-fix arm computed `0xFF << (8 & 7) = 0xFF << 0 = 0xFF`.
+//
+// The visible bug: `(value << bit_width) & 1` should fold to 0 (because
+// any value shifted by bit_width is 0), but the masked-shift form
+// folds it as `(value << 0) & 1` and leaves it unresolved.
+
+/// `IntConst(1, U8) << IntConst(8, U8)` is 0 per Sleigh — KnownBits
+/// must fold the chain to a constant 0, not 1.
+#[test]
+fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let one = b.build_int_const(1u64, NodeOutputType::U8);
+        let eight = b.build_int_const(8u64, NodeOutputType::U8);
+        Ok(b.build_int_binary_operation(one, eight, IntBinaryOp::ShiftLeft, NodeOutputType::U8)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(
+        fg.int_const_val(val),
+        Some(0),
+        "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
+         KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
+         unresolved or folded to 1."
+    );
+    Ok(())
+}
+
+/// `IntConst(0xFF, U32) >> IntConst(32, U32)` is 0 per Sleigh — KnownBits
+/// must report all bits known zero.
+#[test]
+fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let v = b.build_int_const(0xFFu64, NodeOutputType::U32);
+        let thirty_two = b.build_int_const(32u64, NodeOutputType::U32);
+        Ok(b.build_int_binary_operation(v, thirty_two, IntBinaryOp::ShiftRight, NodeOutputType::U32)?)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(
+        fg.int_const_val(val),
+        Some(0),
+        "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
+         `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
+    );
+    Ok(())
+}
+
 /// PPC CR0-byte extraction chain (BUG-24): an unknown one-byte source value
 /// (the cr0 register) is masked, ORed with a literal that pre-sets the EQ
 /// bit, right-shifted to position the EQ bit at bit 0, and finally ANDed
