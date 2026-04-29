@@ -4,7 +4,9 @@ use petgraph::visit::EdgeRef;
 
 use super::types::RegionEdgeKind;
 use super::Cfg;
-use crate::error::{Error, ErrorKind, Result};
+use anyhow::anyhow;
+
+use crate::error::Result;
 
 impl<R: rsleigh::MemReader> Cfg<R> {
     /// Renders a varnode to a printable name. Fetches Sleigh registers per
@@ -14,7 +16,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     pub(super) fn vn_to_name(&self, vn: &rsleigh::Vn) -> Result<String> {
         match vn.addr.space {
             rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs().map_err(ErrorKind::SleighError)?;
+                let regs = self.sleigh.regs().map_err(anyhow::Error::from)?;
                 vn_to_name_with_regs(&regs, vn)
             }
             _ => vn_to_name_non_register(vn),
@@ -39,7 +41,7 @@ fn vn_to_name_with_regs(regs: &rsleigh::SleighRegs, vn: &rsleigh::Vn) -> Result<
     if vn.addr.space == rsleigh::VnSpace::REGISTER {
         return Ok(regs
             .vn_to_name(*vn)
-            .ok_or(ErrorKind::InvalidRegVn(*vn))?
+            .ok_or_else(|| anyhow!("invalid register vn {vn:?}"))?
             .to_string());
     }
     vn_to_name_non_register(vn)
@@ -57,9 +59,9 @@ fn vn_to_name_non_register(vn: &rsleigh::Vn) -> Result<String> {
         rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
         rsleigh::VnSpace::REGISTER => {
             // Caller error: should have routed through with-regs path.
-            Err(ErrorKind::InvalidRegVn(*vn).into())
+            Err(anyhow!("invalid register vn {vn:?}"))
         }
-        s => Err(ErrorKind::UnsupportedVnSpaceDisplay(s).into()),
+        s => Err(anyhow!("unsupported varnode space for display: {s:?}")),
     }
 }
 
@@ -85,7 +87,7 @@ pub struct CfgDotDumper<'a, R: rsleigh::MemReader>(&'a Cfg<R>);
 
 impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     type Node = NodeIndex;
-    type Error = Error;
+    type Error = anyhow::Error;
     type State = ();
 
     fn create_initial_state(&self) -> Self::State {}
@@ -102,14 +104,14 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
     ) -> Result<()> {
         use std::fmt::Write;
 
-        let regs = self.0.sleigh.regs().map_err(ErrorKind::SleighError)?;
+        let regs = self.0.sleigh.regs().map_err(anyhow::Error::from)?;
 
         let dot_id = node_id.index().to_string();
         let node = self
             .0
             .graph
             .node_weight(node_id)
-            .ok_or(ErrorKind::InvalidRegion(node_id))?;
+            .ok_or_else(|| anyhow!("invalid region index {node_id:?}"))?;
         let first_insn_index = node.start_addr.insn_index;
         let start_addr = node.start_addr.machine_addr.addr;
 
@@ -126,12 +128,12 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 .collect::<Result<_>>()?;
             let insn_addr = insn.addr.machine_addr.addr;
             write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode)
-                .map_err(ErrorKind::FormatError)?;
+                .map_err(anyhow::Error::from)?;
             if !variables.is_empty() {
-                write!(&mut label, ", {}", variables.join(", ")).map_err(ErrorKind::FormatError)?;
+                write!(&mut label, ", {}", variables.join(", ")).map_err(anyhow::Error::from)?;
             }
         }
-        write!(&mut label, "\\l").map_err(ErrorKind::FormatError)?;
+        write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
         // Add node
         out.node(&dot_id, &label, "box", &[]);

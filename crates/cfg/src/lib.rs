@@ -19,7 +19,7 @@ pub use cfg::{
     Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region,
     RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator, ResolvedTargets,
 };
-pub use error::{Error, ErrorKind, Result};
+pub use error::Result;
 
 #[doc(hidden)]
 pub mod test_api;

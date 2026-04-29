@@ -6,7 +6,7 @@
 mod common;
 use common::{binary, build_cfg, make_region, make_sleigh};
 
-use cfg::{Cfg, ErrorKind, RegionEdgeKind};
+use cfg::{Cfg, RegionEdgeKind};
 use petgraph::stable_graph::StableDiGraph;
 
 fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
@@ -82,10 +82,10 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     };
 
     let err = cfg.region_branch(src).unwrap_err();
-    assert!(matches!(
-        err.kind(),
-        ErrorKind::DuplicateEdgeKind(_, RegionEdgeKind::Branch)
-    ));
+    assert!(
+        err.to_string().contains("more than one outgoing edge"),
+        "got: {err}"
+    );
 }
 
 // ── W3: region_id_at_start public-API contract ────────────────────────────
@@ -145,8 +145,8 @@ fn duplicate_if_case_true_is_detected_by_region_if() {
         .region_if(src)
         .map(|_| ())
         .expect_err("region_if must return DuplicateEdgeKind on malformed graph");
-    assert!(matches!(
-        err.kind(),
-        ErrorKind::DuplicateEdgeKind(_, RegionEdgeKind::IfCaseTrue)
-    ));
+    assert!(
+        err.to_string().contains("more than one outgoing edge"),
+        "got: {err}"
+    );
 }

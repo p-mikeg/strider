@@ -4,7 +4,9 @@ use super::Builder;
 use crate::cfg::types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction, RegionTerminator,
 };
-use crate::error::{ErrorKind, Result};
+use anyhow::{anyhow, bail};
+
+use crate::error::Result;
 
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
@@ -34,7 +36,7 @@ fn next_pcode_addr(
         .machine_addr
         .addr
         .checked_add(lift_res.machine_insn_len as u64)
-        .ok_or(ErrorKind::MachineAddrOverflow(addr))?;
+        .ok_or_else(|| anyhow!("machine-address overflow advancing past pcode addr {addr:?}"))?;
     Ok(PcodeInsnAddr {
         machine_addr: MachineInsnAddr { addr: next_machine },
         insn_index: 0,
@@ -131,8 +133,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     4 => (raw as i32) as i64,
                     _ => raw.cast_signed(),
                 };
-                let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or(
-                    ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr),
+                let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
+                    || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
                 )?;
                 let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
                 // Sleigh idiom: a branch to `target == pcode_count` (one past the
@@ -151,11 +153,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     );
                 }
                 if target > pcode_count {
-                    return Err(ErrorKind::InvalidBranchTargetVaErr(
-                        branch_target_var,
-                        branch_insn_addr,
-                    )
-                    .into());
+                    bail!(
+                        "invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"
+                    );
                 }
                 Ok(PcodeInsnAddr {
                     machine_addr: branch_insn_addr.machine_addr,
@@ -169,9 +169,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 },
                 insn_index: 0,
             }),
-            _ => {
-                Err(ErrorKind::InvalidBranchTargetVaErr(branch_target_var, branch_insn_addr).into())
-            }
+            _ => Err(anyhow!(
+                "invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"
+            )),
         }
     }
 
@@ -220,7 +220,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // Tail calls may only jump to the start of a machine insn. They
             // cannot target a specific pcode op inside a machine insn.
             if branch_target_addr.insn_index != 0 {
-                return Err(ErrorKind::InvalidTailCall(branch_target_addr).into());
+                bail!("invalid tail call at opcode {branch_target_addr:?}");
             }
         }
 
@@ -250,7 +250,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target_var = *insn
                     .inputs
                     .first()
-                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
                 let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
                 // BUG-25: clang at -O0 (used for the aarch64be / ppc32le
@@ -299,7 +299,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target_var = *insn
                     .inputs
                     .first()
-                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
 
                 // We reached the end of the current region
@@ -347,7 +347,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target_vn = *insn
                     .inputs
                     .first()
-                    .ok_or(ErrorKind::MissingBranchTarget(addr))?;
+                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let resolved = if let Some(cached) =
                     self.builder.options.known_targets.get(&addr).cloned()
                 {
@@ -436,8 +436,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                                 insn_index: 0,
                             };
                             if self.is_branch_tail_call(target_addr)? {
-                                return Err(
-                                    ErrorKind::UnresolvedIndirectBranch(addr).into(),
+                                bail!(
+                                    "branch-indirect at {addr:?} could not be statically resolved"
                                 );
                             }
                         }
@@ -529,7 +529,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 .builder
                 .sleigh
                 .lift_one(cur_addr.machine_addr.addr)
-                .map_err(|e| ErrorKind::GenericSleighError(format!("{e:?}")))?;
+                .map_err(|e| anyhow!("generic sleigh error {e:?}"))?;
             // `enumerate` before `skip` so `i` is the absolute pcode index.
             // On the very first machine instruction this may start at a non-zero
             // index (the work queue delivered a mid-instruction entry point);

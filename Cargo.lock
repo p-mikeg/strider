@@ -84,6 +84,7 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 name = "cfg"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "dot",
  "ir",
  "object",
@@ -92,9 +93,7 @@ dependencies = [
  "petgraph",
  "reader",
  "rsleigh",
- "strider-error",
  "target",
- "thiserror",
 ]
 
 [[package]]
@@ -272,8 +271,7 @@ checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
 name = "dot"
 version = "0.1.0"
 dependencies = [
- "strider-error",
- "thiserror",
+ "anyhow",
 ]
 
 [[package]]

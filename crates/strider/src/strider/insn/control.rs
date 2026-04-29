@@ -136,7 +136,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // Fallthrough successor — leave to the post-loop linker.
             return Ok(());
         }
-        Err(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)).into())
+        Err(anyhow!("invalid region index {region_id:?}"))
     }
 
     /// F7 — lifts a region whose CFG terminator is
@@ -225,10 +225,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let res = self.cfg.region_if(region_id)?;
         let if_true_region = res
             .if_true_region
-            .ok_or(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)))?;
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let if_false_region = res
             .if_false_region
-            .ok_or(cfg::Error::from(cfg::ErrorKind::InvalidRegion(region_id)))?;
+            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
         let true_block = region_lookup(if_true_region)?;
         let false_block = region_lookup(if_false_region)?;
         self.builder.build_if(cond, true_block, false_block)?;
