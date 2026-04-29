@@ -164,21 +164,28 @@ impl<'g> Matcher<'g> {
     /// unfiltered loop.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         let kind = pat.as_dyn().kind_spec();
-        self.fn_graph
+        let mut bindings = Bindings::default();
+        let mut hits: Vec<Match> = Vec::new();
+        for node in self
+            .fn_graph
             .preorder()
             .filter(|&node| kind.accepts_discriminant(self.fn_graph.graph.node_kind(node)))
-            .filter_map(|node| {
-                let mut bindings = Bindings::default();
-                if self.match_node_id(node, pat, &mut bindings) {
-                    Some(Match {
-                        root: node,
-                        bindings,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
+        {
+            let mark = bindings.mark();
+            if self.match_node_id(node, pat, &mut bindings) {
+                hits.push(Match {
+                    root: node,
+                    bindings: bindings.clone(),
+                });
+            }
+            // Roll back to the pre-attempt state regardless of outcome —
+            // successful matches kept their bindings via clone, failed
+            // matches discard the speculative entries.  Net: one
+            // allocation per find_all + one per successful match,
+            // versus one per candidate previously.
+            bindings.restore(mark);
+        }
+        hits
     }
 
     /// Try to match `pat` against the subgraph rooted at `node`.  Returns the
