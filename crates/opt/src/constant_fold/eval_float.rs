@@ -3,6 +3,53 @@ use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 // ── float constant evaluation ─────────────────────────────────────────────────
 
+// Each helper expects `$ty` to be `f32` or `f64` and `$bits_to_lo` to widen the
+// final result to a u64 lane.  Both branches differ only in which
+// `from_bits`/`to_bits` width to call; the operation match itself is identical.
+macro_rules! eval_binary {
+    ($ty:ty, $op:expr, $bits_l:expr, $bits_r:expr) => {{
+        let l = <$ty>::from_bits($bits_l as _);
+        let r = <$ty>::from_bits($bits_r as _);
+        let result: $ty = match $op {
+            FloatBinaryOp::Add => l + r,
+            FloatBinaryOp::Sub => l - r,
+            FloatBinaryOp::Mul => l * r,
+            FloatBinaryOp::Div => l / r,
+        };
+        result.to_bits() as u64
+    }};
+}
+
+macro_rules! eval_cmp {
+    ($ty:ty, $op:expr, $bits_l:expr, $bits_r:expr) => {{
+        let l = <$ty>::from_bits($bits_l as _);
+        let r = <$ty>::from_bits($bits_r as _);
+        match $op {
+            FloatCmpOp::Equal => l == r,
+            FloatCmpOp::NotEqual => l != r,
+            FloatCmpOp::Less => l < r,
+            FloatCmpOp::LessEqual => l <= r,
+        }
+    }};
+}
+
+macro_rules! eval_unary {
+    ($ty:ty, $op:expr, $bits:expr) => {{
+        let v = <$ty>::from_bits($bits as _);
+        let result: $ty = match $op {
+            FloatUnaryOp::Neg => -v,
+            FloatUnaryOp::Abs => v.abs(),
+            FloatUnaryOp::Sqrt => v.sqrt(),
+            FloatUnaryOp::Ceil => v.ceil(),
+            FloatUnaryOp::Floor => v.floor(),
+            // IEEE 754 / hardware default: ties-to-even, not Rust's
+            // ties-away-from-zero `round`.
+            FloatUnaryOp::Round => v.round_ties_even(),
+        };
+        result.to_bits() as u64
+    }};
+}
+
 /// Evaluates a float binary op on raw bit patterns.  Returns the result as a
 /// raw bit pattern, or `None` for undefined operations (should not occur in
 /// IEEE 754, but we keep the Option for consistency with the int version).
@@ -13,28 +60,13 @@ pub(super) fn eval_float_binary(
     ty: NodeOutputType,
 ) -> Option<u64> {
     match ty {
-        NodeOutputType::F32 => {
-            let l = f32::from_bits(bits_l as u32);
-            let r = f32::from_bits(bits_r as u32);
-            let result = match op {
-                FloatBinaryOp::Add => l + r,
-                FloatBinaryOp::Sub => l - r,
-                FloatBinaryOp::Mul => l * r,
-                FloatBinaryOp::Div => l / r,
-            };
-            Some(result.to_bits() as u64)
-        }
-        NodeOutputType::F64 => {
-            let l = f64::from_bits(bits_l);
-            let r = f64::from_bits(bits_r);
-            let result = match op {
-                FloatBinaryOp::Add => l + r,
-                FloatBinaryOp::Sub => l - r,
-                FloatBinaryOp::Mul => l * r,
-                FloatBinaryOp::Div => l / r,
-            };
-            Some(result.to_bits())
-        }
+        NodeOutputType::F32 => Some(eval_binary!(f32, op, bits_l as u32, bits_r as u32)),
+        NodeOutputType::F64 => Some(eval_binary!(f64, op, bits_l, bits_r)),
+        // F80 (and all non-float types) fall through.  Rust has no native
+        // 80-bit float type, so opt rules can't constant-fold F80 ops —
+        // the rule sees `None` and skips, leaving the F80 node in the IR
+        // for pattern-matching workloads.  Bit-exact F80 emulation is out
+        // of scope; pattern queries care about graph shape, not values.
         _ => None,
     }
 }
@@ -47,26 +79,8 @@ pub(super) fn eval_float_cmp(
     ty: NodeOutputType,
 ) -> Option<bool> {
     match ty {
-        NodeOutputType::F32 => {
-            let l = f32::from_bits(bits_l as u32);
-            let r = f32::from_bits(bits_r as u32);
-            Some(match op {
-                FloatCmpOp::Equal => l == r,
-                FloatCmpOp::NotEqual => l != r,
-                FloatCmpOp::Less => l < r,
-                FloatCmpOp::LessEqual => l <= r,
-            })
-        }
-        NodeOutputType::F64 => {
-            let l = f64::from_bits(bits_l);
-            let r = f64::from_bits(bits_r);
-            Some(match op {
-                FloatCmpOp::Equal => l == r,
-                FloatCmpOp::NotEqual => l != r,
-                FloatCmpOp::Less => l < r,
-                FloatCmpOp::LessEqual => l <= r,
-            })
-        }
+        NodeOutputType::F32 => Some(eval_cmp!(f32, op, bits_l as u32, bits_r as u32)),
+        NodeOutputType::F64 => Some(eval_cmp!(f64, op, bits_l, bits_r)),
         _ => None,
     }
 }
@@ -74,37 +88,8 @@ pub(super) fn eval_float_cmp(
 /// Evaluates a float unary op on a raw bit pattern.
 pub(super) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u64> {
     match ty {
-        NodeOutputType::F32 => {
-            let v = f32::from_bits(bits as u32);
-            let result = match op {
-                FloatUnaryOp::Neg => -v,
-                FloatUnaryOp::Abs => v.abs(),
-                FloatUnaryOp::Sqrt => v.sqrt(),
-                FloatUnaryOp::Ceil => v.ceil(),
-                FloatUnaryOp::Floor => v.floor(),
-                // IEEE 754 / hardware default: ties-to-even, not Rust's
-                // ties-away-from-zero `round`.
-                FloatUnaryOp::Round => v.round_ties_even(),
-            };
-            Some(result.to_bits() as u64)
-        }
-        NodeOutputType::F64 => {
-            let v = f64::from_bits(bits);
-            let result = match op {
-                FloatUnaryOp::Neg => -v,
-                FloatUnaryOp::Abs => v.abs(),
-                FloatUnaryOp::Sqrt => v.sqrt(),
-                FloatUnaryOp::Ceil => v.ceil(),
-                FloatUnaryOp::Floor => v.floor(),
-                FloatUnaryOp::Round => v.round_ties_even(),
-            };
-            Some(result.to_bits())
-        }
-        // F80 (and all non-float types) fall through.  Rust has no native
-        // 80-bit float type, so opt rules can't constant-fold F80 ops —
-        // the rule sees `None` and skips, leaving the F80 node in the IR
-        // for pattern-matching workloads.  Bit-exact F80 emulation is out
-        // of scope; pattern queries care about graph shape, not values.
+        NodeOutputType::F32 => Some(eval_unary!(f32, op, bits as u32)),
+        NodeOutputType::F64 => Some(eval_unary!(f64, op, bits)),
         _ => None,
     }
 }
