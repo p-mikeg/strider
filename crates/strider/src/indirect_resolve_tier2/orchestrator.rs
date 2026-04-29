@@ -967,23 +967,23 @@ where
             ctx.arg_passing_outputs.push(out);
         }
     }
-    // Clobbered = caller-saved.  The convention models this as the
-    // negation of `callee_saved_regs`, so for the in-place edit we
-    // emit clobbered output kinds matching each callee_saved varnode's
-    // size.  A real `FunctionBuilder::build_call` reads the variable
-    // values pre-call to seed the Call's inputs and emits a fresh
-    // value-typed output per clobber; here we only need the OUTPUT
-    // kinds, since the freshly-spliced Return doesn't read the
-    // clobber values back (the Return's inputs are the ret_val_regs).
+    // CORRECTNESS — H0 follow-up: emit one clobbered output kind per
+    // entry in `BuiltFunctionGraph::call_clobbered` — the canonical
+    // shape `FunctionBuilder::build_call` produces.  The Call node's
+    // outputs are `[Control, Memory] + per-call_clobbered[i] kind` and
+    // pattern queries (e.g. `Match::get_vn(call_out_slot)`) index
+    // directly into `call_clobbered[i]` to recover the underlying
+    // varnode — see `pattern::matcher::match_result`.  Iterating
+    // `cc.callee_saved_regs` here would emit the OPPOSITE set
+    // (preserved-across-call regs, not clobbered) with the wrong
+    // count and wrong sizes for each slot.
     //
-    // This mirrors the FunctionBuilder's clobbered-output-kind shape:
-    // one OutputType per varnode, sized by the varnode's byte width.
-    for vn in &cc.callee_saved_regs {
+    // Skipped (continue) on unsupported byte sizes; this is
+    // conservative — a missing slot loses a downstream pattern match
+    // but produces a well-typed graph.
+    for vn in graph.call_clobbered.iter() {
         let ty: ir::node::NodeOutputType = match (vn.size).try_into() {
             Ok(t) => t,
-            // Unsupported size → skip this clobber.  Conservative: a
-            // missing clobber slot only loses a downstream pattern
-            // match, but produces a well-typed graph.
             Err(_) => continue,
         };
         ctx.clobbered_kinds.push(ir::node::NodeOutputKind::OutputType(ty));
@@ -1595,5 +1595,101 @@ mod tests {
             other => panic!("expected TailCall, got {other:?}"),
         }
         assert_eq!(ev.clone(), ev);
+    }
+
+    /// CORRECTNESS — H0 follow-up: `build_anchor_calling_context`'s
+    /// `clobbered_kinds` must mirror the canonical
+    /// `BuiltFunctionGraph::call_clobbered` shape that
+    /// `FunctionBuilder::build_call` produces.  A CFG-rebuild path
+    /// would emit a Call whose outputs are
+    /// `[Control, Memory] + one OutputType per call_clobbered[i]`;
+    /// the in-place tail-call edit's Call must match — otherwise
+    /// pattern queries against tier-2-resolved indirect calls see
+    /// a different shape from queries against rebuilt calls (e.g.
+    /// `Match::get_vn` on a Call output slot returns wrong
+    /// varnodes because the slot ↔ call_clobbered[i] mapping in
+    /// `pattern::matcher::match_result` assumes the canonical
+    /// shape).
+    ///
+    /// Pre-fix: `build_anchor_calling_context` iterates
+    /// `cc.callee_saved_regs` (the OPPOSITE of caller-saved /
+    /// clobbered) and emits one slot per callee-saved varnode —
+    /// for x86_64 SystemV that's 6 slots regardless of the
+    /// function's actual call_clobbered list.
+    #[test]
+    fn build_anchor_calling_context_clobbered_matches_call_clobbered() {
+        use ir::FunctionBuilder;
+        use ir::node::{NodeKind, NodeOutputType};
+        use rsleigh::Sleigh;
+        use rsleigh::mem_readers::BufMemReader;
+        use std::collections::HashMap;
+        // Build a Strider for x86_64.  cc.callee_saved_regs.len() == 6
+        // (RBX, RBP, R12-R15) — ensure these don't match a function
+        // with empty all_used_variables (whose call_clobbered.len() == 0).
+        let arch = crate::SleighArch::x86_64();
+        let probe = BufMemReader::new(Vec::<u8>::new(), 0);
+        let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
+            .expect("probe sleigh")
+            .regs()
+            .expect("probe regs");
+        let cc = crate::CallingConvention::x86_64_systemv_abi();
+        let strider = Strider::new(arch, regs, cc).expect("Strider::new");
+        // Build a synthetic placeholder graph with NO tracked
+        // variables.  `FunctionBuilder::new` filters out the cc's
+        // ret_val_regs and arg_passing_regs from the user-supplied
+        // `all_used_variables`, but with `vec![]` here we get
+        // `call_clobbered.len() == ret_val_regs.len()` (front-loaded
+        // with ret_val_regs that survive the all_variables filter —
+        // typically 0 since ret_val_regs aren't in the empty
+        // all_variables set).
+        let built_cc = strider.calling_convention();
+        let mut builder = FunctionBuilder::new(vec![], built_cc).expect("FunctionBuilder::new");
+        let region = builder.create_region().expect("region");
+        builder.set_entry_region(region).expect("entry");
+        builder.set_region(region);
+        let target = builder.build_int_const(0xc0deu64, NodeOutputType::U64);
+        builder.build_return(Some(target), &[]).expect("return");
+        let mut graph = builder.build().expect("build");
+        // Locate the placeholder Return.
+        let placeholder = graph
+            .all_node_ids()
+            .find(|&n| matches!(graph.graph.node_kind(n), NodeKind::Return))
+            .expect("Return");
+        let canonical_clobbered_count = graph.call_clobbered.len();
+
+        // Empty cache + minimal OrchestratorConfig.  We don't need a
+        // real Sleigh instance for the helper — it only consumes
+        // `config.strider`.
+        let cache: RegionIrCache = HashMap::new();
+        // Synthesise a tiny Sleigh just to satisfy the type signature.
+        let probe_sleigh = Sleigh::new(
+            arch.sla_spec,
+            arch.pspec,
+            BufMemReader::new(vec![0xc3u8], 0x1000),
+        )
+        .expect("sleigh");
+        let config = OrchestratorConfig {
+            strider: &strider,
+            start_addr: 0x1000,
+            sleigh: Some(probe_sleigh),
+            rom: None,
+            fn_max_size: None,
+            allow_code_before_start_addr: false,
+            debug: None,
+        };
+
+        let ctx = build_anchor_calling_context(&mut graph, placeholder, &config, &cache);
+
+        assert_eq!(
+            ctx.clobbered_kinds.len(),
+            canonical_clobbered_count,
+            "clobbered_kinds.len() must equal BuiltFunctionGraph::call_clobbered.len() \
+             (the canonical shape FunctionBuilder::build_call produces) — \
+             got {} clobbered slots, expected {} from call_clobbered. \
+             Pre-fix the helper iterates cc.callee_saved_regs (6 on x86_64 SysV) \
+             instead of the canonical caller-saved list.",
+            ctx.clobbered_kinds.len(),
+            canonical_clobbered_count,
+        );
     }
 }
