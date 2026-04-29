@@ -25,7 +25,10 @@ fn replace_output_uses(
 /// If every output of `node_id` has no uses and the node still has inputs,
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
-fn cleanup_if_dead(function: &mut ir::BuiltFunctionGraph, node_id: NodeId) -> OptimizationResult {
+fn try_detach_dead_inputs(
+    function: &mut ir::BuiltFunctionGraph,
+    node_id: NodeId,
+) -> OptimizationResult {
     let all_unused = function
         .graph
         .node_outputs(node_id)
@@ -116,7 +119,7 @@ fn remove_phis(
                 function.graph.detach_node_inputs(node_id);
                 Ok(OptimizationResult::Changed)
             } else {
-                Ok(cleanup_if_dead(function, node_id))
+                Ok(try_detach_dead_inputs(function, node_id))
             }
         }
         NodeKind::ControlState => {
@@ -137,11 +140,11 @@ fn remove_phis(
             };
 
             // For ControlState we can only detach when BOTH outputs are unused.
-            // cleanup_if_dead handles this check.
+            // try_detach_dead_inputs handles this check.
             if simplified {
-                Ok(cleanup_if_dead(function, node_id) | OptimizationResult::Changed)
+                Ok(try_detach_dead_inputs(function, node_id) | OptimizationResult::Changed)
             } else {
-                Ok(cleanup_if_dead(function, node_id))
+                Ok(try_detach_dead_inputs(function, node_id))
             }
         }
         _ => Ok(OptimizationResult::NoChange),
