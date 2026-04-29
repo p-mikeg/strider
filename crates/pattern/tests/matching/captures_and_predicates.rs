@@ -113,8 +113,7 @@ fn predicate_inspects_node_kind() {
     let g = t.ret_val(s);
 
     let hits = Matcher::new(&g).find_all(&predicate(|graph, _ty, o| {
-        let n = graph.graph.get_node_from_output(o);
-        matches!(graph.graph.node_kind(n), ir::node::NodeKind::IntConst(7))
+        matches!(graph.graph.kind_of_output(o), ir::node::NodeKind::IntConst(7))
     }));
     assert_eq!(hits.len(), 1);
 }

@@ -62,8 +62,7 @@ pub fn return_value(fg: &BuiltFunctionGraph) -> Result<Value> {
 /// `NodeKind` of the return-value producer.
 pub fn return_kind(fg: &BuiltFunctionGraph) -> Result<NodeKind> {
     let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
-    Ok(*fg.graph.node_kind(node))
+    Ok(*fg.graph.kind_of_output(val))
 }
 
 /// Counts nodes matching `pred`.

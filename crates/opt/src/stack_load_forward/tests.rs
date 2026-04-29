@@ -560,11 +560,10 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
         .expect("return node exists");
     let ret_inputs = fg.graph.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
-    let val_producer = fg.graph.get_node_from_output(ret_inputs[2]);
+    let val_kind = fg.graph.kind_of_output(ret_inputs[2]);
     assert!(
-        matches!(fg.graph.node_kind(val_producer), NodeKind::IntConst(0x4242)),
-        "forwarded value must be the stored constant 0x4242 — got {:?}",
-        fg.graph.node_kind(val_producer),
+        matches!(val_kind, NodeKind::IntConst(0x4242)),
+        "forwarded value must be the stored constant 0x4242 — got {val_kind:?}",
     );
     Ok(())
 }
@@ -753,11 +752,10 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     // ShiftRight inputs: [data, shift_const]; shift_const = (4 - 1) * 8 = 24.
     let shr_inputs = fg.graph.node_inputs(inner);
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
-    let shift_node = fg.graph.get_node_from_output(shr_inputs[1]);
+    let shift_kind = fg.graph.kind_of_output(shr_inputs[1]);
     assert!(
-        matches!(fg.graph.node_kind(shift_node), NodeKind::IntConst(24)),
-        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {:?}",
-        fg.graph.node_kind(shift_node),
+        matches!(shift_kind, NodeKind::IntConst(24)),
+        "BE shift amount must be (store_size - load_size) * 8 = 24 — got {shift_kind:?}",
     );
     Ok(())
 }

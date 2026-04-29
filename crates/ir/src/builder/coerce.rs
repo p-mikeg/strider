@@ -30,8 +30,7 @@ impl FunctionBuilder {
     /// edge.
     pub fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
         let output_type = self.get_output_type(output_id)?;
-        let node_id = self.graph().get_node_from_output(output_id);
-        match self.graph().node_kind(node_id) {
+        match self.graph().kind_of_output(output_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => Ok(Some(*val != 0)),
             NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(*val)),
             _ => Ok(None),
@@ -73,8 +72,7 @@ impl FunctionBuilder {
     /// edge.
     pub fn get_as_unsigned_int(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
         let output_type = self.get_output_type(output_id)?;
-        let node_id = self.graph().get_node_from_output(output_id);
-        match self.graph().node_kind(node_id) {
+        match self.graph().kind_of_output(output_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
                 Ok(output_type.get_unsigned_int_u128(*val).and_then(|v| u64::try_from(v).ok()))
             }
@@ -98,8 +96,7 @@ impl FunctionBuilder {
     /// edge.
     pub fn get_as_signed_int(&self, output_id: NodeOutputId) -> Result<Option<i64>> {
         let output_type = self.get_output_type(output_id)?;
-        let node_id = self.graph().get_node_from_output(output_id);
-        match self.graph().node_kind(node_id) {
+        match self.graph().kind_of_output(output_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
                 Ok(output_type.get_signed_int_i128(*val).and_then(|v| i64::try_from(v).ok()))
             }
@@ -136,8 +133,7 @@ impl FunctionBuilder {
         if !output_type.is_float() {
             return Ok(None);
         }
-        let node_id = self.graph().get_node_from_output(output_id);
-        match self.graph().node_kind(node_id) {
+        match self.graph().kind_of_output(output_id) {
             NodeKind::FloatConst(bits) => Ok(Some(*bits)),
             _ => Ok(None),
         }

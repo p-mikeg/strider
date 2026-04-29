@@ -140,8 +140,7 @@ pub fn classify_anchor_with_rom_and_sp(
                 graph.node_inputs(producer_id).into_iter().collect();
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for &val in inputs.iter().skip(1) {
-                let val_producer = graph.get_node_from_output(val);
-                match graph.node_kind(val_producer) {
+                match graph.kind_of_output(val) {
                     NodeKind::IntConst(k) => {
                         #[allow(clippy::cast_possible_truncation)]
                         targets.push(*k as u64);

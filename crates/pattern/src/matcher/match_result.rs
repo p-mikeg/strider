@@ -127,8 +127,7 @@ impl Match {
     #[must_use]
     pub fn get_int_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u128> {
         let out = self.bindings.get(v)?;
-        let node = graph.graph.get_node_from_output(out);
-        match graph.graph.node_kind(node) {
+        match graph.graph.kind_of_output(out) {
             NodeKind::IntConst(val) => Some(*val),
             _ => None,
         }
@@ -140,8 +139,7 @@ impl Match {
     #[must_use]
     pub fn get_bool_const(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<bool> {
         let out = self.bindings.get(v)?;
-        let node = graph.graph.get_node_from_output(out);
-        match graph.graph.node_kind(node) {
+        match graph.graph.kind_of_output(out) {
             NodeKind::BoolConst(val) => Some(*val),
             _ => None,
         }
@@ -153,8 +151,7 @@ impl Match {
     #[must_use]
     pub fn get_float_bits(&self, v: Var, graph: &BuiltFunctionGraph) -> Option<u64> {
         let out = self.bindings.get(v)?;
-        let node = graph.graph.get_node_from_output(out);
-        match graph.graph.node_kind(node) {
+        match graph.graph.kind_of_output(out) {
             NodeKind::FloatConst(bits) => Some(*bits),
             _ => None,
         }

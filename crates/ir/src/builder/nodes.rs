@@ -363,8 +363,7 @@ impl FunctionBuilder {
         // doesn't fit — skip the immediate-fold and emit the node
         // unchanged.  The graph keeps the IntBitsToFloat node opaque,
         // which is fine for pattern matching.
-        let node_id = self.graph().get_node_from_output(input);
-        if let NodeKind::IntConst(bits) = *self.graph().node_kind(node_id)
+        if let NodeKind::IntConst(bits) = *self.graph().kind_of_output(input)
             && float_type != NodeOutputType::F80
         {
             // FloatConst stores bits as u64; F32/F64 fit, so the value
@@ -401,8 +400,7 @@ impl FunctionBuilder {
         // FloatConst at F80 type somehow appeared, its u64 payload
         // wouldn't fully represent the 80-bit pattern.  Emit the node
         // unchanged.
-        let node_id = self.graph().get_node_from_output(input);
-        if let NodeKind::FloatConst(bits) = *self.graph().node_kind(node_id)
+        if let NodeKind::FloatConst(bits) = *self.graph().kind_of_output(input)
             && input_ty != NodeOutputType::F80
         {
             return Ok(self.build_int_const(bits, int_type));

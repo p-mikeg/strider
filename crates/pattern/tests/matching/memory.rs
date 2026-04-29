@@ -47,9 +47,8 @@ fn load_captures_value_slot() {
     // The captured output is the Load's value slot; reading it back
     // points at the Load node.
     let out = m.get(v).expect("value slot capture");
-    let node = g.graph.get_node_from_output(out);
     assert!(matches!(
-        g.graph.node_kind(node),
+        g.graph.kind_of_output(out),
         ir::node::NodeKind::Load(_)
     ));
 }

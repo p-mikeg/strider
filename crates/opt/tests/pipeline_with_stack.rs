@@ -52,7 +52,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
         .ok_or(opt::ErrorKind::NoReturnNode)?;
     let val = fg.graph.node_inputs(ret)[2];
-    let kind = *fg.graph.node_kind(fg.graph.get_node_from_output(val));
+    let kind = *fg.graph.kind_of_output(val);
     assert!(
         matches!(kind, NodeKind::IntConst(0x42)),
         "load must forward to stored value, got {kind:?}"

@@ -19,8 +19,7 @@ impl Graph {
         if !ty.is_integer() {
             return None;
         }
-        let node = self.get_node_from_output(out);
-        match *self.node_kind(node) {
+        match *self.kind_of_output(out) {
             // IntConst stores u128; narrow to u64 for callers that only need <=64-bit values.
             NodeKind::IntConst(v) => ty.get_unsigned_int_u128(v).and_then(|w| u64::try_from(w).ok()),
             _ => None,
@@ -34,8 +33,7 @@ impl Graph {
         if !self.output_kind(out).is_bool() {
             return None;
         }
-        let node = self.get_node_from_output(out);
-        match *self.node_kind(node) {
+        match *self.kind_of_output(out) {
             NodeKind::BoolConst(v) => Some(v),
             _ => None,
         }
@@ -49,8 +47,7 @@ impl Graph {
         if !ty.is_float() {
             return None;
         }
-        let node = self.get_node_from_output(out);
-        match *self.node_kind(node) {
+        match *self.kind_of_output(out) {
             NodeKind::FloatConst(bits) => Some(bits),
             _ => None,
         }

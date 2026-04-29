@@ -72,8 +72,7 @@ fn example_arithmetic() {
     let hits = m.find_all(&add(any(), var(rhs)).into());
     if let Some(hit) = hits.first() {
         let bound = hit.get(rhs).unwrap();
-        let node = graph.graph.get_node_from_output(bound);
-        println!("rhs of add is: {:?}", graph.graph.node_kind(node)); // IntConst(1)
+        println!("rhs of add is: {:?}", graph.graph.kind_of_output(bound)); // IntConst(1)
     }
 
     // ── Query 5: extend / truncate ────────────────────────────────────────────

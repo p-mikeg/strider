@@ -330,7 +330,7 @@ fn build_float_const_f32_has_correct_bits() -> Result<()> {
     let mut b = empty_builder()?;
     let bits = 1.0f32.to_bits() as u64;
     let out = b.build_float_const(bits, NodeOutputType::F32);
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+    let kind = *b.graph().kind_of_output(out);
     assert_eq!(kind, NodeKind::FloatConst(bits));
     assert_eq!(
         b.graph().output_kind(out),
@@ -344,7 +344,7 @@ fn build_float_const_f64_has_correct_bits() -> Result<()> {
     let mut b = empty_builder()?;
     let bits = 1.0f64.to_bits();
     let out = b.build_float_const(bits, NodeOutputType::F64);
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+    let kind = *b.graph().kind_of_output(out);
     assert_eq!(kind, NodeKind::FloatConst(bits));
     assert_eq!(
         b.graph().output_kind(out),
@@ -377,9 +377,7 @@ fn int_bits_to_float_folds_int_const_immediately() -> Result<()> {
     let int_out = b.build_int_const(bits, NodeOutputType::U32);
     let float_out = b.build_int_bits_to_float(int_out, NodeOutputType::F32)?;
     // Should be a FloatConst, not an IntBitsToFloat node
-    let kind = *b
-        .graph()
-        .node_kind(b.graph().get_node_from_output(float_out));
+    let kind = *b.graph().kind_of_output(float_out);
     assert_eq!(kind, NodeKind::FloatConst(bits));
     Ok(())
 }
@@ -391,7 +389,7 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     let float_out = b.build_float_const(bits, NodeOutputType::F64);
     let int_out = b.build_float_bits_to_int(float_out, NodeOutputType::U64)?;
     // Should be an IntConst, not a FloatBitsToInt node
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(int_out));
+    let kind = *b.graph().kind_of_output(int_out);
     assert_eq!(kind, NodeKind::IntConst(u128::from(bits)));
     Ok(())
 }
@@ -402,7 +400,7 @@ fn build_float_binary_op_produces_correct_node() -> Result<()> {
     let lhs = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
     let rhs = b.build_float_const(2.0f32.to_bits() as u64, NodeOutputType::F32);
     let out = b.build_float_binary_op(lhs, rhs, FloatBinaryOp::Add, NodeOutputType::F32)?;
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(out));
+    let kind = *b.graph().kind_of_output(out);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
     Ok(())
 }
@@ -433,9 +431,7 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
         NodeOutputType::U32,
     )?;
     let float_out = b.build_int_bits_to_float(non_const, NodeOutputType::F32)?;
-    let kind = *b
-        .graph()
-        .node_kind(b.graph().get_node_from_output(float_out));
+    let kind = *b.graph().kind_of_output(float_out);
     assert_eq!(kind, NodeKind::IntBitsToFloat);
     Ok(())
 }
@@ -447,7 +443,7 @@ fn build_cast_to_float_creates_cast_node() -> Result<()> {
     let mut b = empty_builder()?;
     let int_val = b.build_int_const(42u64, NodeOutputType::U64);
     let cast = b.build_cast_to_float(int_val, NodeOutputType::F64);
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(cast));
+    let kind = *b.graph().kind_of_output(cast);
     assert_eq!(kind, NodeKind::CastToFloat);
     assert_eq!(b.get_output_type(cast)?, NodeOutputType::F64);
     Ok(())
@@ -470,7 +466,7 @@ fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
     let i2 = b.build_int_const(0x40000000u64, NodeOutputType::U32);
     // Both inputs are U32 — builder should auto-insert CastToFloat.
     let result = b.build_float_binary_op(i1, i2, FloatBinaryOp::Add, NodeOutputType::F32)?;
-    let kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
+    let kind = *b.graph().kind_of_output(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
     // Verify inputs are CastToFloat nodes.
     let [lhs, rhs] = b
@@ -655,7 +651,7 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
     )?;
 
     // The root must be the Or.
-    let root_kind = *b.graph().node_kind(b.graph().get_node_from_output(result));
+    let root_kind = *b.graph().kind_of_output(result);
     assert_eq!(root_kind, NodeKind::IntBinaryOp(IntBinaryOp::Or));
 
     // `hi_int` consumes the float, so it must be a CastToInt node.
@@ -839,7 +835,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     // One input is the pre-call SP; the other is an IntConst(8).
     let (lhs, rhs) = (inputs[0], inputs[1]);
     assert_eq!(lhs, pre_sp, "Add consumes the pre-call SP output");
-    let rhs_kind = *b.graph().node_kind(b.graph().get_node_from_output(rhs));
+    let rhs_kind = *b.graph().kind_of_output(rhs);
     assert_eq!(
         rhs_kind,
         NodeKind::IntConst(8),

@@ -65,8 +65,7 @@ fn return_data_input_kind(g: &ir::BuiltFunctionGraph) -> NodeKind {
     let inputs: Vec<NodeOutputId> = g.graph.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].  We want slot 2.
     let data_in = inputs[2];
-    let producer = g.graph.get_node_from_output(data_in);
-    *g.graph.node_kind(producer)
+    *g.graph.kind_of_output(data_in)
 }
 
 // ── Basic firing ─────────────────────────────────────────────────────────────

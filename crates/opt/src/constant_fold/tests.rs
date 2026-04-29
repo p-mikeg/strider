@@ -34,8 +34,7 @@ fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
 /// Returns the `NodeKind` of the node that produces the return value.
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
-    Ok(*fg.graph.node_kind(node))
+    Ok(*fg.graph.kind_of_output(val))
 }
 
 // ── integer binary folding ────────────────────────────────────────────────
@@ -196,7 +195,7 @@ fn assert_add_with_const(
         .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
-            *fg.graph.node_kind(fg.graph.get_node_from_output(o)),
+            *fg.graph.kind_of_output(o),
             // IntConst stores u128; masked is u64, widen for comparison.
             NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
         )
@@ -206,8 +205,8 @@ fn assert_add_with_const(
         ok,
         "expected `base + {:#x}`; got lhs kind={:?}, rhs kind={:?}",
         masked,
-        fg.graph.node_kind(fg.graph.get_node_from_output(l)),
-        fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+        fg.graph.kind_of_output(l),
+        fg.graph.kind_of_output(r),
     );
     Ok(())
 }
@@ -238,7 +237,7 @@ fn assert_sub_with_const(
         .get_unsigned_int(expected_const)
         .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
     let const_on_rhs = matches!(
-        *fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+        *fg.graph.kind_of_output(r),
         // IntConst stores u128; masked is u64, widen for comparison.
         NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
     );
@@ -246,8 +245,8 @@ fn assert_sub_with_const(
         l == expected_base && const_on_rhs,
         "expected `base - {:#x}`; got lhs kind={:?}, rhs kind={:?}",
         masked,
-        fg.graph.node_kind(fg.graph.get_node_from_output(l)),
-        fg.graph.node_kind(fg.graph.get_node_from_output(r)),
+        fg.graph.kind_of_output(l),
+        fg.graph.kind_of_output(r),
     );
     Ok(())
 }
@@ -519,8 +518,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // i.e. the low byte of 0xFFFF — *masked* to U8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
     let val = return_value(&fg)?;
-    let producer = fg.graph.get_node_from_output(val);
-    let kind = *fg.graph.node_kind(producer);
+    let kind = *fg.graph.kind_of_output(val);
     let raw = match kind {
         NodeKind::IntConst(v) => v,
         other => panic!("expected IntConst producer for Return value, got {other:?}"),
@@ -569,11 +567,10 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     // and the Truncate(Extend(IntConst(0xFF))) collapses to IntConst(0xFF).
     // Most importantly: no Truncate or Extend node remains in the chain.
     let val = return_value(&fg)?;
-    let producer = fg.graph.get_node_from_output(val);
     assert!(
-        matches!(fg.graph.node_kind(producer), NodeKind::IntConst(_)),
+        matches!(fg.graph.kind_of_output(val), NodeKind::IntConst(_)),
         "round-trip + const-fold must leave an IntConst at the root, got {:?}",
-        fg.graph.node_kind(producer)
+        fg.graph.kind_of_output(val)
     );
     // Belt-and-suspenders: walk all reachable nodes and verify no
     // Truncate/Extend survives the chain to the Return.
@@ -1369,7 +1366,7 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.node_kind(fg.graph.get_node_from_output(val)) {
+    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan(), "NaN must propagate through Add");
     } else {
         return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());
@@ -1388,7 +1385,7 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.node_kind(fg.graph.get_node_from_output(val)) {
+    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan());
     } else {
         return Err(ErrorKind::AssertionFailed("expected FloatConst result".into()).into());

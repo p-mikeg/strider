@@ -99,8 +99,7 @@ fn call_ret_output_capture() {
     let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
     let out = m.get(v).expect("ret_output capture");
     // The captured output is a Call output slot.
-    let node = g.graph.get_node_from_output(out);
-    assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Call));
+    assert!(matches!(g.graph.kind_of_output(out), ir::node::NodeKind::Call));
 }
 
 // ── Return ────────────────────────────────────────────────────────────────────

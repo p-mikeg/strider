@@ -38,7 +38,7 @@ fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
         .ok_or(ErrorKind::NoReturnNode)?;
     let val = fg.graph.node_inputs(ret)[2];
-    Ok(*fg.graph.node_kind(fg.graph.get_node_from_output(val)))
+    Ok(*fg.graph.kind_of_output(val))
 }
 
 // ── original tests ────────────────────────────────────────────────────────────

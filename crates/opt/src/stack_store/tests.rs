@@ -393,8 +393,8 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         5,
         "buf-init and callee-save writes must not be mis-collected as args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[3]));
-    let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[4]));
+    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(42)),
         "arg0 should be 42, got {arg0_kind:?}"
@@ -497,8 +497,8 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     let arg0_val = inputs[3];
     let arg1_val = inputs[4];
-    let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(arg0_val));
-    let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(arg1_val));
+    let arg0_kind = *fg.graph.kind_of_output(arg0_val);
+    let arg1_kind = *fg.graph.kind_of_output(arg1_val);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -722,7 +722,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     let collected_arg_consts: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.graph.node_kind(fg.graph.get_node_from_output(out)) {
+            if let NodeKind::IntConst(v) = *fg.graph.kind_of_output(out) {
                 Some(v)
             } else {
                 None
@@ -803,8 +803,8 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
         5,
         "walker must pass through the non-aliasing global store and collect both stack args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[3]));
-    let arg1_kind = *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[4]));
+    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -878,9 +878,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
         "walker must collect all 4 stack args across 4 interleaved global writes; got inputs={inputs:?}"
     );
     for (slot_idx, expected) in arg_vals.iter().enumerate() {
-        let kind = *fg
-            .graph
-            .node_kind(fg.graph.get_node_from_output(inputs[3 + slot_idx]));
+        let kind = *fg.graph.kind_of_output(inputs[3 + slot_idx]);
         let expected_u128: u128 = (*expected).into();
         assert!(
             matches!(kind, NodeKind::IntConst(v) if v == expected_u128),

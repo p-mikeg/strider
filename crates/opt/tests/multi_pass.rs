@@ -214,8 +214,8 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
     assert_eq!(inputs.len(), 2);
     // One input is x, the other is IntConst(20).
     let kinds = [
-        *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[0])),
-        *fg.graph.node_kind(fg.graph.get_node_from_output(inputs[1])),
+        *fg.graph.kind_of_output(inputs[0]),
+        *fg.graph.kind_of_output(inputs[1]),
     ];
     assert!(
         kinds.iter().any(|k| matches!(k, NodeKind::IntConst(20))),

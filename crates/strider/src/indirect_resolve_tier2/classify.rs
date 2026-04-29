@@ -174,10 +174,7 @@ mod tests {
         // ControlPhi in the test if we hit one, since
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph
-            .graph
-            .node_kind(graph.graph.get_node_from_output(producer_output))
-        {
+        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
             // ControlPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
             let pid = graph.graph.get_node_from_output(producer_output);
@@ -220,10 +217,7 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph
-            .graph
-            .node_kind(graph.graph.get_node_from_output(producer_output))
-        {
+        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
             let pid = graph.graph.get_node_from_output(producer_output);
             let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
@@ -261,10 +255,7 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph
-            .graph
-            .node_kind(graph.graph.get_node_from_output(producer_output))
-        {
+        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
             let pid = graph.graph.get_node_from_output(producer_output);
             let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
@@ -455,9 +446,7 @@ mod tests {
         // we don't run the optimiser here — the unit tests use the
         // raw builder output.  The returned anchor's producer is
         // an IntBinaryOp node, which the `_ => None` arm catches.
-        let producer_kind = *graph
-            .graph
-            .node_kind(graph.graph.get_node_from_output(anchor));
+        let producer_kind = *graph.graph.kind_of_output(anchor);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
