@@ -208,9 +208,8 @@ fn elf_sections_to_mem_regions_propagates_data_error() {
     let err = elf_sections_to_mem_regions(&obj, |_| true)
         .expect_err("malformed section must surface an error");
     assert!(
-        matches!(err.kind(), reader::ErrorKind::Object(_)),
-        "got {:?}",
-        err.kind(),
+        err.to_string().contains("failed to parse ELF"),
+        "got: {err}",
     );
 }
 
@@ -406,13 +405,12 @@ fn elf_sections_to_mem_regions_propagates_region_overflow() {
     let obj = parse(&buf);
     let err = elf_sections_to_mem_regions(&obj, |_| true)
         .expect_err("addr+len overflow must surface as RegionOverflow");
+    let msg = err.to_string();
+    let expected_addr = format!("{:#x}", u64::MAX - 1);
     assert!(
-        matches!(
-            err.kind(),
-            reader::ErrorKind::RegionOverflow { start_addr, len }
-                if *start_addr == u64::MAX - 1 && *len == 4
-        ),
-        "got {:?}",
-        err.kind(),
+        msg.contains("would overflow u64")
+            && msg.contains(&expected_addr)
+            && msg.contains("length 4"),
+        "got: {err}",
     );
 }

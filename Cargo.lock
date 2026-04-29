@@ -855,11 +855,10 @@ dependencies = [
 name = "reader"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "object",
  "rsleigh",
- "strider-error",
  "tempfile",
- "thiserror",
 ]
 
 [[package]]
@@ -1116,9 +1115,8 @@ dependencies = [
 name = "target"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "rsleigh",
- "strider-error",
- "thiserror",
 ]
 
 [[package]]

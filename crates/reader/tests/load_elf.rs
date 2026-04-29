@@ -9,7 +9,6 @@ use std::io::Write as _;
 
 use common::elf_fixture::simple_text_elf;
 use object::{Endianness, Object, read::ObjectSection};
-use reader::ErrorKind;
 use tempfile::NamedTempFile;
 
 /// Happy path: `load_elf` on a valid ELF tempfile returns a parsed
@@ -31,8 +30,8 @@ fn load_elf_parses_valid_tempfile() {
 
 /// Pinned contract: when `load_elf` is given a file that exists on disk
 /// but whose contents do NOT parse as a valid ELF, the function returns
-/// `Err(ErrorKind::Object(_))` rather than panicking, succeeding, or
-/// silently swallowing the error.
+/// an error whose message identifies it as an ELF-parse failure rather
+/// than panicking, succeeding, or silently swallowing the error.
 ///
 /// This test cannot directly assert that the file bytes are not leaked
 /// when parse fails — `load_elf`'s entire success path leaks
@@ -48,12 +47,18 @@ fn load_elf_rejects_garbage_bytes() {
     f.flush().unwrap();
 
     let err = reader::load_elf(f.path()).unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::Object(_)), "got {:?}", err.kind());
+    assert!(
+        err.to_string().contains("failed to parse ELF"),
+        "got: {err}",
+    );
 }
 
-/// A missing path produces `ErrorKind::Io(_)`.
+/// A missing path produces an I/O error.
 #[test]
 fn load_elf_missing_path_is_io_error() {
     let err = reader::load_elf("/definitely/not/a/real/path/for/tests").unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::Io(_)), "got {:?}", err.kind());
+    assert!(
+        err.to_string().contains("failed to read file"),
+        "got: {err}",
+    );
 }

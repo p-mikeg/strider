@@ -250,18 +250,18 @@ fn lookup_table_shorter_inner_region_does_not_shadow_outer_tail() {
 /// The returned error carries the offending start and length for diagnostics.
 #[test]
 fn mem_region_new_rejects_overflow() {
-    use reader::ErrorKind;
     let start = u64::MAX - 3;
     // len = 4 ⇒ end would be u64::MAX + 1 — reject.
     let err = MemRegion::new(start, vec![0u8; 4])
         .expect_err("overflowing region must be rejected");
-    match err.kind() {
-        ErrorKind::RegionOverflow { start_addr, len } => {
-            assert_eq!(*start_addr, start);
-            assert_eq!(*len, 4u64);
-        }
-        other => panic!("expected RegionOverflow, got {other:?}"),
-    }
+    let msg = err.to_string();
+    let expected_addr = format!("{start:#x}");
+    assert!(
+        msg.contains("would overflow u64")
+            && msg.contains(&expected_addr)
+            && msg.contains("length 4"),
+        "got: {err}",
+    );
 }
 
 /// Exact-fit at the top of the address space is accepted: start = u64::MAX - 3,
