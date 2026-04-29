@@ -27,7 +27,7 @@ pub fn apply_link_register(
     placeholder_return: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
-    opt::apply_link_register(&mut fg.graph, placeholder_return, ret_val_outputs)
+    opt::apply_link_register(fg, placeholder_return, ret_val_outputs)
         // opt is now anyhow-based; ? lifts directly via identity From.
 }
 
@@ -54,7 +54,7 @@ pub fn apply_tail_call(
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
     opt::apply_tail_call(
-        &mut fg.graph,
+        fg,
         placeholder_return,
         target,
         arg_passing_outputs,

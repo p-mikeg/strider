@@ -65,6 +65,7 @@ pub fn classify_jump_table(
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
+    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
 ) -> Option<ResolvedTargets> {
     // Step 1: structural shape match.  `match_jump_table_shape`
     // returns the `idx` value and the `(base, stride, entry_size)`
@@ -81,7 +82,7 @@ pub fn classify_jump_table(
     //       control path leading to the dispatch's region.  Slower
     //       but covers the gcc-emitted "compare-and-branch then
     //       indirect" pattern that has no AND-mask.
-    let bound = bound_via_known_bits(fg, shape.idx_output)
+    let bound = bound_via_known_bits(fg, shape.idx_output, known)
         .or_else(|| bound_via_predecessor_if(fg, anchor_output, shape.idx_output))?;
 
     // Step 3: enforce the per-call enumeration cap.  Returning None
@@ -229,10 +230,16 @@ fn match_jump_table_shape(
 /// `Not`, `Popcount`, `Lzcount`, `ShiftLeft`) — so any bound this function
 /// previously returned is still proved, and some previously-unbounded
 /// shapes now resolve.
+///
+/// `known` is the pre-computed result of [`crate::analyze_known_bits`] —
+/// callers (typically [`super::IndirectBranchResolve::optimize`]) compute
+/// it once per pass invocation and thread it through every classified
+/// anchor so we don't re-run the worklist analysis per anchor.
 #[must_use]
 pub fn bound_via_known_bits(
     fg: &BuiltFunctionGraph,
     idx_output: NodeOutputId,
+    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
@@ -246,11 +253,8 @@ pub fn bound_via_known_bits(
     // chance.
     let type_mask = u64::try_from(ty.get_unsigned_int(u128::from(u64::MAX))?).ok()?;
 
-    // Outputs absent from `analyze`'s map have no proven bit info; treat
-    // them as the all-unknown default.  An analyzer error propagates as
-    // None — the caller falls back to the predecessor-If walk and the
-    // orchestrator surfaces UnresolvedIndirectBranch at fixed point.
-    let known = crate::analyze_known_bits(fg).ok()?;
+    // Outputs absent from the map have no proven bit info; treat them
+    // as the all-unknown default.
     let kb = known.get(&idx_output).copied().unwrap_or_default();
     let max = kb.max_value(type_mask);
     if max == type_mask {

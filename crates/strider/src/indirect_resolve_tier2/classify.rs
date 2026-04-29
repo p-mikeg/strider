@@ -46,12 +46,14 @@ pub fn classify_anchor_with_rom_and_sp(
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
+    let known = opt::analyze_known_bits(graph).ok()?;
     opt::classify_anchor_with_rom_and_sp(
         graph,
         anchor_output,
         link_register_vn,
         rom,
         stack_ptr_vn,
+        &known,
     )
 }
 #[cfg(test)]

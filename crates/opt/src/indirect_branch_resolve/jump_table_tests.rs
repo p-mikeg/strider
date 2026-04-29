@@ -10,6 +10,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use super::*;
+use crate::analyze_known_bits;
 use ir::BuiltFunctionGraph;
 use ir::FunctionBuilder;
 use ir::IntBinaryOp;
@@ -247,7 +248,8 @@ fn bound_via_known_bits_returns_max_plus_one() {
         fb.build_int_binary_operation(v, mask, IntBinaryOp::And, NodeOutputType::U32)
             .expect("and")
     });
-    let bound = bound_via_known_bits(&g, idx).expect("must bound");
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let bound = bound_via_known_bits(&g, idx, &known).expect("must bound");
     assert_eq!(bound, 8);
 }
 
@@ -258,7 +260,8 @@ fn bound_via_known_bits_returns_none_when_unbounded() {
         let addr = fb.build_int_const(0x1000u64, NodeOutputType::U32);
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    assert_eq!(bound_via_known_bits(&g, idx), None);
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    assert_eq!(bound_via_known_bits(&g, idx, &known), None);
 }
 
 #[test]
@@ -268,7 +271,8 @@ fn bound_via_known_bits_with_int_const_input() {
     // this to a Single, but the local recurrence handles it
     // anyway.)
     let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, NodeOutputType::U32));
-    let bound = bound_via_known_bits(&g, idx).expect("must bound a const");
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let bound = bound_via_known_bits(&g, idx, &known).expect("must bound a const");
     assert_eq!(bound, 6);
 }
 
@@ -308,7 +312,8 @@ fn bound_via_known_bits_handles_zero_extend() {
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
     g.graph.replace_all_uses(placeholder, idx).expect("rewire");
-    let bound = bound_via_known_bits(&g, idx).expect("bound from zero-extend");
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let bound = bound_via_known_bits(&g, idx, &known).expect("bound from zero-extend");
     // U8 narrows to 0..255, so bound = 256.
     assert_eq!(bound, 256);
 }
@@ -369,7 +374,8 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // The detached AND's output isn't in the entry preorder, so
     // `analyze_known_bits` never visits it.  Its kb defaults to
     // all-unknown and `bound_via_known_bits` returns None.
-    let bound = bound_via_known_bits(&g, detached_idx);
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let bound = bound_via_known_bits(&g, detached_idx, &known);
     assert_eq!(
         bound, None,
         "unreachable output must yield None (default Kb, no narrowing)",
@@ -458,7 +464,8 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         entries: vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
         size: 4,
     };
-    let result = classify_jump_table(&g, anchor, Some(&rom), None);
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let result = classify_jump_table(&g, anchor, Some(&rom), None, &known);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -488,7 +495,8 @@ fn classify_jump_table_no_rom_returns_none() {
             .expect("add");
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
-    let result = classify_jump_table(&g, anchor, None, None);
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let result = classify_jump_table(&g, anchor, None, None, &known);
     assert_eq!(result, None);
 }
 
@@ -518,7 +526,8 @@ fn classify_jump_table_unbounded_idx_returns_none() {
         entries: vec![0x10, 0x20, 0x30, 0x40],
         size: 4,
     };
-    let result = classify_jump_table(&g, anchor, Some(&rom), None);
+    let known = analyze_known_bits(&g).expect("kb analyze");
+    let result = classify_jump_table(&g, anchor, Some(&rom), None, &known);
     assert_eq!(result, None);
 }
 

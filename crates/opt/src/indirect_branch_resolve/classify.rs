@@ -51,7 +51,8 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    classify_anchor_with_rom(fg, anchor_output, link_register_vn, None)
+    let known = crate::analyze_known_bits(fg).ok()?;
+    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, None, None, &known)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -74,7 +75,8 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
-    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None)
+    let known = crate::analyze_known_bits(fg).ok()?;
+    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None, &known)
 }
 
 /// Classify a placeholder anchor with both an optional
@@ -105,6 +107,7 @@ pub fn classify_anchor_with_rom_and_sp(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
+    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
 ) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     let producer_id = graph.get_node_from_output(anchor_output);
@@ -169,12 +172,13 @@ pub fn classify_anchor_with_rom_and_sp(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(fg, anchor_output, rom, link_register_vn)
+            if let Some(r) =
+                classify_jump_table(fg, anchor_output, rom, link_register_vn, known)
             {
                 return Some(r);
             }
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp);
+                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
             }
             None
         }
@@ -186,7 +190,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp);
+                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
             }
             None
         }

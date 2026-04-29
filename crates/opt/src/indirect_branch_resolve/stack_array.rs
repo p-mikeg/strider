@@ -78,6 +78,7 @@ pub fn classify_stack_array(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
+    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
 ) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
@@ -91,7 +92,7 @@ pub fn classify_stack_array(
     let (load_anchor, target_mask) = strip_target_mask(fg, anchor_output);
 
     let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
-    let bound = bound_via_known_bits(fg, shape.idx_output)
+    let bound = bound_via_known_bits(fg, shape.idx_output, known)
         .or_else(|| bound_via_predecessor_if(fg, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
@@ -544,7 +545,8 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let result = classify_stack_array(&fg, load_out, sp64());
+        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
+        let result = classify_stack_array(&fg, load_out, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -578,7 +580,8 @@ mod tests {
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
+        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
+        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
     }
 
     #[test]
@@ -630,7 +633,8 @@ mod tests {
             .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
-        assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
+        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
+        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────

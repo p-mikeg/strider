@@ -15,7 +15,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use ir::Graph;
+use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use anyhow::anyhow;
@@ -42,10 +42,11 @@ use crate::error::Result;
 /// [`NodeKind::Return`], or when the IR mutation calls
 /// ([`Graph::add_node_input`] / [`Graph::remove_node_input`]) fail.
 pub fn apply_link_register(
-    graph: &mut Graph,
+    fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
+    let graph = &mut fg.graph;
     let kind = *graph.node_kind(placeholder_return);
     if !matches!(kind, NodeKind::Return) {
         return Err(anyhow!("expected Return node, got {kind:?}"));
@@ -93,13 +94,14 @@ pub fn apply_link_register(
 /// expected 3 (i.e. not a placeholder shape), or when IR
 /// construction fails.
 pub fn apply_tail_call(
-    graph: &mut Graph,
+    fg: &mut BuiltFunctionGraph,
     placeholder_return: NodeId,
     target: u64,
     arg_passing_outputs: &[NodeOutputId],
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
+    let graph = &mut fg.graph;
     let kind = *graph.node_kind(placeholder_return);
     if !matches!(kind, NodeKind::Return) {
         return Err(anyhow!("expected Return node, got {kind:?}"));
@@ -175,7 +177,7 @@ mod tests {
     use ir::FunctionBuilder;
     use ir::node::NodeOutputType;
 
-    fn build_placeholder_graph() -> (ir::Graph, NodeId) {
+    fn build_placeholder_graph() -> (ir::BuiltFunctionGraph, NodeId) {
         let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
@@ -192,41 +194,41 @@ mod tests {
                 found = Some(nid);
             }
         }
-        (built.graph, found.expect("Return"))
+        (built, found.expect("Return"))
     }
 
     #[test]
     fn apply_link_register_keeps_return_node_id() {
-        let (mut graph, return_id_before) = build_placeholder_graph();
+        let (mut fg, return_id_before) = build_placeholder_graph();
         let inputs_before: Vec<_> =
-            graph.node_inputs(return_id_before).into_iter().collect();
+            fg.graph.node_inputs(return_id_before).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
-        apply_link_register(&mut graph, return_id_before, &[]).expect("apply");
-        assert!(matches!(graph.node_kind(return_id_before), NodeKind::Return));
+        apply_link_register(&mut fg, return_id_before, &[]).expect("apply");
+        assert!(matches!(fg.graph.node_kind(return_id_before), NodeKind::Return));
     }
 
     #[test]
     fn apply_link_register_rejects_non_return_node() {
-        let (mut graph, _return_id) = build_placeholder_graph();
-        let int_const_id = graph
+        let (mut fg, _return_id) = build_placeholder_graph();
+        let int_const_id = fg.graph
             .all_node_ids()
-            .find(|&nid| matches!(graph.node_kind(nid), NodeKind::IntConst(_)))
+            .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
-        let result = apply_link_register(&mut graph, int_const_id, &[]);
+        let result = apply_link_register(&mut fg, int_const_id, &[]);
         assert!(result.is_err(), "must reject non-Return: {result:?}");
     }
 
     #[test]
     fn apply_tail_call_emits_call_then_return() {
-        let (mut graph, placeholder) = build_placeholder_graph();
+        let (mut fg, placeholder) = build_placeholder_graph();
         let _new_return =
-            apply_tail_call(&mut graph, placeholder, 0xc0de_u64, &[], &[], &[])
+            apply_tail_call(&mut fg, placeholder, 0xc0de_u64, &[], &[], &[])
                 .expect("apply");
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
         let mut had_call = false;
-        for nid in graph.all_node_ids() {
-            if matches!(graph.node_kind(nid), NodeKind::Call) {
+        for nid in fg.graph.all_node_ids() {
+            if matches!(fg.graph.node_kind(nid), NodeKind::Call) {
                 had_call = true;
                 break;
             }
@@ -243,13 +245,12 @@ mod tests {
         builder.set_entry_region(region).expect("entry");
         builder.set_region(region);
         builder.build_return(None, &[]).expect("return");
-        let built = builder.build().expect("build");
-        let mut graph = built.graph;
-        let ret_id = graph
+        let mut fg = builder.build().expect("build");
+        let ret_id = fg.graph
             .all_node_ids()
-            .find(|&nid| matches!(graph.node_kind(nid), NodeKind::Return))
+            .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
-        let result = apply_tail_call(&mut graph, ret_id, 0xc0de, &[], &[], &[]);
+        let result = apply_tail_call(&mut fg, ret_id, 0xc0de, &[], &[], &[]);
         assert!(result.is_err(), "must reject 2-input Return: {result:?}");
     }
 
@@ -288,13 +289,13 @@ mod tests {
         // `[ctrl, mem, ret_val_0, ret_val_1]` (the placeholder
         // `target_value` slot is dropped so `RetPat::ret_val(idx)` stays
         // 0-indexed over the real return values).
-        let (mut graph, placeholder) = build_placeholder_graph();
-        let inputs_before: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
+        let (mut fg, placeholder) = build_placeholder_graph();
+        let inputs_before: Vec<_> = fg.graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
-        let r0 = synth_value_output(&mut graph, 0x42, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut graph, 0x43, NodeOutputType::U64);
-        apply_link_register(&mut graph, placeholder, &[r0, r1]).expect("apply");
-        let inputs_after: Vec<_> = graph.node_inputs(placeholder).into_iter().collect();
+        let r0 = synth_value_output(&mut fg.graph, 0x42, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut fg.graph, 0x43, NodeOutputType::U64);
+        apply_link_register(&mut fg, placeholder, &[r0, r1]).expect("apply");
+        let inputs_after: Vec<_> = fg.graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
             inputs_after.len(),
             2 + 2,
@@ -308,21 +309,21 @@ mod tests {
     fn apply_tail_call_threads_arg_passing_into_call() {
         // Three arg-passing outputs → Call's inputs are
         // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
-        let (mut graph, placeholder) = build_placeholder_graph();
-        let a0 = synth_value_output(&mut graph, 0x01, NodeOutputType::U64);
-        let a1 = synth_value_output(&mut graph, 0x02, NodeOutputType::U64);
-        let a2 = synth_value_output(&mut graph, 0x03, NodeOutputType::U64);
+        let (mut fg, placeholder) = build_placeholder_graph();
+        let a0 = synth_value_output(&mut fg.graph, 0x01, NodeOutputType::U64);
+        let a1 = synth_value_output(&mut fg.graph, 0x02, NodeOutputType::U64);
+        let a2 = synth_value_output(&mut fg.graph, 0x03, NodeOutputType::U64);
         let new_return =
-            apply_tail_call(&mut graph, placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
+            apply_tail_call(&mut fg, placeholder, 0xc0de, &[a0, a1, a2], &[], &[])
                 .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
         // back to the Call.
         let new_return_inputs: Vec<_> =
-            graph.node_inputs(new_return).into_iter().collect();
+            fg.graph.node_inputs(new_return).into_iter().collect();
         let call_ctrl = new_return_inputs[0];
-        let (call_node, _) = graph.output_definition(call_ctrl);
-        assert!(matches!(graph.node_kind(call_node), NodeKind::Call));
-        let call_inputs: Vec<_> = graph.node_inputs(call_node).into_iter().collect();
+        let (call_node, _) = fg.graph.output_definition(call_ctrl);
+        assert!(matches!(fg.graph.node_kind(call_node), NodeKind::Call));
+        let call_inputs: Vec<_> = fg.graph.node_inputs(call_node).into_iter().collect();
         assert_eq!(
             call_inputs.len(),
             6,
@@ -337,13 +338,13 @@ mod tests {
     fn apply_tail_call_threads_clobbered_kinds_into_call_outputs() {
         // Two clobbered output kinds → Call's outputs are
         // `[Control, Memory, clob_0, clob_1]`.
-        let (mut graph, placeholder) = build_placeholder_graph();
+        let (mut fg, placeholder) = build_placeholder_graph();
         let clob_kinds = [
             NodeOutputKind::OutputType(NodeOutputType::U64),
             NodeOutputKind::OutputType(NodeOutputType::U32),
         ];
         let new_return = apply_tail_call(
-            &mut graph,
+            &mut fg,
             placeholder,
             0xbeef,
             &[],
@@ -353,29 +354,29 @@ mod tests {
         .expect("apply");
         // Walk to the Call.
         let new_return_inputs: Vec<_> =
-            graph.node_inputs(new_return).into_iter().collect();
-        let (call_node, _) = graph.output_definition(new_return_inputs[0]);
-        let call_outputs: Vec<_> = graph.node_outputs(call_node).into_iter().collect();
+            fg.graph.node_inputs(new_return).into_iter().collect();
+        let (call_node, _) = fg.graph.output_definition(new_return_inputs[0]);
+        let call_outputs: Vec<_> = fg.graph.node_outputs(call_node).into_iter().collect();
         assert_eq!(
             call_outputs.len(),
             4,
             "Call must have [Control, Memory, clob_0, clob_1]",
         );
-        assert_eq!(graph.output_kind(call_outputs[2]), clob_kinds[0]);
-        assert_eq!(graph.output_kind(call_outputs[3]), clob_kinds[1]);
+        assert_eq!(fg.graph.output_kind(call_outputs[2]), clob_kinds[0]);
+        assert_eq!(fg.graph.output_kind(call_outputs[3]), clob_kinds[1]);
     }
 
     #[test]
     fn apply_tail_call_threads_ret_val_outputs_into_return() {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
-        let (mut graph, placeholder) = build_placeholder_graph();
-        let r0 = synth_value_output(&mut graph, 0x10, NodeOutputType::U64);
-        let r1 = synth_value_output(&mut graph, 0x11, NodeOutputType::U64);
+        let (mut fg, placeholder) = build_placeholder_graph();
+        let r0 = synth_value_output(&mut fg.graph, 0x10, NodeOutputType::U64);
+        let r1 = synth_value_output(&mut fg.graph, 0x11, NodeOutputType::U64);
         let new_return =
-            apply_tail_call(&mut graph, placeholder, 0xface, &[], &[], &[r0, r1])
+            apply_tail_call(&mut fg, placeholder, 0xface, &[], &[], &[r0, r1])
                 .expect("apply");
-        let inputs: Vec<_> = graph.node_inputs(new_return).into_iter().collect();
+        let inputs: Vec<_> = fg.graph.node_inputs(new_return).into_iter().collect();
         assert_eq!(inputs.len(), 4, "[call_ctrl, call_mem, r0, r1]");
         assert_eq!(inputs[2], r0);
         assert_eq!(inputs[3], r1);

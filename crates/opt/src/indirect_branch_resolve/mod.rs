@@ -232,55 +232,56 @@ impl Optimizer for IndirectBranchResolve {
     /// # Errors
     ///
     /// Propagates failures from [`apply_link_register`] /
-    /// [`apply_tail_call`] (typically [`crate::ErrorKind::IrError`]).
+    /// [`apply_tail_call`].
     fn optimize(
         &self,
         graph: &mut Graph,
         entry: NodeId,
     ) -> Result<OptimizationResult> {
+        // Wrap once over the whole loop: the classifier and the in-place
+        // editors all operate on `&mut BuiltFunctionGraph`, and
+        // `analyze_known_bits` is a per-call read-only analysis we want
+        // to compute once and reuse across all anchors.
+        crate::pipeline::with_built(graph, entry, |fg| self.optimize_built(fg))
+    }
+}
+
+impl IndirectBranchResolve {
+    fn optimize_built(
+        &self,
+        fg: &mut ir::BuiltFunctionGraph,
+    ) -> Result<OptimizationResult> {
+        // Cache the known-bits analysis up-front: classify_anchor's
+        // jump-table and stack-array arms used to call analyze_known_bits
+        // per anchor, paying the worklist cost N times for N anchors
+        // even though the IR doesn't change between in-place edits
+        // (the LinkRegister edit appends slots; the tail-call edit
+        // detaches the placeholder and emits fresh nodes — neither
+        // affects bounds on existing producers).
+        let known = crate::analyze_known_bits(fg)?;
         let mut changed = false;
-        // Cache an empty context once for anchors that haven't been
-        // populated by a calling-convention-aware caller.  Defaulting
-        // to empty slices keeps the in-place editors well-typed; a
-        // real ABI-aware caller (see `strider`'s orchestrator) seeds
-        // the per-anchor entries.
         let empty_ctx = AnchorCallingContext::default();
         for (addr, anchor_output) in &self.unresolved_anchors {
-            // `classify_anchor_with_rom_and_sp` now takes
-            // `&BuiltFunctionGraph` so it can drive `pattern::Matcher`
-            // for the jump-table and stack-array shape matches.  The
-            // pass owns only `&mut Graph`, so we wrap each call via
-            // `with_built` (read-only access — the classifier itself
-            // never mutates the graph; the in-place editors below run
-            // on the restored `&mut Graph`).
-            let resolved_opt = crate::pipeline::with_built(graph, entry, |fg| {
-                classify::classify_anchor_with_rom_and_sp(
-                    fg,
-                    *anchor_output,
-                    self.link_register_vn,
-                    self.rom.as_deref(),
-                    self.stack_ptr_vn,
-                )
-            });
-            let Some(resolved) = resolved_opt else {
-                continue;
+            let resolved = match classify::classify_anchor_with_rom_and_sp(
+                fg,
+                *anchor_output,
+                self.link_register_vn,
+                self.rom.as_deref(),
+                self.stack_ptr_vn,
+                &known,
+            ) {
+                Some(r) => r,
+                None => continue,
             };
-            // Locate the placeholder Return.  Skip anchors whose
-            // placeholder has already been edited away in a previous
-            // iteration of the same fixed-point loop.
             let Some(placeholder) =
-                find_placeholder_return_for_anchor(graph, *anchor_output)
+                find_placeholder_return_for_anchor(&fg.graph, *anchor_output)
             else {
                 continue;
             };
             let ctx = self.anchor_contexts.get(addr).unwrap_or(&empty_ctx);
             match resolved {
                 ResolvedTargets::LinkRegister => {
-                    inplace::apply_link_register(
-                        graph,
-                        placeholder,
-                        &ctx.ret_val_outputs,
-                    )?;
+                    inplace::apply_link_register(fg, placeholder, &ctx.ret_val_outputs)?;
                     changed = true;
                 }
                 ResolvedTargets::Single(target) => {
@@ -290,7 +291,7 @@ impl Optimizer for IndirectBranchResolve {
                         continue;
                     }
                     let _new_return = inplace::apply_tail_call(
-                        graph,
+                        fg,
                         placeholder,
                         target,
                         &ctx.arg_passing_outputs,
