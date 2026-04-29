@@ -273,6 +273,7 @@ where
     fn step(&mut self) -> Result<Decision> {
         let (next_known, in_place_edits) = self.classify_and_partition()?;
         self.apply_in_place_edits(&in_place_edits)?;
+        let prev_unresolved_len = self.unresolved.len();
         let unresolved_after_edits = self.recompute_unresolved(&in_place_edits);
 
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&self.known_targets);
@@ -292,11 +293,11 @@ where
             return Ok(Decision::FixedPoint);
         }
 
-        // Track stall: an in-place-only iteration must reduce
-        // `unresolved` strictly, or we've found a fixed point in
-        // disguise.  Surface as a typed error so a misclassifying
+        // Track stall: an in-place-only iteration must strictly
+        // reduce the unresolved count, or we've found a fixed point
+        // in disguise.  Surface as a typed error so a misclassifying
         // resolver shows up before exhausting the cap.
-        if !edge_set_changed && unresolved_after_edits.len() >= self.unresolved.len() {
+        if !edge_set_changed && unresolved_after_edits.len() >= prev_unresolved_len {
             if self.stall_budget == 0 {
                 bail!(
                     "in-place edits stalled: {} unresolved branches after edit, no edge-set growth",
@@ -413,22 +414,25 @@ where
         Ok(())
     }
 
+    /// Filter `self.unresolved` against the post-edit graph: drop
+    /// entries whose placeholder Return was detached by an in-place
+    /// edit.  No-op when no edits fired (returns the unmodified vec).
     fn recompute_unresolved(
-        &self,
+        &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
     ) -> Vec<(PcodeInsnAddr, ir::Value)> {
+        let unresolved = std::mem::take(&mut self.unresolved);
         if in_place_edits.is_empty() {
-            return self.unresolved.clone();
+            return unresolved;
         }
         let Some(graph) = self.graph.as_ref() else {
             return Vec::new();
         };
-        self.unresolved
-            .iter()
+        unresolved
+            .into_iter()
             .filter(|(_, anchor)| {
                 opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
             })
-            .copied()
             .collect()
     }
 
