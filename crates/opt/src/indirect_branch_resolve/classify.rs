@@ -1,10 +1,10 @@
-//! Producer-shape classifier for tier-2 indirect-branch resolution.
+//! Producer-shape classifier for indirect-branch resolution.
 //!
 //! Walks the producer node of a placeholder anchor's value-input and
-//! classifies it into a [`ResolvedTargets`].  The arms here are the
-//! soundness-checked subset originally implemented in strider's
-//! tier-2 resolver — F5 relocates the logic into the opt crate so it
-//! can be invoked from an [`crate::Optimizer`] pass.
+//! classifies it into a [`ResolvedTargets`].  Each arm is a
+//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, `ValuePhi`
+//! of constants, jump-table load, stack-array load) — the comments on
+//! each arm spell out why the runtime target set is constrained.
 //!
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into

@@ -1,35 +1,27 @@
-//! F5 — IR-level indirect-branch resolver.
+//! IR-level indirect-branch resolver.
 //!
-//! Originally implemented in `strider::indirect_resolve_tier2` (the
-//! "tier-2" classifier).  F5 relocates the classification + in-place
-//! edit logic into the `opt` crate so it can be invoked as an
-//! [`crate::Optimizer`] pass inside the standard fixed-point loop.
-//! The strider crate retains thin shims that delegate to this module
-//! for back-compat with the existing tier-2 orchestrator.
+//! Classifies placeholder anchors that the strider lifter inserts at
+//! `BranchIndirect` sites and applies the in-place IR edits for the
+//! resolutions that don't require a CFG rebuild.  Used as an
+//! [`crate::Optimizer`] pass inside the standard fixed-point loop;
+//! the strider orchestrator drives the outer loop (CFG rebuild,
+//! cache invalidation, iteration cap).
 //!
-//! ## What moved here
+//! ## Submodules
 //!
-//! - `classify_anchor` / `classify_anchor_with_rom` /
-//!   `classify_anchor_with_rom_and_sp` ([`classify`]) — producer-shape
-//!   classifier returning [`ResolvedTargets`].
-//! - `apply_link_register` / `apply_tail_call` ([`inplace`]) — in-place
-//!   IR edits for resolutions that don't require a CFG rebuild.
-//! - `classify_jump_table` ([`jump_table`]) — rodata jump-table arm.
-//! - `classify_stack_array` ([`stack_array`]) — BUG-30 stack-array arm.
-//!
-//! ## What stays in strider
-//!
-//! - The orchestrator's outer fixed-point loop (CFG rebuild, cache
-//!   invalidation, iteration cap).
+//! - [`classify`] — producer-shape classifier returning
+//!   [`ResolvedTargets`] (`classify_anchor*` family).
+//! - [`inplace`] — in-place IR edits for `LinkRegister` returns and
+//!   `Single` tail calls (`apply_link_register`, `apply_tail_call`).
+//! - [`jump_table`] — rodata jump-table arm.
+//! - [`stack_array`] — stack-array-of-labels arm.
 //!
 //! ## Where [`ResolvedTargets`] lives
 //!
 //! Defined here in `opt` and re-exported as `cfg::ResolvedTargets`.
 //! `cfg` already depends on `opt` (cfg's `indirect_resolve` mini-graph
 //! runs the opt pipeline), so opt is the upstream crate where the type
-//! must live; the reverse direction would form a dep cycle.  R3
-//! collapsed an earlier two-enum mirror into this single canonical
-//! type.
+//! must live; the reverse direction would form a dep cycle.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -85,8 +77,8 @@ pub enum ResolvedTargets {
     Multiple(Vec<u64>),
 }
 
-/// F5 — opt pass that classifies indirect-branch placeholder anchors
-/// and applies the in-place IR edits that don't require a CFG rebuild
+/// Opt pass that classifies indirect-branch placeholder anchors and
+/// applies the in-place IR edits that don't require a CFG rebuild
 /// (LinkRegister returns + Single tail calls).
 ///
 /// `Multiple` and intra-function `Single` resolutions are LEFT for the
@@ -328,8 +320,7 @@ pub fn find_placeholder_return_for_anchor(
 
 #[cfg(test)]
 mod tests {
-    //! F5 — unit tests for [`IndirectBranchResolve`] as an
-    //! [`Optimizer`] pass.
+    //! Unit tests for [`IndirectBranchResolve`] as an [`Optimizer`] pass.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -362,7 +353,7 @@ mod tests {
 
     #[test]
     fn pass_does_nothing_when_no_anchors() -> Result<()> {
-        // F5 unit 1 — vacuous case.  No anchors → NoChange.
+        // Vacuous case: no anchors → NoChange.
         let (mut graph, entry, _anchor) = placeholder_graph_with_int_const(0xc0de);
         let pass = IndirectBranchResolve::new();
         let result = pass.optimize(&mut graph, entry)?;
@@ -372,7 +363,7 @@ mod tests {
 
     #[test]
     fn pass_returns_no_change_when_no_anchor_classifies() -> Result<()> {
-        // F5 unit 2 — classifier returns None for every anchor.
+        // Classifier returns None for every anchor.
         // Construct: one anchor whose producer is an IntBinaryOp(Add),
         // which the classifier maps to None (not IntConst, not
         // InitialVar, not ValuePhi, not a Load shape with stack-array
@@ -414,8 +405,8 @@ mod tests {
 
     #[test]
     fn pass_returns_changed_when_link_register_anchor_resolves() -> Result<()> {
-        // F5 unit 3 — InitialVar(lr) anchor resolves to LinkRegister
-        // and the LinkRegister in-place edit fires.
+        // InitialVar(lr) anchor resolves to LinkRegister and the
+        // LinkRegister in-place edit fires.
         //
         // Pre-condition: run RedundantPhis to collapse the trivial
         // single-input ControlPhi over `lr` → InitialVar(lr) directly.
@@ -461,9 +452,9 @@ mod tests {
 
     #[test]
     fn pass_returns_changed_when_tail_call_anchor_resolves() -> Result<()> {
-        // F5 unit 4 — IntConst(K) anchor where K is OUT of the
-        // function's range (per `is_tail_call`).  Pass applies the
-        // tail-call in-place edit and returns Changed.
+        // IntConst(K) anchor where K is OUT of the function's range
+        // (per `is_tail_call`).  Pass applies the tail-call in-place
+        // edit and returns Changed.
         let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
         let mut pass = IndirectBranchResolve::new();
@@ -486,9 +477,9 @@ mod tests {
 
     #[test]
     fn pass_does_not_apply_in_place_for_intra_fn_single() -> Result<()> {
-        // F5 unit 5 — IntConst(K) anchor where K is in-range (NOT a
-        // tail call).  Pass leaves the graph alone — the orchestrator
-        // would handle this via a CFG rebuild.
+        // IntConst(K) anchor where K is in-range (NOT a tail call).
+        // Pass leaves the graph alone — the orchestrator would handle
+        // this via a CFG rebuild.
         let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
         let mut pass = IndirectBranchResolve::new();

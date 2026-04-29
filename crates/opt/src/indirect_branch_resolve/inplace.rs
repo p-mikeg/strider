@@ -1,5 +1,6 @@
-//! In-place IR edits for tier-2 resolutions that don't require a CFG
-//! rebuild.  Two variants are supported:
+//! In-place IR edits for resolutions that don't require a CFG rebuild.
+//!
+//! Two variants are supported:
 //!
 //!   * **`LinkRegister`**: the placeholder `Return(target_value)`
 //!     already has the right control-flow shape.  We append the
@@ -11,13 +12,6 @@
 //!     (becoming a zombie unreachable node) and a fresh
 //!     `IntConst → Call → Return` chain is wired on the same control
 //!     and memory inputs.
-//!
-//! ## Origin
-//!
-//! Originally implemented in `strider::indirect_resolve_tier2::inplace`
-//! and using strider's error type.  F5 relocates the logic into the
-//! opt crate; the error type switches to [`crate::Error`] so opt-pass
-//! impls don't depend on strider.
 
 #![allow(clippy::module_name_repetitions)]
 
