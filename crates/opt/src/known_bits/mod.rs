@@ -356,16 +356,19 @@ impl OptimizerOnBuilt for KnownBits {
         // that needs bit-knowledge without graph rewrites).
         let known = analyze(function)?;
 
-        // Phase 2 — replace fully-determined outputs with constants.
-        // Snapshot reachable nodes so we can mutate the graph below
-        // without holding a borrow on the preorder iterator.
-        let nodes: Vec<_> = function.preorder().collect();
+        // Phase 2 — replace fully-determined outputs with constants.  Drive
+        // via WorkSet so a rewritten node's consumers are re-checked in the
+        // same call: a freshly-introduced IntConst can let a sibling whose
+        // *other* operand was previously unknown become fully-determined.
+        let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
-        // Reused across iterations: snapshot of `node_outputs` so the body can
-        // call `replace_all_uses` (which mutates `function.graph`) without
-        // holding a borrow into the graph's output slice.
         let mut outputs: Vec<NodeOutputId> = Vec::new();
-        for &node_id in &nodes {
+        let mut consumers: Vec<NodeId> = Vec::new();
+        while let Some(node_id) = work.pop() {
+            // Already-constant nodes have nothing to rewrite.
+            if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
+                continue;
+            }
             outputs.clear();
             outputs.extend(function.graph.node_outputs(node_id));
             for &out in &outputs {
@@ -383,12 +386,17 @@ impl OptimizerOnBuilt for KnownBits {
                 if !kb.all_known(type_mask) {
                     continue;
                 }
-                // Skip nodes that are already constants (avoids busy-loop).
-                if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
-                    continue;
+                consumers.clear();
+                for (consumer, _) in function.graph.output_uses(out) {
+                    consumers.push(consumer);
                 }
                 let new_out = function.make_int_const(kb.ones, ty)?;
-                result = result.after_replace(function, out, new_out)?;
+                if function.replace_all_uses(out, new_out)? {
+                    result = OptimizationResult::Changed;
+                    for &consumer in &consumers {
+                        work.push(consumer);
+                    }
+                }
             }
         }
         Ok(result)
