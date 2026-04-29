@@ -77,23 +77,6 @@ pub fn rewrite_rule(
         match outcome {
             BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
-                // F1 provenance propagation: the RHS replacement node
-                // inherits the LHS root's fingerprint.  When the RHS has
-                // inputs, create_node already auto-merged from them; we
-                // additionally union the root's fingerprint to capture the
-                // FOLDING insn's contribution (e.g. an IntAdd fold replaces
-                // IntAdd(IntConst(a), IntConst(b)) with IntConst(c) where
-                // the new IntConst has no inputs and would otherwise have
-                // an empty fingerprint).  Merging is idempotent — a
-                // replacement that already has the root's addrs is
-                // unaffected by the merge.
-                let root_fp = fg.graph.fingerprint_of(node).clone();
-                let producer = fg.graph.get_node_from_output(new_out);
-                let producer_fp = fg.graph.fingerprint_of(producer).clone();
-                fg.graph.set_fingerprint(
-                    producer,
-                    ir::Fingerprint::merge(&producer_fp, &root_fp),
-                );
                 let changed = fg.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }

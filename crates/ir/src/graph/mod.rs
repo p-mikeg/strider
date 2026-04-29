@@ -13,10 +13,10 @@
 
 use std::collections::HashMap;
 
-use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
+use cranelift_entity::{ListPool, PrimaryMap};
 
 use crate::node::{
-    Fingerprint, Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
+    Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
 };
 
 mod access;
@@ -62,12 +62,6 @@ pub struct Graph {
     /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
     /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
     pub(crate) call_other_names: HashMap<NodeId, String>,
-    /// F1 provenance side-table: per-node [`Fingerprint`] recording which
-    /// pcode instructions contributed to each node.  Backed by
-    /// [`SecondaryMap`] (a `Vec` indexed by node-id integer) because every
-    /// value-producing node has a fingerprint — dense access pattern, O(1)
-    /// without hashing, and unset slots default to the empty fingerprint.
-    pub(crate) fingerprints: SecondaryMap<NodeId, Fingerprint>,
 }
 
 impl Default for Graph {
@@ -89,7 +83,6 @@ impl Graph {
             node_to_id: HashMap::new(),
             stack_phi_offsets: HashMap::new(),
             call_other_names: HashMap::new(),
-            fingerprints: SecondaryMap::new(),
         }
     }
 
@@ -116,11 +109,8 @@ impl Graph {
 
     /// Returns the total number of nodes ever allocated in the graph.
     ///
-    /// F1 lift-site fingerprint plumbing snapshots this before a lift call
-    /// and uses the post-lift delta to enumerate the freshly created nodes
-    /// that need their pcode address seeded.  Stable across `Clone` —
-    /// detached zombies count toward the total because the entity arena
-    /// never reclaims slots.
+    /// Stable across `Clone` — detached zombies count toward the total
+    /// because the entity arena never reclaims slots.
     #[inline]
     #[must_use]
     pub fn node_count(&self) -> usize {

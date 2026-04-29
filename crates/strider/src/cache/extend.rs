@@ -102,9 +102,8 @@ pub fn extend_predecessors_with_handle(
     // IR error (cacheable-node guard) or — for the var-phi fallback —
     // the unsupported-regsize dispatch.  The cacheable-node guard cannot
     // fire today (ControlState / MemPhi / ControlPhi are all non-cacheable
-    // by design), but defensive hardening matters because F1 fingerprint
-    // plumbing extends create_node's behavior in ways that could grow new
-    // failure modes for the per-var fallback.
+    // by design), but defensive hardening matters as a forward-compatible
+    // shape for the per-var fallback.
     let mut appended: Vec<NodeId> = Vec::new();
 
     // Step 1: append predecessor's exit control to the ControlState.

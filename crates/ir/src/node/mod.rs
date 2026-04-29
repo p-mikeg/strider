@@ -4,18 +4,18 @@
 //! `ir::node::NodeKind`, etc. all resolve through this module.
 
 mod data;
-mod fingerprint;
 mod ids;
 mod kind;
 mod output_kind;
 mod output_type;
+mod pcode_addr;
 
 #[cfg(test)]
 mod tests;
 
 pub use data::{Node, NodeInput, NodeOutput};
-pub use fingerprint::{Fingerprint, PcodeInsnAddr};
 pub use ids::{NodeId, NodeInputId, NodeOutputId};
+pub use pcode_addr::PcodeInsnAddr;
 pub use kind::{FunctionArgSource, NodeKind};
 pub use output_kind::NodeOutputKind;
 pub use output_type::NodeOutputType;
