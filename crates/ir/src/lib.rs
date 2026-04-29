@@ -54,7 +54,6 @@ pub mod walk;
 
 pub use crate::error::{Error, ErrorKind, Result};
 pub use builder::{FunctionBuilder, VarId};
-pub use node::PcodeInsnAddr;
 pub use node_signature::ExpectedOutputKind;
 pub use ops::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
