@@ -265,7 +265,7 @@ fn merge_preserves_invariant_under_conflict() {
     );
 }
 
-// ── BUG-24: shifts must propagate the lhs's known bits ───────────────────────
+// ── shifts must propagate the lhs's known bits ───────────────────────
 
 /// Variant of `make_fn` that tracks a single 1-byte variable so the closure
 /// can read it via `read_variable` to obtain a non-constant `InitialVar`
@@ -403,7 +403,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     Ok(())
 }
 
-/// PPC CR0-byte extraction chain (BUG-24): an unknown one-byte source value
+/// PPC CR0-byte extraction chain: an unknown one-byte source value
 /// (the cr0 register) is masked, ORed with a literal that pre-sets the EQ
 /// bit, right-shifted to position the EQ bit at bit 0, and finally ANDed
 /// with 1.  Mathematically, `((cr0 & 1) | 2) >> 1) & 1 == 1` for every
@@ -432,7 +432,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
         semantic,
         Some(1),
         "((cr0 & 1) | 2) >> 1 & 1 must fold to 1 for every cr0; \
-         got non-constant return value (BUG-24 propagation)"
+         got non-constant return value (propagation)"
     );
     Ok(())
 }

@@ -74,7 +74,7 @@ impl FunctionBuilder {
         let output_type = self.get_output_type(output_id)?;
         match self.graph().kind_of_output(output_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_unsigned_int_u128(*val).and_then(|v| u64::try_from(v).ok()))
+                Ok(output_type.get_unsigned_int(*val).and_then(|v| u64::try_from(v).ok()))
             }
             NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(*val as u64)),
             _ => Ok(None),
@@ -98,7 +98,7 @@ impl FunctionBuilder {
         let output_type = self.get_output_type(output_id)?;
         match self.graph().kind_of_output(output_id) {
             NodeKind::IntConst(val) if output_type.is_integer() => {
-                Ok(output_type.get_signed_int_i128(*val).and_then(|v| i64::try_from(v).ok()))
+                Ok(output_type.get_signed_int(*val).and_then(|v| i64::try_from(v).ok()))
             }
             NodeKind::BoolConst(val) if output_type.is_bool() => Ok(Some(i64::from(*val))),
             _ => Ok(None),

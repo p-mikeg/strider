@@ -14,7 +14,7 @@ use target::Endianness;
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, store_value_byte_size};
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -210,7 +210,7 @@ fn probe(
                 None
             }
         }
-        // BUG-28 cause #2 also affects this pass: a non-aliasing `Store`
+        // cause #2 also affects this pass: a non-aliasing `Store`
         // (a write to global / heap memory, which `StackStoreDetect`
         // didn't rewrite to `StackStore` because its address didn't
         // resolve to `sp + K`) on the memory chain previously
@@ -234,20 +234,8 @@ fn probe(
                 }
                 Some(SpExpr::Terminal { base: _, offset: store_off }) => {
                     // SP-rooted: only continue if the byte ranges are
-                    // provably disjoint.  Store size taken from the
-                    // value's declared NodeOutputType; the fallback
-                    // (`i64::MAX`) is the soundness-preserving answer
-                    // — it forces `ranges_disjoint` to return false
-                    // and we conservatively terminate.  In valid IR
-                    // a Store's DATA slot is value-typed by signature
-                    // so the fallback is unreachable; the branch
-                    // exists only as a defensive guardrail.
-                    let data = inputs[2];
-                    let store_size = fg
-                        .graph
-                        .output_kind(data)
-                        .as_value()
-                        .map_or(i64::MAX, |t| t.byte_size() as i64);
+                    // provably disjoint.
+                    let store_size = store_value_byte_size(&fg.graph, inputs[2]);
                     if ranges_disjoint(store_off, store_size, offset, load_size) {
                         let prev_mem = inputs[0];
                         probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
@@ -363,11 +351,11 @@ fn realize(
 }
 
 
-// ── Public helper for the tier-2 indirect-branch classifier (BUG-30) ──────
+// ── Public helper for the tier-2 indirect-branch classifier ──────
 //
 // `try_forward_load` rewrites the load by bottoming-out the memory chain at
 // a `StackStore` and re-using its data slot.  When the load address has a
-// concrete SP-relative offset, that's straightforward.  But the BUG-30
+// concrete SP-relative offset, that's straightforward.  But the 
 // computed-goto-via-stack-array shape has a *symbolic* offset
 // (`sp + base + idx*stride`) — the per-i target lives at offset
 // `base + i*stride` for i in [0, N), bounded by KnownBits.
@@ -397,7 +385,7 @@ fn realize(
 //     iff disjoint.  `SpExpr::Phi` (SP through a phi) is conservatively
 //     treated as aliasing → bail.
 //   * `MemPhi`: cross-region join.  This helper does NOT recurse
-//     across MemPhi (returns `None`) — the BUG-30 case is single-
+//     across MemPhi (returns `None`) — the case is single-
 //     region (the prologue stores and the dispatch load live in the
 //     same region) and the classifier asks one offset at a time, so
 //     the "all preds agree" reasoning the existing `probe` does for
@@ -420,7 +408,7 @@ fn realize(
 /// on success, or `None` when no matching store dominates the chain.
 ///
 /// See the module-level "Public helper for the tier-2 indirect-branch
-/// classifier (BUG-30)" notes for the soundness rules.
+/// classifier" notes for the soundness rules.
 ///
 /// # Parameters
 ///
@@ -436,7 +424,7 @@ fn realize(
 ///   across multiple calls for the same graph to amortise the cost
 ///   of decomposing repeated SP expressions.
 #[must_use]
-pub fn find_stack_stored_value_at_offset(
+pub(crate) fn find_stack_stored_value_at_offset(
     graph: &ir::Graph,
     mem: NodeOutputId,
     offset: i64,
@@ -490,11 +478,7 @@ pub fn find_stack_stored_value_at_offset(
                     graph, inputs[0], offset, value_type, sp_vn, memo,
                 ),
                 Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-                    let data = inputs[2];
-                    let store_size = graph
-                        .output_kind(data)
-                        .as_value()
-                        .map_or(i64::MAX, |t| t.byte_size() as i64);
+                    let store_size = store_value_byte_size(graph, inputs[2]);
                     if ranges_disjoint(store_off, store_size, offset, load_size) {
                         find_stack_stored_value_at_offset(
                             graph, inputs[0], offset, value_type, sp_vn, memo,

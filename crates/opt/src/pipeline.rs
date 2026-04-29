@@ -200,9 +200,10 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns the first [`crate::Error`] reported by any pass, or the
-    /// final-validate error from `ir::validate::validate` if the post-pass
-    /// run leaves an invalid graph.
+    /// Returns the first [`crate::Error`] reported by any pass.  If every
+    /// pass and post-pass succeeds, the graph is then re-validated and any
+    /// validation error is returned.  When a post-pass returns `Err`, the
+    /// final validation step is skipped — the pass error wins.
     pub fn run(
         &self,
         graph: &mut ir::Graph,

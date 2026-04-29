@@ -191,13 +191,12 @@ fn assert_add_with_const(
     let l = inputs[0];
     let r = inputs[1];
     let masked = ty
-        .get_unsigned_int(expected_const)
+        .get_unsigned_int(u128::from(expected_const))
         .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
             *fg.graph.kind_of_output(o),
-            // IntConst stores u128; masked is u64, widen for comparison.
-            NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
+            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
         )
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
@@ -234,12 +233,11 @@ fn assert_sub_with_const(
     let l = inputs[0];
     let r = inputs[1];
     let masked = ty
-        .get_unsigned_int(expected_const)
+        .get_unsigned_int(u128::from(expected_const))
         .ok_or(ErrorKind::ExpectedIntegerType(ty))?;
     let const_on_rhs = matches!(
         *fg.graph.kind_of_output(r),
-        // IntConst stores u128; masked is u64, widen for comparison.
-        NodeKind::IntConst(v) if ty.get_unsigned_int_u128(v) == Some(u128::from(masked))
+        NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
     );
     assert!(
         l == expected_base && const_on_rhs,
@@ -532,14 +530,14 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-19 helper: Truncate(Extend(x)) round-trip ────────────────────────
+// ── helper: Truncate(Extend(x)) round-trip ────────────────────────
 //
 // Register-merge chains in `write_reg_vn` produce
 //   Extend_zext(Truncate(Or(...)))
 // and similar `Truncate(Extend(x))` round-trips when the inner expression's
 // width equals the outer truncate's output width.  The new round-trip
 // rules in `apply_bitcast_extend_rules` collapse these to the inner
-// expression.  These do NOT fully fix BUG-19's pattern-matcher walk
+// expression.  These do NOT fully fix 's pattern-matcher walk
 // (which still fails on x86 IMUL chains because the surrounding shape
 // has Extend/Truncate at the *outer* level — opposite direction), but
 // they ARE valid algebraic identities that simplify the IR generally.
@@ -1608,7 +1606,7 @@ fn eval_int_cmp_borrow_unmasked_u8() {
     );
 }
 
-// ── BUG-21 ARM residue: IntUnaryOp::Neg/Not constant-fold semantics ──
+// ── ARM residue: IntUnaryOp::Neg/Not constant-fold semantics ──
 //
 // The IR's enum variants follow Sleigh's counter-intuitive opcode
 // naming, which the analyzer dispatch table propagates:

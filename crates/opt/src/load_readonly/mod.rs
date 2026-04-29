@@ -79,7 +79,7 @@ impl<M: ReadOnlyMemory + 'static> LoadReadOnly<M> {
                 continue;
             };
 
-            let Some(masked) = ty.get_unsigned_int(loaded) else {
+            let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
                 continue;
             };
             let new_out = function.make_int_const(masked, ty)?;

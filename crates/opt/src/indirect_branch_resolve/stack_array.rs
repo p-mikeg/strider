@@ -1,4 +1,4 @@
-//! BUG-30 — stack-array-of-labels arm of the tier-2 indirect-branch classifier.
+//! Stack-array-of-labels arm of the tier-2 indirect-branch classifier.
 //!
 //! At -O0, gcc and clang lower a C `goto *targets[idx]` to:
 //!
@@ -44,7 +44,7 @@
 //! Failing either gate returns `None`; the orchestrator defers the
 //! branch.  No panic, no partial commitment, no over-approximation.
 
-use super::ResolvedTargets;
+use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
@@ -53,13 +53,6 @@ use crate::stack_load_forward::find_stack_stored_value_at_offset;
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
 use pattern::{IntVar, Matcher, Var, and as and_pat, any_int_const, or as or_pat, var};
-
-/// Per-call enumeration cap.  Mirrors the rodata jump-table arm's
-/// `MAX_TABLE_ENTRIES` for the same reason: a buggy KnownBits result
-/// could otherwise force iteration through 4 GiB of slots.  Real
-/// `goto *targets[]` arrays are bounded by the source-level switch arm
-/// count, well under 4096.
-const MAX_TABLE_ENTRIES: u64 = 4096;
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor_with_rom_and_sp`] when the
@@ -294,7 +287,7 @@ fn match_stack_array_shape(
             }
             Some(SpExpr::Phi { .. }) => {
                 // SP through a phi-join — out of scope for the
-                // single-region BUG-30 shape.  Bail.
+                // single-region shape.  Bail.
                 return None;
             }
             None => {
@@ -626,7 +619,7 @@ mod tests {
         assert_eq!(classify_stack_array(&fg, load_out, sp64()), None);
     }
 
-    // ── strip_target_mask characterization tests (R2-1) ──────────────────
+    // ── strip_target_mask characterization tests ──────────────────
     //
     // These tests pin the contract of `strip_target_mask` before R2's
     // refactor migrates the manual NodeKind matching to `pattern::and` /

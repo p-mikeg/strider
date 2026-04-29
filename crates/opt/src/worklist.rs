@@ -39,7 +39,10 @@ impl WorkSet {
         }
     }
 
-    /// Pops the next node, removing it from the pending set.
+    /// Pops the next node and removes it from the pending set, so a
+    /// subsequent [`Self::push`] of the same id re-enqueues it.  This is
+    /// what consumers rely on: after processing a node, dependents pushed
+    /// by the body must take effect when their predecessor's outputs change.
     pub(crate) fn pop(&mut self) -> Option<NodeId> {
         let n = self.queue.pop_front()?;
         self.queued.remove(&n);
@@ -50,9 +53,15 @@ impl WorkSet {
 /// Detaches the inputs of every node not reachable from the function entry.
 ///
 /// Unreachable nodes can only be consumed by other unreachable nodes, so
-/// severing their inputs is always safe. Cleans up dead-block residue and
+/// severing their inputs is always safe.  Cleans up dead-block residue and
 /// orphaned address-arithmetic chains left behind by passes that rewrite
 /// reachable consumers (e.g. `DeadBranchElimination`, `FunctionArgDetect`).
+///
+/// Callers typically discard the result with `let _ = ...`: a Changed
+/// verdict here is bookkeeping-only — an unreachable node cannot be a
+/// consumer of a reachable producer, so no other pass can act on the
+/// result.  Escalating it into the pipeline's `Changed` signal would
+/// just buy one extra fixed-point iteration with no work to do.
 pub(crate) fn detach_unreachable_nodes(
     graph: &mut Graph,
     entry: NodeId,

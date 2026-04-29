@@ -79,11 +79,11 @@ pub fn classify_anchor_with_rom(
 
 /// Classify a placeholder anchor with both an optional
 /// [`ReadOnlyMemory`] (for the rodata jump-table arm) and an optional
-/// stack-pointer varnode (for the BUG-30 stack-array-of-labels arm).
+/// stack-pointer varnode (for the stack-array-of-labels arm).
 ///
 /// Same contract as [`classify_anchor`] for every shape unaffected by
 /// either side-channel.  When `rom` is `None`, the rodata-jump-table
-/// arm is short-circuited.  When `stack_ptr_vn` is `None`, the BUG-30
+/// arm is short-circuited.  When `stack_ptr_vn` is `None`, the 
 /// stack-array arm is short-circuited.
 ///
 /// The orchestrator passes both: the rom for the binary-image rodata,
@@ -163,7 +163,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
         // IntConst(stride))))` jump-table dispatch shape.
         //
-        // BUG-30: when the rodata jump-table arm doesn't match and
+        // when the rodata jump-table arm doesn't match and
         // an SP varnode is supplied, fall through to
         // `stack_array::classify_stack_array` which handles the
         // computed-goto-via-local-stack-array shape.  Both arms fail
@@ -178,7 +178,7 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
-        // BUG-30: ARM / arm-thumb / arm-be lifters wrap the
+        // ARM / arm-thumb / arm-be lifters wrap the
         // dispatch target in `IntBinaryOp(And)` with a constant mask
         // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
         // stack_array classifier transparently strips the mask, so

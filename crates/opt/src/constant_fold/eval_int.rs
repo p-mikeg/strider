@@ -31,11 +31,10 @@ pub(super) fn eval_int_binary(
     // — pre-fix the evaluator computed `r % bits` and diverged from Sleigh
     // by the full shift output for any literal `r >= bits`.
     let r_ge_bits = r >= u128::from(bits);
-    // Shift amounts < bits are passed straight through; masking past that
-    // point would silently fold to a different value than Sleigh.
-    let shift = |s: u128| -> u32 {
-        if bits == 0 { 0 } else { s as u32 }
-    };
+    // Shift arms below only call `shift` inside the `!r_ge_bits` branch,
+    // so `s < bits <= u128::from(u32::MAX)` and the truncation is lossless.
+    #[allow(clippy::cast_possible_truncation)]
+    let shift = |s: u128| -> u32 { s as u32 };
     let raw: u128 = match op {
         IntBinaryOp::Add => l.wrapping_add(r),
         IntBinaryOp::Sub => l.wrapping_sub(r),
@@ -58,7 +57,7 @@ pub(super) fn eval_int_binary(
             }
         }
         IntBinaryOp::SShiftRight => {
-            let sl = ty.get_signed_int_i128(l)?;
+            let sl = ty.get_signed_int(l)?;
             if r_ge_bits {
                 // Sign-bit-set → fill with all-ones; sign-bit-clear → zero.
                 if sl < 0 { mask } else { 0 }
@@ -73,8 +72,8 @@ pub(super) fn eval_int_binary(
             l / r
         }
         IntBinaryOp::Sdiv => {
-            let sl = ty.get_signed_int_i128(l)?;
-            let sr = ty.get_signed_int_i128(r)?;
+            let sl = ty.get_signed_int(l)?;
+            let sr = ty.get_signed_int(r)?;
             if sr == 0 {
                 return None;
             }
@@ -100,8 +99,8 @@ pub(super) fn eval_int_binary(
             l % r
         }
         IntBinaryOp::Srem => {
-            let sl = ty.get_signed_int_i128(l)?;
-            let sr = ty.get_signed_int_i128(r)?;
+            let sl = ty.get_signed_int(l)?;
+            let sr = ty.get_signed_int(r)?;
             if sr == 0 {
                 return None;
             }
@@ -133,18 +132,18 @@ pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
     // Mask both inputs to ty at entry.  Unsigned comparisons (Equal, Less,
     // LessEqual, Carry, Borrow) operate on raw u128s and would otherwise
     // return wrong answers for narrow IntConsts that carry high bits beyond
-    // the type width.  The signed arms re-mask via get_signed_int_i128 so
+    // the type width.  The signed arms re-mask via get_signed_int so
     // the double-mask is idempotent for them.
     let mask = ty.bit_mask_u128();
     let l = l & mask;
     let r = r & mask;
 
     let signed = |v: u128| -> Result<i128> {
-        ty.get_signed_int_i128(v)
+        ty.get_signed_int(v)
             .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
     };
     let unsigned_max = || -> Result<u128> {
-        ty.get_unsigned_int_u128(u128::MAX)
+        ty.get_unsigned_int(u128::MAX)
             .ok_or_else(|| ErrorKind::ExpectedIntegerType(ty).into())
     };
     let bits = ty.bit_width() as u32;

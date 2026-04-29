@@ -53,8 +53,7 @@ pub use function_args::FunctionArgDetect;
 pub use indirect_branch_resolve::{
     AnchorAddr, AnchorCallingContext, IndirectBranchResolve, ResolvedTargets,
     apply_link_register, apply_tail_call, classify_anchor, classify_anchor_with_rom,
-    classify_anchor_with_rom_and_sp, classify_jump_table, classify_stack_array,
-    find_placeholder_return_for_anchor,
+    classify_anchor_with_rom_and_sp, find_placeholder_return_for_anchor,
 };
 pub use known_bits::{KnownBits, Kb, analyze as analyze_known_bits};
 pub use load_readonly::LoadReadOnly;

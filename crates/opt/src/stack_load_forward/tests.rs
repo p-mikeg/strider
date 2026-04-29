@@ -187,10 +187,10 @@ fn bail_on_type_mismatch() -> Result<()> {
 /// An intervening `Store(_)` whose address is *not* SP-relative is provably
 /// non-aliasing with any stack slot (different address spaces, or at least
 /// different decomposition: one is `sp + K`, the other isn't).  The walker
-/// passes through it and forwards the load (BUG-28 cause #2).
+/// passes through it and forwards the load.
 ///
 /// Was previously `bail_on_opaque_store_between` — pinned the
-/// over-conservative pre-BUG-28-fix behaviour.  Renamed to reflect the new
+/// over-conservative pre--fix behaviour.  Renamed to reflect the new
 /// (correct) behaviour and the original docstring's actual semantic
 /// observation.
 #[test]
@@ -849,13 +849,13 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-30: public helper for the indirect-branch classifier ─────────────
+// ── public helper for the indirect-branch classifier ─────────────
 //
 // `find_stack_stored_value_at_offset` walks the memory chain backward from
 // a given `mem` looking for a `StackStore { offset == requested }` whose
 // value type matches the caller's expectation.  Used by the tier-2
 // indirect-branch classifier to look up entries of a stack-array of label
-// addresses one offset at a time (BUG-30 — computed-goto via local stack
+// addresses one offset at a time (computed-goto via local stack
 // array).  These tests pin the helper's contract in isolation, before the
 // classifier wires it in.
 
@@ -929,7 +929,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
 
     let sp_val = b.read_variable(&sp)?;
     // Two stores at distinct offsets that both belong to the chain reaching
-    // a final load — mimics the BUG-30 array-of-labels prologue.
+    // a final load — mimics the array-of-labels prologue.
     let off24 = b.build_int_const(24u64, NodeOutputType::U64);
     let off16 = b.build_int_const(16u64, NodeOutputType::U64);
     let addr_24 =
@@ -1133,7 +1133,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
 }
 
 /// End-to-end recipe: the classifier loop calls the helper once per i to
-/// enumerate a stack-array of label addresses.  Mirrors the x64 BUG-30
+/// enumerate a stack-array of label addresses.  Mirrors the x64 
 /// fixture's prologue (sp-24 → L0, sp-16 → L1).  Asserts the helper
 /// produces N IntConst values that the classifier can then return as
 /// `ResolvedTargets::Multiple`.
@@ -1148,7 +1148,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
     b.set_region(region);
 
     let sp_val = b.read_variable(&sp)?;
-    // Mirror the x64 BUG-30 prologue: store target0 at sp-24, target1 at sp-16.
+    // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
     let off24 = b.build_int_const(24u64, NodeOutputType::U64);
     let off16 = b.build_int_const(16u64, NodeOutputType::U64);
     let addr_24 =

@@ -5,24 +5,26 @@ use super::*;
 // ── NodeOutputType ───────────────────────────────────────────────────────
 
 /// `get_unsigned_int` must mask the value to the declared width.
-/// Bits above the type's width must be cleared even if they are set in
-/// the raw u64.
+/// Bits above the type's width must be cleared even if they are set.
 #[test]
 fn unsigned_int_masks_to_declared_width() {
-    let wide: u64 = u64::MAX;
+    let wide: u128 = u128::MAX;
     assert_eq!(
         NodeOutputType::U8.get_unsigned_int(wide),
-        Some(u8::MAX as u64)
+        Some(u128::from(u8::MAX))
     );
     assert_eq!(
         NodeOutputType::U16.get_unsigned_int(wide),
-        Some(u16::MAX as u64)
+        Some(u128::from(u16::MAX))
     );
     assert_eq!(
         NodeOutputType::U32.get_unsigned_int(wide),
-        Some(u32::MAX as u64)
+        Some(u128::from(u32::MAX))
     );
-    assert_eq!(NodeOutputType::U64.get_unsigned_int(wide), Some(u64::MAX));
+    assert_eq!(
+        NodeOutputType::U64.get_unsigned_int(wide),
+        Some(u128::from(u64::MAX))
+    );
 }
 
 /// `get_unsigned_int` must return `None` for `Bool` because a boolean is
@@ -37,26 +39,24 @@ fn unsigned_int_is_none_for_bool() {
 /// negative.
 #[test]
 fn signed_int_sign_extends_from_declared_width() {
-    // u8::MAX as i8 is -1
-    assert_eq!(NodeOutputType::U8.get_signed_int(u8::MAX as u64), Some(-1));
-    // i8::MIN (0x80) sign-extends to -128
     assert_eq!(
-        NodeOutputType::U8.get_signed_int(i8::MIN as u8 as u64),
-        Some(i8::MIN as i64)
+        NodeOutputType::U8.get_signed_int(u128::from(u8::MAX)),
+        Some(-1)
     );
-    // i8::MAX (0x7F) stays positive
     assert_eq!(
-        NodeOutputType::U8.get_signed_int(i8::MAX as u64),
-        Some(i8::MAX as i64)
+        NodeOutputType::U8.get_signed_int(u128::from(i8::MIN as u8)),
+        Some(i128::from(i8::MIN))
     );
-    // i16::MIN (0x8000) sign-extends to -32768
     assert_eq!(
-        NodeOutputType::U16.get_signed_int(i16::MIN as u16 as u64),
-        Some(i16::MIN as i64)
+        NodeOutputType::U8.get_signed_int(i8::MAX as u128),
+        Some(i128::from(i8::MAX))
     );
-    // u32::MAX as u64 sign-extends as i32 to -1
     assert_eq!(
-        NodeOutputType::U32.get_signed_int(u32::MAX as u64),
+        NodeOutputType::U16.get_signed_int(u128::from(i16::MIN as u16)),
+        Some(i128::from(i16::MIN))
+    );
+    assert_eq!(
+        NodeOutputType::U32.get_signed_int(u128::from(u32::MAX)),
         Some(-1)
     );
 }

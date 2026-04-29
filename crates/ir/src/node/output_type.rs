@@ -140,64 +140,6 @@ impl NodeOutputType {
         }
     }
 
-    /// Interprets `val` as an unsigned integer of this width and returns the
-    /// truncated value, or `None` if this type is `Bool` or a float type.
-    ///
-    /// The truncation ensures that bits beyond the type's width are cleared,
-    /// matching the hardware behaviour of narrower registers.
-    #[inline]
-    #[must_use]
-    pub fn get_unsigned_int(self, val: u64) -> Option<u64> {
-        match self {
-            NodeOutputType::Bool
-            | NodeOutputType::U80
-            | NodeOutputType::U128
-            | NodeOutputType::U256
-            | NodeOutputType::F32
-            | NodeOutputType::F64
-            | NodeOutputType::F80 => None,
-            NodeOutputType::U8 => Some(val as u8 as u64),
-            NodeOutputType::U16 => Some(val as u16 as u64),
-            NodeOutputType::U32 => Some(val as u32 as u64),
-            NodeOutputType::U64 => Some(val),
-        }
-    }
-
-    /// Interprets `val` as a signed integer of this width with sign-extension
-    /// and returns the result, or `None` if this type is `Bool` or a float type.
-    ///
-    /// Casting through the signed type of the same width sign-extends the
-    /// value to 64 bits.
-    #[inline]
-    #[must_use]
-    pub fn get_signed_int(self, val: u64) -> Option<i64> {
-        match self {
-            NodeOutputType::Bool
-            | NodeOutputType::U80
-            | NodeOutputType::U128
-            | NodeOutputType::U256
-            | NodeOutputType::F32
-            | NodeOutputType::F64
-            | NodeOutputType::F80 => None,
-            NodeOutputType::U8 => Some(val as i8 as i64),
-            NodeOutputType::U16 => Some(val as i16 as i64),
-            NodeOutputType::U32 => Some(val as i32 as i64),
-            NodeOutputType::U64 => Some(val as i64),
-        }
-    }
-
-    /// Sign-extends `val` from this type's width to 64 bits and returns the
-    /// result as a `u64` bit pattern.
-    ///
-    /// Returns `None` if this type is `Bool`, `U128`, `U256`, or a float type,
-    /// since those widths either are not integer or cannot be represented in 64
-    /// bits.
-    #[inline]
-    #[must_use]
-    pub fn sign_extend(self, val: u64) -> Option<u64> {
-        self.get_signed_int(val).map(|v| v as u64)
-    }
-
     /// Returns the all-ones bit mask for this integer type, as `u128`.
     /// `Bool` returns `1`; integer widths return their natural bit widths.
     /// `U256` returns `u128::MAX` as a best-effort sentinel — this method is
@@ -219,26 +161,26 @@ impl NodeOutputType {
         (1u128 << bits) - 1
     }
 
-    /// Masks `val` to this type's bit width.  For widths ≥ 128 returns `val`
-    /// unchanged.  Companion to [`Self::get_unsigned_int`] but works at u128
-    /// width.
+    /// Masks `val` to this type's bit width and returns the result, or `None`
+    /// if this type is not an integer (`Bool`, `F32`, `F64`, `F80`).
+    ///
+    /// For widths ≥ 128 returns `val` unchanged.  This matches the hardware
+    /// behaviour of narrower registers — bits beyond the type's width are
+    /// cleared.
     #[must_use]
-    pub fn get_unsigned_int_u128(self, val: u128) -> Option<u128> {
+    pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
             return None;
         }
         Some(val & self.bit_mask_u128())
     }
 
-    /// Sign-extends `val` (treated as the type's bit-width-narrow representation)
-    /// to a full 128-bit signed integer.  Companion to [`Self::get_signed_int`]
-    /// but works at U128 width.
-    ///
-    /// For widths > 128 returns `None` — i128 cannot represent values wider
-    /// than 128 bits as signed.  No current consumer hits this case
-    /// (NodeOutputType::U256 is unreachable in IntConst land today).
+    /// Sign-extends `val` (treated as the type's bit-width-narrow
+    /// representation) to a full 128-bit signed integer, or returns `None`
+    /// if this type is not an integer or its width exceeds 128 bits
+    /// (`U256` — unreachable in `IntConst` land today).
     #[must_use]
-    pub fn get_signed_int_i128(self, val: u128) -> Option<i128> {
+    pub fn get_signed_int(self, val: u128) -> Option<i128> {
         if !self.is_integer() {
             return None;
         }
@@ -302,59 +244,50 @@ mod tests {
     }
 
     #[test]
-    fn get_unsigned_int_u128_masks_to_width() {
-        // 0x12345678 masked to U16 = 0x5678.
+    fn get_unsigned_int_masks_to_width() {
         assert_eq!(
-            NodeOutputType::U16.get_unsigned_int_u128(0x12345678u128),
+            NodeOutputType::U16.get_unsigned_int(0x12345678u128),
             Some(0x5678u128)
         );
-        // 0x12345678 masked to U32 = 0x12345678.
         assert_eq!(
-            NodeOutputType::U32.get_unsigned_int_u128(0x12345678u128),
+            NodeOutputType::U32.get_unsigned_int(0x12345678u128),
             Some(0x12345678u128)
         );
-        // U128 masking is identity.
         assert_eq!(
-            NodeOutputType::U128.get_unsigned_int_u128(u128::MAX),
+            NodeOutputType::U128.get_unsigned_int(u128::MAX),
             Some(u128::MAX)
         );
-        // Float types return None.
-        assert_eq!(NodeOutputType::F32.get_unsigned_int_u128(0x12345678u128), None);
+        assert_eq!(NodeOutputType::F32.get_unsigned_int(0x12345678u128), None);
+        assert_eq!(NodeOutputType::Bool.get_unsigned_int(1), None);
     }
 
     #[test]
-    fn get_signed_int_i128_sign_extends_negative_at_narrow_widths() {
-        // -50 stored at U32 width is 0xffff_ffce.  Sign-extending to i128
-        // must produce -50.
+    fn get_signed_int_sign_extends_negative_at_narrow_widths() {
         let neg50_at_u32 = 0xffff_ffceu128;
         assert_eq!(
-            NodeOutputType::U32.get_signed_int_i128(neg50_at_u32),
+            NodeOutputType::U32.get_signed_int(neg50_at_u32),
             Some(-50i128)
         );
-        // -50 stored at U8 width is 0xce.  Sign-extending must give -50.
         assert_eq!(
-            NodeOutputType::U8.get_signed_int_i128(0xceu128),
+            NodeOutputType::U8.get_signed_int(0xceu128),
             Some(-50i128)
         );
-        // Positive 50 at U32 stays 50.
         assert_eq!(
-            NodeOutputType::U32.get_signed_int_i128(50u128),
+            NodeOutputType::U32.get_signed_int(50u128),
             Some(50i128)
         );
     }
 
     #[test]
-    fn get_signed_int_i128_handles_full_u128_width() {
-        // U128 with high bit set: read as negative i128.
+    fn get_signed_int_handles_full_u128_width() {
         let neg1_at_u128 = u128::MAX;
         assert_eq!(
-            NodeOutputType::U128.get_signed_int_i128(neg1_at_u128),
+            NodeOutputType::U128.get_signed_int(neg1_at_u128),
             Some(-1i128)
         );
-        // U128 max-positive (high bit clear): stays positive when reinterpreted as i128.
         let max_pos = i128::MAX as u128;
         assert_eq!(
-            NodeOutputType::U128.get_signed_int_i128(max_pos),
+            NodeOutputType::U128.get_signed_int(max_pos),
             Some(i128::MAX)
         );
     }
@@ -410,50 +343,28 @@ mod tests {
         assert_eq!(NodeOutputType::F80.bit_mask_u128(), 0);
     }
 
-    /// `get_unsigned_int(U80) → None` because 80 bits don't fit in `u64`.
-    /// Callers needing the value must use `get_unsigned_int_u128`.
     #[test]
-    fn get_unsigned_int_u80_returns_none() {
-        assert_eq!(NodeOutputType::U80.get_unsigned_int(0xDEADBEEF), None);
-        assert_eq!(NodeOutputType::U80.get_signed_int(0xDEADBEEF), None);
-    }
-
-    /// `get_unsigned_int_u128(U80)` masks the value to 80 bits.
-    #[test]
-    fn get_unsigned_int_u128_for_u80_masks_to_80_bits() {
-        // Bits beyond the low 80 must be cleared.
+    fn get_unsigned_int_for_u80_masks_to_80_bits() {
         let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
         let mask: u128 = (1u128 << 80) - 1;
+        assert_eq!(NodeOutputType::U80.get_unsigned_int(raw), Some(mask));
         assert_eq!(
-            NodeOutputType::U80.get_unsigned_int_u128(raw),
-            Some(mask)
-        );
-        // Already-masked values pass through.
-        assert_eq!(
-            NodeOutputType::U80.get_unsigned_int_u128(0x12345678),
+            NodeOutputType::U80.get_unsigned_int(0x12345678),
             Some(0x12345678)
         );
     }
 
-    /// `get_signed_int_i128(U80)` sign-extends the 80-bit value to i128.
-    /// The high bit at position 79 (mask `1u128 << 79`) determines sign.
     #[test]
-    fn get_signed_int_i128_for_u80_sign_extends() {
-        // -1 at U80: all 80 bits set.  Sign-extended to i128 should be -1.
+    fn get_signed_int_for_u80_sign_extends() {
         let neg1_at_u80 = (1u128 << 80) - 1;
         assert_eq!(
-            NodeOutputType::U80.get_signed_int_i128(neg1_at_u80),
+            NodeOutputType::U80.get_signed_int(neg1_at_u80),
             Some(-1i128)
         );
-        // Positive small value stays positive.
-        assert_eq!(
-            NodeOutputType::U80.get_signed_int_i128(50u128),
-            Some(50i128)
-        );
-        // -50 at U80: mask 0xFFFFFFFFFFFFFFFFFFCE within 80 bits.
+        assert_eq!(NodeOutputType::U80.get_signed_int(50u128), Some(50i128));
         let neg50 = ((1u128 << 80) - 1) ^ 49;
         assert_eq!(
-            NodeOutputType::U80.get_signed_int_i128(neg50),
+            NodeOutputType::U80.get_signed_int(neg50),
             Some(-50i128)
         );
     }

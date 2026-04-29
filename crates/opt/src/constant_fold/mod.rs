@@ -31,32 +31,18 @@ fn try_lower_cast_to_float(
     let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
     let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
 
-    let out_kind = fg.graph.output_kind(out);
-    let in_kind = fg.graph.output_kind(input);
-    let out_ty = out_kind.as_value_or_err()?;
-    let in_ty = in_kind.as_value_or_err()?;
+    let out_ty = fg.graph.output_kind(out).as_value_or_err()?;
+    let in_ty = fg.graph.output_kind(input).as_value_or_err()?;
 
-    // 1. Identity: input already has the target float type.
-    if in_ty == out_ty {
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, input)?));
-    }
-
-    // 2. Float→float precision change.
-    if in_ty.is_float() {
-        let new_out = fg.make_float_to_float_node(input, out_ty)?;
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-    }
-
-    // Input is integer from here.
-
-    // 3. Integer constant → float constant (same bits).
-    if let Some(bits) = fg.int_const_val(input) {
-        let new_out = fg.make_float_const(bits, out_ty)?;
-        return Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?));
-    }
-
-    // 4. Non-constant integer → explicit IntBitsToFloat.
-    let new_out = fg.make_int_bits_to_float_node(input, out_ty)?;
+    let new_out = if in_ty == out_ty {
+        input
+    } else if in_ty.is_float() {
+        fg.make_float_to_float_node(input, out_ty)?
+    } else if let Some(bits) = fg.int_const_val(input) {
+        fg.make_float_const(bits, out_ty)?
+    } else {
+        fg.make_int_bits_to_float_node(input, out_ty)?
+    };
     Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
 }
 

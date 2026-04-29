@@ -1,6 +1,6 @@
 //! Jump-table arm for the tier-2 indirect-branch classifier.
 //!
-//! Round R4 extension.  Recognises the canonical jump-table dispatch
+//! Recognises the canonical jump-table dispatch
 //! shape — `Load(IntAdd(IntConst(base), IntMul(idx, IntConst(stride))))`
 //! and its commutative variants — proves an upper bound `N` on the
 //! index `idx`, reads the `N` table entries from a caller-supplied
@@ -43,23 +43,11 @@
 
 use std::collections::HashSet;
 
-use super::ResolvedTargets;
+use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
 use crate::ReadOnlyMemory;
 use rsleigh::VnSpace;
-
-/// Maximum number of jump-table entries we willingly enumerate.
-///
-/// A `mask`-derived bound from [`KnownBits`] can be as large as
-/// `u32::MAX + 1` if the mask is all-ones; without this cap a buggy
-/// known-bits result would force us to iterate through 4 GiB of
-/// entries.  Real jump tables emitted by gcc / clang are bounded by
-/// the source-level `switch` arm count, almost always well under
-/// 4096.  Tables larger than this cap are unusual enough that we
-/// prefer `None` (defer to `UnresolvedIndirectBranch`) over the
-/// pathological enumeration cost.
-const MAX_TABLE_ENTRIES: u64 = 4096;
 
 /// Top-level classifier hook for the jump-table arm.  Called by
 /// [`super::classify::classify_anchor`] when the anchor's producer is
@@ -256,7 +244,7 @@ pub fn bound_via_known_bits(
     // KnownBits at most narrows below this; if no narrowing is
     // possible we return None so the predecessor-If fallback gets a
     // chance.
-    let type_mask = ty.get_unsigned_int(u64::MAX)?;
+    let type_mask = u64::try_from(ty.get_unsigned_int(u128::from(u64::MAX))?).ok()?;
 
     // Outputs absent from `analyze`'s map have no proven bit info; treat
     // them as the all-unknown default.  An analyzer error propagates as
@@ -415,8 +403,7 @@ fn walk_control_for_if_bound(
         // We follow the node's slot-0 input as the control
         // predecessor when the node has one; otherwise return None.
         _ => {
-            let inputs = graph.node_inputs(producer);
-            let first = inputs.get(0).copied()?;
+            let first = graph.node_inputs(producer).into_iter().next()?;
             // Only walk through if the input is a Control output —
             // otherwise we'd derail into data flow.
             if !graph.output_kind(first).is_control() {

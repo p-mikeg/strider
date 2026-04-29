@@ -39,6 +39,18 @@ pub mod inplace;
 pub mod jump_table;
 pub mod stack_array;
 
+/// Per-anchor enumeration cap, shared by both the rodata jump-table arm
+/// (`jump_table::classify_jump_table`) and the stack-array-of-labels arm
+/// (`stack_array::classify_stack_array`).
+///
+/// `u32::MAX + 1` if a known-bits mask were all-ones, so without this cap
+/// a buggy KnownBits result could force iteration through 4 GiB of slots.
+/// Real jump tables emitted by gcc/clang are bounded by the source-level
+/// `switch` arm count, almost always well under 4096.  Tables larger than
+/// this cap are unusual enough that we prefer `None` (defer to
+/// `UnresolvedIndirectBranch`) over the pathological enumeration cost.
+pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
+
 pub use classify::{
     classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
 };
@@ -103,7 +115,7 @@ pub struct IndirectBranchResolve {
     /// [`classify_anchor_with_rom_and_sp`].
     pub link_register_vn: Option<rsleigh::Vn>,
     /// Calling-convention stack-pointer varnode (`None` disables the
-    /// BUG-30 stack-array arm).  Threaded into
+    /// stack-array arm).  Threaded into
     /// [`classify_anchor_with_rom_and_sp`].
     pub stack_ptr_vn: Option<rsleigh::Vn>,
     /// Read-only memory image (`None` disables the rodata
@@ -227,7 +239,7 @@ impl Optimizer for IndirectBranchResolve {
         // the per-anchor entries.
         let empty_ctx = AnchorCallingContext::default();
         for (addr, anchor_output) in &self.unresolved_anchors {
-            // Phase 5 — `classify_anchor_with_rom_and_sp` now takes
+            // `classify_anchor_with_rom_and_sp` now takes
             // `&BuiltFunctionGraph` so it can drive `pattern::Matcher`
             // for the jump-table and stack-array shape matches.  The
             // pass owns only `&mut Graph`, so we wrap each call via
