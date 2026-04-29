@@ -1714,3 +1714,102 @@ fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     Ok(())
 }
 
+// ── Sleigh INT_LEFT/INT_RIGHT/INT_SRIGHT out-of-range shift semantics ──
+//
+// Sleigh's `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
+// returns 0 when the shift amount is >= 8*sizeout — i.e. shifting by
+// the full bit-width or beyond zeroes the value.  `OpBehaviorIntRight`
+// has the same rule, and `OpBehaviorIntSright` returns
+// `signbit ? all_ones : 0` for full-width-or-greater shifts.
+//
+// Pre-fix the constant-fold evaluator computed `shift = (s as u32) % bits`,
+// which gives `1 << (32 % 32) = 1 << 0 = 1` for `IntConst(1, U32) << 32`
+// — diverging from Sleigh by a factor of `2^bits`.  The mismatch
+// surfaces whenever a lifter emits a literal shift at the type's
+// bit-width (e.g. an unrolled bit-clear that masks via `(value & ~(1 <<
+// k))` for k = bit-width as a degenerate "no-op" loop iteration), or
+// whenever `KnownBits` propagates a shift constant that happens to
+// land at-or-past bits.
+
+/// Sleigh `INT_LEFT(IntConst(1), IntConst(32))` at sizeout=4 evaluates
+/// to 0.  Our fold must agree.
+#[test]
+fn eval_int_binary_shl_at_bit_width_returns_zero_u32() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftLeft, 1, 32, NodeOutputType::U32),
+        Some(0),
+        "Sleigh: 1u32 << 32 = 0 (`r >= 8*sizeout` returns 0 per opbehavior.cc:411). \
+         Pre-fix fold computed `1 << (32 % 32) = 1 << 0 = 1` — diverges from Sleigh."
+    );
+}
+
+/// Sleigh `INT_LEFT(IntConst(1), IntConst(64))` at sizeout=8 evaluates
+/// to 0.  At u64 the wider type doesn't change the rule.
+#[test]
+fn eval_int_binary_shl_at_bit_width_returns_zero_u64() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftLeft, 1, 64, NodeOutputType::U64),
+        Some(0),
+        "Sleigh: 1u64 << 64 = 0.  Pre-fix fold computed `1 << (64 % 64) = 1`."
+    );
+}
+
+/// Sleigh `INT_LEFT(IntConst(0xFF), IntConst(40))` at sizeout=4 evaluates
+/// to 0 (40 > 32).  Beyond-bit-width shifts also zero the result.
+#[test]
+fn eval_int_binary_shl_above_bit_width_returns_zero_u32() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftLeft, 0xFF, 40, NodeOutputType::U32),
+        Some(0),
+        "Sleigh: shift > bit-width still returns 0.  Pre-fix fold computed \
+         `0xFF << (40 % 32) = 0xFF << 8 = 0xFF00`."
+    );
+}
+
+/// Sleigh `INT_RIGHT(IntConst(0xFFFF_FFFF), IntConst(32))` at sizeout=4
+/// evaluates to 0 — same out-of-range rule as INT_LEFT.
+#[test]
+fn eval_int_binary_shr_at_bit_width_returns_zero_u32() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 32, NodeOutputType::U32),
+        Some(0),
+        "Sleigh: 0xFFFFFFFFu32 >> 32 = 0 per opbehavior.cc:432.  Pre-fix \
+         fold computed `0xFFFFFFFF >> (32 % 32) = 0xFFFFFFFF`."
+    );
+}
+
+/// Sleigh `INT_SRIGHT(IntConst(0xFFFF_FFFF), IntConst(32))` at sizeout=4
+/// evaluates to 0xFFFF_FFFF (sign bit set → fill with all-ones).
+#[test]
+fn eval_int_binary_sshr_at_bit_width_negative_returns_all_ones_u32() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::SShiftRight, 0xFFFF_FFFF, 32, NodeOutputType::U32),
+        Some(0xFFFF_FFFF),
+        "Sleigh: signed-negative i32::MAX-style >> 32 fills with sign bit \
+         (= 0xFFFFFFFF) per opbehavior.cc:454-460."
+    );
+}
+
+/// Sleigh `INT_SRIGHT(IntConst(0x7FFF_FFFF), IntConst(32))` at sizeout=4
+/// evaluates to 0 (sign bit clear → fill with zeros).
+#[test]
+fn eval_int_binary_sshr_at_bit_width_positive_returns_zero_u32() {
+    use crate::constant_fold::eval_int::eval_int_binary;
+
+    assert_eq!(
+        eval_int_binary(IntBinaryOp::SShiftRight, 0x7FFF_FFFF, 32, NodeOutputType::U32),
+        Some(0),
+        "Sleigh: signed-non-negative >> bit-width = 0 (no sign bit to fill)."
+    );
+}
+

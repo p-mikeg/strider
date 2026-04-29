@@ -24,9 +24,17 @@ pub(super) fn eval_int_binary(
     let l = l & mask;
     let r = r & mask;
     let bits = ty.bit_width() as u32;
-    // Shift amounts are masked to prevent UB; u32 is required by wrapping_shl/shr.
+    // Sleigh's `OpBehaviorIntLeft::evaluateBinary` (sleigh/src/opbehavior.cc:411)
+    // returns 0 when the shift amount is `>= 8 * sizeout`.  `IntRight` matches.
+    // `IntSright` returns `signbit ? calc_mask : 0`.  Mirroring this here keeps
+    // the constant-fold's evaluation consistent with Sleigh's runtime semantics
+    // — pre-fix the evaluator computed `r % bits` and diverged from Sleigh
+    // by the full shift output for any literal `r >= bits`.
+    let r_ge_bits = r >= u128::from(bits);
+    // Shift amounts < bits are passed straight through; masking past that
+    // point would silently fold to a different value than Sleigh.
     let shift = |s: u128| -> u32 {
-        if bits == 0 { 0 } else { (s as u32) % bits }
+        if bits == 0 { 0 } else { s as u32 }
     };
     let raw: u128 = match op {
         IntBinaryOp::Add => l.wrapping_add(r),
@@ -35,11 +43,28 @@ pub(super) fn eval_int_binary(
         IntBinaryOp::And => l & r,
         IntBinaryOp::Or => l | r,
         IntBinaryOp::Xor => l ^ r,
-        IntBinaryOp::ShiftLeft => l.wrapping_shl(shift(r)) & mask,
-        IntBinaryOp::ShiftRight => l.wrapping_shr(shift(r)),
+        IntBinaryOp::ShiftLeft => {
+            if r_ge_bits {
+                0
+            } else {
+                l.wrapping_shl(shift(r)) & mask
+            }
+        }
+        IntBinaryOp::ShiftRight => {
+            if r_ge_bits {
+                0
+            } else {
+                l.wrapping_shr(shift(r))
+            }
+        }
         IntBinaryOp::SShiftRight => {
             let sl = ty.get_signed_int_i128(l)?;
-            sl.wrapping_shr(shift(r)) as u128 & mask
+            if r_ge_bits {
+                // Sign-bit-set → fill with all-ones; sign-bit-clear → zero.
+                if sl < 0 { mask } else { 0 }
+            } else {
+                sl.wrapping_shr(shift(r)) as u128 & mask
+            }
         }
         IntBinaryOp::Div => {
             if r == 0 {
