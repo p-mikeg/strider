@@ -1097,6 +1097,197 @@ mod tests {
     }
 
     #[test]
+    fn apply_split_invalidation_evicts_on_shrunk_count() {
+        // Pin: when the prev_snapshot says a region had N insns and
+        // the new_cfg's same-key region has FEWER than N insns, the
+        // cache entry MUST be evicted.  This is the critical contract
+        // for split detection: a `split_region` event in the cfg
+        // builder shortens the first half, so the cached IR no longer
+        // matches the new region's body and the next lift must
+        // repopulate from scratch.
+        use crate::RegionIrEntry;
+        let arch = crate::SleighArch::x86_64();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let new_cfg = cfg::Builder::new(
+            sleigh,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg");
+        let key = MachineInsnAddr { addr: 0x1000 };
+        // Take the actual count from the new_cfg, then make the
+        // snapshot say there were `count + 1` insns previously — the
+        // new cfg now has fewer, so eviction must fire.
+        let new_count = take_split_snapshot(&new_cfg)
+            .expect("snap")
+            .get(&key)
+            .copied()
+            .expect("key");
+        assert!(new_count >= 1, "ret produces at least one pcode insn");
+        let mut snapshot: CfgSplitSnapshot = HashMap::new();
+        snapshot.insert(key, new_count + 1);
+        let mut cache: RegionIrCache = HashMap::new();
+        cache.insert(key, RegionIrEntry::empty(pcode_addr(0x1000)));
+        apply_split_invalidation(&mut cache, &snapshot, &new_cfg).expect("inv");
+        assert!(
+            !cache.contains_key(&key),
+            "shrunk insn count must evict the cache entry",
+        );
+    }
+
+    #[test]
+    fn apply_split_invalidation_preserves_on_unchanged_count() {
+        // Negative case: same insn count → entry stays.  Pre-fix, a
+        // bug at the `<` boundary (e.g. using `<=`) would over-evict
+        // every region every iteration, defeating the cache.
+        use crate::RegionIrEntry;
+        let arch = crate::SleighArch::x86_64();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+            .expect("sleigh");
+        let new_cfg = cfg::Builder::new(
+            sleigh,
+            0x1000,
+            cfg::OptionsBuilder::new().build(),
+        )
+        .build()
+        .expect("cfg");
+        let key = MachineInsnAddr { addr: 0x1000 };
+        let new_count = take_split_snapshot(&new_cfg)
+            .expect("snap")
+            .get(&key)
+            .copied()
+            .expect("key");
+        let mut snapshot: CfgSplitSnapshot = HashMap::new();
+        snapshot.insert(key, new_count);
+        let mut cache: RegionIrCache = HashMap::new();
+        cache.insert(key, RegionIrEntry::empty(pcode_addr(0x1000)));
+        apply_split_invalidation(&mut cache, &snapshot, &new_cfg).expect("inv");
+        assert!(
+            cache.contains_key(&key),
+            "unchanged insn count must NOT evict the cache entry",
+        );
+    }
+
+    /// Build a minimal `OrchestratorConfig` for unit tests of helpers
+    /// that only inspect a few `config` fields (e.g. `is_tail_call`,
+    /// which reads only `start_addr`, `fn_max_size`, and
+    /// `allow_code_before_start_addr`).  The Sleigh / Strider /
+    /// pcode_address values are placeholders that must satisfy the
+    /// type signature without being inspected by the helper.
+    fn config_for_is_tail_call_tests<'a>(
+        strider: &'a Strider,
+        start_addr: u64,
+        fn_max_size: Option<u64>,
+        allow_code_before_start_addr: bool,
+    ) -> OrchestratorConfig<'a, Vec<u8>> {
+        use rsleigh::Sleigh;
+        use rsleigh::mem_readers::BufMemReader;
+        let arch = crate::SleighArch::x86_64();
+        let probe = BufMemReader::new(vec![0xc3u8], start_addr);
+        let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, probe).expect("sleigh");
+        OrchestratorConfig {
+            strider,
+            start_addr,
+            sleigh: Some(sleigh),
+            rom: None,
+            fn_max_size,
+            allow_code_before_start_addr,
+        }
+    }
+
+    fn make_strider_for_test() -> Strider {
+        use rsleigh::Sleigh;
+        use rsleigh::mem_readers::BufMemReader;
+        let arch = crate::SleighArch::x86_64();
+        let probe = BufMemReader::new(Vec::<u8>::new(), 0);
+        let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
+            .expect("probe sleigh")
+            .regs()
+            .expect("regs");
+        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv_abi())
+            .expect("Strider::new")
+    }
+
+    #[test]
+    fn is_tail_call_target_below_start_addr_is_tail_call() {
+        // Target < start_addr without `allow_code_before_start_addr`
+        // → tail call.  Pin the boundary: target == start_addr is NOT
+        // tail (false), target == start_addr - 1 IS tail (true).
+        let strider = make_strider_for_test();
+        let config = config_for_is_tail_call_tests(&strider, 0x1000, None, false);
+        assert!(is_tail_call(0x0fff, &config), "target < start_addr → tail");
+        assert!(
+            !is_tail_call(0x1000, &config),
+            "target == start_addr → not tail (boundary)",
+        );
+        assert!(!is_tail_call(0x1001, &config), "target > start_addr → not tail");
+    }
+
+    #[test]
+    fn is_tail_call_allow_code_before_start_addr_disables_below_check() {
+        // With `allow_code_before_start_addr`, even target < start_addr
+        // is an intra-fn branch — not a tail call.
+        let strider = make_strider_for_test();
+        let config = config_for_is_tail_call_tests(&strider, 0x1000, None, true);
+        assert!(
+            !is_tail_call(0x0fff, &config),
+            "allow_code_before_start_addr=true must disable the below-start branch",
+        );
+    }
+
+    #[test]
+    fn is_tail_call_above_fn_max_size_is_tail_call() {
+        // With fn_max_size = 0x100, target == start_addr + 0x100 is
+        // exactly at end_exclusive → tail (the `<=` boundary).
+        // Target == start_addr + 0xff is the last in-function byte → not tail.
+        let strider = make_strider_for_test();
+        let config = config_for_is_tail_call_tests(&strider, 0x1000, Some(0x100), false);
+        assert!(
+            is_tail_call(0x1100, &config),
+            "target == start_addr + fn_max_size → tail (end_exclusive boundary)",
+        );
+        assert!(
+            !is_tail_call(0x10ff, &config),
+            "target = start_addr + fn_max_size - 1 → not tail (last in-fn byte)",
+        );
+        assert!(is_tail_call(0x2000, &config), "target far above → tail");
+    }
+
+    #[test]
+    fn is_tail_call_no_fn_max_size_means_above_is_intra_fn() {
+        // Without fn_max_size, only the below-start condition triggers.
+        // A target far above start_addr stays intra-fn.
+        let strider = make_strider_for_test();
+        let config = config_for_is_tail_call_tests(&strider, 0x1000, None, false);
+        assert!(
+            !is_tail_call(0xffff_ffff_ffff_ffff, &config),
+            "no fn_max_size → above-start targets are intra-fn",
+        );
+    }
+
+    #[test]
+    fn is_tail_call_fn_max_size_saturates_on_overflow() {
+        // start_addr + fn_max_size could overflow; the impl uses
+        // `saturating_add`, so end_exclusive caps at u64::MAX.  Pin
+        // it: target == u64::MAX must be tail (== end_exclusive).
+        let strider = make_strider_for_test();
+        let config = config_for_is_tail_call_tests(
+            &strider,
+            u64::MAX - 5,
+            Some(0x100),
+            false,
+        );
+        assert!(
+            is_tail_call(u64::MAX, &config),
+            "saturating end_exclusive must still classify u64::MAX as tail",
+        );
+    }
+
+    #[test]
     fn take_split_snapshot_reports_each_region_once() {
         // Pin: [`take_split_snapshot`] visits every region of `cfg`
         // exactly once and produces an entry per region.  This is the
