@@ -477,7 +477,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     // Anchor with a placeholder return so build() succeeds.
     builder.build_return(Some(idx), &[]).unwrap();
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(&g.graph, cmp, idx, /* on_true */ true);
+    let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ true);
     assert_eq!(bound, Some(4));
 }
 
@@ -495,7 +495,7 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
         .unwrap();
     builder.build_return(Some(idx), &[]).unwrap();
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(&g.graph, cmp, idx, /* on_true */ false);
+    let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ false);
     assert_eq!(bound, None);
 }
 
@@ -513,7 +513,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
         .unwrap();
     builder.build_return(Some(idx), &[]).unwrap();
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(&g.graph, cmp, idx, true);
+    let bound = bound_from_if_condition(&g, cmp, idx, true);
     assert_eq!(bound, Some(5));
 }
 
@@ -581,7 +581,7 @@ fn bound_via_predecessor_if_walks_one_hop() {
     // region.  bound_via_predecessor_if must follow control back
     // through one hop and surface bound = 4.
     let (g, anchor, idx_in_dispatch) = build_pred_if_graph(4);
-    let bound = bound_via_predecessor_if(&g.graph, anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
     assert_eq!(bound, Some(4));
 }
 
@@ -615,7 +615,7 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(&g.graph, anchor, idx);
+    let bound = bound_via_predecessor_if(&g, anchor, idx);
     assert_eq!(bound, None);
 }
 
@@ -672,7 +672,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
         }
     }
     let anchor = anchor.expect("anchor");
-    let bound = bound_via_predecessor_if(&g.graph, anchor, idx_in_dispatch);
+    let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
     assert_eq!(bound, None, "If on unrelated var must not bound idx");
 }
 
@@ -691,6 +691,6 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
         .unwrap();
     builder.build_return(Some(idx), &[]).unwrap();
     let g = builder.build().unwrap();
-    let bound = bound_from_if_condition(&g.graph, cmp, idx, true);
+    let bound = bound_from_if_condition(&g, cmp, idx, true);
     assert_eq!(bound, None);
 }

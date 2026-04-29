@@ -78,7 +78,6 @@ pub fn classify_jump_table(
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    let graph = &fg.graph;
     // Step 1: structural shape match.  `match_jump_table_shape`
     // returns the `idx` value and the `(base, stride, space)` triple
     // — everything we need to enumerate entries.  Falls through to
@@ -94,7 +93,7 @@ pub fn classify_jump_table(
     //       but covers the gcc-emitted "compare-and-branch then
     //       indirect" pattern that has no AND-mask.
     let bound = bound_via_known_bits(fg, shape.idx_output)
-        .or_else(|| bound_via_predecessor_if(graph, anchor_output, shape.idx_output))?;
+        .or_else(|| bound_via_predecessor_if(fg, anchor_output, shape.idx_output))?;
 
     // Step 3: enforce the per-call enumeration cap.  Returning None
     // here is sound: the orchestrator will defer; if a future
@@ -308,7 +307,7 @@ pub fn bound_via_known_bits(
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
 pub fn bound_via_predecessor_if(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,
 ) -> Option<u64> {
@@ -318,13 +317,14 @@ pub fn bound_via_predecessor_if(
     // The placeholder Return's input slot 0 is its Control input; we
     // walk upward through Controls looking for an If whose true
     // branch leads to this Return.
+    let graph = &fg.graph;
     let return_node = find_anchor_consumer_return(graph, anchor_output)?;
     // Slot 0 = control; see node_signature::expected_signature for
     // Return: `inputs: [CTRL, MEM]; in_tail: RET`.
     let control_in = *graph.node_inputs(return_node).get(0)?;
 
     let mut visited: HashSet<NodeId> = HashSet::new();
-    walk_control_for_if_bound(graph, control_in, idx_output, &mut visited)
+    walk_control_for_if_bound(fg, control_in, idx_output, &mut visited)
 }
 
 /// Locates the (single) Return node that consumes `anchor_output` —
@@ -349,11 +349,12 @@ fn find_anchor_consumer_return(
 /// `Control` input of whoever's downstream.  Returns the proved
 /// bound (or None) for the path on the way to here.
 fn walk_control_for_if_bound(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     control_out: NodeOutputId,
     idx_output: NodeOutputId,
     visited: &mut HashSet<NodeId>,
 ) -> Option<u64> {
+    let graph = &fg.graph;
     let producer = graph.get_node_from_output(control_out);
     if !visited.insert(producer) {
         // Cycle (loop back-edge).  Loops can rewrite `idx` per
@@ -381,10 +382,10 @@ fn walk_control_for_if_bound(
             // failure mode is sound: an If we can't crack open
             // becomes a transparent control-flow node we walk
             // through.
-            if let Some(b) = bound_from_if_condition(graph, cond_out, idx_output, on_true) {
+            if let Some(b) = bound_from_if_condition(fg, cond_out, idx_output, on_true) {
                 return Some(b);
             }
-            walk_control_for_if_bound(graph, if_inputs[0], idx_output, visited)
+            walk_control_for_if_bound(fg, if_inputs[0], idx_output, visited)
         }
         // ControlState merges multiple predecessors — every
         // predecessor's path must independently prove the bound, and
@@ -406,7 +407,7 @@ fn walk_control_for_if_bound(
                 // whole join unreachable for every later
                 // predecessor.
                 let mut local = visited.clone();
-                let bound = walk_control_for_if_bound(graph, pred, idx_output, &mut local)?;
+                let bound = walk_control_for_if_bound(fg, pred, idx_output, &mut local)?;
                 combined = combined.max(bound);
             }
             Some(combined)
@@ -427,7 +428,7 @@ fn walk_control_for_if_bound(
             if !graph.output_kind(first).is_control() {
                 return None;
             }
-            walk_control_for_if_bound(graph, first, idx_output, visited)
+            walk_control_for_if_bound(fg, first, idx_output, visited)
         }
     }
 }
@@ -449,8 +450,28 @@ fn walk_control_for_if_bound(
 /// gives a *lower* bound which doesn't help here.  An over-cautious
 /// None is sound; the orchestrator may try again with a stronger
 /// classifier next iteration.
+///
+/// Shape detection uses the `pattern` crate's `int_cmp_any` builder
+/// to capture the comparison's operator and operands in a single
+/// match step.  `int_cmp_any` honours each op's commutativity:
+/// non-commutative ops (`Less`, `LessEqual`, `Sless`, `SlessEqual`)
+/// only bind when `idx` is on the LHS, which is exactly the
+/// orientation that proves an upper bound.  The previously
+/// hand-rolled "swapped" case checked both orderings and returned
+/// None for the swapped one — the pattern simply fails to match
+/// there, which is identical at the call site.
+///
+/// NOTE — `IntCmpOp::Equal` is deliberately NOT handled here.  The
+/// taken-true arm of `idx == N` constrains `idx` to the single
+/// value `{N}`, NOT `[0, N]`.  The `0..bound` enumeration shape
+/// this function feeds into would over-read entries `0..N-1` that
+/// `idx == N` never selects, or — if the table has exactly N
+/// entries indexed `0..N-1` — read past the table end and fail
+/// resolution.  Falling through to the catch-all `None` surfaces
+/// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
+/// Code-review H2.
 fn bound_from_if_condition(
-    graph: &Graph,
+    fg: &BuiltFunctionGraph,
     cond_out: NodeOutputId,
     idx_output: NodeOutputId,
     on_true_branch: bool,
@@ -458,45 +479,34 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
+    use pattern::{IntCmpOpVar, IntVar, Matcher, Var, any_int_const, int_cmp_any, var};
+    let graph = &fg.graph;
     let cmp_node = graph.get_node_from_output(cond_out);
-    let NodeKind::IntCmpOp(op) = *graph.node_kind(cmp_node) else {
-        return None;
-    };
-    let [lhs, rhs] = graph.node_inputs_exact::<2>(cmp_node).ok()?;
-    // Check both orderings: `idx < N` and `N > idx`-shaped (the IR
-    // doesn't have GreaterThan directly, but the orchestrator may
-    // see swapped operands when ConstantFold normalises a `swap`
-    // away).
-    let (idx_side, const_side, swapped) = if same_value(graph, lhs, idx_output) {
-        (lhs, rhs, false)
-    } else if same_value(graph, rhs, idx_output) {
-        (rhs, lhs, true)
-    } else {
-        return None;
-    };
-    let _ = idx_side; // kept for symmetry / readability
-    let n = graph.int_const_val(const_side)?;
 
-    // CORRECTNESS for the `swapped` case: in `IntCmp::Less(N, idx)`
-    // taken-true we have `N < idx`, which is a *lower* bound on
-    // idx — no upper bound.  We therefore return None on swapped
-    // for asymmetric ops.
-    // NOTE — `IntCmpOp::Equal` is deliberately NOT handled here.
-    // The taken-true arm of `idx == N` constrains `idx` to the
-    // single value `{N}`, NOT `[0, N]`.  The `0..bound` enumeration
-    // shape this function feeds into would over-read entries
-    // `0..N-1` that `idx == N` never selects, or — if the table has
-    // exactly N entries indexed `0..N-1` — read past the table end
-    // and fail resolution.  Falling through to the catch-all `None`
-    // surfaces the case as `UnresolvedIndirectBranch` instead of
-    // mis-resolving.  A future improvement can add a
-    // `Single(table[N])` path that bypasses table enumeration for
-    // this degenerate case.  Code-review H2.
+    let op_var = IntCmpOpVar::new();
+    let idx_var = Var::new();
+    let n_var = IntVar::new();
+    let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
+    let m = Matcher::new(fg).match_at(cmp_node, &pat)?;
+
+    // The pattern accepts any LHS; we still verify it refers to the
+    // dispatch's `idx_output`.  `same_value` walks through trivial
+    // single-input phis, which patterns can't express directly:
+    // intermediate orchestrator iterations omit RedundantPhis, so
+    // the dispatch region's read of `idx` is wrapped in a
+    // single-input ControlPhi distinct from the `If`'s direct read.
+    let lhs = m.get(idx_var)?;
+    if !same_value(graph, lhs, idx_output) {
+        return None;
+    }
+    let n = u64::try_from(m.get_int(n_var)?).ok()?;
+    let op = m.get_int_cmp_op(op_var)?;
+
     match op {
         // idx < N (true) → bound = N.
-        IntCmpOp::Less | IntCmpOp::Sless if !swapped => Some(n),
+        IntCmpOp::Less | IntCmpOp::Sless => Some(n),
         // idx <= N (true) → bound = N + 1.
-        IntCmpOp::LessEqual | IntCmpOp::SlessEqual if !swapped => n.checked_add(1),
+        IntCmpOp::LessEqual | IntCmpOp::SlessEqual => n.checked_add(1),
         _ => None,
     }
 }
