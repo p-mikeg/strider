@@ -28,7 +28,8 @@ pub struct RewriteSkip;
 pub struct NotBuildable(pub &'static str);
 
 /// A capture variable referenced by a builder is not bound by the LHS
-/// match. Carries the capture **kind name** (e.g. `"IntVar"`) so the
+/// match. Carries the capture **kind name** (e.g. `"uint"`,
+/// `"int_binary_op"`, or the variant-agnostic ctor's name) so the
 /// site of the bug is obvious from the error message.
 #[derive(Debug, thiserror::Error)]
 #[error("missing binding for capture of kind {0}")]
@@ -54,6 +55,15 @@ pub(crate) fn is_skip(err: &anyhow::Error) -> bool {
 #[must_use]
 pub(crate) fn missing_binding(kind: &'static str) -> anyhow::Error {
     anyhow::Error::new(MissingBinding(kind))
+}
+
+/// Public alias of [`missing_binding`] for use by the `*_const_with!`
+/// macro expansions, which need to construct the error from outside the
+/// crate's source tree.  The macro emits `$crate::__missing_binding(...)`.
+#[doc(hidden)]
+#[must_use]
+pub fn __missing_binding(kind: &'static str) -> anyhow::Error {
+    missing_binding(kind)
 }
 
 /// Returns an [`anyhow::Error`] wrapping a [`NotBuildable`] for the

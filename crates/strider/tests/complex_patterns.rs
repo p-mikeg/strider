@@ -6,7 +6,7 @@
 //!   * Every `Matcher` instance opts into `ignore_casts_mask(EXTEND |
 //!     TRUNCATE)` and `ignore_control_states()` so tests don't break on
 //!     arch-specific width-cast / region-join noise.
-//!   * Bit-mask values are captured (never hardcoded) via an `IntVar` and
+//!   * Bit-mask values are captured (never hardcoded) via a `Capture` and
 //!     a `.when_match()` predicate that checks `count_ones() == 1`.
 //!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
 //!     between the If and the following Call to set up the ISA-mode
@@ -28,7 +28,7 @@ mod common;
 use common::*;
 
 use pattern::{
-    CastMask, IntCmpOp, IntVar, Matcher, Capture, Pat,
+    CastMask, IntCmpOp, Matcher, Capture, Pat,
     add, and, any, any_int_const, call, function_arg, if_node, int_cmp,
     int_const, load, store, var, IntoPat,
 };
@@ -63,9 +63,9 @@ fn matcher(g: &ir::BuiltFunctionGraph) -> Matcher<'_> {
 
 /// Pattern that matches `IntConst` whose value is a single-bit mask
 /// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
-fn single_bit_int_const(iv: IntVar) -> Pat {
-    any_int_const(iv).when_match(move |_g, _ty, b| {
-        let Some(n) = b.get_int(iv) else { return false; };
+fn single_bit_int_const(iv: Capture) -> Pat {
+    any_int_const(iv).when_match(move |fg, _ty, b| {
+        let Some(n) = b.get_uint(iv, fg) else { return false; };
         n != 0 && n.count_ones() == 1
     })
 }
@@ -77,7 +77,7 @@ fn single_bit_int_const(iv: IntVar) -> Pat {
 /// the analyzer lowers p-code `INT_NOTEQUAL` to `BoolNeg(IntEqual)`, so
 /// every "(x & K) == 0" or "(x & K) != 0" both still produce an
 /// `IntCmpOp::Equal` in IR (potentially wrapped in a `BoolUnaryOp::Neg`).
-fn bit_test_against_zero(value: Capture, mask_var: IntVar) -> Pat {
+fn bit_test_against_zero(value: Capture, mask_var: Capture) -> Pat {
     int_cmp(
         IntCmpOp::Equal,
         and(var(value), single_bit_int_const(mask_var)),
@@ -98,7 +98,7 @@ fn field_store(addr_pat: impl Into<Pat>, data_pat: impl Into<Pat>) -> Pat {
 
 /// Capture-friendly any-load-of-(base + IntConst-bound-to-`offset`):
 ///   load.addr( add(var(base), any_int_const(offset)) )
-fn field_load_at_offset(base: Capture, offset: IntVar) -> Pat {
+fn field_load_at_offset(base: Capture, offset: Capture) -> Pat {
     field_load(add(var(base), any_int_const(offset)))
 }
 
@@ -121,12 +121,12 @@ fn read_struct_fields_assertions(g: &ir::BuiltFunctionGraph) {
             "expected ≥1 Load match in read_struct_fields");
 
     // (c) At least one of {4, 8} must appear as a constant offset on the
-    // load address — capture the offset via an IntVar and assert.
+    // load address — capture the offset via a Capture and assert.
     let base = Capture::new();
-    let off = IntVar::new();
+    let off = Capture::new();
     let off_pat: Pat = field_load_at_offset(base, off);
     let hits = m.find_all(&off_pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_int_var(off)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}");
 }
@@ -143,10 +143,10 @@ fn write_struct_fields_assertions(g: &ir::BuiltFunctionGraph) {
 
     let m = matcher(g);
     let base = Capture::new();
-    let off = IntVar::new();
+    let off = Capture::new();
     let pat: Pat = field_store(add(var(base), any_int_const(off)), any());
     let hits = m.find_all(&pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_int_var(off)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected ≥1 Store(base + {{4,8}}); got offsets {offsets:?}");
 
@@ -171,7 +171,7 @@ fn nested_struct_field_assertions(g: &ir::BuiltFunctionGraph) {
 
     let m = matcher(g);
     let base = Capture::new();
-    let off = IntVar::new();
+    let off = Capture::new();
     let pat: Pat = field_load_at_offset(base, off);
     let hits = m.find_all(&pat);
     // Either we found a `Load(base + IntConst)` (offset captured), or the
@@ -179,7 +179,7 @@ fn nested_struct_field_assertions(g: &ir::BuiltFunctionGraph) {
     // for this fixture.  But if any `add(_, IntConst)` form matched, at
     // least one offset must be non-zero (the inner.x position is at
     // `padding + offsetof(Inner, x)` ≥ 4).
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_int_var(off)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
     if !offsets.is_empty() {
         assert!(offsets.iter().any(|&n| n != 0),
                 "all captured Load offsets are 0 in nested_struct_field; got {offsets:?}");
@@ -209,14 +209,14 @@ fn bit_test_zero_assertions(g: &ir::BuiltFunctionGraph) {
     // the captured mask is a single-bit value (the pattern enforces the
     // predicate; we additionally verify the captures).
     let m = matcher(g);
-    let mask = IntVar::new();
+    let mask = Capture::new();
     let value = Capture::new();
     let pat: Pat = bit_test_against_zero(value, mask);
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero");
     for h in &hits {
-        if let Some(n) = h.get_int_var(mask) {
+        if let Some(n) = h.get_uint(mask, g) {
             assert!(n.count_ones() == 1 && n != 0,
                     "captured mask {n:#x} is not a single-bit value");
         }
@@ -301,7 +301,7 @@ fn call_with_field_arg_assertions(g: &ir::BuiltFunctionGraph) {
     // pattern — the value of `offset` is captured rather than hardcoded.
     let m = matcher(g);
     let base = Capture::new();
-    let off = IntVar::new();
+    let off = Capture::new();
     let pat: Pat = call().arg(0, field_load_at_offset(base, off)).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
@@ -311,7 +311,7 @@ fn call_with_field_arg_assertions(g: &ir::BuiltFunctionGraph) {
     // `struct S { int a, b, c, flags; int *handler; }` (16 on 32-bit
     // pointer arches) or 32 (on 64-bit pointer arches with extra
     // padding) — both well under 256.
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_int_var(off)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, g)).collect();
     assert!(offsets.iter().any(|&n| n < 256),
             "no captured field-load offset is in 0..256; got {offsets:?}");
 }
@@ -340,7 +340,7 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     //   (c) A Call exists whose arg(0) is a struct-field Load (any
     //       offset captured into `off`).
     let m = matcher(g);
-    let mask = IntVar::new();
+    let mask = Capture::new();
 
     // Bit-test pattern: assert `IntCmp(Equal, And(_, single-bit-const), 0)`
     // somewhere in the graph.  The masked value's source is not pinned
@@ -359,7 +359,7 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     assert!(!m.find_all(&bit_test).is_empty(),
             "expected a bit-test `IntCmp(Equal, And(_, single-bit-const), 0)` in dispatch_on_flag");
 
-    let off = IntVar::new();
+    let off = Capture::new();
     let base = Capture::new();
     let call_field_arg: Pat =
         call().arg(0, field_load_at_offset(base, off)).into();
@@ -373,9 +373,9 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     // Call, no opaque CallOther in the way) must succeed on every
     // arch including arm_thumb, which proves `opt::CallOtherElide`
     // drops the `setISAMode` CallOther between If and Call.
-    let off2 = IntVar::new();
+    let off2 = Capture::new();
     let base2 = Capture::new();
-    let off3 = IntVar::new();
+    let off3 = Capture::new();
     let base3 = Capture::new();
     let true_pat: Pat = if_node()
         .true_branch(call().arg(0, field_load_at_offset(base2, off2)))
@@ -476,7 +476,7 @@ fn complex_dispatch_assertions(g: &ir::BuiltFunctionGraph) {
     // Multiple struct field accesses => at least one Load at base+const.
     let m = matcher(g);
     let base = Capture::new();
-    let off = IntVar::new();
+    let off = Capture::new();
     let pat: Pat = field_load_at_offset(base, off);
     assert!(!m.find_all(&pat).is_empty(),
             "expected ≥1 Load(base + IntConst) in complex_dispatch");
@@ -484,7 +484,7 @@ fn complex_dispatch_assertions(g: &ir::BuiltFunctionGraph) {
     // Distinct field offsets — proves multiple fields are accessed,
     // not the same one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat).iter().filter_map(|h| h.get_int_var(off)).collect();
+        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, g)).collect();
     assert!(offsets.len() >= 2,
             "expected ≥2 distinct Load offsets in complex_dispatch; got {offsets:?}");
 }

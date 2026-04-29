@@ -52,7 +52,7 @@ use crate::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
-use pattern::{IntVar, Matcher, Capture, and as and_pat, any_int_const, or as or_pat, var};
+use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor_with_rom_and_sp`] when the
@@ -161,17 +161,17 @@ const MAX_STRIP_LAYERS: usize = 4;
 // hand-rolled commutative-operand checks.  `pattern::and` /
 // `pattern::or` auto-try both orderings, so a single match per layer
 // covers the prior `int_const_val(rhs)` / `int_const_val(lhs)`
-// fallback chain.  The `IntVar` capture binds the const value, and
-// the `Capture` capture binds the surviving non-const operand — the same
-// disambiguation the prior code performed by trying `int_const_val`
-// on each operand in turn.
+// fallback chain.  Each `Capture` binds either the const operand
+// (read back via `Match::get_uint`) or the surviving non-const
+// operand — the same disambiguation the prior code performed by
+// trying `int_const_val` on each operand in turn.
 //
 // The walk is transitive (cap of 4 layers) so we cannot express it
 // as a single tree pattern; instead we run one pattern match per
 // iteration, mirroring the prior loop's per-layer scope.  The
 // truncating `as u64` is preserved verbatim — the prior
-// `int_const_val` returned `u64`, and `IntVar` stores `u128`.  Real
-// dispatch masks fit in `u64` on every supported arch.
+// `int_const_val` returned `u64`, and `get_uint` returns `u128`.
+// Real dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
@@ -184,11 +184,11 @@ fn strip_target_mask(
         let producer = graph.get_node_from_output(current);
 
         // And-with-constant: mask narrows.
-        let c_var = IntVar::new();
+        let c_var = Capture::new();
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &and_p.into())
-            && let (Some(c128), Some(other)) = (m.get_int_var(c_var), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -205,11 +205,11 @@ fn strip_target_mask(
         // it.  When the OR's constant overlaps surviving mask bits,
         // leave the wrapper in place (the shape match below will fail
         // and we defer to the orchestrator).
-        let c_var = IntVar::new();
+        let c_var = Capture::new();
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &or_p.into())
-            && let (Some(or_c128), Some(other)) = (m.get_int_var(c_var), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -408,18 +408,18 @@ fn extract_idx_and_stride(
     // are non-commutative) — the rhs must still be the const stride
     // exponent.  We try the multiplication shape first, then the
     // shift shape, mirroring the prior match's arm order.
-    use pattern::{IntVar, Matcher, Capture, any_int_const, mul, shl, var};
+    use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
     let candidate_node = fg.graph.get_node_from_output(candidate);
     let matcher = Matcher::new(fg);
 
     // Mul(idx, IntConst(stride)) — either ordering.
-    let stride_var = IntVar::new();
+    let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const(stride_var));
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
-        let stride_u128 = m.get_int_var(stride_var)?;
-        // `IntVar` returns `u128`; the prior code's `int_const_val`
+        let stride_u128 = m.get_uint(stride_var, fg)?;
+        // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
         #[allow(clippy::cast_possible_truncation)]
@@ -429,14 +429,14 @@ fn extract_idx_and_stride(
     }
 
     // ShiftLeft(idx, IntConst(s)) — non-commutative; rhs must be const.
-    let s_var = IntVar::new();
+    let s_var = Capture::new();
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const(s_var));
     let m = matcher.match_at(candidate_node, &shl_pat.into())?;
-    let s_u128 = m.get_int_var(s_var)?;
+    let s_u128 = m.get_uint(s_var, fg)?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
-    // stride.  `IntVar` returns `u128`; out-of-range values reject
+    // stride.  `get_uint` returns `u128`; out-of-range values reject
     // here just as the prior `int_const_val` → `s >= 64` check did.
     if s_u128 >= 64 {
         return None;

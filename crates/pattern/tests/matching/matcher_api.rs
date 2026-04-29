@@ -90,7 +90,7 @@ fn match_at_is_scoped_to_that_node_only() {
 fn find_all_is_deterministic() {
     let g = shapes::add_nested_3(1, 2, 3);
     let matcher = Matcher::new(&g);
-    let pat: Pat = any_int_const(IntVar::new());
+    let pat: Pat = any_int_const(Capture::new());
 
     let a1: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
     let a2: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
@@ -136,8 +136,8 @@ fn graph_three_adds() -> ir::BuiltFunctionGraph {
 #[test]
 fn find_all_returns_distinct_matches_with_distinct_roots() {
     let g = graph_three_adds();
-    let lhs = IntVar::new();
-    let rhs = IntVar::new();
+    let lhs = Capture::new();
+    let rhs = Capture::new();
     let hits = Matcher::new(&g).find_all(&add(any_int_const(lhs), any_int_const(rhs)).into());
     // Three leaf Adds + two outer Adds (the outer ones have non-const
     // operands, so they DON'T match `any_int_const × any_int_const`).
@@ -151,8 +151,8 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
 #[test]
 fn each_match_has_its_own_bindings() {
     let g = graph_three_adds();
-    let lhs = IntVar::new();
-    let rhs = IntVar::new();
+    let lhs = Capture::new();
+    let rhs = Capture::new();
     let hits = Matcher::new(&g).find_all(&add(any_int_const(lhs), any_int_const(rhs)).into());
     assert_eq!(hits.len(), 3);
 
@@ -160,7 +160,7 @@ fn each_match_has_its_own_bindings() {
     // independent set.  Exactly the three operand pairs must appear.
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.get_int_var(lhs).unwrap(), m.get_int_var(rhs).unwrap()))
+        .map(|m| (m.get_uint(lhs, &g).unwrap(), m.get_uint(rhs, &g).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) }) // commutative retry can swap
         .collect();
     got.sort();
@@ -172,7 +172,7 @@ fn each_match_has_its_own_bindings() {
 #[test]
 fn bindings_clone_outlives_match() {
     let g = shapes::add_consts(5, 3);
-    let v = IntVar::new();
+    let v = Capture::new();
 
     // Clone the bindings, then drop the Match.  The snapshot still resolves.
     let bindings = {
@@ -188,7 +188,7 @@ fn bindings_clone_outlives_match() {
         m.bindings_clone()
     };
 
-    assert_eq!(bindings.get_int(v), Some(5));
+    assert_eq!(bindings.get_uint(v, &g), Some(5));
 }
 
 // ── Match::get_vn ────────────────────────────────────────────────────────────

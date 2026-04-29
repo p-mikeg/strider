@@ -175,15 +175,14 @@ fn match_jump_table_shape(
     // single `load().addr(add(any_int_const(base), mul(var(idx),
     // any_int_const(stride))))` pattern matches all four operand
     // orderings of `(base + idx*stride)` without an explicit fallback
-    // chain.  `any_int_const(IntVar)` guarantees the captured side is
-    // an `IntConst` node and binds the literal value to the `IntVar`,
-    // so on a successful match `idx_output` is necessarily the *other*
-    // operand of the multiplication — the same disambiguation the
-    // prior `extract_base_and_mul` performed by trying `int_const_val`
-    // on each `mul` operand in turn.
-    use pattern::{IntVar, Matcher, Capture, add, any_int_const, load, mul, var};
-    let base_var = IntVar::new();
-    let stride_var = IntVar::new();
+    // chain.  `any_int_const(c)` guarantees the captured side is an
+    // `IntConst` node, so on a successful match `idx_output` is
+    // necessarily the *other* operand of the multiplication — the
+    // same disambiguation the prior `extract_base_and_mul` performed
+    // by trying `int_const_val` on each `mul` operand in turn.
+    use pattern::{Capture, Matcher, add, any_int_const, load, mul, var};
+    let base_var = Capture::new();
+    let stride_var = Capture::new();
     let idx_var = Capture::new();
     let pat = load().addr(add(
         any_int_const(base_var),
@@ -191,15 +190,15 @@ fn match_jump_table_shape(
     ));
     let m = Matcher::new(fg).match_at(load_node, &pat.into())?;
 
-    // CORRECTNESS — `IntVar` capture stores the constant value as
-    // `u128`; the prior code returned `u64` for both `base` and
-    // `stride` via `int_const_val`, which itself truncates to `u64`.
-    // We mirror the truncation here.  Real jump-table bases /
-    // strides fit in `u64` on every supported arch.
+    // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior code
+    // returned `u64` for both `base` and `stride` via `int_const_val`,
+    // which itself truncates to `u64`.  We mirror the truncation here.
+    // Real jump-table bases / strides fit in `u64` on every supported
+    // arch.
     #[allow(clippy::cast_possible_truncation)]
-    let base = m.get_int_var(base_var)? as u64;
+    let base = m.get_uint(base_var, fg)? as u64;
     #[allow(clippy::cast_possible_truncation)]
-    let stride = m.get_int_var(stride_var)? as u64;
+    let stride = m.get_uint(stride_var, fg)? as u64;
     let idx_output = m.output(idx_var)?;
 
     Some(JumpTableShape {
@@ -469,13 +468,13 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use pattern::{IntCmpOpVar, IntVar, Matcher, Capture, any_int_const, int_cmp_any, var};
+    use pattern::{Capture, Matcher, any_int_const, int_cmp_any, var};
     let graph = &fg.graph;
     let cmp_node = graph.get_node_from_output(cond_out);
 
-    let op_var = IntCmpOpVar::new();
+    let op_var = Capture::new();
     let idx_var = Capture::new();
-    let n_var = IntVar::new();
+    let n_var = Capture::new();
     let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
     let m = Matcher::new(fg).match_at(cmp_node, &pat)?;
 
@@ -489,8 +488,8 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_output) {
         return None;
     }
-    let n = u64::try_from(m.get_int_var(n_var)?).ok()?;
-    let op = m.get_int_cmp_op(op_var)?;
+    let n = u64::try_from(m.get_uint(n_var, fg)?).ok()?;
+    let op = m.get_int_cmp_op(op_var, fg)?;
 
     match op {
         // idx < N (true) → bound = N.

@@ -17,56 +17,56 @@ use super::try_lower_cast_to_float;
 /// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
 fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, IntVar, Capture, add, and, any_int_const, boxed_rule, int_const_with, or,
+        BoxedRule, Capture, add, and, any_int_const, boxed_rule, int_const_with, or,
         rewrite_rule, sub, var,
     };
 
     // (x + C1) + C2 → x + (C1 + C2)
-    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_add = boxed_rule(rewrite_rule(
         add(add(var(x), any_int_const(c1)), any_int_const(c2)),
-        add(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+        add(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2))),
     ));
 
     // (x - C1) - C2 → x - (C1 + C2)
-    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_sub = boxed_rule(rewrite_rule(
         sub(sub(var(x), any_int_const(c1)), any_int_const(c2)),
-        sub(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
+        sub(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2))),
     ));
 
     // (x + C1) - C2 → x + (C1 - C2)
-    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_sub = boxed_rule(rewrite_rule(
         sub(add(var(x), any_int_const(c1)), any_int_const(c2)),
-        add(var(x), int_const_with!([c1, c2] => c1.wrapping_sub(c2))),
+        add(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2))),
     ));
 
     // (x - C1) + C2 → x + (C2 - C1)
-    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_add = boxed_rule(rewrite_rule(
         add(sub(var(x), any_int_const(c1)), any_int_const(c2)),
-        add(var(x), int_const_with!([c1, c2] => c2.wrapping_sub(c1))),
+        add(var(x), int_const_with!([c1: uint, c2: uint] => c2.wrapping_sub(c1))),
     ));
 
     // (a & C1) & C2 → a & (C1 & C2)
-    let (a, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
+    let (a, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_merge = boxed_rule(rewrite_rule(
         and(and(var(a), any_int_const(c1)), any_int_const(c2)),
-        and(var(a), int_const_with!([c1, c2] => c1 & c2)),
+        and(var(a), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
     ));
 
     // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
     let (a, b) = (Capture::new(), Capture::new());
-    let (c1, c2, c3) = (IntVar::new(), IntVar::new(), IntVar::new());
+    let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_dist = boxed_rule(rewrite_rule(
         and(
             or(and(var(a), any_int_const(c1)), and(var(b), any_int_const(c2))),
             any_int_const(c3),
         ),
         or(
-            and(var(a), int_const_with!([c1, c3] => c1 & c3)),
-            and(var(b), int_const_with!([c2, c3] => c2 & c3)),
+            and(var(a), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
+            and(var(b), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
         ),
     ));
 
@@ -203,7 +203,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // We pin the high-mask check via `when_match`: the captured constant
     // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
     // output bit width.
-    use pattern::{and, any_int_const, or, IntVar};
+    use pattern::{and, any_int_const, or};
     // Two rule orientations because the Or's commutative match doesn't
     // generate enough swaps to enumerate "the And side of the Or might
     // be either operand AND the IntConst inside that And might be either
@@ -211,14 +211,14 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     let mk_drop_high_half = |swap: bool| -> BoxedRule {
         let a = Capture::new();
         let b = Capture::new();
-        let c = IntVar::new();
+        let c = Capture::new();
         let inner = if swap {
             or(and(any_int_const(c), var(b)), var(a))
         } else {
             or(var(a), and(any_int_const(c), var(b)))
         };
-        let pat = truncate(inner).when_match(move |_fg, ty, bnd| {
-            let Some(c_val) = bnd.get_int(c) else { return false; };
+        let pat = truncate(inner).when_match(move |fg, ty, bnd| {
+            let Some(c_val) = bnd.get_uint(c, fg) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -236,14 +236,14 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // `any_int_const` placement.
     let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
         let x = Capture::new();
-        let c = IntVar::new();
+        let c = Capture::new();
         let inner = if swap {
             and(var(x), any_int_const(c))
         } else {
             and(any_int_const(c), var(x))
         };
-        let pat = truncate(inner).when_match(move |_fg, ty, bnd| {
-            let Some(c_val) = bnd.get_int(c) else { return false; };
+        let pat = truncate(inner).when_match(move |fg, ty, bnd| {
+            let Some(c_val) = bnd.get_uint(c, fg) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -288,7 +288,7 @@ pub(super) fn apply_bitcast_extend_rules(
 /// Builds the rule vec for [`apply_identity_rules`].
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, IntVar, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
+        BoxedRule, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -298,10 +298,10 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     // constant against the node's output-type all-ones value.
     let all_ones_rule = {
         let x = Capture::new();
-        let c = IntVar::new();
+        let c = Capture::new();
         let pat: Pat = and(var(x), any_int_const(c)).into();
-        let pat = pat.when_match(move |_fg, ty, b| {
-            b.get_int(c) == ty.get_unsigned_int(u128::MAX)
+        let pat = pat.when_match(move |fg, ty, b| {
+            b.get_uint(c, fg) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -311,10 +311,10 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     // compiler choice.
     let xor_all_ones_rule = {
         let x = Capture::new();
-        let c = IntVar::new();
+        let c = Capture::new();
         let pat: Pat = xor(var(x), any_int_const(c)).into();
-        let pat = pat.when_match(move |_fg, ty, b| {
-            b.get_int(c) == ty.get_unsigned_int(u128::MAX)
+        let pat = pat.when_match(move |fg, ty, b| {
+            b.get_uint(c, fg) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, neg(var(x))))
     };
@@ -377,10 +377,9 @@ pub(super) fn apply_identity_rules(
 /// Builds the rule vec for [`apply_const_eval_rules`].
 fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoolVar, BoxedRule, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, any_bool_const,
-        any_int_const, bool_const_with, boxed_rule, cast_to_bool, cast_to_int, int_binary_any,
-        int_cmp_any, int_const_with, int_unary_any, lzcount, popcount, rewrite_rule, sign_extend,
-        truncate, zero_extend,
+        BoxedRule, Capture, any_bool_const, any_int_const, bool_const_with, boxed_rule,
+        cast_to_bool, cast_to_int, int_binary_any, int_cmp_any, int_const_with, int_unary_any,
+        lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -390,12 +389,12 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //    overflow / U128+ masking failures; the closure opts out of the
         //    rewrite in that case via `pattern::skip()`.
         {
-            let op = IntBinaryOpVar::new();
-            let l = IntVar::new();
-            let r = IntVar::new();
+            let op = Capture::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 int_binary_any(op, any_int_const(l), any_int_const(r)),
-                int_const_with!([op, l, r, ty] =>
+                int_const_with!([op: int_binary_op, l: uint, r: uint, ty] =>
                     eval_int_binary(op, l, r, ty)
                         .ok_or_else(pattern::skip)?
                 ),
@@ -403,11 +402,11 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         },
         // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
         {
-            let op = IntUnaryOpVar::new();
-            let v = IntVar::new();
+            let op = Capture::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 int_unary_any(op, any_int_const(v)),
-                int_const_with!([op, v, ty] => {
+                int_const_with!([op: int_unary_op, v: uint, ty] => {
                     // The IR's enum names follow Sleigh's counter-intuitive
                     // convention (see arithmetic.rs comments and analyzer
                     // insn dispatch):
@@ -428,12 +427,12 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; bridge
         //    that failure through `pattern::Error::rewrite_closure(...)`.
         {
-            let op = IntCmpOpVar::new();
-            let l = IntVar::new();
-            let r = IntVar::new();
+            let op = Capture::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 int_cmp_any(op, any_int_const(l), any_int_const(r)),
-                bool_const_with!([op, l, r, in_ty] => {
+                bool_const_with!([op: int_cmp_op, l: uint, r: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     eval_int_cmp(op, l, r, input_ty)?
                 }),
@@ -447,20 +446,20 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //    truncate output is always narrower than U64 in practice, but
         //    the skip costs nothing and is consistent with other rules).
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 truncate(any_int_const(v)),
-                int_const_with!([v, ty] =>
+                int_const_with!([v: uint, ty] =>
                     ty.get_unsigned_int(v).ok_or_else(pattern::skip)?
                 ),
             ))
         },
         // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 zero_extend(any_int_const(v)),
-                int_const_with!([v] => v),
+                int_const_with!([v: uint] => v),
             ))
         },
         // 6. SignExtend(IntConst(v)) =>
@@ -469,10 +468,10 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //    the sign-extended i128 value, which `get_unsigned_int` then
         //    masks to the wider output width.
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 sign_extend(any_int_const(v)),
-                int_const_with!([v, in_ty, ty] => {
+                int_const_with!([v: uint, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let signed = input_ty
                         .get_signed_int(v)
@@ -485,10 +484,10 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         // 7. Popcount(IntConst(v)) =>
         //        int_const(masked(v, in_ty).count_ones(), ty)
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 popcount(any_int_const(v)),
-                int_const_with!([v, in_ty] => {
+                int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
@@ -503,10 +502,10 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         //    shifting by (128 - bits) aligns to the u128's MSB so
         //    `leading_zeros()` gives the correct count within the type's width.
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 lzcount(any_int_const(v)),
-                int_const_with!([v, in_ty] => {
+                int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
@@ -531,18 +530,18 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
         },
         // 9. CastToBool(IntConst(v)) => bool_const(v != 0)
         {
-            let v = IntVar::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 cast_to_bool(any_int_const(v)),
-                bool_const_with!([v] => v != 0),
+                bool_const_with!([v: uint] => v != 0),
             ))
         },
         // 10. CastToInt(BoolConst(b)) => int_const(b as u128, ty)
         {
-            let b = BoolVar::new();
+            let b = Capture::new();
             boxed_rule(rewrite_rule(
                 cast_to_int(any_bool_const(b)),
-                int_const_with!([b] => u128::from(b)),
+                int_const_with!([b: bool] => u128::from(b)),
             ))
         },
     ];
@@ -566,63 +565,63 @@ pub(super) fn apply_const_eval_rules(
 /// Builds the rule vec for [`apply_bool_float_rules`].
 fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoolUnaryOpVar, BoolVar, BoxedRule, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-        FloatVar, Pat, any_bool_const, any_float_const, bool_and, bool_or, bool_unary_any,
-        bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any, rewrite_rule,
+        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_and, bool_or,
+        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any,
+        rewrite_rule,
     };
     use pattern::{bool_const_with, float_const_with};
 
     let rules: Vec<BoxedRule> = vec![
         // BAnd(BoolConst(l), BoolConst(r)) => bool_const(l && r)
         {
-            let l = BoolVar::new();
-            let r = BoolVar::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 bool_and(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l, r] => l && r),
+                bool_const_with!([l: bool, r: bool] => l && r),
             ))
         },
         // BOr(BoolConst(l), BoolConst(r)) => bool_const(l || r)
         {
-            let l = BoolVar::new();
-            let r = BoolVar::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 bool_or(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l, r] => l || r),
+                bool_const_with!([l: bool, r: bool] => l || r),
             ))
         },
         // BXor(BoolConst(l), BoolConst(r)) => bool_const(l ^ r)
         {
-            let l = BoolVar::new();
-            let r = BoolVar::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 bool_xor(any_bool_const(l), any_bool_const(r)),
-                bool_const_with!([l, r] => l ^ r),
+                bool_const_with!([l: bool, r: bool] => l ^ r),
             ))
         },
         // BAnd(BoolConst(false), _) => bool_const(false)  (absorbing element).
         // The constraint that the const is the absorbing value lives in the
         // pattern via `.when_match()`, so the rewrite closure is a literal.
         {
-            let l = BoolVar::new();
+            let l = Capture::new();
             let pat: Pat = bool_and(any_bool_const(l), pattern::any()).into();
-            let pat = pat.when_match(move |_fg, _ty, b| b.get_bool(l) == Some(false));
+            let pat = pat.when_match(move |fg, _ty, b| b.get_bool(l, fg) == Some(false));
             boxed_rule(rewrite_rule(pat, bool_const_with!([] => false)))
         },
         // BOr(BoolConst(true), _) => bool_const(true)  (absorbing element)
         {
-            let l = BoolVar::new();
+            let l = Capture::new();
             let pat: Pat = bool_or(any_bool_const(l), pattern::any()).into();
-            let pat = pat.when_match(move |_fg, _ty, b| b.get_bool(l) == Some(true));
+            let pat = pat.when_match(move |fg, _ty, b| b.get_bool(l, fg) == Some(true));
             boxed_rule(rewrite_rule(pat, bool_const_with!([] => true)))
         },
         // BoolUnaryOp(op)(BoolConst(v)) => bool_const(!v)
         {
-            let op = BoolUnaryOpVar::new();
-            let v = BoolVar::new();
+            let op = Capture::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 bool_unary_any(op, any_bool_const(v)),
-                bool_const_with!([op, v] => {
+                bool_const_with!([op: bool_unary_op, v: bool] => {
                     use ir::BoolUnaryOp;
                     match op {
                         BoolUnaryOp::Neg => !v,
@@ -633,12 +632,12 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
         // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
         //     float_const(eval_float_binary(op, l, r, ty)?)
         {
-            let op = FloatBinaryOpVar::new();
-            let l = FloatVar::new();
-            let r = FloatVar::new();
+            let op = Capture::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 float_binary_any(op, any_float_const(l), any_float_const(r)),
-                float_const_with!([op, l, r, ty] =>
+                float_const_with!([op: float_binary_op, l: float_bits, r: float_bits, ty] =>
                     eval_float_binary(op, l, r, ty)
                         .ok_or_else(pattern::skip)?
                 ),
@@ -646,11 +645,11 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
         },
         // FloatUnaryOp(op)(FloatConst(v)) => float_const(eval_float_unary(op, v, ty)?)
         {
-            let op = FloatUnaryOpVar::new();
-            let v = FloatVar::new();
+            let op = Capture::new();
+            let v = Capture::new();
             boxed_rule(rewrite_rule(
                 float_unary_any(op, any_float_const(v)),
-                float_const_with!([op, v, ty] =>
+                float_const_with!([op: float_unary_op, v: float_bits, ty] =>
                     eval_float_unary(op, v, ty)
                         .ok_or_else(pattern::skip)?
                 ),
@@ -660,12 +659,12 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
         //     bool_const(eval_float_cmp(op, l, r, in_ty)?)
         //   `in_ty` = root's first-value-input type (the float operand type).
         {
-            let op = FloatCmpOpVar::new();
-            let l = FloatVar::new();
-            let r = FloatVar::new();
+            let op = Capture::new();
+            let l = Capture::new();
+            let r = Capture::new();
             boxed_rule(rewrite_rule(
                 float_cmp_any(op, any_float_const(l), any_float_const(r)),
-                bool_const_with!([op, l, r, in_ty] => {
+                bool_const_with!([op: float_cmp_op, l: float_bits, r: float_bits, in_ty] => {
                     let input_ty = in_ty.ok_or_else(pattern::skip)?;
                     eval_float_cmp(op, l, r, input_ty)
                         .ok_or_else(pattern::skip)?

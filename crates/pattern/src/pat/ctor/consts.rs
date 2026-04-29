@@ -1,7 +1,6 @@
 //! Build-only constant constructors ([`int_const_with_fn`],
-//! [`bool_const_with_fn`], [`float_const_with_fn`]) plus the [`FromCtx`]
-//! trait and [`first_value_input_type`] helper the `*_const_with!`
-//! macros expand against.
+//! [`bool_const_with_fn`], [`float_const_with_fn`]) plus the [`first_value_input_type`]
+//! helper the `*_const_with!` macros expand against.
 //!
 //! These constructors are match-only-false (their `post_match` always
 //! returns `false`), so accidentally pasting one on the LHS of a rule
@@ -17,10 +16,6 @@ use crate::error::Result;
 use crate::pat::Pat;
 use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodeKindCheck, NodePat};
 use crate::pat::traits::BuildCtx;
-use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
-};
 
 /// Match-only-false post_match shared by every `*_const_with_fn` — these
 /// patterns are build-only; landing one on an LHS is a silent no-match
@@ -94,85 +89,3 @@ where
         )
         .into_pat()
 }
-
-/// Extract a typed value from a [`BuildCtx`] given a capture variable.
-///
-/// Used by the `*_const_with!` macros to resolve each capture identifier
-/// into its concrete value.  Implemented for every capture-var type
-/// ([`Capture`](crate::var::Capture) binding is not useful for
-/// const-with — it yields a `NodeOutputId`, not a scalar value — so
-/// that impl is intentionally omitted).
-#[allow(clippy::wrong_self_convention)]
-pub trait FromCtx {
-    type Output;
-
-    /// Resolve this capture variable against the bindings carried by `ctx`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`anyhow::Error`] wrapping
-    /// [`crate::error::MissingBinding`] when the capture variable is not
-    /// present in `ctx.bindings` — i.e. the LHS of the rewrite rule
-    /// didn't bind it.
-    fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output>;
-}
-
-macro_rules! impl_from_ctx {
-    ($ty:ty, $out:ty, $getter:ident, $kind_name:literal) => {
-        impl FromCtx for $ty {
-            type Output = $out;
-            fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
-                ctx.bindings
-                    .$getter(*self)
-                    .ok_or_else(|| crate::error::missing_binding($kind_name))
-            }
-        }
-    };
-}
-
-impl_from_ctx!(IntVar, u128, get_int, "IntVar");
-impl_from_ctx!(BoolVar, bool, get_bool, "BoolVar");
-impl_from_ctx!(FloatVar, u64, get_float_bits, "FloatVar");
-impl_from_ctx!(
-    IntBinaryOpVar,
-    ir::IntBinaryOp,
-    get_int_binary_op,
-    "IntBinaryOpVar"
-);
-impl_from_ctx!(
-    IntUnaryOpVar,
-    ir::IntUnaryOp,
-    get_int_unary_op,
-    "IntUnaryOpVar"
-);
-impl_from_ctx!(IntCmpOpVar, ir::IntCmpOp, get_int_cmp_op, "IntCmpOpVar");
-impl_from_ctx!(
-    BoolBinaryOpVar,
-    ir::BoolBinaryOp,
-    get_bool_binary_op,
-    "BoolBinaryOpVar"
-);
-impl_from_ctx!(
-    BoolUnaryOpVar,
-    ir::BoolUnaryOp,
-    get_bool_unary_op,
-    "BoolUnaryOpVar"
-);
-impl_from_ctx!(
-    FloatBinaryOpVar,
-    ir::FloatBinaryOp,
-    get_float_binary_op,
-    "FloatBinaryOpVar"
-);
-impl_from_ctx!(
-    FloatUnaryOpVar,
-    ir::FloatUnaryOp,
-    get_float_unary_op,
-    "FloatUnaryOpVar"
-);
-impl_from_ctx!(
-    FloatCmpOpVar,
-    ir::FloatCmpOp,
-    get_float_cmp_op,
-    "FloatCmpOpVar"
-);

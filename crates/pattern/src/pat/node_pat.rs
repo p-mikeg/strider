@@ -37,7 +37,7 @@ use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
 /// Post-match runs after the kind spec has already accepted the candidate
 /// and all input / output / consumer constraints have passed — it is the
 /// place for bindings that depend on payload data (e.g. the `*_any`
-/// op-variant capture, or the typed-Capture path of `IntoAnyIntConst`).
+/// op-variant capture binding the matched node's `NodeId`).
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
 

@@ -1,17 +1,15 @@
-use ir::node::{NodeId, NodeOutputId};
+use ir::BuiltFunctionGraph;
+use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{
     BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
 };
 
-use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, Capture, FloatBinaryOpVar, FloatCmpOpVar,
-    FloatUnaryOpVar, FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
-};
+use crate::var::Capture;
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
 
-/// One unified [`Capture`] binding: the matched node id, plus the value
+/// One [`Capture`] binding: the matched node id, plus the value
 /// `NodeOutputId` when the pattern that produced the binding is
 /// value-producing.  Control-flow patterns (`Call`, `If`, `Return`,
 /// `CallOther`) bind only the `NodeId` and leave `output = None`.
@@ -31,7 +29,7 @@ impl Binding {
 /// A set of capture-variable bindings accumulated during a single
 /// match attempt.
 ///
-/// Bindings are append-only: once a variable is bound it cannot be
+/// Bindings are append-only: once a `Capture` is bound it cannot be
 /// rebound to a different value.  A mismatch (trying to bind an
 /// already-bound variable to a different value) makes the containing
 /// match fail.
@@ -43,42 +41,20 @@ impl Binding {
 /// an O(1) `Vec::truncate`.  No allocations, no per-kind HashMap
 /// clones, no deep copy of the full state.
 ///
-/// Lookups (`get_*`) are linear scans filtered by entry variant.  In
-/// the patterns we currently exercise (constant-fold rules,
-/// indirect-branch resolvers) bindings stay in the single-digit
-/// range; if profiling shows the scan as hot we can layer a hash
-/// overlay on top of the journaled `Vec` without changing the public
-/// API.
+/// Lookups (`get_*`) are linear scans over the entry `Vec`.  In the
+/// patterns we currently exercise (constant-fold rules, indirect-
+/// branch resolvers) bindings stay in the single-digit range; if
+/// profiling shows the scan as hot we can layer a hash overlay on top
+/// of the journaled `Vec` without changing the public API.
 ///
 /// External callers see `Bindings` as read-only: construction is via
-/// `Default::default()`, mutation goes through the `bind_*` family,
+/// `Default::default()`, mutation goes through [`Self::bind_capture`],
 /// and the `mark` / `restore` journal API is `pub(crate)` because only
 /// the matcher's commutative-retry / speculative-attempt paths
 /// legitimately need it.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    entries: Vec<BindingEntry>,
-}
-
-/// One appended binding.  Kind-tagged: since every capture-variable type has
-/// its own `u32` id drawn from a shared counter, a given id can only occur
-/// in one variant — but the tagging still gives us type-safe lookup.
-#[derive(Clone, Copy)]
-enum BindingEntry {
-    /// Unified data/control capture.  `output` is `Some` for
-    /// value-producing patterns, `None` for control-flow patterns.
-    Capture(Capture, Binding),
-    Int(IntVar, u128),
-    Bool(BoolVar, bool),
-    Float(FloatVar, u64),
-    IntBinaryOp(IntBinaryOpVar, IntBinaryOp),
-    IntUnaryOp(IntUnaryOpVar, IntUnaryOp),
-    IntCmpOp(IntCmpOpVar, IntCmpOp),
-    BoolBinaryOp(BoolBinaryOpVar, BoolBinaryOp),
-    BoolUnaryOp(BoolUnaryOpVar, BoolUnaryOp),
-    FloatBinaryOp(FloatBinaryOpVar, FloatBinaryOp),
-    FloatUnaryOp(FloatUnaryOpVar, FloatUnaryOp),
-    FloatCmpOp(FloatCmpOpVar, FloatCmpOp),
+    entries: Vec<(Capture, Binding)>,
 }
 
 /// Opaque marker returned by [`Bindings::mark`] and consumed by
@@ -103,14 +79,12 @@ impl Bindings {
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent
     /// (full-binding-equal) bind, `false` on conflict (no mutation).
     pub fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
-        for entry in &self.entries {
-            if let BindingEntry::Capture(k, existing) = entry
-                && *k == c
-            {
+        for (k, existing) in &self.entries {
+            if *k == c {
                 return *existing == binding;
             }
         }
-        self.entries.push(BindingEntry::Capture(c, binding));
+        self.entries.push((c, binding));
         true
     }
 
@@ -118,14 +92,10 @@ impl Bindings {
     /// `c`, or `None` if `c` was not captured in this match.
     #[must_use]
     pub fn get_binding(&self, c: Capture) -> Option<Binding> {
-        for entry in &self.entries {
-            if let BindingEntry::Capture(k, b) = entry
-                && *k == c
-            {
-                return Some(*b);
-            }
-        }
-        None
+        self.entries
+            .iter()
+            .find(|(k, _)| *k == c)
+            .map(|(_, b)| *b)
     }
 
     /// Convenience: returns the value `NodeOutputId` bound to `c`, or
@@ -149,49 +119,167 @@ impl Bindings {
     pub fn get_node(&self, c: Capture) -> Option<NodeId> {
         self.get_binding(c).map(|b| b.node)
     }
-}
 
-/// Emit a `bind_$name` / `get_$name` pair as a linear scan over `entries`
-/// filtering by the given `BindingEntry` variant.
-macro_rules! decl_bind_get {
-    ($variant:ident, $bind_name:ident, $get_name:ident, $var:ty, $val:ty, $doc_stem:literal) => {
-        impl Bindings {
-            #[doc = concat!("Bind `v` to ", $doc_stem, ".\n\nReturns `true` on new or idempotent binding, `false` on conflict (no mutation).")]
-            pub fn $bind_name(&mut self, v: $var, val: $val) -> bool {
-                for entry in &self.entries {
-                    if let BindingEntry::$variant(k, existing) = entry
-                        && *k == v
-                    {
-                        return *existing == val;
-                    }
-                }
-                self.entries.push(BindingEntry::$variant(v, val));
-                true
-            }
+    // ── Typed extractors ──────────────────────────────────────────────
+    //
+    // These read the constant value or op variant that the bound node
+    // carries.  All return `None` for unbound captures, control-flow
+    // bindings, or producers whose `NodeKind` doesn't match the requested
+    // shape — the same "wrong shape ⇒ None" contract the old typed-Var
+    // getters had.
 
-            #[doc = concat!("Returns the ", $doc_stem, " bound to `v`, or `None` if unbound.")]
-            pub fn $get_name(&self, v: $var) -> Option<$val> {
-                for entry in &self.entries {
-                    if let BindingEntry::$variant(k, val) = entry
-                        && *k == v
-                    {
-                        return Some(*val);
-                    }
-                }
-                None
-            }
+    /// If the node bound to `c` is an `IntConst`, returns the stored
+    /// constant value masked to the output type's bit width.
+    #[must_use]
+    pub fn get_uint(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u128> {
+        let out = self.get_output(c)?;
+        let NodeKind::IntConst(val) = graph.graph.kind_of_output(out) else {
+            return None;
+        };
+        let ty = graph.graph.output_kind(out).as_value()?;
+        ty.get_unsigned_int(*val)
+    }
+
+    /// If the node bound to `c` is an `IntConst`, returns the stored
+    /// constant sign-extended from the output type's bit width to
+    /// `i128`.
+    #[must_use]
+    pub fn get_int(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i128> {
+        let out = self.get_output(c)?;
+        let NodeKind::IntConst(val) = graph.graph.kind_of_output(out) else {
+            return None;
+        };
+        let ty = graph.graph.output_kind(out).as_value()?;
+        ty.get_signed_int(*val)
+    }
+
+    /// If the node bound to `c` is a `BoolConst`, returns the stored
+    /// boolean value.
+    #[must_use]
+    pub fn get_bool(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<bool> {
+        let out = self.get_output(c)?;
+        match graph.graph.kind_of_output(out) {
+            NodeKind::BoolConst(val) => Some(*val),
+            _ => None,
         }
-    };
-}
+    }
 
-decl_bind_get!(Int,             bind_int,             get_int,             IntVar,          u128,         "the integer constant value");
-decl_bind_get!(Bool,            bind_bool,            get_bool,            BoolVar,         bool,         "the boolean constant value");
-decl_bind_get!(Float,           bind_float,           get_float_bits,      FloatVar,        u64,          "the float constant IEEE 754 bit pattern");
-decl_bind_get!(IntBinaryOp,     bind_int_binary_op,   get_int_binary_op,   IntBinaryOpVar,  IntBinaryOp,  "the [`IntBinaryOp`] variant");
-decl_bind_get!(IntUnaryOp,      bind_int_unary_op,    get_int_unary_op,    IntUnaryOpVar,   IntUnaryOp,   "the [`IntUnaryOp`] variant");
-decl_bind_get!(IntCmpOp,        bind_int_cmp_op,      get_int_cmp_op,      IntCmpOpVar,     IntCmpOp,     "the [`IntCmpOp`] variant");
-decl_bind_get!(BoolBinaryOp,    bind_bool_binary_op,  get_bool_binary_op,  BoolBinaryOpVar, BoolBinaryOp, "the [`BoolBinaryOp`] variant");
-decl_bind_get!(BoolUnaryOp,     bind_bool_unary_op,   get_bool_unary_op,   BoolUnaryOpVar,  BoolUnaryOp,  "the [`BoolUnaryOp`] variant");
-decl_bind_get!(FloatBinaryOp,   bind_float_binary_op, get_float_binary_op, FloatBinaryOpVar,FloatBinaryOp,"the [`FloatBinaryOp`] variant");
-decl_bind_get!(FloatUnaryOp,    bind_float_unary_op,  get_float_unary_op,  FloatUnaryOpVar, FloatUnaryOp, "the [`FloatUnaryOp`] variant");
-decl_bind_get!(FloatCmpOp,      bind_float_cmp_op,    get_float_cmp_op,    FloatCmpOpVar,   FloatCmpOp,   "the [`FloatCmpOp`] variant");
+    /// If the node bound to `c` is a `FloatConst`, returns the raw
+    /// IEEE 754 bit pattern as `u64`.
+    #[must_use]
+    pub fn get_float_bits(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u64> {
+        let out = self.get_output(c)?;
+        match graph.graph.kind_of_output(out) {
+            NodeKind::FloatConst(bits) => Some(*bits),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is an `IntBinaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_int_binary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<IntBinaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::IntBinaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is an `IntUnaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_int_unary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<IntUnaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::IntUnaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
+    #[must_use]
+    pub fn get_int_cmp_op(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<IntCmpOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::IntCmpOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a `BoolBinaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_bool_binary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<BoolBinaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::BoolBinaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a `BoolUnaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_bool_unary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<BoolUnaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::BoolUnaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_float_binary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<FloatBinaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::FloatBinaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a `FloatUnaryOp`, returns the op variant.
+    #[must_use]
+    pub fn get_float_unary_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<FloatUnaryOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::FloatUnaryOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a `FloatCmpOp`, returns the op variant.
+    #[must_use]
+    pub fn get_float_cmp_op(
+        &self,
+        c: Capture,
+        graph: &BuiltFunctionGraph,
+    ) -> Option<FloatCmpOp> {
+        let node = self.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::FloatCmpOp(op) => Some(*op),
+            _ => None,
+        }
+    }
+}

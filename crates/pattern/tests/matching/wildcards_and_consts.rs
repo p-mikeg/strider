@@ -69,9 +69,9 @@ fn int_const_zero_and_u64_max_match() {
 #[test]
 fn any_int_const_captures_value() {
     let g = Tb::empty().ret_const(123);
-    let iv = IntVar::new();
+    let iv = Capture::new();
     let m = a::unique(&g, any_int_const(iv));
-    assert_eq!(m.get_int_var(iv), Some(123));
+    assert_eq!(m.get_uint(iv, &g), Some(123));
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn any_int_const_rejects_non_const() {
     let s = t.add(a1, a2);
     let g = t.ret_val(s);
 
-    let iv = IntVar::new();
+    let iv = Capture::new();
     a::matches(&g, any_int_const(iv), 2);
 }
 
@@ -108,9 +108,9 @@ fn any_bool_const_captures_value() {
     let as_int = t.as_int(b, NodeOutputType::U64);
     let g = t.ret_val(as_int);
 
-    let bv = BoolVar::new();
+    let bv = Capture::new();
     let m = a::unique(&g, any_bool_const(bv));
-    assert_eq!(m.get_bool_var(bv), Some(true));
+    assert_eq!(m.get_bool(bv, &g), Some(true));
 }
 
 // ── Float constants ───────────────────────────────────────────────────────────
@@ -146,9 +146,9 @@ fn any_float_const_captures_bits() {
     let ci = t.float_to_int(c, NodeOutputType::U64);
     let g = t.ret_val(ci);
 
-    let fv = FloatVar::new();
+    let fv = Capture::new();
     let m = a::unique(&g, any_float_const(fv));
-    assert_eq!(m.get_float_var(fv), Some(2.5f64.to_bits()));
+    assert_eq!(m.get_float_bits(fv, &g), Some(2.5f64.to_bits()));
 }
 
 // ── Constant deduplication ────────────────────────────────────────────────────

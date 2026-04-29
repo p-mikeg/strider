@@ -137,11 +137,11 @@ fn sub_x_x_to_zero_rule() {
 #[test]
 fn int_const_with_folds_two_captured_ints() {
     let mut g = graph_add_const_const(5, 3);
-    let a_v = IntVar::new();
-    let b_v = IntVar::new();
+    let a_v = Capture::new();
+    let b_v = Capture::new();
     let rule = rewrite_rule(
         add(any_int_const(a_v), any_int_const(b_v)),
-        int_const_with!([a_v, b_v] => a_v.wrapping_add(b_v)),
+        int_const_with!([a_v: uint, b_v: uint] => a_v.wrapping_add(b_v)),
     );
 
     let add_node = find_add(&g);
@@ -168,10 +168,10 @@ fn int_const_with_exposes_ty_and_in_ty() {
     let tr = t.trunc_to(s, NodeOutputType::U8);
     let mut g = t.ret_val(tr);
 
-    let v = IntVar::new();
+    let v = Capture::new();
     let rule = rewrite_rule(
         truncate(any_int_const(v)),
-        int_const_with!([v, ty] => { let _ = ty; v }),
+        int_const_with!([v: uint, ty] => { let _ = ty; v }),
     );
 
     // Try against every node — only the Truncate's constant-input shape is
@@ -228,21 +228,21 @@ fn rhs_control_pattern_is_not_buildable() {
 #[test]
 fn rhs_unbound_capture_raises_missing_binding() {
     let mut g = graph_add_const_const(5, 3);
-    // LHS binds only `bound`; RHS references `unbound` (same Capture type, never
-    // mentioned in LHS).
-    let bound = IntVar::new();
-    let unbound = IntVar::new();
+    // LHS binds only `bound`; RHS references `unbound` (a fresh Capture
+    // never mentioned in LHS).
+    let bound = Capture::new();
+    let unbound = Capture::new();
     let rule = rewrite_rule(
         add(any_int_const(bound), any()),
-        int_const_with!([unbound] => unbound),
+        int_const_with!([unbound: uint] => unbound),
     );
 
     let add_node = find_add(&g);
     let err = rule(&mut g, add_node).expect_err("missing binding expected");
     let mb = err.downcast_ref::<pattern::MissingBinding>();
     assert!(
-        matches!(mb, Some(pattern::MissingBinding("IntVar"))),
-        "expected MissingBinding(\"IntVar\"), got {err:?}"
+        matches!(mb, Some(pattern::MissingBinding("uint"))),
+        "expected MissingBinding(\"uint\"), got {err:?}"
     );
 }
 
@@ -251,13 +251,13 @@ fn rhs_unbound_capture_raises_missing_binding() {
 #[test]
 fn rhs_skip_sentinel_returns_false_without_mutation() {
     let mut g = graph_add_const_const(5, 3);
-    let a_v = IntVar::new();
-    let b_v = IntVar::new();
+    let a_v = Capture::new();
+    let b_v = Capture::new();
     let rule = rewrite_rule(
         add(any_int_const(a_v), any_int_const(b_v)),
         // Simulate a "div by zero"-style opt-out: compute an Option, bail
         // out via `?` when None.
-        int_const_with!([a_v, b_v, ty] => {
+        int_const_with!([a_v: uint, b_v: uint, ty] => {
             let _ = (a_v, b_v, ty);
             None::<u128>.ok_or_else(pattern::skip)?
         }),
@@ -283,13 +283,13 @@ fn rhs_closure_error_propagates_through_anyhow() {
     struct CustomErr;
 
     let mut g = graph_add_const_const(5, 3);
-    let a_v = IntVar::new();
-    let b_v = IntVar::new();
+    let a_v = Capture::new();
+    let b_v = Capture::new();
     let rule = rewrite_rule(
         add(any_int_const(a_v), any_int_const(b_v)),
         // Body must evaluate to `u64` at the success path; the `Err(...)?`
         // form bails before the type check matters.
-        int_const_with!([a_v, b_v] => {
+        int_const_with!([a_v: uint, b_v: uint] => {
             let _ = (a_v, b_v);
             let res: pattern::Result<u128> = Err(anyhow::Error::new(CustomErr));
             res?

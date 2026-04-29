@@ -210,7 +210,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> strider::Res
     // be unreachable, and the rest collapse via dead-branch-elim).
     let pipeline = strider.build_optimizer_pipeline();
     let rule_all_false = rewrite_rule(
-        pattern::int_eq(pattern::any(), pattern::any_int_const(pattern::IntVar::new())),
+        pattern::int_eq(pattern::any(), pattern::any_int_const(pattern::Capture::new())),
         pattern::bool_const(false),
     );
     let mut rewriter = GraphRewriter::wrap_built(&mut g);

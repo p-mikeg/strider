@@ -1,13 +1,16 @@
 //! Variant-agnostic `*_any` constructors.
 //!
 //! Each `*_any` constructor matches any variant in its op family and binds
-//! the actual operator to a typed op-capture variable (`IntBinaryOpVar` etc.).
+//! the matched node to a [`Capture`].  The op variant is recovered after
+//! the match via the matching `Match::get_*_op(c, &graph)` helper.
+//!
 //! These tests verify:
 //!   * every op family has a working `*_any` ctor;
 //!   * the matched op variant is retrievable via `match.get_*_op`;
 //!   * `*_any` still honours family membership (int_binary_any won't match
 //!     a bool op);
-//!   * value captures (`.capture(Capture)`) compose with op-variant capture.
+//!   * value captures (additional `.capture(Capture)`) compose with the
+//!     op-binding capture.
 
 use ir::node::NodeOutputType;
 use ir::{
@@ -35,9 +38,9 @@ fn int_binary_any_captures_each_variant() {
         let v = t.int_bin(l, r, op);
         let g = t.ret_val(v);
 
-        let ov = IntBinaryOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(&g, int_binary_any(ov, int_const(5), int_const(3)));
-        assert_eq!(m.get_int_binary_op(ov), Some(op));
+        assert_eq!(m.get_int_binary_op(ov, &g), Some(op));
     }
 }
 
@@ -49,7 +52,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let r = t.u64(3);
     let v = t.add(l, r);
     let g = t.ret_val(v);
-    let ov = IntBinaryOpVar::new();
+    let ov = Capture::new();
     a::matches(&g, int_binary_any(ov, int_const(3), int_const(5)), 1);
 
     // Non-commutative op: swap must NOT match.
@@ -58,7 +61,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
     let r = t.u64(3);
     let v = t.sub(l, r);
     let g = t.ret_val(v);
-    let ov = IntBinaryOpVar::new();
+    let ov = Capture::new();
     a::none(&g, int_binary_any(ov, int_const(3), int_const(5)));
 }
 
@@ -72,9 +75,9 @@ fn int_unary_any_captures_variant() {
         let v = t.int_un(v, op);
         let g = t.ret_val(v);
 
-        let ov = IntUnaryOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(&g, int_unary_any(ov, int_const(42)));
-        assert_eq!(m.get_int_unary_op(ov), Some(op));
+        assert_eq!(m.get_int_unary_op(ov, &g), Some(op));
     }
 }
 
@@ -95,9 +98,9 @@ fn int_cmp_any_captures_variant() {
         let cast = t.as_int(c, NodeOutputType::U64);
         let g = t.ret_val(cast);
 
-        let ov = IntCmpOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(&g, int_cmp_any(ov, int_const(5), int_const(3)));
-        assert_eq!(m.get_int_cmp_op(ov), Some(op));
+        assert_eq!(m.get_int_cmp_op(ov, &g), Some(op));
     }
 }
 
@@ -110,7 +113,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let c = t.int_cmp(l, r, IntCmpOp::Equal);
     let cast = t.as_int(c, NodeOutputType::U64);
     let g = t.ret_val(cast);
-    let ov = IntCmpOpVar::new();
+    let ov = Capture::new();
     a::matches(&g, int_cmp_any(ov, int_const(3), int_const(5)), 1);
 
     // Less is NOT commutative → swap rejects.
@@ -120,7 +123,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let c = t.int_cmp(l, r, IntCmpOp::Less);
     let cast = t.as_int(c, NodeOutputType::U64);
     let g = t.ret_val(cast);
-    let ov = IntCmpOpVar::new();
+    let ov = Capture::new();
     a::none(&g, int_cmp_any(ov, int_const(3), int_const(5)));
 }
 
@@ -135,7 +138,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let cast = t.as_int(c, NodeOutputType::U64);
     let g = t.ret_val(cast);
 
-    let ov = FloatCmpOpVar::new();
+    let ov = Capture::new();
     a::matches(
         &g,
         float_cmp_any(ov, float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits())),
@@ -149,7 +152,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let c2 = t2.fcmp(l2, r2, FloatCmpOp::Less);
     let cast2 = t2.as_int(c2, NodeOutputType::U64);
     let g2 = t2.ret_val(cast2);
-    let ov2 = FloatCmpOpVar::new();
+    let ov2 = Capture::new();
     a::none(
         &g2,
         float_cmp_any(ov2, float_const(2.0f64.to_bits()), float_const(1.0f64.to_bits())),
@@ -168,9 +171,9 @@ fn bool_binary_any_captures_variant() {
         let cast = t.as_int(c, NodeOutputType::U64);
         let g = t.ret_val(cast);
 
-        let ov = BoolBinaryOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(&g, bool_binary_any(ov, bool_const(true), bool_const(false)));
-        assert_eq!(m.get_bool_binary_op(ov), Some(op));
+        assert_eq!(m.get_bool_binary_op(ov, &g), Some(op));
     }
 }
 
@@ -182,9 +185,9 @@ fn bool_unary_any_captures_variant() {
     let cast = t.as_int(v, NodeOutputType::U64);
     let g = t.ret_val(cast);
 
-    let ov = BoolUnaryOpVar::new();
+    let ov = Capture::new();
     let m = a::unique(&g, bool_unary_any(ov, bool_const(true)));
-    assert_eq!(m.get_bool_unary_op(ov), Some(BoolUnaryOp::Neg));
+    assert_eq!(m.get_bool_unary_op(ov, &g), Some(BoolUnaryOp::Neg));
 }
 
 // ── Float binary / unary / cmp ───────────────────────────────────────────────
@@ -204,12 +207,12 @@ fn float_binary_any_captures_variant() {
         let cast = t.float_to_int(v, NodeOutputType::U64);
         let g = t.ret_val(cast);
 
-        let ov = FloatBinaryOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(
             &g,
             float_binary_any(ov, float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())),
         );
-        assert_eq!(m.get_float_binary_op(ov), Some(op));
+        assert_eq!(m.get_float_binary_op(ov, &g), Some(op));
     }
 }
 
@@ -227,9 +230,9 @@ fn float_unary_any_captures_variant() {
         let cast = t.float_to_int(v, NodeOutputType::U64);
         let g = t.ret_val(cast);
 
-        let ov = FloatUnaryOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(&g, float_unary_any(ov, float_const(9.0f64.to_bits())));
-        assert_eq!(m.get_float_unary_op(ov), Some(op));
+        assert_eq!(m.get_float_unary_op(ov, &g), Some(op));
     }
 }
 
@@ -248,12 +251,12 @@ fn float_cmp_any_captures_variant() {
         let cast = t.as_int(c, NodeOutputType::U64);
         let g = t.ret_val(cast);
 
-        let ov = FloatCmpOpVar::new();
+        let ov = Capture::new();
         let m = a::unique(
             &g,
             float_cmp_any(ov, float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())),
         );
-        assert_eq!(m.get_float_cmp_op(ov), Some(op));
+        assert_eq!(m.get_float_cmp_op(ov, &g), Some(op));
     }
 }
 
@@ -269,7 +272,7 @@ fn int_binary_any_does_not_match_bool_op() {
     let cast = t.as_int(c, NodeOutputType::U64);
     let g = t.ret_val(cast);
 
-    let ov = IntBinaryOpVar::new();
+    let ov = Capture::new();
     a::none(&g, int_binary_any(ov, any(), any()));
 }
 
@@ -283,19 +286,19 @@ fn variant_any_composes_with_value_capture() {
     let v = t.sub(l, r);
     let g = t.ret_val(v);
 
-    let ov = IntBinaryOpVar::new();
-    let lv = IntVar::new();
-    let rv = IntVar::new();
+    let ov = Capture::new();
+    let lv = Capture::new();
+    let rv = Capture::new();
     let m = a::unique(&g, int_binary_any(ov, any_int_const(lv), any_int_const(rv)));
 
-    assert_eq!(m.get_int_binary_op(ov), Some(IntBinaryOp::Sub));
-    assert_eq!(m.get_int_var(lv), Some(100));
-    assert_eq!(m.get_int_var(rv), Some(50));
+    assert_eq!(m.get_int_binary_op(ov, &g), Some(IntBinaryOp::Sub));
+    assert_eq!(m.get_uint(lv, &g), Some(100));
+    assert_eq!(m.get_uint(rv, &g), Some(50));
 }
 
 #[test]
-fn unbound_op_var_returns_none() {
-    // If a pattern doesn't use an IntBinaryOpVar, `.get_int_binary_op` on it
+fn unbound_op_capture_returns_none() {
+    // If a pattern doesn't bind a Capture, `.get_int_binary_op` on it
     // returns None.
     let g = {
         let mut t = Tb::empty();
@@ -303,6 +306,6 @@ fn unbound_op_var_returns_none() {
         t.ret_val(v)
     };
     let m = a::first(&g, int_const(7));
-    let ov = IntBinaryOpVar::new();
-    assert_eq!(m.get_int_binary_op(ov), None);
+    let ov = Capture::new();
+    assert_eq!(m.get_int_binary_op(ov, &g), None);
 }

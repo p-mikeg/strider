@@ -133,6 +133,8 @@
 
 pub mod error;
 pub use error::{skip, MissingBinding, NotBuildable, Result};
+#[doc(hidden)]
+pub use error::__missing_binding;
 
 mod macros;
 mod matcher;
@@ -142,7 +144,7 @@ mod var;
 
 pub use rewrite::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
 pub use pat::traits::BuildCtx;
-pub use pat::ctor::consts::{FromCtx, first_value_input_type};
+pub use pat::ctor::consts::first_value_input_type;
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
 // ── Core types & entry points ────────────────────────────────────────────────
@@ -151,12 +153,9 @@ pub use matcher::bindings::Binding;
 pub use matcher::{Bindings, CastMask, Match, Matcher, MatcherOptions};
 pub use pat::{IntoPat, Pat};
 
-// ── Capture variables ────────────────────────────────────────────────────────
+// ── Capture variable ─────────────────────────────────────────────────────────
 
-pub use var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, Capture, FloatBinaryOpVar, FloatCmpOpVar,
-    FloatUnaryOpVar, FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
-};
+pub use var::Capture;
 
 // ── Builder structs ──────────────────────────────────────────────────────────
 
@@ -166,10 +165,6 @@ pub use pat::{
     IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat,
     StackStorePhiPat, StorePat,
 };
-
-// ── Const-capture overload traits ────────────────────────────────────────────
-
-pub use pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst};
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────
 

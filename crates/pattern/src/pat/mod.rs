@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::var::{BoolVar, Capture, FloatVar, IntVar};
+use crate::var::Capture;
 
 mod builders;
 pub(crate) mod ctor;
@@ -29,104 +29,55 @@ pub(crate) type MatchPredicateFn = Arc<
     dyn Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool + Send + Sync,
 >;
 
-// ── Const-capture overloading traits ──────────────────────────────────────────
+// ── any_*_const constructors ──────────────────────────────────────────────────
 //
-// Three near-identical pairs (Capture/typed `*Capture`) — the macro below
-// expands each to the ~30-line pattern that was open-coded before.
-// `Capture` impls match "any foo-const node" and bind the matched
-// output; typed-Capture impls additionally bind the concrete value and (in
-// build position) emit a fresh const node from the captured value.
+// Each takes a [`Capture`] and builds a pattern that matches any
+// `IntConst` / `BoolConst` / `FloatConst` node and binds it to the
+// capture.  After the match, callers extract the constant value via
+// [`crate::Match::get_uint`] / `get_bool` / `get_float_bits`.
+//
+// These are intentionally function-only (no trait dispatch) — the
+// previous overloading on `Capture` vs typed-Var is gone with the typed
+// Vars themselves.
 
-macro_rules! decl_any_const {
-    (
-        trait $trait:ident, sealed $sealed:ident, method $method:ident,
-        variant $variant:ident, $sample:expr, $build_ty:expr,
-        typed $typed:ty, $bind:ident, $get:ident, $missing:literal
-    ) => {
-        #[doc = concat!(
-            "Sealed trait used by `any_",
-            stringify!($variant),
-            "` to accept either a [`Capture`] (binds the matched node + output) or a typed capture that binds the concrete constant value."
-        )]
-        pub trait $trait: sealed::$sealed {
-            #[doc(hidden)]
-            fn $method(self) -> Pat;
-        }
-
-        impl $trait for Capture {
-            fn $method(self) -> Pat {
-                crate::pat::node_pat::NodePat::matcher(
-                    crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
-                    crate::pat::node_pat::InputsSpec::None,
-                )
-                .into_pat()
-                .capture(self)
-            }
-        }
-
-        impl $trait for $typed {
-            fn $method(self) -> Pat {
-                let tv = self;
-                crate::pat::node_pat::NodePat::matcher(
-                    crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
-                    crate::pat::node_pat::InputsSpec::None,
-                )
-                // The `_` arm is defensive — the kind spec normally
-                // restricts to this variant, but we don't depend on
-                // that.  Binding happens in `post_match` per the
-                // NodePat kind-purity rule.
-                .with_post_match(Arc::new(move |ctx, node, b| {
-                    match ctx.graph.graph.node_kind(node) {
-                        NodeKind::$variant(v) => b.$bind(tv, *v),
-                        _ => false,
-                    }
-                }))
-                .with_build_fn(
-                    Arc::new(move |ctx| {
-                        let v = ctx
-                            .bindings
-                            .$get(tv)
-                            .ok_or_else(|| crate::error::missing_binding($missing))?;
-                        Ok(NodeKind::$variant(v))
-                    }),
-                    $build_ty,
-                )
-                .into_pat()
-            }
-        }
-    };
+/// Matches any `IntConst` node and binds it to `c`.
+///
+/// Fails if the producing node is not an `IntConst` — use this instead
+/// of `var(c)` when you want the pattern itself to enforce the node is
+/// a compile-time constant.  Recover the value via
+/// [`crate::Match::get_uint`] / [`crate::Match::get_int`].
+#[must_use]
+pub fn any_int_const(c: Capture) -> Pat {
+    crate::pat::node_pat::NodePat::matcher(
+        crate::pat::node_pat::KindSpec::variant(&NodeKind::IntConst(0u128)),
+        crate::pat::node_pat::InputsSpec::None,
+    )
+    .into_pat()
+    .capture(c)
 }
 
-decl_any_const!(
-    trait IntoAnyIntConst, sealed SealedAnyIntConst, method into_any_int_const_pat,
-    variant IntConst, 0u128, crate::pat::node_pat::BuildTy::InheritRoot,
-    typed IntVar, bind_int, get_int, "IntVar"
-);
-decl_any_const!(
-    trait IntoAnyBoolConst, sealed SealedAnyBoolConst, method into_any_bool_const_pat,
-    variant BoolConst, false, crate::pat::node_pat::BuildTy::Fixed(NodeOutputType::Bool),
-    typed BoolVar, bind_bool, get_bool, "BoolVar"
-);
-decl_any_const!(
-    trait IntoAnyFloatConst, sealed SealedAnyFloatConst, method into_any_float_const_pat,
-    variant FloatConst, 0u64, crate::pat::node_pat::BuildTy::InheritRoot,
-    typed FloatVar, bind_float, get_float_bits, "FloatVar"
-);
+/// Matches any `BoolConst` node and binds it to `c`.  Recover the
+/// value via [`crate::Match::get_bool`].
+#[must_use]
+pub fn any_bool_const(c: Capture) -> Pat {
+    crate::pat::node_pat::NodePat::matcher(
+        crate::pat::node_pat::KindSpec::variant(&NodeKind::BoolConst(false)),
+        crate::pat::node_pat::InputsSpec::None,
+    )
+    .into_pat()
+    .capture(c)
+}
 
-mod sealed {
-    use crate::var::{BoolVar, Capture, FloatVar, IntVar};
-
-    pub trait SealedAnyIntConst {}
-    impl SealedAnyIntConst for Capture {}
-    impl SealedAnyIntConst for IntVar {}
-
-    pub trait SealedAnyBoolConst {}
-    impl SealedAnyBoolConst for Capture {}
-    impl SealedAnyBoolConst for BoolVar {}
-
-    pub trait SealedAnyFloatConst {}
-    impl SealedAnyFloatConst for Capture {}
-    impl SealedAnyFloatConst for FloatVar {}
+/// Matches any `FloatConst` node and binds it to `c`.  Recover the
+/// IEEE 754 bit pattern via [`crate::Match::get_float_bits`].
+#[must_use]
+pub fn any_float_const(c: Capture) -> Pat {
+    crate::pat::node_pat::NodePat::matcher(
+        crate::pat::node_pat::KindSpec::variant(&NodeKind::FloatConst(0u64)),
+        crate::pat::node_pat::InputsSpec::None,
+    )
+    .into_pat()
+    .capture(c)
 }
 
 // ── Core pattern type ─────────────────────────────────────────────────────────
