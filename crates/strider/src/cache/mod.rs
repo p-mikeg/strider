@@ -31,14 +31,12 @@
 //!
 //! # Module structure (W6)
 //!
-//! The original `ir_cache.rs` (~1200 lines) splits into five focused
+//! The original `ir_cache.rs` (~1200 lines) splits into four focused
 //! submodules.  Each owns a coherent slice of the cache lifecycle:
 //!
 //!   * [`entry`] — the [`RegionIrEntry`] / [`PredecessorHandles`]
 //!     types.
-//!   * [`stats`] — the [`LiftStats`] reporting type.
-//!   * [`lift`] — the lift drivers ([`lift_new_regions_into`],
-//!     [`lift_new_regions_into_with_stats`]).
+//!   * [`lift`] — the lift driver ([`lift_new_regions_into`]).
 //!   * [`extend`] — predecessor-edge extension
 //!     ([`extend_predecessors_into`],
 //!     [`extend_predecessors_with_handle`]).
@@ -60,7 +58,6 @@ mod entry;
 mod extend;
 mod invalidate;
 mod lift;
-mod stats;
 
 #[cfg(test)]
 mod tests;
@@ -68,8 +65,7 @@ mod tests;
 pub use entry::{PredecessorHandles, RegionIrEntry};
 pub use extend::{extend_predecessors_into, extend_predecessors_with_handle};
 pub use invalidate::invalidate_split_regions;
-pub use lift::{lift_new_regions_into, lift_new_regions_into_with_stats};
-pub use stats::LiftStats;
+pub use lift::lift_new_regions_into;
 
 /// Persistent map from a region's machine start address to its IR
 /// boundary handles.  Keyed by `MachineInsnAddr` (not `PcodeInsnAddr`)

@@ -22,7 +22,7 @@ use rsleigh::Vn;
 
 use super::lift::populate_cache_from_handles;
 use super::{
-    extend_predecessors_with_handle, LiftStats, PredecessorHandles, RegionIrCache, RegionIrEntry,
+    extend_predecessors_with_handle, PredecessorHandles, RegionIrCache, RegionIrEntry,
 };
 
 fn pcode_addr(machine: u64) -> PcodeInsnAddr {
@@ -506,33 +506,6 @@ fn extend_predecessors_with_handle_keeps_control_state_node_id_stable_across_cal
     );
 }
 
-// ── G1-COMPLETE: LiftStats unit tests ───────────────────────────────────
-
-#[test]
-fn lift_stats_default_is_zeroed() {
-    // Pin: the LiftStats default state means "nothing was lifted
-    // yet."  Callers can assume `Default::default()` is the
-    // identity for accumulation.
-    let stats = LiftStats::default();
-    assert_eq!(stats.pcode_insns_lifted, 0);
-    assert_eq!(stats.regions_lifted, 0);
-    assert!(stats.newly_lifted_addrs.is_empty());
-}
-
-#[test]
-fn lift_stats_partial_eq_round_trip() {
-    // Pin: LiftStats supports structural equality for test
-    // assertion purposes.
-    let s1 = LiftStats::default();
-    let s2 = LiftStats::default();
-    assert_eq!(s1, s2);
-    let s3 = LiftStats {
-        pcode_insns_lifted: 5,
-        ..Default::default()
-    };
-    assert_ne!(s1, s3);
-}
-
 #[test]
 fn extend_predecessors_into_handles_var_not_in_predecessor_exit_map() {
     // When pred.exit_vn_to_value lacks the var, fallback to
@@ -685,7 +658,6 @@ fn cache_module_split_re_exports_public_api() {
     // still reachable via crate::cache::*.  This test exists because
     // the W6 file move can silently drop a re-export and break
     // downstream callers; the test forces every name to be referenced.
-    let _ = LiftStats::default();
     let _ = RegionIrEntry::empty(pcode_addr(0));
     let _ = MachineInsnAddr { addr: 0 };
     let _ = PcodeInsnAddr {
@@ -712,7 +684,6 @@ fn cache_module_top_level_helpers_compile() {
         let _ = super::count_uncached_regions::<R>;
         let _ = super::predecessor_diffs::<R>;
         let _ = super::lift_new_regions_into::<R>;
-        let _ = super::lift_new_regions_into_with_stats::<R>;
         let _ = super::extend_predecessors_into::<R>;
         let _ = super::invalidate_split_regions::<R>;
     }

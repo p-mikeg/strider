@@ -43,8 +43,7 @@ pub use cache as ir_cache;
 pub use cache::{
     cache_key_for_region, count_uncached_regions, extend_predecessors_into,
     extend_predecessors_with_handle, invalidate_split_regions, lift_new_regions_into,
-    lift_new_regions_into_with_stats, predecessor_diffs, LiftStats, PredecessorHandles,
-    RegionIrCache, RegionIrEntry,
+    predecessor_diffs, PredecessorHandles, RegionIrCache, RegionIrEntry,
 };
 pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
 pub use rewrite::GraphRewriter;

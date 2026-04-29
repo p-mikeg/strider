@@ -1,13 +1,12 @@
 //! Region-lift drivers — the entry points the orchestrator calls each
 //! fixed-point iteration to materialise CFG regions into IR.
 
-use cfg::{Cfg, MachineInsnAddr};
+use cfg::Cfg;
 
 use crate::error::Result;
 
 use super::entry::RegionIrEntry;
-use super::stats::LiftStats;
-use super::{cache_key_for_region, RegionIrCache};
+use super::RegionIrCache;
 
 /// CORRECTNESS NOTE — `lift_new_regions_into`:
 ///
@@ -44,72 +43,14 @@ pub fn lift_new_regions_into<R: rsleigh::MemReader>(
     cache: &mut RegionIrCache,
     cfg: &Cfg<R>,
 ) -> Result<crate::AnalyzeOutcome> {
-    // Discard stats — callers who need them go through
-    // `lift_new_regions_into_with_stats`.
-    let (outcome, _stats) = lift_new_regions_into_with_stats(strider, cache, cfg)?;
-    Ok(outcome)
-}
-
-/// Variant of [`lift_new_regions_into`] that also returns a
-/// [`LiftStats`] reporting how many regions / pcode insns the
-/// **cache contract** considers newly lifted by this call.
-///
-/// CORRECTNESS — pre-call snapshot: we snapshot `cache.keys()` BEFORE
-/// invoking the strider lift.  Any region in `cfg` whose
-/// `MachineInsnAddr` is in that pre-snapshot is considered cached
-/// (and contributes 0 to the lift counters).  Any region not in the
-/// pre-snapshot is considered freshly lifted.
-///
-/// CORRECTNESS — pcode count source: the count is taken from
-/// `cfg.graph[region_id].insns.len()` of the freshly-lifted regions
-/// — i.e. the actual number of pcode instructions the lift would
-/// have to process for those regions.  This matches the round-2
-/// semantic where each pcode insn is lifted at most once.
-///
-/// # Errors
-///
-/// Propagates `analyze_cfg` errors.
-pub fn lift_new_regions_into_with_stats<R: rsleigh::MemReader>(
-    strider: &crate::Strider,
-    cache: &mut RegionIrCache,
-    cfg: &Cfg<R>,
-) -> Result<(crate::AnalyzeOutcome, LiftStats)> {
-    // CORRECTNESS — pre-call cache snapshot: capture which regions
-    // were cached BEFORE the lift so we can distinguish "newly
-    // lifted" from "already cached" after the lift completes.
-    let cached_pre: std::collections::HashSet<MachineInsnAddr> =
-        cache.keys().copied().collect();
-
-    // Identify freshly-lifted regions BEFORE actually running the
-    // lift — we walk `cfg` to compute (region_id, machine_addr,
-    // insn_count) for each region, then mark those whose
-    // `machine_addr` is NOT in the pre-snapshot as "fresh".
-    let mut stats = LiftStats::default();
-    for region_id in cfg.region_ids() {
-        let key = cache_key_for_region(cfg, region_id)?;
-        if cached_pre.contains(&key) {
-            // CORRECTNESS — cached: contributes zero to the lift
-            // counters.  See round-1 vs round-2 note on `LiftStats`.
-            continue;
-        }
-        let region = cfg
-            .graph
-            .node_weight(region_id)
-            .ok_or(crate::error::ErrorKind::CfgNoRegion(region_id))?;
-        stats.regions_lifted += 1;
-        stats.pcode_insns_lifted += region.insns.len();
-        stats.newly_lifted_addrs.push(key);
-    }
-
     // CORRECTNESS — full re-lift this iteration: round 1 doesn't
     // persist the FunctionBuilder, so we physically re-lift
     // everything.  The returned `region_handles` snapshot is
     // captured against the freshly-built graph and replaces any
-    // prior cache entries — but the LiftStats above already pinned
-    // the round-2-compatible "new regions only" count.
+    // prior cache entries.
     let outcome = strider.analyze_cfg(cfg)?;
     populate_cache_from_handles(cache, &outcome.region_handles);
-    Ok((outcome, stats))
+    Ok(outcome)
 }
 
 /// Populates `cache` with one [`RegionIrEntry`] per
