@@ -68,6 +68,23 @@ fn create_single_node() {
     check_node_output_defintions(&graph, node_id, vec![(node_id, 0)]);
 }
 
+/// `kind_of_output` agrees with the two-step `node_kind(get_node_from_output(out))`
+/// lookup it replaces — pinned because ~100 callsites depend on the equivalence.
+#[test]
+fn kind_of_output_matches_two_step_lookup() {
+    let mut graph = Graph::new();
+    let node_id = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let [out] = graph.node_outputs_exact::<1>(node_id).unwrap();
+    let two_step = graph.node_kind(graph.get_node_from_output(out));
+    let one_step = graph.kind_of_output(out);
+    assert_eq!(one_step, two_step);
+    assert_eq!(one_step, &NodeKind::IntConst(7));
+}
+
 /// Cacheable nodes with identical kind and inputs must be deduplicated:
 /// the second call must return the same [`NodeId`] as the first and must
 /// not grow the node table.

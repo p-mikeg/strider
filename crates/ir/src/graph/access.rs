@@ -7,7 +7,7 @@
 //! code don't have to defend against shape errors with `unwrap`.
 
 use crate::iterators::{Inputs, Outputs};
-use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
 
 use super::Graph;
 
@@ -95,6 +95,17 @@ impl Graph {
     #[must_use]
     pub fn get_node_from_output(&self, output_id: NodeOutputId) -> NodeId {
         self.outputs[output_id].source_id
+    }
+
+    /// Returns the [`NodeKind`] of the node that produces `output_id`.
+    ///
+    /// Shorthand for `node_kind(get_node_from_output(output_id))` — the
+    /// most common two-step lookup in pattern-matching and validation
+    /// code paths.
+    #[inline]
+    #[must_use]
+    pub fn kind_of_output(&self, output_id: NodeOutputId) -> &NodeKind {
+        &self.nodes[self.outputs[output_id].source_id].kind
     }
 
     /// Returns the [`NodeInputId`] of the input slot at position `idx` of `node`.
