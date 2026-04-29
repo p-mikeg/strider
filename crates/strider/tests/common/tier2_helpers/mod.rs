@@ -7,13 +7,21 @@
 //! |-------------------|-----------------------------------------------------------|
 //! | [`orchestrator`]  | End-to-end pipeline runners + placeholder-anchor finders. |
 //! | [`classify`]      | One fixture per producer-shape arm of `classify_anchor`.  |
-//! | [`inplace`]       | In-place-edit-test fixtures (today: re-exports).          |
-//! | [`cache`]         | Cache-contract-test fixtures (today: re-exports).         |
 //!
 //! Every public helper is re-exported flat from this `mod.rs` so callers
-//! continue to write `use common::tier2_helpers::build_X;` exactly as they
-//! did pre-W7.  The flat re-export surface is the **stable public API**;
-//! tests should not import from sub-modules directly.
+//! write `use common::tier2_helpers::build_X;` regardless of which
+//! sub-module the helper actually lives in.  The flat re-export surface
+//! is the **stable public API**; tests should not import from sub-modules
+//! directly.
+//!
+//! R3 dropped two placeholder sub-modules (`cache`, `inplace`) that
+//! had no fixtures of their own and only re-exported
+//! `build_initial_var_target_scenario_x86_64` from `classify`.  The
+//! flat re-export surface in this `mod.rs` already covers that helper,
+//! so the placeholders bought no isolation — only navigation overhead.
+//! Future cache- or inplace-specific fixtures can land directly in
+//! `classify` (or in a new sub-module added when the first such fixture
+//! appears).
 //!
 //! IMPORTANT: the anchor returned is **NOT** the original `NodeOutputId`
 //! recorded at lift time — that id can be invalidated by `ConstantFold`'s
@@ -30,9 +38,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
-pub mod cache;
 pub mod classify;
-pub mod inplace;
 pub mod orchestrator;
 
 // ── Flat re-export surface (preserved across the W7 split) ──────────────────
