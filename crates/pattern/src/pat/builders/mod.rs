@@ -10,18 +10,11 @@
 //!
 //! # Capture rule
 //!
-//! - Value-producing builders (memory, phi, function-arg, binary ops,
-//!   wildcards) expose `.capture(v: Var)` through [`crate::pat::IntoPat`].
-//!   It binds the matched `NodeOutputId` — value-kind filtered, so on a
-//!   multi-output node (e.g. `Load` = `[Memory, Value]`) the capture always
-//!   lands on the value slot.
-//! - Control-flow builders (`CallPat`, `IfPat`, `RetPat`, `CallOtherPat`)
-//!   expose `.capture_node(nv: NodeVar)` to bind the matched `NodeId`.
-//!   These sites have no single "the value" output, so `NodeVar` is the
-//!   only handle.
-//!
-//! No builder exposes both.  A user never has to choose between them on a
-//! given builder.
+//! Every builder and every [`crate::pat::Pat`] supports `.capture(c)` via
+//! the [`crate::pat::IntoPat`] blanket trait.  After a successful match,
+//! [`crate::Match::node`] returns the bound `NodeId` and
+//! [`crate::Match::output`] returns the bound value `NodeOutputId` (or
+//! `None` for control-flow patterns that have no single value output).
 
 mod binary_op;
 mod branch;

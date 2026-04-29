@@ -44,9 +44,24 @@ pub fn skip() -> anyhow::Error {
 }
 
 /// Returns `true` if `err` is the [`RewriteSkip`] sentinel.
-#[must_use]
-pub fn is_skip(err: &anyhow::Error) -> bool {
+pub(crate) fn is_skip(err: &anyhow::Error) -> bool {
     err.downcast_ref::<RewriteSkip>().is_some()
+}
+
+/// Returns an [`anyhow::Error`] wrapping a [`MissingBinding`] for the
+/// given capture-kind name.  Used uniformly by every builder that
+/// materializes captured bindings.
+#[must_use]
+pub(crate) fn missing_binding(kind: &'static str) -> anyhow::Error {
+    anyhow::Error::new(MissingBinding(kind))
+}
+
+/// Returns an [`anyhow::Error`] wrapping a [`NotBuildable`] for the
+/// given pattern type name.  Used by `try_build` impls of match-only
+/// patterns.
+#[must_use]
+pub(crate) fn not_buildable(name: &'static str) -> anyhow::Error {
+    anyhow::Error::new(NotBuildable(name))
 }
 
 /// Convenience `Result` alias.

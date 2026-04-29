@@ -183,7 +183,7 @@ fn commutative_swap_does_not_leak_bindings() {
     // NOT match (the two operands are different `NodeOutputId`s and `x`
     // enforces identity).
     let g = shapes::int_bin(5, 3, IntBinaryOp::Add);
-    let x = Var::new();
+    let x = Capture::new();
     a::none(&g, add(var(x), var(x)));
 }
 
@@ -192,7 +192,7 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     // add(5, 5): constant dedup makes both operands the same output.  Now
     // `add(var(x), var(x))` MUST match.
     let g = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    let x = Var::new();
+    let x = Capture::new();
     let m = a::unique(&g, add(var(x), var(x)));
-    assert_eq!(m.get_int_const(x, &g), Some(5));
+    assert_eq!(m.get_uint(x, &g), Some(5));
 }

@@ -15,7 +15,7 @@
 use ir::node::{NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
 use opt::{Optimizer, RedundantPhis};
-use pattern::{CastMask, Matcher, Pat, Var, add, any_int_const, initial_var_for};
+use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_for};
 
 /// Collapses single-predecessor `ControlPhi` / `MemPhi` / `ControlState`
 /// nodes the FunctionBuilder inserts at the entry region for every
@@ -74,7 +74,7 @@ where
 
 /// Pattern: `add(initial_var(x_vn), int_const(_))`.
 fn pat() -> Pat {
-    add(initial_var_for(x_vn()), any_int_const(Var::new())).into()
+    add(initial_var_for(x_vn()), any_int_const(Capture::new())).into()
 }
 
 /// Run the pattern under `mask` and return the match count.
@@ -138,7 +138,7 @@ fn fixture_zext_then_add() -> BuiltFunctionGraph {
 
 /// Pattern asking for the U32 InitialVar at offset 0x40.
 fn pat_u32_initial_var() -> Pat {
-    add(initial_var_for(x_u32_vn()), any_int_const(Var::new())).into()
+    add(initial_var_for(x_u32_vn()), any_int_const(Capture::new())).into()
 }
 
 fn count_u32(g: &BuiltFunctionGraph, mask: CastMask) -> usize {
@@ -221,7 +221,7 @@ fn fixture_truncate_of_zext_then_add() -> BuiltFunctionGraph {
 }
 
 fn pat_u16_initial_var() -> Pat {
-    add(initial_var_for(x_u16_vn()), any_int_const(Var::new())).into()
+    add(initial_var_for(x_u16_vn()), any_int_const(Capture::new())).into()
 }
 
 fn count_u16(g: &BuiltFunctionGraph, mask: CastMask) -> usize {

@@ -196,8 +196,8 @@ fn nested_pattern_depth_five() {
 fn nested_any_partial_matches() {
     // (inner + 3) with any() captures — inner add can be any shape.
     let g = shapes::add_nested_3(1, 2, 3);
-    let inner = Var::new();
+    let inner = Capture::new();
     let m = a::unique(&g, add(any().capture(inner), int_const(3)));
     // `inner` should point to the inner Add's value output.
-    assert!(m.get(inner).is_some());
+    assert!(m.output(inner).is_some());
 }

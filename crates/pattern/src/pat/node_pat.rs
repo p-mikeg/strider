@@ -31,14 +31,13 @@ use crate::error::Result;
 use crate::matcher::Bindings;
 use crate::matcher::walk;
 use crate::pat::traits::{BuildCtx, BuildOutcome, MatchCtx, Pattern};
-use crate::var::NodeVar;
 
 /// Node-level check closure used by [`NodePat::post_match`].
 ///
 /// Post-match runs after the kind spec has already accepted the candidate
 /// and all input / output / consumer constraints have passed — it is the
 /// place for bindings that depend on payload data (e.g. the `*_any`
-/// op-variant capture, or the typed-Var path of `IntoAnyIntConst`).
+/// op-variant capture, or the typed-Capture path of `IntoAnyIntConst`).
 pub(crate) type NodeKindCheck =
     Arc<dyn Fn(&MatchCtx, NodeId, &mut Bindings) -> bool + Send + Sync>;
 
@@ -198,19 +197,10 @@ pub struct NodePat {
     /// Optional constraints on the single consumer of outputs (by position).
     pub(crate) consumers: ConsumersSpec,
     /// Runs AFTER inputs/outputs/consumers match (and after each commutative
-    /// retry) but BEFORE output/node captures.  This is the designated
-    /// binding site for payload-dependent captures (op-variant Vars,
-    /// typed-constant Vars), since it executes once bindings from
-    /// sub-matches are already in place.
+    /// retry).  This is the designated binding site for payload-dependent
+    /// captures (op-variant Vars, typed-constant Vars), since it executes
+    /// once bindings from sub-matches are already in place.
     pub(crate) post_match: Option<NodeKindCheck>,
-    /// Bind the matched `NodeId` to `nv` after a successful match.
-    /// Set only by the control-flow builders (`CallPat`, `IfPat`, `RetPat`,
-    /// `CallOtherPat`) via their `.capture_node(nv)` method.  Value-output
-    /// builders route all captures through [`crate::pat::any::CapturePat`]
-    /// (wrapping `Var` bindings), since `NodeVar` on a value-producing node
-    /// is almost never the handle the caller wants — see the crate-level
-    /// capture docs for the rule.
-    pub(crate) node_var: Option<NodeVar>,
 }
 
 pub enum InputsSpec {
@@ -307,7 +297,7 @@ impl Pattern for NodePat {
 
     fn try_build(&self, ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
         let Some(build) = &self.build else {
-            return Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())));
+            return Err(crate::error::not_buildable(std::any::type_name::<Self>()));
         };
 
         // Recurse into inputs.  Only `Fixed` inputs are buildable — ordered
@@ -327,7 +317,7 @@ impl Pattern for NodePat {
                 out
             }
             InputsSpec::Indexed(_) => {
-                return Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())));
+                return Err(crate::error::not_buildable(std::any::type_name::<Self>()));
             }
         };
 
@@ -360,7 +350,6 @@ impl NodePat {
             outputs: OutputsSpec::None,
             consumers: ConsumersSpec::None,
             post_match: None,
-            node_var: None,
         }
     }
 
@@ -392,11 +381,6 @@ impl NodePat {
 
     pub(crate) fn with_post_match(mut self, pm: NodeKindCheck) -> Self {
         self.post_match = Some(pm);
-        self
-    }
-
-    pub(crate) fn with_node_var(mut self, nv: Option<crate::var::NodeVar>) -> Self {
-        self.node_var = nv;
         self
     }
 
@@ -524,15 +508,6 @@ fn try_once(
     // (d) post_match (op-var binding for *Any patterns)
     if let Some(pm) = &pat.post_match
         && !pm(ctx, node, b)
-    {
-        return false;
-    }
-
-    // (e) node capture — value-output captures (`Var`) go through
-    // `CapturePat` / `VarPat` at the Pat level, not through a NodePat
-    // field.  `node_var` is set only by the control-flow builders.
-    if let Some(nv) = pat.node_var
-        && !b.bind_node_var(nv, node)
     {
         return false;
     }

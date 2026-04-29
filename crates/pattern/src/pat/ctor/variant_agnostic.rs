@@ -23,7 +23,7 @@ use crate::var::{
 
 // `binary` / `cmp` / `unary` tags select the ctor's input layout + arity.
 // Commutativity deciders and missing-binding messages are derived from the
-// enum / Var names.  `$sample_op` is an arbitrary variant of the op enum
+// enum / Capture names.  `$sample_op` is an arbitrary variant of the op enum
 // used only to build the `KindSpec::variant(...)` discriminant — payload
 // is ignored.
 macro_rules! impl_variant_any {
@@ -47,7 +47,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
+                        .ok_or_else(|| crate::error::missing_binding($missing))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,
@@ -75,7 +75,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
+                        .ok_or_else(|| crate::error::missing_binding($missing))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,
@@ -103,7 +103,7 @@ macro_rules! impl_variant_any {
                     let op = ctx
                         .bindings
                         .$get(op_var)
-                        .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
+                        .ok_or_else(|| crate::error::missing_binding($missing))?;
                     Ok(NodeKind::$op_enum(op))
                 }),
                 $build_ty,

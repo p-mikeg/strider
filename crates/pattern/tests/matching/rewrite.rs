@@ -75,7 +75,7 @@ fn return_data_input_kind(g: &ir::BuiltFunctionGraph) -> NodeKind {
 fn identity_rule_redirects_consumers_and_returns_true() {
     let mut g = graph_add_x_zero();
 
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
     // The graph has two Add nodes (`add(7, 1)` and `add(x, 0)`) — try the
@@ -104,7 +104,7 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let mut g = graph_add_const_const(5, 3);
     // Try to rewrite a `sub(var(x), var(x))` pattern on a graph containing
     // only adds.  Should no-op.
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0));
     let add_node = find_add(&g);
     let fired = rule(&mut g, add_node).expect("ok");
@@ -120,7 +120,7 @@ fn rule_returns_false_when_lhs_does_not_match() {
 #[test]
 fn sub_x_x_to_zero_rule() {
     let mut g = graph_sub_x_x();
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0));
 
     let sub_node = find_sub(&g);
@@ -228,7 +228,7 @@ fn rhs_control_pattern_is_not_buildable() {
 #[test]
 fn rhs_unbound_capture_raises_missing_binding() {
     let mut g = graph_add_const_const(5, 3);
-    // LHS binds only `bound`; RHS references `unbound` (same Var type, never
+    // LHS binds only `bound`; RHS references `unbound` (same Capture type, never
     // mentioned in LHS).
     let bound = IntVar::new();
     let unbound = IntVar::new();
@@ -306,7 +306,7 @@ fn rhs_closure_error_propagates_through_anyhow() {
 #[test]
 fn apply_rules_returns_false_when_neither_fires() {
     let mut g = graph_add_const_const(5, 3);
-    let x = Var::new();
+    let x = Capture::new();
     let rules: Vec<BoxedRule> = vec![
         boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0))),
         boxed_rule(rewrite_rule(mul(var(x), int_const(1)), var(x))),
@@ -319,8 +319,8 @@ fn apply_rules_returns_false_when_neither_fires() {
 #[test]
 fn apply_rules_or_composes_results() {
     let mut g = graph_add_const_const(5, 3);
-    let x = Var::new();
-    let y = Var::new();
+    let x = Capture::new();
+    let y = Capture::new();
     let rules: Vec<BoxedRule> = vec![
         // First rule doesn't match.
         boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0))),
@@ -343,8 +343,8 @@ fn apply_rules_observes_post_fire_state() {
     // documents the contract: `fn(node)` runs on the same node, OR-ing
     // results.
     let mut g = graph_add_x_zero();
-    let x = Var::new();
-    let y = Var::new();
+    let x = Capture::new();
+    let y = Capture::new();
     let rules: Vec<BoxedRule> = vec![
         boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
         // Also an identity-ish rule for demo.
@@ -366,11 +366,11 @@ fn apply_rules_observes_post_fire_state() {
 
 #[test]
 fn boxed_rule_allows_heterogeneous_vec() {
-    // Different LHS shapes each close over distinct Var IDs, so the plain
+    // Different LHS shapes each close over distinct Capture IDs, so the plain
     // `impl Fn` returned by `rewrite_rule` has different types per rule —
     // hence the need for `BoxedRule`.
-    let x = Var::new();
-    let y = Var::new();
+    let x = Capture::new();
+    let y = Capture::new();
     let rules: Vec<BoxedRule> = vec![
         boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
         boxed_rule(rewrite_rule(sub(var(y), var(y)), int_const(0))),
@@ -394,7 +394,7 @@ fn rewrite_returns_false_when_no_consumer() {
     // The graph contains a Return and one IntConst(7), plus entry nodes —
     // no Add at all.  So the rule's LHS can't match; returns Ok(false).
     let mut g = g;
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     for n in g.preorder().collect::<Vec<_>>() {
         assert!(!rule(&mut g, n).expect("ok"));
@@ -409,7 +409,7 @@ fn pattern_match_before_and_after_rewrite() {
     let mut g = graph_add_x_zero();
     a::matches(&g, add(any(), int_const(0)), 1);
 
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     for n in g.preorder().collect::<Vec<_>>() {
         let _ = rule(&mut g, n);

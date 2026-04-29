@@ -53,7 +53,7 @@ fn match_at_hits_correct_node() {
     let m = Matcher::new(&g)
         .match_at(add_node, &add(int_const(5), int_const(3)).into())
         .expect("match_at should succeed on the Add node");
-    assert_eq!(m.root, add_node);
+    assert_eq!(m.root(), add_node);
 }
 
 #[test]
@@ -92,8 +92,8 @@ fn find_all_is_deterministic() {
     let matcher = Matcher::new(&g);
     let pat: Pat = any_int_const(IntVar::new());
 
-    let a1: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root).collect();
-    let a2: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root).collect();
+    let a1: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
+    let a2: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
 
     assert_eq!(a1, a2);
 }
@@ -144,7 +144,7 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     assert_eq!(hits.len(), 3);
 
     // All three `root` NodeIds are distinct.
-    let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root).collect();
+    let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
     assert_eq!(roots.len(), 3);
 }
 
@@ -160,7 +160,7 @@ fn each_match_has_its_own_bindings() {
     // independent set.  Exactly the three operand pairs must appear.
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.get_int(lhs).unwrap(), m.get_int(rhs).unwrap()))
+        .map(|m| (m.get_int_var(lhs).unwrap(), m.get_int_var(rhs).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) }) // commutative retry can swap
         .collect();
     got.sort();
@@ -196,7 +196,7 @@ fn bindings_clone_outlives_match() {
 #[test]
 fn get_vn_on_initial_var_returns_varnode() {
     let (g, reg) = shapes::single_initial_var();
-    let v = Var::new();
+    let v = Capture::new();
     let m = a::unique(&g, initial_var().capture(v));
     assert_eq!(m.get_vn(v, &g), Some(reg));
 }
@@ -204,7 +204,7 @@ fn get_vn_on_initial_var_returns_varnode() {
 #[test]
 fn get_vn_on_non_mapped_producer_returns_none() {
     let g = shapes::add_consts(5, 3);
-    let v = Var::new();
+    let v = Capture::new();
     // Capture the Add itself — `get_vn` only has a meaning for InitialVar
     // and Call ret-output slots, so this must return None.
     let m = a::unique(&g, add(int_const(5), int_const(3)).capture(v));
@@ -220,7 +220,7 @@ fn get_vn_on_call_ret_output_returns_ret_reg() {
     t.call_at(0xCAFE);
     let g = t.ret_regs(&[ret]);
 
-    let v = Var::new();
+    let v = Capture::new();
     let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
     assert_eq!(m.get_vn(v, &g), Some(ret));
 }
@@ -229,7 +229,7 @@ fn get_vn_on_call_ret_output_returns_ret_reg() {
 fn get_vn_on_unbound_var_returns_none() {
     let g = shapes::add_consts(5, 3);
     let m = a::first(&g, int_const(5));
-    let never_bound = Var::new();
+    let never_bound = Capture::new();
     assert_eq!(m.get_vn(never_bound, &g), None);
 }
 
@@ -416,7 +416,7 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
     let hits = m.find_all(&truncate(any()));
     assert_eq!(hits.len(), 1, "truncate(any) must match the Truncate node");
     assert!(matches!(
-        g.graph.node_kind(hits[0].root),
+        g.graph.node_kind(hits[0].root()),
         NodeKind::Truncate
     ));
 }

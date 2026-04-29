@@ -14,7 +14,7 @@
 
 use ir::node::NodeOutputType;
 use ir::{FunctionBuilder, IntBinaryOp};
-use pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Var};
+use pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
 
 use super::GraphRewriter;
 
@@ -115,7 +115,7 @@ fn apply_rule_with_no_match_returns_zero_applications() -> crate::Result<()> {
     // Function returns a bare IntConst — no Add nodes anywhere.
     // `add(x, 0) → x` cannot fire; `apply_rule` must return 0.
     let mut built = one_const_fn(7);
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     let mut rewriter = GraphRewriter::wrap_built(&mut built);
     let n = rewriter.apply_rule(rule)?;
@@ -133,7 +133,7 @@ fn apply_rule_with_one_match_returns_one_application() -> crate::Result<()> {
     // which now feeds off `7`).
     let mut built = add_x_plus_zero(7);
     assert_eq!(count_adds(&built), 1, "fixture must have exactly one Add");
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     let mut rewriter = GraphRewriter::wrap_built(&mut built);
     let n = rewriter.apply_rule(rule)?;
@@ -165,8 +165,8 @@ fn apply_rules_round_robin_reaches_fixed_point() -> crate::Result<()> {
     assert_eq!(count_adds(&built), 2, "fixture has two Adds");
     assert_eq!(count_subs(&built), 1, "fixture has one Sub");
 
-    let y = Var::new();
-    let z = Var::new();
+    let y = Capture::new();
+    let z = Capture::new();
     let rules: Vec<pattern::BoxedRule> = vec![
         boxed_rule(rewrite_rule(add(var(y), int_const(0)), var(y))),
         boxed_rule(rewrite_rule(sub(var(z), var(z)), int_const(0))),
@@ -223,7 +223,7 @@ fn apply_rule_preserves_use_list_integrity() -> crate::Result<()> {
     // so any future change that breaks use-list bookkeeping
     // surfaces as a unit-test failure.
     let mut built = add_x_plus_zero(7);
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     let mut rewriter = GraphRewriter::wrap_built(&mut built);
     rewriter.apply_rule(rule)?;

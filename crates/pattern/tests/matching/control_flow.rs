@@ -33,9 +33,9 @@ fn call_target_with_pattern() {
 #[test]
 fn call_captures_node() {
     let g = shapes::call_at(0x1234);
-    let n = NodeVar::new();
-    let m = a::unique(&g, call().at(0x1234).capture_node(n));
-    let node = m.get_node(n).expect("node capture");
+    let n = Capture::new();
+    let m = a::unique(&g, call().at(0x1234).capture(n));
+    let node = m.node(n).expect("node capture");
     assert!(matches!(
         g.graph.node_kind(node),
         ir::node::NodeKind::Call
@@ -95,9 +95,9 @@ fn graph_call_then_return_ret_reg() -> (ir::BuiltFunctionGraph, rsleigh::Vn) {
 #[test]
 fn call_ret_output_capture() {
     let (g, _ret) = graph_call_then_return_ret_reg();
-    let v = Var::new();
+    let v = Capture::new();
     let m = a::unique(&g, call().at(0xCAFE).ret_output(0, var(v)));
-    let out = m.get(v).expect("ret_output capture");
+    let out = m.output(v).expect("ret_output capture");
     // The captured output is a Call output slot.
     assert!(matches!(g.graph.kind_of_output(out), ir::node::NodeKind::Call));
 }
@@ -141,9 +141,9 @@ fn ret_preceded_by_call() {
 #[test]
 fn ret_captures_node() {
     let g = shapes::add_consts(5, 3);
-    let n = NodeVar::new();
-    let m = a::unique(&g, ret().capture_node(n));
-    let node = m.get_node(n).expect("ret node capture");
+    let n = Capture::new();
+    let m = a::unique(&g, ret().capture(n));
+    let node = m.node(n).expect("ret node capture");
     assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Return));
 }
 
@@ -174,9 +174,9 @@ fn if_node_true_and_false_branches() {
 #[test]
 fn if_node_captures() {
     let g = shapes::if_cmp_then_return(4);
-    let n = NodeVar::new();
-    let m = a::unique(&g, if_node().capture_node(n));
-    let node = m.get_node(n).expect("if node capture");
+    let n = Capture::new();
+    let m = a::unique(&g, if_node().capture(n));
+    let node = m.node(n).expect("if node capture");
     assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::If));
 }
 
@@ -240,9 +240,9 @@ fn call_other_user_op_id_filter() {
 #[test]
 fn call_other_captures_node() {
     let g = graph_call_other(5);
-    let n = NodeVar::new();
-    let m = a::unique(&g, call_other().capture_node(n));
-    let node = m.get_node(n).expect("node capture");
+    let n = Capture::new();
+    let m = a::unique(&g, call_other().capture(n));
+    let node = m.node(n).expect("node capture");
     assert!(matches!(
         g.graph.node_kind(node),
         ir::node::NodeKind::CallOther { .. }

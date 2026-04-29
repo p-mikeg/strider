@@ -107,37 +107,40 @@ fn float_var_conflict_fails_and_preserves_original() {
     assert_eq!(b.get_float_bits(v), Some(a));
 }
 
-// ── Var (NodeOutputId capture) ───────────────────────────────────────────────
+// ── Capture (unified node + output) ──────────────────────────────────────────
 
 #[test]
-fn var_bind_and_get_with_real_output_ids() {
+fn capture_bind_and_get_with_real_output_ids() {
     // Build `return(IntConst(1) + IntConst(2))` to harvest two distinct
     // `NodeOutputId`s from the graph.
     let mut t = Tb::empty();
     let a = t.u64(1);
     let b = t.u64(2);
     let s = t.add(a, b);
-    let _g = t.ret_val(s);
+    let g = t.ret_val(s);
+
+    let na = g.graph.get_node_from_output(a);
+    let nb = g.graph.get_node_from_output(b);
 
     let mut bindings = Bindings::default();
-    let v = Var::new();
+    let v = Capture::new();
     assert_eq!(bindings.get(v), None);
-    assert!(bindings.bind_var(v, a));
+    let ba = pattern::Binding::new(na, Some(a));
+    let bb = pattern::Binding::new(nb, Some(b));
+    assert!(bindings.bind_capture(v, ba));
     assert_eq!(bindings.get(v), Some(a));
 
     // Idempotent with same output.
-    assert!(bindings.bind_var(v, a));
+    assert!(bindings.bind_capture(v, ba));
     assert_eq!(bindings.get(v), Some(a));
 
     // Conflict preserves original.
-    assert!(!bindings.bind_var(v, b));
+    assert!(!bindings.bind_capture(v, bb));
     assert_eq!(bindings.get(v), Some(a));
 }
 
-// ── NodeVar (NodeId capture) ─────────────────────────────────────────────────
-
 #[test]
-fn node_var_bind_and_get_with_real_node_ids() {
+fn capture_bind_and_get_with_real_node_ids() {
     // Thread distinct values through an Add so both constants stay reachable.
     let mut t = Tb::empty();
     let a = t.u64(1);
@@ -153,12 +156,14 @@ fn node_var_bind_and_get_with_real_node_ids() {
     assert_ne!(n1, n2);
 
     let mut bindings = Bindings::default();
-    let v = NodeVar::new();
+    let v = Capture::new();
     assert_eq!(bindings.get_node(v), None);
-    assert!(bindings.bind_node_var(v, n1));
+    let b1 = pattern::Binding::new(n1, None);
+    let b2 = pattern::Binding::new(n2, None);
+    assert!(bindings.bind_capture(v, b1));
     assert_eq!(bindings.get_node(v), Some(n1));
-    assert!(bindings.bind_node_var(v, n1));
-    assert!(!bindings.bind_node_var(v, n2));
+    assert!(bindings.bind_capture(v, b1));
+    assert!(!bindings.bind_capture(v, b2));
     assert_eq!(bindings.get_node(v), Some(n1));
 }
 
@@ -262,8 +267,8 @@ op_variant_contract!(
 #[test]
 fn default_bindings_return_none_for_every_var_type() {
     let b = Bindings::default();
-    assert_eq!(b.get(Var::new()), None);
-    assert_eq!(b.get_node(NodeVar::new()), None);
+    assert_eq!(b.get(Capture::new()), None);
+    assert_eq!(b.get_node(Capture::new()), None);
     assert_eq!(b.get_int(IntVar::new()), None);
     assert_eq!(b.get_bool(BoolVar::new()), None);
     assert_eq!(b.get_float_bits(FloatVar::new()), None);
@@ -330,8 +335,8 @@ fn capture_ids_are_globally_unique_across_families_and_many_allocations() {
         ids.push(format!("{:?}", IntVar::new()));
         ids.push(format!("{:?}", BoolVar::new()));
         ids.push(format!("{:?}", FloatVar::new()));
-        ids.push(format!("{:?}", Var::new()));
-        ids.push(format!("{:?}", NodeVar::new()));
+        ids.push(format!("{:?}", Capture::new()));
+        ids.push(format!("{:?}", Capture::new()));
     }
     let unique: std::collections::HashSet<&String> = ids.iter().collect();
     assert_eq!(unique.len(), ids.len());

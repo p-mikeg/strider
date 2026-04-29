@@ -105,7 +105,8 @@ pub fn call() -> CallPat {
     CallPat::new()
 }
 /// Starts building a `CallOther` (user-defined op) pattern.  Chain
-/// `.user_op_id()`, `.arg()`, `.capture()` to add constraints.
+/// `.user_op_id()`, `.arg()` to add constraints.  Use
+/// [`crate::pat::IntoPat::capture`] to bind the matched node id.
 #[must_use]
 pub fn call_other() -> CallOtherPat {
     CallOtherPat::new()

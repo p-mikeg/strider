@@ -22,7 +22,7 @@
 //!
 //! ```rust
 //! use ir::{FunctionBuilder, IntBinaryOp, node::NodeOutputType};
-//! use pattern::{Matcher, Var, add, load, var};
+//! use pattern::{Capture, Matcher, add, load, var};
 //!
 //! // *(0x1000 + 8); return the loaded value.
 //! let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
@@ -39,25 +39,26 @@
 //! let graph = fb.build().unwrap();
 //!
 //! // Match every load whose address is (something + anything).
-//! let ptr_v = Var::new();
-//! let off_v = Var::new();
-//! let pat = load().addr(add(var(ptr_v), var(off_v)));
+//! let ptr_c = Capture::new();
+//! let off_c = Capture::new();
+//! let pat = load().addr(add(var(ptr_c), var(off_c)));
 //!
 //! let matcher = Matcher::new(&graph);
 //! let hits = matcher.find_all(&pat.into());
 //! assert_eq!(hits.len(), 1);
 //!
-//! // The captured operands are `NodeOutputId`s; `get_int_const` resolves
+//! // The captured operands are `NodeOutputId`s; `get_uint` resolves
 //! // them to the concrete constant values their producers yielded.
 //! let m = &hits[0];
-//! assert_eq!(m.get_int_const(ptr_v, &graph), Some(0x1000u128));
-//! assert_eq!(m.get_int_const(off_v, &graph), Some(8u128));
+//! assert_eq!(m.get_uint(ptr_c, &graph), Some(0x1000u128));
+//! assert_eq!(m.get_uint(off_c, &graph), Some(8u128));
 //! ```
 //!
 //! # Key types
 //!
 //! - [`Pat`] — pattern values (cheap to clone, reference-counted)
-//! - [`Var`] / [`NodeVar`] — capture variables for data outputs / control nodes
+//! - [`Capture`] — unified capture variable; binds a node id and (when
+//!   the pattern is value-producing) a value output
 //! - [`Matcher`] — executes a pattern against an [`ir::BuiltFunctionGraph`]
 //! - [`Match`] — result of one successful match; exposes captured bindings
 //!
@@ -70,16 +71,18 @@
 //!
 //! ## Captures and predicates
 //!
-//! [`var`]`(v)` is shorthand for [`any`]`().capture(v)`.  Any builder or
-//! [`Pat`] supports `.capture(v)` to bind the matched output and `.when(f)` to
-//! add a custom predicate guard.  The standalone [`predicate`]`(f)` constructor
-//! is equivalent to [`any`]`().when(f)`.
+//! [`var`]`(c)` is shorthand for [`any`]`().capture(c)`.  Any builder or
+//! [`Pat`] supports `.capture(c)` to bind the matched node and `.when(f)` to
+//! add a custom predicate guard.
 //!
 //! ## Commutative matching
 //!
 //! Binary operations that are mathematically commutative (`add`, `mul`, `and`,
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`) automatically try both
-//! operand orderings.  Call `.ordered()` on the returned builder to opt out.
+//! operand orderings.  Symmetric integer comparisons (`int_eq`, `int_carry`,
+//! `int_scarry`) and float comparisons (`float_eq`, `float_ne`) likewise
+//! retry with swapped operands.  Call `.ordered()` on the returned builder
+//! to opt out where the builder type supports it.
 //!
 //! ## Walk-through flags ([`MatcherOptions`])
 //!
@@ -124,7 +127,7 @@
 //! ```
 
 pub mod error;
-pub use error::{is_skip, skip, MissingBinding, NotBuildable, Result, RewriteSkip};
+pub use error::{skip, MissingBinding, NotBuildable, Result};
 
 mod macros;
 mod matcher;
@@ -133,20 +136,21 @@ mod rewrite;
 mod var;
 
 pub use rewrite::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
-pub use pat::traits::{BuildCtx, BuildOutcome};
+pub use pat::traits::BuildCtx;
 pub use pat::ctor::consts::{FromCtx, first_value_input_type};
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};
 
 // ── Core types & entry points ────────────────────────────────────────────────
 
+pub use matcher::bindings::Binding;
 pub use matcher::{Bindings, CastMask, Match, Matcher, MatcherOptions};
-pub use pat::{IntoPat, MatchPredicateFn, Pat, PredicateFn};
+pub use pat::{IntoPat, Pat};
 
 // ── Capture variables ────────────────────────────────────────────────────────
 
 pub use var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, Capture, FloatBinaryOpVar, FloatCmpOpVar,
+    FloatUnaryOpVar, FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
 };
 
 // ── Builder structs ──────────────────────────────────────────────────────────

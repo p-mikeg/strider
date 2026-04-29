@@ -1,24 +1,24 @@
 //! `IfPat` — matches `If` nodes with optional constraints on the condition
 //! input and the single consumers of the true/false control outputs
 //! (via `ConsumersSpec::Indexed` direct-step forward walk).
+//!
+//! Use [`crate::pat::IntoPat::capture`] to bind the matched If node id.
 
 use ir::node::NodeKind;
 
 use crate::pat::Pat;
 use crate::pat::node_pat::{ConsumersSpec, InputsSpec, KindSpec, NodePat};
-use crate::var::NodeVar;
 
 /// Builder for `If` node patterns.  Created by [`crate::pat::if_node`].
 pub struct IfPat {
     cond: Option<Pat>,
     true_branch: Option<Pat>,
     false_branch: Option<Pat>,
-    node_var: Option<NodeVar>,
 }
 
 impl IfPat {
     pub(crate) fn new() -> Self {
-        Self { cond: None, true_branch: None, false_branch: None, node_var: None }
+        Self { cond: None, true_branch: None, false_branch: None }
     }
     /// Constrain the branch condition.
     pub fn cond(mut self, p: impl Into<Pat>) -> Self {
@@ -35,17 +35,11 @@ impl IfPat {
         self.false_branch = Some(p.into());
         self
     }
-    /// Bind the matched `If` node to `nv`.
-    #[must_use]
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
 }
 
 impl From<IfPat> for Pat {
     fn from(b: IfPat) -> Pat {
-        let IfPat { cond, true_branch, false_branch, node_var } = b;
+        let IfPat { cond, true_branch, false_branch } = b;
         // If inputs: [ctrl(0), cond(1)]. Outputs: [true-ctrl(0), false-ctrl(1)].
         let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
         if let Some(c) = cond {
@@ -65,7 +59,6 @@ impl From<IfPat> for Pat {
         };
         NodePat::matcher(KindSpec::Exact(NodeKind::If), InputsSpec::Indexed(indexed_inputs))
             .with_consumers(consumers_spec)
-            .with_node_var(node_var)
             .into_pat()
     }
 }

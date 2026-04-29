@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::var::{BoolVar, FloatVar, IntVar, Var};
+use crate::var::{BoolVar, Capture, FloatVar, IntVar};
 
 mod builders;
 pub(crate) mod ctor;
@@ -18,28 +18,24 @@ pub use builders::{
 };
 pub use ctor::*;
 
-/// Predicate function type used by the `WhenPat` combinator (produced by
-/// [`IntoPat::when`] / [`Pat::when_impl`]).
-pub type PredicateFn =
+/// Predicate function type used by the [`guards::GuardPat`] combinator
+/// (produced by [`IntoPat::when`]).
+pub(crate) type PredicateFn =
     Arc<dyn Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync>;
 
-/// Predicate function type used by the `WhenMatchPat` combinator (produced by
-/// [`Pat::when_match`]).
-///
-/// Unlike [`PredicateFn`], this variant sees the full capture [`crate::matcher::Bindings`]
-/// map, not just the single matched output — useful for guards that
-/// reference multiple captures.
-pub type MatchPredicateFn = Arc<
+/// Predicate function type used by the [`guards::GuardPat`] combinator
+/// for the bindings-aware variant (produced by [`Pat::when_match`]).
+pub(crate) type MatchPredicateFn = Arc<
     dyn Fn(&BuiltFunctionGraph, NodeOutputType, &crate::matcher::Bindings) -> bool + Send + Sync,
 >;
 
 // ── Const-capture overloading traits ──────────────────────────────────────────
 //
-// Three near-identical pairs (Int/Bool/Float × `Var` / typed `*Var`) — the
-// macro below expands each to the ~30-line pattern that was open-coded
-// before.  `Var` impls match "any foo-const node" and bind the matched
-// output; typed-Var impls additionally bind the concrete value and (in build
-// position) emit a fresh const node from the captured value.
+// Three near-identical pairs (Capture/typed `*Capture`) — the macro below
+// expands each to the ~30-line pattern that was open-coded before.
+// `Capture` impls match "any foo-const node" and bind the matched
+// output; typed-Capture impls additionally bind the concrete value and (in
+// build position) emit a fresh const node from the captured value.
 
 macro_rules! decl_any_const {
     (
@@ -50,14 +46,14 @@ macro_rules! decl_any_const {
         #[doc = concat!(
             "Sealed trait used by `any_",
             stringify!($variant),
-            "` to accept either a [`Var`] (binds the matched `NodeOutputId`) or a typed capture that binds the concrete constant value."
+            "` to accept either a [`Capture`] (binds the matched node + output) or a typed capture that binds the concrete constant value."
         )]
         pub trait $trait: sealed::$sealed {
             #[doc(hidden)]
             fn $method(self) -> Pat;
         }
 
-        impl $trait for Var {
+        impl $trait for Capture {
             fn $method(self) -> Pat {
                 crate::pat::node_pat::NodePat::matcher(
                     crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
@@ -75,10 +71,10 @@ macro_rules! decl_any_const {
                     crate::pat::node_pat::KindSpec::variant(&NodeKind::$variant($sample)),
                     crate::pat::node_pat::InputsSpec::None,
                 )
-                // Kind spec already enforces the variant, so the match arm
-                // below is unreachable in the `_` case — but keeping it
-                // lets the closure body stay a single `match`.  Binding
-                // happens in `post_match` per the NodePat kind-purity rule.
+                // The `_` arm is defensive — the kind spec normally
+                // restricts to this variant, but we don't depend on
+                // that.  Binding happens in `post_match` per the
+                // NodePat kind-purity rule.
                 .with_post_match(Arc::new(move |ctx, node, b| {
                     match ctx.graph.graph.node_kind(node) {
                         NodeKind::$variant(v) => b.$bind(tv, *v),
@@ -90,7 +86,7 @@ macro_rules! decl_any_const {
                         let v = ctx
                             .bindings
                             .$get(tv)
-                            .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($missing)))?;
+                            .ok_or_else(|| crate::error::missing_binding($missing))?;
                         Ok(NodeKind::$variant(v))
                     }),
                     $build_ty,
@@ -118,18 +114,18 @@ decl_any_const!(
 );
 
 mod sealed {
-    use crate::var::{BoolVar, FloatVar, IntVar, Var};
+    use crate::var::{BoolVar, Capture, FloatVar, IntVar};
 
     pub trait SealedAnyIntConst {}
-    impl SealedAnyIntConst for Var {}
+    impl SealedAnyIntConst for Capture {}
     impl SealedAnyIntConst for IntVar {}
 
     pub trait SealedAnyBoolConst {}
-    impl SealedAnyBoolConst for Var {}
+    impl SealedAnyBoolConst for Capture {}
     impl SealedAnyBoolConst for BoolVar {}
 
     pub trait SealedAnyFloatConst {}
-    impl SealedAnyFloatConst for Var {}
+    impl SealedAnyFloatConst for Capture {}
     impl SealedAnyFloatConst for FloatVar {}
 }
 
@@ -149,28 +145,6 @@ impl Pat {
     /// Borrow the inner [`DynPat`](crate::pat::traits::DynPat).
     pub(crate) fn as_dyn(&self) -> &crate::pat::traits::DynPat {
         &self.0
-    }
-
-    /// After this pattern matches successfully, additionally bind the matched
-    /// output to `v`.  If `v` is already bound the output must equal the
-    /// stored binding, otherwise the match fails.
-    fn capture_impl(self, v: Var) -> Pat {
-        Pat::from_dyn(Arc::new(crate::pat::any::CapturePat {
-            inner: self,
-            var: v,
-        }))
-    }
-
-    /// After this pattern matches successfully, additionally run `f` against
-    /// the matched output.  The match fails if `f` returns `false`.
-    fn when_impl<F>(self, f: F) -> Pat
-    where
-        F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
-    {
-        Pat::from_dyn(Arc::new(crate::pat::guards::GuardPat {
-            inner: self,
-            func: crate::pat::guards::GuardFn::Output(Arc::new(f)),
-        }))
     }
 
     /// After this pattern matches successfully, additionally run `f` with
@@ -198,28 +172,31 @@ impl Pat {
 /// each builder re-implementing them.
 ///
 /// Every type that implements `Into<Pat>` automatically gets `capture` and `when`
-/// for free.  Import this trait to call `.capture(v)` / `.when(f)` on builder
+/// for free.  Import this trait to call `.capture(c)` / `.when(f)` on builder
 /// types.
 pub trait IntoPat: Into<Pat> + Sized {
-    /// After matching, bind the matched **value** output to `v`.
-    ///
-    /// **Only meaningful on value-producing patterns.**  Control-flow
-    /// builders (`CallPat`, `IfPat`, `RetPat`, `CallOtherPat`) expose
-    /// `.capture_node(nv)` instead — calling `.capture(v)` on one of those
-    /// compiles (via this blanket impl) but the resulting pattern never
-    /// matches, because `Var` refers to a data edge and those nodes have
-    /// no value output to bind.
-    fn capture(self, v: Var) -> Pat {
-        self.into().capture_impl(v)
+    /// After matching, bind the matched node (and its value output, if
+    /// the pattern is value-producing) to `c`.  For control-flow
+    /// patterns (`Call`, `If`, `Return`, `CallOther`) only the node id
+    /// is bound and [`crate::Match::output`] returns `None`.
+    fn capture(self, c: Capture) -> Pat {
+        let inner: Pat = self.into();
+        Pat::from_dyn(Arc::new(crate::pat::any::CapturePat {
+            inner,
+            capture: c,
+        }))
     }
     /// After matching, additionally run `f` — fails if it returns `false`.
     fn when<F>(self, f: F) -> Pat
     where
         F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
     {
-        self.into().when_impl(f)
+        let inner: Pat = self.into();
+        Pat::from_dyn(Arc::new(crate::pat::guards::GuardPat {
+            inner,
+            func: crate::pat::guards::GuardFn::Output(Arc::new(f)),
+        }))
     }
 }
 
 impl<T: Into<Pat>> IntoPat for T {}
-

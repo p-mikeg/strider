@@ -99,9 +99,9 @@ where
 ///
 /// Used by the `*_const_with!` macros to resolve each capture identifier
 /// into its concrete value.  Implemented for every capture-var type
-/// ([`Var`](crate::var::Var) binding is not useful for const-with — it
-/// yields a `NodeOutputId`, not a value — so that impl is intentionally
-/// omitted).
+/// ([`Capture`](crate::var::Capture) binding is not useful for
+/// const-with — it yields a `NodeOutputId`, not a scalar value — so
+/// that impl is intentionally omitted).
 #[allow(clippy::wrong_self_convention)]
 pub trait FromCtx {
     type Output;
@@ -110,8 +110,9 @@ pub trait FromCtx {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::MissingBinding`] when the capture variable
-    /// is not present in `ctx.bindings` — i.e. the LHS of the rewrite rule
+    /// Returns an [`anyhow::Error`] wrapping
+    /// [`crate::error::MissingBinding`] when the capture variable is not
+    /// present in `ctx.bindings` — i.e. the LHS of the rewrite rule
     /// didn't bind it.
     fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output>;
 }
@@ -123,7 +124,7 @@ macro_rules! impl_from_ctx {
             fn from_ctx(&self, ctx: &BuildCtx<'_>) -> Result<Self::Output> {
                 ctx.bindings
                     .$getter(*self)
-                    .ok_or_else(|| anyhow::Error::new(crate::error::MissingBinding($kind_name)))
+                    .ok_or_else(|| crate::error::missing_binding($kind_name))
             }
         }
     };

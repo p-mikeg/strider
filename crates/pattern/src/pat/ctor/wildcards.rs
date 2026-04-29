@@ -8,7 +8,7 @@ use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 use crate::pat::any::{AnyPat, VarPat};
 use crate::pat::node_pat::{BuildTy, InputsSpec, KindSpec, NodePat};
 use crate::pat::{IntoAnyBoolConst, IntoAnyFloatConst, IntoAnyIntConst, IntoPat, Pat};
-use crate::var::Var;
+use crate::var::Capture;
 
 /// Matches any single output unconditionally.
 #[must_use]
@@ -16,15 +16,15 @@ pub fn any() -> Pat {
     Pat::from_dyn(Arc::new(AnyPat))
 }
 
-/// Matches any output and binds it to `v`.
+/// Matches any output and binds it to `c`.
 ///
-/// If `v` is already bound the output must equal the stored binding.
-/// Equivalent in behavior to `any().capture(v)`, but constructs a dedicated
+/// If `c` is already bound the output must equal the stored binding.
+/// Equivalent in behavior to `any().capture(c)`, but constructs a dedicated
 /// [`VarPat`] rather than wrapping [`AnyPat`] in a [`CapturePat`] — one
 /// fewer vtable hop and no backtracking snapshot per match.
 #[must_use]
-pub fn var(v: Var) -> Pat {
-    Pat::from_dyn(Arc::new(VarPat { var: v }))
+pub fn var(c: Capture) -> Pat {
+    Pat::from_dyn(Arc::new(VarPat { capture: c }))
 }
 
 /// Matches an `IntConst` node whose stored value, when masked to the node's
@@ -46,10 +46,10 @@ pub fn var(v: Var) -> Pat {
 pub fn int_const(v: impl Into<i128>) -> Pat {
     let v_signed: i128 = v.into();
     let v_unsigned: u128 = v_signed as u128;
-    // Use VariantWith to prefilter to IntConst discriminant (no payload check);
-    // the width-aware equality is done in post_match where we have the output type.
+    // Discriminant-only prefilter; the width-aware equality is done in
+    // post_match where we have the output type.
     NodePat::matcher(
-        KindSpec::variant_with(&NodeKind::IntConst(0u128), |_| true),
+        KindSpec::variant(&NodeKind::IntConst(0u128)),
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
@@ -93,29 +93,30 @@ pub fn float_const(bits: u64) -> Pat {
         .into_pat()
 }
 
-/// Matches any `IntConst` node and binds either the output (for a [`Var`]) or
+/// Matches any `IntConst` node and binds either the output (for a [`Capture`]) or
 /// the concrete constant value (for an [`crate::var::IntVar`]).
 ///
 /// Fails if the producing node is not an `IntConst` — use this instead of
-/// `var(v)` when you want the pattern itself to enforce the node is a
+/// `var(c)` when you want the pattern itself to enforce the node is a
 /// compile-time constant.
 pub fn any_int_const<C: IntoAnyIntConst>(v: C) -> Pat {
     v.into_any_int_const_pat()
 }
 
-/// Matches any `BoolConst` node and binds its output (for a [`Var`]) or its
+/// Matches any `BoolConst` node and binds its output (for a [`Capture`]) or its
 /// value (for a [`crate::var::BoolVar`]).
 pub fn any_bool_const<C: IntoAnyBoolConst>(v: C) -> Pat {
     v.into_any_bool_const_pat()
 }
 
-/// Matches any `FloatConst` node and binds either the output (for a [`Var`])
+/// Matches any `FloatConst` node and binds either the output (for a [`Capture`])
 /// or its IEEE 754 bit pattern (for a [`crate::var::FloatVar`]).
 pub fn any_float_const<C: IntoAnyFloatConst>(v: C) -> Pat {
     v.into_any_float_const_pat()
 }
 
-/// Matches any output for which `f` returns `true`.  Equivalent to `any().when(f)`.
+/// Matches any output for which `f` returns `true`.  Equivalent to
+/// `any().when(f)`.
 pub fn predicate<F>(f: F) -> Pat
 where
     F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,

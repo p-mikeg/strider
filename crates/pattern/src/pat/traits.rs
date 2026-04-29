@@ -35,7 +35,7 @@ pub struct MatchCtx<'g, 'm> {
 impl MatchCtx<'_, '_> {
     /// Value-kind gate: returns `Some(ty)` if `target` is a value output,
     /// `None` for Control / Memory / ControlPhi slots.  Used by `VarPat`,
-    /// `CapturePat`, and `GuardPat` because `Var` bindings refer to data
+    /// `CapturePat`, and `GuardPat` because `Capture` bindings refer to data
     /// edges only — on a multi-output node this steers `try_match_node`'s
     /// iteration to the value slot.
     pub(crate) fn require_value_output(
@@ -95,7 +95,7 @@ pub trait Pattern: Send + Sync {
     /// pattern type.  Buildable patterns (`NodePat`, `CapturePat`, and any
     /// future build-only leaf) override this.
     fn try_build(&self, _ctx: &mut BuildCtx<'_>) -> Result<BuildOutcome> {
-        Err(anyhow::Error::new(crate::error::NotBuildable(std::any::type_name::<Self>())))
+        Err(crate::error::not_buildable(std::any::type_name::<Self>()))
     }
 }
 
@@ -103,6 +103,10 @@ pub trait Pattern: Send + Sync {
 /// output, or a `Skip` signalling the rewrite doesn't apply after all.
 pub enum BuildOutcome {
     Out(NodeOutputId),
+    /// Reserved for build-time opt-out; today the rewrite-rule
+    /// interpreter detects skips via the [`crate::error::RewriteSkip`]
+    /// error sentinel rather than this variant.
+    #[allow(dead_code)]
     Skip,
 }
 

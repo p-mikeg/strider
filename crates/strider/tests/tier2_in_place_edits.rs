@@ -258,7 +258,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 #[test]
 fn tier2_apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use pattern::{any, call, IntoPat, Matcher, Var};
+    use pattern::{any, call, IntoPat, Matcher, Capture};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
     // runs, the placeholder Return has 3 inputs `[ctrl, mem,
@@ -309,7 +309,7 @@ fn tier2_apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_quer
     // The headline assertion: a `pattern::call().arg(0, …)` query
     // matches at least once.  Pre-H0 this would have returned zero
     // matches because the Call had no arg slot 0.
-    let v0 = Var::new();
+    let v0 = Capture::new();
     let pat: pattern::Pat = call().arg(0, any().capture(v0)).into();
     let matcher = Matcher::new(&graph);
     let matches = matcher.find_all(&pat);
@@ -320,7 +320,7 @@ fn tier2_apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_quer
     // Bonus: the captured value must be exactly arg0 (the
     // in-place edit threaded it through unchanged).
     let m = &matches[0];
-    let captured = m.get(v0).expect("arg0 capture must bind");
+    let captured = m.output(v0).expect("arg0 capture must bind");
     assert_eq!(
         captured, arg0,
         "captured arg slot 0 must equal the threaded arg0 value",

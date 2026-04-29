@@ -1,12 +1,13 @@
 //! `CallPat`, `CallOtherPat` — call-site builders. Inputs are sparse-indexed
 //! over `[ctrl, mem, target/args…]`; `CallPat` additionally supports output
 //! constraints on ret-value slots.
+//!
+//! Use [`crate::pat::IntoPat::capture`] to bind the matched call node id.
 
 use ir::node::NodeKind;
 
 use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, OutputsSpec};
 use crate::pat::{Pat, int_const};
-use crate::var::NodeVar;
 
 // ── CallPat ───────────────────────────────────────────────────────────────────
 
@@ -15,12 +16,11 @@ pub struct CallPat {
     target: Option<Pat>,
     args: Vec<(usize, Pat)>,
     ret_outputs: Vec<(usize, Pat)>,
-    node_var: Option<NodeVar>,
 }
 
 impl CallPat {
     pub(crate) fn new() -> Self {
-        Self { target: None, args: Vec::new(), ret_outputs: Vec::new(), node_var: None }
+        Self { target: None, args: Vec::new(), ret_outputs: Vec::new() }
     }
     /// Constrain the call target with an arbitrary pattern.
     pub fn target(mut self, p: impl Into<Pat>) -> Self {
@@ -33,21 +33,15 @@ impl CallPat {
         self
     }
     /// Capture or constrain the Call's return-value output at ABI position
-    /// `idx` — e.g. `.ret_output(0, var(v))` binds `v` to the `NodeOutputId`
-    /// of the calling convention's first return register (`rax` on x86_64,
-    /// `x0` on AArch64).  The inner pattern should be `var(v)` or `any()`;
-    /// richer patterns are matched against the value output but will
-    /// typically fail because the Call itself produces the value.  If the
-    /// ret reg at `idx` is callee-saved, it does not appear as a Call
-    /// output and the match fails.
+    /// `idx` — e.g. `.ret_output(0, var(c))` binds `c` to the
+    /// `NodeOutputId` of the calling convention's first return register
+    /// (`rax` on x86_64, `x0` on AArch64).  The inner pattern should be
+    /// `var(c)` or `any()`; richer patterns are matched against the
+    /// value output but will typically fail because the Call itself
+    /// produces the value.  If the ret reg at `idx` is callee-saved,
+    /// it does not appear as a Call output and the match fails.
     pub fn ret_output(mut self, idx: usize, p: impl Into<Pat>) -> Self {
         self.ret_outputs.push((idx, p.into()));
-        self
-    }
-    /// Bind the matched `Call` node to `nv`.
-    #[must_use]
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
         self
     }
     /// Constrain the call target to the literal address `addr`.
@@ -59,7 +53,7 @@ impl CallPat {
 
 impl From<CallPat> for Pat {
     fn from(b: CallPat) -> Pat {
-        let CallPat { target, args, ret_outputs, node_var } = b;
+        let CallPat { target, args, ret_outputs } = b;
         // Call inputs: [ctrl(0), mem(1), target(2), arg0(3), arg1(4), ...].
         let mut indexed_inputs: Vec<(usize, Pat)> = Vec::new();
         if let Some(tgt) = target {
@@ -76,7 +70,6 @@ impl From<CallPat> for Pat {
         };
         NodePat::matcher(KindSpec::Exact(NodeKind::Call), InputsSpec::Indexed(indexed_inputs))
             .with_outputs(outputs_spec)
-            .with_node_var(node_var)
             .into_pat()
     }
 }
@@ -87,12 +80,11 @@ impl From<CallPat> for Pat {
 pub struct CallOtherPat {
     user_op_id: Option<u64>,
     args: Vec<(usize, Pat)>,
-    node_var: Option<NodeVar>,
 }
 
 impl CallOtherPat {
     pub(crate) fn new() -> Self {
-        Self { user_op_id: None, args: Vec::new(), node_var: None }
+        Self { user_op_id: None, args: Vec::new() }
     }
     /// Constrain the matched node to a specific user-op id.
     #[must_use]
@@ -105,26 +97,21 @@ impl CallOtherPat {
         self.args.push((idx, p.into()));
         self
     }
-    /// Bind the matched `CallOther` node to `nv`.
-    #[must_use]
-    pub fn capture_node(mut self, nv: NodeVar) -> Self {
-        self.node_var = Some(nv);
-        self
-    }
 }
 
 impl From<CallOtherPat> for Pat {
     fn from(b: CallOtherPat) -> Pat {
-        let CallOtherPat { user_op_id, args, node_var } = b;
+        let CallOtherPat { user_op_id, args } = b;
         // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), ...].
         let indexed_inputs: Vec<(usize, Pat)> =
             args.into_iter().map(|(i, p)| (2 + i, p)).collect();
+        let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = match user_op_id {
-            None => KindSpec::variant(&NodeKind::CallOther { user_op_id: 0 }),
-            Some(expected) => KindSpec::Exact(NodeKind::CallOther { user_op_id: expected }),
+            None => KindSpec::variant(&exemplar),
+            Some(expected) => KindSpec::variant_with(&exemplar, move |k| {
+                matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
+            }),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs))
-            .with_node_var(node_var)
-            .into_pat()
+        NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs)).into_pat()
     }
 }

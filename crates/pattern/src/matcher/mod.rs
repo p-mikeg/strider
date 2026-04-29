@@ -9,7 +9,7 @@ mod function_arg_handle;
 
 pub use function_arg_handle::FunctionArgHandle;
 
-mod bindings;
+pub(crate) mod bindings;
 pub(crate) mod cast_mask;
 pub(crate) mod commutativity;
 mod match_result;

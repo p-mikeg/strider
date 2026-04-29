@@ -7,7 +7,7 @@
 //!   * the matched op variant is retrievable via `match.get_*_op`;
 //!   * `*_any` still honours family membership (int_binary_any won't match
 //!     a bool op);
-//!   * value captures (`.capture(Var)`) compose with op-variant capture.
+//!   * value captures (`.capture(Capture)`) compose with op-variant capture.
 
 use ir::node::NodeOutputType;
 use ir::{
@@ -274,8 +274,8 @@ fn variant_any_composes_with_value_capture() {
     let m = a::unique(&g, int_binary_any(ov, any_int_const(lv), any_int_const(rv)));
 
     assert_eq!(m.get_int_binary_op(ov), Some(IntBinaryOp::Sub));
-    assert_eq!(m.get_int(lv), Some(100));
-    assert_eq!(m.get_int(rv), Some(50));
+    assert_eq!(m.get_int_var(lv), Some(100));
+    assert_eq!(m.get_int_var(rv), Some(50));
 }
 
 #[test]

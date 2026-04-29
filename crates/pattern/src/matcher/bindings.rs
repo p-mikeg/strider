@@ -5,11 +5,28 @@ use ir::{
 };
 
 use crate::var::{
-    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, FloatBinaryOpVar, FloatCmpOpVar, FloatUnaryOpVar,
-    FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar, NodeVar, Var,
+    BoolBinaryOpVar, BoolUnaryOpVar, BoolVar, Capture, FloatBinaryOpVar, FloatCmpOpVar,
+    FloatUnaryOpVar, FloatVar, IntBinaryOpVar, IntCmpOpVar, IntUnaryOpVar, IntVar,
 };
 
 // ── Bindings ──────────────────────────────────────────────────────────────────
+
+/// One unified [`Capture`] binding: the matched node id, plus the value
+/// `NodeOutputId` when the pattern that produced the binding is
+/// value-producing.  Control-flow patterns (`Call`, `If`, `Return`,
+/// `CallOther`) bind only the `NodeId` and leave `output = None`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Binding {
+    pub node: NodeId,
+    pub output: Option<NodeOutputId>,
+}
+
+impl Binding {
+    #[must_use]
+    pub fn new(node: NodeId, output: Option<NodeOutputId>) -> Self {
+        Self { node, output }
+    }
+}
 
 /// A set of capture-variable bindings accumulated during a single match attempt.
 ///
@@ -24,9 +41,8 @@ use crate::var::{
 /// allocations, no per-kind HashMap clones, no deep copy of the full state.
 ///
 /// Lookups (`get_*`) are linear scans filtered by entry variant.  Typical
-/// matches produce ≤10 bindings so scan cost is in-cache and beats HashMap
-/// on cold-path inserts.  If a future pattern produces dozens of bindings,
-/// a lazy overlay index can be added without changing the public API.
+/// matches produce a small handful of bindings so scan cost is in-cache and
+/// beats HashMap on cold-path inserts.
 #[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<BindingEntry>,
@@ -34,12 +50,12 @@ pub struct Bindings {
 
 /// One appended binding.  Kind-tagged: since every capture-variable type has
 /// its own `u32` id drawn from a shared counter, a given id can only occur
-/// in one variant — but the tagging still gives us type-safe lookup (a
-/// `get_int(iv)` call only scans `Int(_)` entries, never `IntBinaryOp(_)`).
+/// in one variant — but the tagging still gives us type-safe lookup.
 #[derive(Clone, Copy)]
 enum BindingEntry {
-    Var(Var, NodeOutputId),
-    NodeVar(NodeVar, NodeId),
+    /// Unified data/control capture.  `output` is `Some` for
+    /// value-producing patterns, `None` for control-flow patterns.
+    Capture(Capture, Binding),
     Int(IntVar, u128),
     Bool(BoolVar, bool),
     Float(FloatVar, u64),
@@ -72,6 +88,55 @@ impl Bindings {
         self.entries.truncate(mark.0);
     }
 
+    /// Bind `c` to `binding`.  Returns `true` on new or idempotent
+    /// (full-binding-equal) bind, `false` on conflict (no mutation).
+    pub fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
+        for entry in &self.entries {
+            if let BindingEntry::Capture(k, existing) = entry
+                && *k == c
+            {
+                return *existing == binding;
+            }
+        }
+        self.entries.push(BindingEntry::Capture(c, binding));
+        true
+    }
+
+    /// Returns the [`Binding`] (node + optional value output) bound to
+    /// `c`, or `None` if `c` was not captured in this match.
+    #[must_use]
+    pub fn get_binding(&self, c: Capture) -> Option<Binding> {
+        for entry in &self.entries {
+            if let BindingEntry::Capture(k, b) = entry
+                && *k == c
+            {
+                return Some(*b);
+            }
+        }
+        None
+    }
+
+    /// Convenience: returns the value `NodeOutputId` bound to `c`, or
+    /// `None` if `c` was not captured or the binding was control-flow.
+    #[must_use]
+    pub fn get_output(&self, c: Capture) -> Option<NodeOutputId> {
+        self.get_binding(c).and_then(|b| b.output)
+    }
+
+    /// Alias for [`Self::get_output`] — kept short because it is the
+    /// most-used accessor inside `*_const_with!` macro bodies and
+    /// post-match `when_match` closures.
+    #[must_use]
+    pub fn get(&self, c: Capture) -> Option<NodeOutputId> {
+        self.get_output(c)
+    }
+
+    /// Convenience: returns the `NodeId` bound to `c`, or `None` if `c`
+    /// was not captured.
+    #[must_use]
+    pub fn get_node(&self, c: Capture) -> Option<NodeId> {
+        self.get_binding(c).map(|b| b.node)
+    }
 }
 
 /// Emit a `bind_$name` / `get_$name` pair as a linear scan over `entries`
@@ -107,8 +172,6 @@ macro_rules! decl_bind_get {
     };
 }
 
-decl_bind_get!(Var,             bind_var,             get,                 Var,             NodeOutputId, "the matched `NodeOutputId` (data output edge)");
-decl_bind_get!(NodeVar,         bind_node_var,        get_node,            NodeVar,         NodeId,       "the matched `NodeId` (control-level node)");
 decl_bind_get!(Int,             bind_int,             get_int,             IntVar,          u128,         "the integer constant value");
 decl_bind_get!(Bool,            bind_bool,            get_bool,            BoolVar,         bool,         "the boolean constant value");
 decl_bind_get!(Float,           bind_float,           get_float_bits,      FloatVar,        u64,          "the float constant IEEE 754 bit pattern");

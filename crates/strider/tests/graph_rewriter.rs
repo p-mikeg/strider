@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
-use pattern::{add, int_const, rewrite_rule, var, IntoPat, Var};
+use pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, GraphRewriter, SleighArch, Strider};
@@ -164,7 +164,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> strider::Resu
     // the cmp itself to `BoolConst(true)`.  We use the simpler form:
     // match the cmp, replace its output with `bool_const(true)`.
     let pipeline = strider.build_optimizer_pipeline();
-    let cmp_var = Var::new();
+    let cmp_var = Capture::new();
     let rule = rewrite_rule(
         // LHS: int_eq(any, int_const(K_0))
         pattern::int_eq(pattern::any(), int_const(targets[0] as i128)).capture(cmp_var),
@@ -256,7 +256,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> strider::Result<(
 
     assert_eq!(count_adds(&graph), 2, "fixture has two Adds");
 
-    let x = Var::new();
+    let x = Capture::new();
     let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0)), var(x));
     let pipeline = opt::default_pipeline();
 
@@ -311,7 +311,7 @@ fn manual_rewrite_does_not_break_validate() -> strider::Result<()> {
     // (graph-level invariants) — a broken use-list would only
     // surface here, hence pin it explicitly.
     let mut g = add_k_plus_zero(42);
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
@@ -327,7 +327,7 @@ fn manual_rewrite_does_not_break_validate() -> strider::Result<()> {
 #[test]
 fn apply_rule_using_pattern_var_capture() -> strider::Result<()> {
     // End-to-end exercise of the `pattern::rewrite_rule(lhs, rhs)`
-    // flow with a non-trivial Var capture on both sides.  Pattern:
+    // flow with a non-trivial Capture capture on both sides.  Pattern:
     // `add(var(x), int_const(0)) -> var(x)`.  The capture binds the
     // matched LHS subtree's left input on the LHS, and the RHS uses
     // the same capture to materialise a "passthrough" — the
@@ -340,11 +340,11 @@ fn apply_rule_using_pattern_var_capture() -> strider::Result<()> {
     let mut g = add_k_plus_zero(99);
     assert_eq!(count_adds(&g), 1, "fixture has one Add");
 
-    let x = Var::new();
+    let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     let mut rewriter = GraphRewriter::wrap_built(&mut g);
     let fired = rewriter.apply_rule(rule)?;
-    assert_eq!(fired, 1, "Var-capture rule fires exactly once");
+    assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(
         count_adds(&g),
         0,

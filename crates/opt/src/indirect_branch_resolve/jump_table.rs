@@ -181,10 +181,10 @@ fn match_jump_table_shape(
     // operand of the multiplication — the same disambiguation the
     // prior `extract_base_and_mul` performed by trying `int_const_val`
     // on each `mul` operand in turn.
-    use pattern::{IntVar, Matcher, Var, add, any_int_const, load, mul, var};
+    use pattern::{IntVar, Matcher, Capture, add, any_int_const, load, mul, var};
     let base_var = IntVar::new();
     let stride_var = IntVar::new();
-    let idx_var = Var::new();
+    let idx_var = Capture::new();
     let pat = load().addr(add(
         any_int_const(base_var),
         mul(var(idx_var), any_int_const(stride_var)),
@@ -197,10 +197,10 @@ fn match_jump_table_shape(
     // We mirror the truncation here.  Real jump-table bases /
     // strides fit in `u64` on every supported arch.
     #[allow(clippy::cast_possible_truncation)]
-    let base = m.get_int(base_var)? as u64;
+    let base = m.get_int_var(base_var)? as u64;
     #[allow(clippy::cast_possible_truncation)]
-    let stride = m.get_int(stride_var)? as u64;
-    let idx_output = m.get(idx_var)?;
+    let stride = m.get_int_var(stride_var)? as u64;
+    let idx_output = m.output(idx_var)?;
 
     Some(JumpTableShape {
         base,
@@ -469,12 +469,12 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use pattern::{IntCmpOpVar, IntVar, Matcher, Var, any_int_const, int_cmp_any, var};
+    use pattern::{IntCmpOpVar, IntVar, Matcher, Capture, any_int_const, int_cmp_any, var};
     let graph = &fg.graph;
     let cmp_node = graph.get_node_from_output(cond_out);
 
     let op_var = IntCmpOpVar::new();
-    let idx_var = Var::new();
+    let idx_var = Capture::new();
     let n_var = IntVar::new();
     let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
     let m = Matcher::new(fg).match_at(cmp_node, &pat)?;
@@ -485,11 +485,11 @@ fn bound_from_if_condition(
     // intermediate orchestrator iterations omit RedundantPhis, so
     // the dispatch region's read of `idx` is wrapped in a
     // single-input ControlPhi distinct from the `If`'s direct read.
-    let lhs = m.get(idx_var)?;
+    let lhs = m.output(idx_var)?;
     if !same_value(graph, lhs, idx_output) {
         return None;
     }
-    let n = u64::try_from(m.get_int(n_var)?).ok()?;
+    let n = u64::try_from(m.get_int_var(n_var)?).ok()?;
     let op = m.get_int_cmp_op(op_var)?;
 
     match op {

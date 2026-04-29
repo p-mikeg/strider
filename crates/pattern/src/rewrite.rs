@@ -131,12 +131,12 @@ pub type BoxedRule =
 ///
 /// ```rust
 /// use pattern::{
-///     BoxedRule, Var, add, apply_rules_in_order, boxed_rule, int_const,
+///     BoxedRule, Capture, add, apply_rules_in_order, boxed_rule, int_const,
 ///     rewrite_rule, sub, var,
 /// };
 ///
-/// let x = Var::new();
-/// let y = Var::new();
+/// let x = Capture::new();
+/// let y = Capture::new();
 /// let rules: Vec<BoxedRule> = vec![
 ///     // add(x, 0) → x
 ///     boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),

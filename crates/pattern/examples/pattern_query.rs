@@ -67,11 +67,11 @@ fn example_arithmetic() {
     let hits = m.find_all(&add(int_const(1), and(int_const(4), int_const(7))).into());
     println!("add(1, and(4,7)) matches (wrong order): {}", hits.len()); // 0
 
-    // ── Query 4: capture a sub-expression with a Var ─────────────────────────
-    let rhs = Var::new();
+    // ── Query 4: capture a sub-expression with a Capture ─────────────────────────
+    let rhs = Capture::new();
     let hits = m.find_all(&add(any(), var(rhs)).into());
     if let Some(hit) = hits.first() {
-        let bound = hit.get(rhs).unwrap();
+        let bound = hit.output(rhs).unwrap();
         println!("rhs of add is: {:?}", graph.graph.kind_of_output(bound)); // IntConst(1)
     }
 
@@ -174,10 +174,10 @@ fn example_calls_and_returns() {
     ); // 0
 
     // ── Capture the call node id ──────────────────────────────────────────────
-    let cv = NodeVar::new();
-    let hits = m.find_all(&call().at(0x2000).capture_node(cv).into());
+    let cv = Capture::new();
+    let hits = m.find_all(&call().at(0x2000).capture(cv));
     if let Some(hit) = hits.first() {
-        let nid = hit.get_node(cv).unwrap();
+        let nid = hit.node(cv).unwrap();
         println!("Captured call node kind: {:?}", graph.graph.node_kind(nid)); // Call
     }
 
@@ -201,16 +201,16 @@ fn example_calls_and_returns() {
             .len()
     ); // 0
 
-    // ── Capture the call target address via a Var ─────────────────────────────
-    let addr = Var::new();
-    let rv = NodeVar::new();
+    // ── Capture the call target address via a Capture ─────────────────────────────
+    let addr = Capture::new();
+    let rv = Capture::new();
     let hits = m.find_all(
         &ret()
-            .preceded_by(call().target(var(addr)).capture_node(rv))
+            .preceded_by(call().target(var(addr)).capture(rv))
             .into(),
     );
     if let Some(hit) = hits.first() {
-        let tgt_out = hit.get(addr).unwrap();
+        let tgt_out = hit.output(addr).unwrap();
         let tgt_node = graph.graph.get_node_from_output(tgt_out);
         println!(
             "Target of call before return: {:?}",
@@ -275,12 +275,12 @@ fn example_if_branches() {
     ); // 0
 
     // ── Capture the If node id ────────────────────────────────────────────────
-    let iv = NodeVar::new();
-    let hits = m.find_all(&if_node().capture_node(iv).into());
+    let iv = Capture::new();
+    let hits = m.find_all(&if_node().capture(iv));
     if let Some(hit) = hits.first() {
         println!(
             "If node kind: {:?}",
-            graph.graph.node_kind(hit.get_node(iv).unwrap())
+            graph.graph.node_kind(hit.node(iv).unwrap())
         );
     }
 }
@@ -317,24 +317,24 @@ fn example_captures() {
     let m = Matcher::new(&graph);
 
     // ── Capture both operands of the condition ────────────────────────────────
-    let lhs_v = Var::new();
-    let rhs_v = Var::new();
+    let lhs_v = Capture::new();
+    let rhs_v = Capture::new();
     let hits = m.find_all(&if_node().cond(int_eq(var(lhs_v), var(rhs_v))).into());
     if let Some(hit) = hits.first() {
-        let lhs_node = graph.graph.get_node_from_output(hit.get(lhs_v).unwrap());
-        let rhs_node = graph.graph.get_node_from_output(hit.get(rhs_v).unwrap());
+        let lhs_node = graph.graph.get_node_from_output(hit.output(lhs_v).unwrap());
+        let rhs_node = graph.graph.get_node_from_output(hit.output(rhs_v).unwrap());
         println!("Condition lhs: {:?}", graph.graph.node_kind(lhs_node)); // IntConst(0)
         println!("Condition rhs: {:?}", graph.graph.node_kind(rhs_node)); // IntConst(1)
     }
 
     // ── Match a return with a specific value and capture it ───────────────────
-    let val_v = Var::new();
-    let ret_v = NodeVar::new();
-    let hits = m.find_all(&ret().ret_val(0, var(val_v)).capture_node(ret_v).into());
+    let val_v = Capture::new();
+    let ret_v = Capture::new();
+    let hits = m.find_all(&ret().ret_val(0, var(val_v)).capture(ret_v));
     println!("Returns with a value: {}", hits.len()); // 2 (one per branch)
     for hit in &hits {
-        let val_node = graph.graph.get_node_from_output(hit.get(val_v).unwrap());
-        let ret_node = hit.get_node(ret_v).unwrap();
+        let val_node = graph.graph.get_node_from_output(hit.output(val_v).unwrap());
+        let ret_node = hit.node(ret_v).unwrap();
         println!(
             "  Return {:?} returns {:?}",
             ret_node,
@@ -343,7 +343,7 @@ fn example_captures() {
     }
 
     // ── Enforce equality: same var used twice ─────────────────────────────────
-    let x = Var::new();
+    let x = Capture::new();
     // add(x, x) only matches nodes where both inputs are the *same* output.
     let mut b2 = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).expect("build");
     let r2 = b2.create_region().expect("build");
@@ -406,12 +406,12 @@ fn example_load_store() {
     ); // 0
 
     // Capture the address and extract the constant value directly.
-    let addr_v = Var::new();
+    let addr_v = Capture::new();
     let hits = m.find_all(&load().addr(var(addr_v)).into());
     if let Some(hit) = hits.first() {
         // get_int_const is the easy way to get the constant without digging into node kinds.
         let addr_val = hit
-            .get_int_const(addr_v, &g_load)
+            .get_uint(addr_v, &g_load)
             .expect("address is an int const");
         println!("Captured load address: 0x{addr_val:X}"); // 0x100
     }
@@ -451,14 +451,14 @@ fn example_load_store() {
     ); // 0
 
     // Capture both addr and data at once, then read values directly.
-    let addr_v2 = Var::new();
-    let data_v2 = Var::new();
+    let addr_v2 = Capture::new();
+    let data_v2 = Capture::new();
     let hits2 = m2.find_all(&store().addr(var(addr_v2)).data(var(data_v2)).into());
     if let Some(hit) = hits2.first() {
         println!(
             "Captured store: addr=0x{:X}, data={}",
-            hit.get_int_const(addr_v2, &g_store).unwrap(),
-            hit.get_int_const(data_v2, &g_store).unwrap(),
+            hit.get_uint(addr_v2, &g_store).unwrap(),
+            hit.get_uint(data_v2, &g_store).unwrap(),
         ); // addr=0x200, data=42
     }
 
@@ -493,10 +493,10 @@ fn example_load_store() {
     ); // 0
 
     // Capture the call argument and extract the value with get_int_const.
-    let arg_v = Var::new();
+    let arg_v = Capture::new();
     let hits3 = m3.find_all(&call().arg(0, var(arg_v)).into());
     if let Some(hit) = hits3.first() {
-        let arg_val = hit.get_int_const(arg_v, &g_call).unwrap();
+        let arg_val = hit.get_uint(arg_v, &g_call).unwrap();
         println!("Captured call arg0: {arg_val}"); // 42
     }
 }
@@ -556,13 +556,13 @@ fn example_initial_vars() {
     // In a single-region graph, `read_variable` returns a ControlPhi node
     // rather than the InitialVar directly.  The ControlPhi holds the InitialVar
     // as one of its inputs.
-    let lhs_v = Var::new();
-    let rhs_v = Var::new();
+    let lhs_v = Capture::new();
+    let rhs_v = Capture::new();
     let hits = m.find_all(&add(var(lhs_v), var(rhs_v)).into());
     println!("add of any two values: {}", hits.len()); // 1
     if let Some(hit) = hits.first() {
-        let lhs = graph.graph.get_node_from_output(hit.get(lhs_v).unwrap());
-        let rhs = graph.graph.get_node_from_output(hit.get(rhs_v).unwrap());
+        let lhs = graph.graph.get_node_from_output(hit.output(lhs_v).unwrap());
+        let rhs = graph.graph.get_node_from_output(hit.output(rhs_v).unwrap());
         // Both inputs are ControlPhi(vn) nodes wrapping the InitialVar.
         println!("  lhs kind: {:?}", graph.graph.node_kind(lhs),);
         println!("  rhs kind: {:?}", graph.graph.node_kind(rhs),);

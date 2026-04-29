@@ -33,7 +33,7 @@
 //!
 //! // Pattern that matches the switch's index-input slot, then replace it
 //! // with IntConst(4) so DeadBranchElim can prune the dead arms.
-//! let idx = pattern::Var::new();
+//! let idx = pattern::Capture::new();
 //! let rule = pattern::rewrite_rule(
 //!     pattern::int_eq(pattern::var(idx), pattern::any_int_const(idx_const_var)),
 //!     pattern::int_const(4),

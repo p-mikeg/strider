@@ -42,11 +42,11 @@ fn load_addr_matches_literal() {
 #[test]
 fn load_captures_value_slot() {
     let g = shapes::store_then_load_ram(0x100, 42);
-    let v = Var::new();
+    let v = Capture::new();
     let m = a::unique(&g, load().addr(int_const(0x100)).capture(v));
     // The captured output is the Load's value slot; reading it back
     // points at the Load node.
-    let out = m.get(v).expect("value slot capture");
+    let out = m.output(v).expect("value slot capture");
     assert!(matches!(
         g.graph.kind_of_output(out),
         ir::node::NodeKind::Load(_)

@@ -17,47 +17,47 @@ use super::try_lower_cast_to_float;
 /// Called once from [`REASSOC_AND_MASK_RULES`]'s `LazyLock` initializer.
 fn build_reassoc_and_mask_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, IntVar, Var, add, and, any_int_const, boxed_rule, int_const_with, or,
+        BoxedRule, IntVar, Capture, add, and, any_int_const, boxed_rule, int_const_with, or,
         rewrite_rule, sub, var,
     };
 
     // (x + C1) + C2 → x + (C1 + C2)
-    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
     let rule_add_add = boxed_rule(rewrite_rule(
         add(add(var(x), any_int_const(c1)), any_int_const(c2)),
         add(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
     ));
 
     // (x - C1) - C2 → x - (C1 + C2)
-    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
     let rule_sub_sub = boxed_rule(rewrite_rule(
         sub(sub(var(x), any_int_const(c1)), any_int_const(c2)),
         sub(var(x), int_const_with!([c1, c2] => c1.wrapping_add(c2))),
     ));
 
     // (x + C1) - C2 → x + (C1 - C2)
-    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
     let rule_add_sub = boxed_rule(rewrite_rule(
         sub(add(var(x), any_int_const(c1)), any_int_const(c2)),
         add(var(x), int_const_with!([c1, c2] => c1.wrapping_sub(c2))),
     ));
 
     // (x - C1) + C2 → x + (C2 - C1)
-    let (x, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let (x, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
     let rule_sub_add = boxed_rule(rewrite_rule(
         add(sub(var(x), any_int_const(c1)), any_int_const(c2)),
         add(var(x), int_const_with!([c1, c2] => c2.wrapping_sub(c1))),
     ));
 
     // (a & C1) & C2 → a & (C1 & C2)
-    let (a, c1, c2) = (Var::new(), IntVar::new(), IntVar::new());
+    let (a, c1, c2) = (Capture::new(), IntVar::new(), IntVar::new());
     let rule_and_merge = boxed_rule(rewrite_rule(
         and(and(var(a), any_int_const(c1)), any_int_const(c2)),
         and(var(a), int_const_with!([c1, c2] => c1 & c2)),
     ));
 
     // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
-    let (a, b) = (Var::new(), Var::new());
+    let (a, b) = (Capture::new(), Capture::new());
     let (c1, c2, c3) = (IntVar::new(), IntVar::new(), IntVar::new());
     let rule_and_dist = boxed_rule(rewrite_rule(
         and(
@@ -104,19 +104,19 @@ pub(super) fn apply_reassoc_and_mask_rules(
 /// Builds the rule vec for [`apply_bitcast_extend_rules`].
 fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, Var, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
+        BoxedRule, Capture, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
         sign_extend, truncate, var, zero_extend,
     };
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
-    let x = Var::new();
+    let x = Capture::new();
     let rule_int_float = boxed_rule(rewrite_rule(
         int_bits_to_float(float_bits_to_int(var(x))),
         var(x),
     ));
 
     // FloatBitsToInt(IntBitsToFloat(x)) → x
-    let x = Var::new();
+    let x = Capture::new();
     let rule_float_int = boxed_rule(rewrite_rule(
         float_bits_to_int(int_bits_to_float(var(x))),
         var(x),
@@ -133,7 +133,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // The width-equality check uses `when_match` on the Bindings: the
     // captured `x`'s output type must equal the rule root's `ty`.
     let zext_round_trip = {
-        let x = Var::new();
+        let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |fg, ty, b| {
             b.get(x)
                 .and_then(|out| fg.graph.output_kind(out).as_value())
@@ -146,7 +146,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // widths match (sign-extension's added bits are sign replication; the
     // truncate cuts them off and recovers the original bits).
     let sext_round_trip = {
-        let x = Var::new();
+        let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |fg, ty, b| {
             b.get(x)
                 .and_then(|out| fg.graph.output_kind(out).as_value())
@@ -170,8 +170,8 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // For BUG-19 it's enough to cover the (SignExt, SignExt) case for Mul.
     use pattern::mul as mul_pat;
     let narrow_mul_through_sext = {
-        let a = Var::new();
-        let b = Var::new();
+        let a = Capture::new();
+        let b = Capture::new();
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |fg, ty, bnd| {
                 bnd.get(a)
@@ -209,8 +209,8 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // be either operand AND the IntConst inside that And might be either
     // operand of the And".
     let mk_drop_high_half = |swap: bool| -> BoxedRule {
-        let a = Var::new();
-        let b = Var::new();
+        let a = Capture::new();
+        let b = Capture::new();
         let c = IntVar::new();
         let inner = if swap {
             or(and(any_int_const(c), var(b)), var(a))
@@ -235,7 +235,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // And is commutative but the matcher's swap doesn't enumerate over
     // `any_int_const` placement.
     let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
-        let x = Var::new();
+        let x = Capture::new();
         let c = IntVar::new();
         let inner = if swap {
             and(var(x), any_int_const(c))
@@ -288,16 +288,16 @@ pub(super) fn apply_bitcast_extend_rules(
 /// Builds the rule vec for [`apply_identity_rules`].
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, IntVar, Pat, Var, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
+        BoxedRule, IntVar, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
-    let x = Var::new();
+    let x = Capture::new();
     // x & all_ones → x  (commutative). The all-ones mask depends on the
     // output width, so we use `.when_match()` to compare the captured
     // constant against the node's output-type all-ones value.
     let all_ones_rule = {
-        let x = Var::new();
+        let x = Capture::new();
         let c = IntVar::new();
         let pat: Pat = and(var(x), any_int_const(c)).into();
         let pat = pat.when_match(move |_fg, ty, b| {
@@ -310,7 +310,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     // canonicalize so downstream consumers see one shape regardless of
     // compiler choice.
     let xor_all_ones_rule = {
-        let x = Var::new();
+        let x = Capture::new();
         let c = IntVar::new();
         let pat: Pat = xor(var(x), any_int_const(c)).into();
         let pat = pat.when_match(move |_fg, ty, b| {

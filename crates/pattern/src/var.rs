@@ -1,12 +1,19 @@
 //! Capture variable newtypes used throughout the pattern engine.
 //!
-//! Every capture variable is a globally-unique `u32` id.  The 13 types
-//! below carry no data besides that id — they exist purely to keep the
-//! type of a binding visible at the call site (a `Var` binds a
-//! `NodeOutputId`, an `IntVar` binds an integer constant value, an
-//! `IntBinaryOpVar` binds an `IntBinaryOp` discriminant, and so on).
+//! [`Capture`] is the unified data/control capture handle: every
+//! pattern position that wants to bind a matched node uses the same
+//! type.  After a successful match, [`crate::Match::node`] returns the
+//! `NodeId` and [`crate::Match::output`] returns the value
+//! `NodeOutputId` (or `None` for control-flow nodes that have no
+//! single value output).
 //!
-//! All 13 share the same `::new()` / `Default::default()` / deriveable
+//! Every capture variable is a globally-unique `u32` id.  The 12 typed
+//! payload-capture types below carry no data besides that id — they
+//! exist purely to keep the type of a binding visible at the call site
+//! (an `IntVar` binds an integer constant value, an `IntBinaryOpVar`
+//! binds an `IntBinaryOp` discriminant, and so on).
+//!
+//! All share the same `::new()` / `Default::default()` / deriveable
 //! traits; the `decl_var!` macro emits each instance in a single line.
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -15,6 +22,34 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 
 fn next_id() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Unified capture variable.  Binds to a single matched node — every
+/// successful match records both the node's `NodeId` and (when the
+/// pattern is value-producing) the value `NodeOutputId`.
+///
+/// Each `Capture::new()` call produces a globally unique id via a
+/// process-wide atomic counter; uniqueness lets the matcher's
+/// [`Bindings`](crate::Bindings) storage (an append-only `Vec`)
+/// identify entries unambiguously without per-pattern bookkeeping.
+///
+/// The same `Capture` can appear in multiple positions of a pattern;
+/// the matcher requires all occurrences to bind to the **same** node
+/// (and the same value output, if applicable).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Capture(u32);
+
+impl Capture {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(next_id())
+    }
+}
+
+impl Default for Capture {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 macro_rules! decl_var {
@@ -36,12 +71,8 @@ macro_rules! decl_var {
     };
 }
 
-decl_var!(Var,
-    "A capture variable that binds a [`ir::node::NodeOutputId`] (data value edge).\n\nEach `Var::new()` call produces a globally unique id.  The same `Var` can appear in multiple positions of a pattern; the matcher requires all occurrences to bind to the **same** output.");
-decl_var!(NodeVar,
-    "A capture variable that binds a [`ir::node::NodeId`] (control-level node).");
 decl_var!(IntVar,
-    "A capture variable that binds the **integer constant value** (`u64`) carried by an `IntConst` node.");
+    "A capture variable that binds the **integer constant value** (`u128`) carried by an `IntConst` node.");
 decl_var!(BoolVar,
     "A capture variable that binds the **boolean constant value** (`bool`) carried by a `BoolConst` node.");
 decl_var!(FloatVar,
