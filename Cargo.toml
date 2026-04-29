@@ -19,7 +19,6 @@ opt = { path = "crates/opt" }
 target = { path = "crates/target" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
-strider-error = { path = "crates/strider-error" }
 pcode-lift = { path = "crates/pcode-lift" }
 rsleigh = { path="../rsleigh" }
 
