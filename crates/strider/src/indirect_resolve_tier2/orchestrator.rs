@@ -53,7 +53,7 @@ use opt::ReadOnlyMemory;
 
 use crate::error::{ErrorKind, Result};
 use crate::strider::Strider;
-use crate::{cache_key_for_region, lift_new_regions_into_with_stats, RegionIrCache};
+use crate::{cache_key_for_region, lift_new_regions_into, RegionIrCache};
 
 use super::{apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp};
 
@@ -89,9 +89,6 @@ fn take_split_snapshot<R: rsleigh::MemReader>(cfg: &Cfg<R>) -> Result<CfgSplitSn
 /// orchestrator uses this so it can drop the previous iteration's
 /// `Cfg` (recovering its `Sleigh`) and still detect region splits.
 ///
-/// Returns the number of cache entries evicted, so the caller can
-/// update [`OrchestratorStats::cache_evictions_on_split`].
-///
 /// CORRECTNESS — equivalence with `invalidate_split_regions`: both
 /// scan `new_cfg`'s regions, compare each region's current insn count
 /// against the same region's count in the previous iteration, and
@@ -103,8 +100,7 @@ fn apply_split_invalidation<R: rsleigh::MemReader>(
     cache: &mut RegionIrCache,
     prev_snapshot: &CfgSplitSnapshot,
     new_cfg: &Cfg<R>,
-) -> Result<usize> {
-    let cache_size_before = cache.len();
+) -> Result<()> {
     for region_id in new_cfg.region_ids() {
         let key = cache_key_for_region(new_cfg, region_id)?;
         if !cache.contains_key(&key) {
@@ -122,7 +118,7 @@ fn apply_split_invalidation<R: rsleigh::MemReader>(
             cache.remove(&key);
         }
     }
-    Ok(cache_size_before.saturating_sub(cache.len()))
+    Ok(())
 }
 
 /// Configuration for the orchestrator.  Held outside the
@@ -170,161 +166,9 @@ where
     /// branch.  Mirrors
     /// [`cfg::OptionsBuilder::allow_code_before_start_addr`].
     pub allow_code_before_start_addr: bool,
-    /// F4 — opt-in per-iteration debug-trace configuration.  When
-    /// `Some(_)`, [`run_with_stats`] populates
-    /// [`OrchestratorStats::trace`] with one [`IterationSnapshot`]
-    /// per outer-loop iteration.  When `None` (the default), the
-    /// orchestrator's trace-capture sites short-circuit — no `Vec`
-    /// is allocated, no [`IterationSnapshot`] is constructed.  This
-    /// is the F4 zero-overhead-when-disabled contract.
-    pub debug: Option<OrchestratorDebugConfig>,
 }
 
-/// F4 — opt-in capture knobs for the orchestrator's debug trace.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct OrchestratorDebugConfig {
-    /// Capture per-anchor classifications into
-    /// [`IterationSnapshot::classifications`] each iteration.
-    pub capture_classifications: bool,
-    /// Capture in-place edits into [`IterationSnapshot::edits_applied`]
-    /// each iteration.
-    pub capture_edits: bool,
-}
-
-/// F4 — single-iteration record produced when
-/// [`OrchestratorConfig::debug`] enables tracing.  One entry per
-/// iteration of the orchestrator's outer fixed-point loop, in order;
-/// see [`OrchestratorStats::trace`] for the per-run accumulator.
-///
-/// NOTE — intentionally NOT marked `#[non_exhaustive]`: tests
-/// destructure instances exhaustively to pin the trace shape per
-/// iteration; adding `#[non_exhaustive]` would force a `_ => ...` arm
-/// that defeats the point of those exhaustive matches.  Future field
-/// additions follow the same explicit-update protocol.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IterationSnapshot {
-    /// Zero-based index of this iteration in the orchestrator's outer loop.
-    pub iteration_index: usize,
-    /// Number of unresolved anchors at the START of this iteration.
-    pub unresolved_count_at_entry: usize,
-    /// Per-anchor classification outcomes captured this iteration when
-    /// [`OrchestratorDebugConfig::capture_classifications`] is true.
-    pub classifications: Vec<(PcodeInsnAddr, ClassificationOutcome)>,
-    /// In-place edits applied this iteration when
-    /// [`OrchestratorDebugConfig::capture_edits`] is true.
-    pub edits_applied: Vec<EditEvent>,
-    /// `true` iff this iteration triggered a structural CFG rebuild.
-    /// In-place edits do NOT set this flag.
-    pub cfg_rebuild_triggered: bool,
-}
-
-/// F4 — the result of classifying one placeholder anchor in one iteration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClassificationOutcome {
-    /// Classifier returned `Some(_)` — the orchestrator either
-    /// applied an in-place edit or queued a structural rebuild.
-    Resolved(ResolvedTargets),
-    /// Classifier returned `None` — the orchestrator left this
-    /// anchor for a later iteration.
-    StillUnresolved,
-}
-
-/// F4 — the kind of in-place IR edit the orchestrator applied this iteration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EditEvent {
-    /// [`super::apply_link_register`] fired on the placeholder at `addr`.
-    LinkRegister {
-        /// Pcode address of the placeholder's `BranchIndirect`.
-        addr: PcodeInsnAddr,
-    },
-    /// [`super::apply_tail_call`] fired with target `target`.
-    TailCall {
-        /// Pcode address of the placeholder's `BranchIndirect`.
-        addr: PcodeInsnAddr,
-        /// Tail-call target address (out-of-range for the function).
-        target: u64,
-    },
-    /// A structural rebuild's `known_targets` map gained an entry.
-    ///
-    /// **Trace ordering note (cr H1):** these events are captured at
-    /// **classification time**, not at the structural-rebuild apply
-    /// site that consumes them.  Within a single `IterationSnapshot`,
-    /// `KnownTargetUpdate` events therefore appear in the per-anchor
-    /// classification order, BEFORE any `LinkRegister` /
-    /// `TailCall` edit events for that iteration — even though
-    /// structurally the rebuild they correspond to happens later in
-    /// the iteration's loop body.  See [`run_with_stats`]'s docs.
-    KnownTargetUpdate {
-        /// Pcode address of the placeholder's `BranchIndirect`.
-        addr: PcodeInsnAddr,
-        /// The resolution that fed `with_known_targets` for the rebuild.
-        kind: ResolvedTargets,
-    },
-}
-
-/// Statistics emitted by [`run_with_stats`] so tests (and downstream
-/// observability hooks) can pin which optimizer subset ran in which
-/// phase, count CFG rebuilds, in-place edits, and total IR-lift calls.
-///
-/// Each field is incremented monotonically across the orchestrator's
-/// iteration loop; reset to zero on a fresh `run_with_stats` call.
-///
-/// CORRECTNESS NOTE: tests use these counters to pin the spec's
-/// pipeline-tier separation contract — `destructive_runs == 1` for
-/// every successful run, `stable_runs >= destructive_runs` always.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct OrchestratorStats {
-    /// Total times [`Strider::build_stable_optimizer_pipeline`] ran.
-    /// At minimum 1 (the initial lift always runs the stable subset);
-    /// each rebuild iteration adds 1 more.
-    pub stable_runs: usize,
-    /// Total times [`Strider::build_destructive_optimizer_pipeline`]
-    /// ran.  Exactly 1 on a successful run (fast-path or
-    /// fixed-point exit); 0 on the iteration-cap / unresolved-at-
-    /// fixed-point error paths since those abort before the
-    /// destructive run.
-    pub destructive_runs: usize,
-    /// Total times the CFG was rebuilt.  At minimum 1 (the initial
-    /// build).  Each `Single(K)` intra-fn or `Multiple` resolution
-    /// adds 1.  Tail-call `Single(K)` and `LinkRegister` resolutions
-    /// do NOT trigger a rebuild — they fire as in-place edits.
-    pub cfg_rebuilds: usize,
-    /// Total times [`super::apply_link_register`] ran.
-    pub link_register_edits: usize,
-    /// Total times [`super::apply_tail_call`] ran.
-    pub tail_call_edits: usize,
-    /// Total iterations of the outer fixed-point loop.  0 when the
-    /// fast-path skipped the loop entirely.
-    pub iterations: usize,
-    /// Sum, across all `lift_new_regions_into` calls, of pcode insns
-    /// the cache contract considered **newly lifted**.  In round 1 the
-    /// IR is physically rebuilt each iteration, but cached regions do
-    /// NOT contribute to this counter (mirrors round-2 semantics where
-    /// a persistent FunctionBuilder genuinely skips them).  Tests use
-    /// this to pin the spec's "every pcode instruction is lifted to IR
-    /// at most once across the entire fixed-point analysis" contract
-    /// at the API surface — see [`crate::ir_cache::LiftStats`].
-    pub pcode_insns_lifted: usize,
-    /// Sum, across all `lift_new_regions_into` calls, of regions the
-    /// cache considered newly lifted.  Same round-1 / round-2 caveat
-    /// as `pcode_insns_lifted`.
-    pub regions_newly_lifted: usize,
-    /// Number of cache entries evicted by `invalidate_split_regions`
-    /// across all rebuilds.  Round-1 pin: a `Multiple([t])` resolution
-    /// where `t` lands mid-region produces exactly one eviction; a
-    /// `Multiple([t])` where `t` is a fresh address produces zero.
-    pub cache_evictions_on_split: usize,
-    /// F4 — opt-in per-iteration trace.  `None` by default (zero
-    /// overhead — capture sites short-circuit on the `None` arm).
-    /// `Some(Vec<IterationSnapshot>)` when the caller passed
-    /// [`OrchestratorConfig::debug`] = `Some(_)`.
-    pub trace: Option<Vec<IterationSnapshot>>,
-}
-
-/// Round-1 orchestrator entry point.  Drives the iterate-resolve-
-/// feed-back loop and discards the stats; equivalent to
-/// [`run_with_stats`] with the stats dropped.
+/// Drives the iterate-resolve-feed-back loop.
 ///
 /// # Errors
 ///
@@ -332,67 +176,10 @@ pub struct OrchestratorStats {
 /// * [`ErrorKind::UnresolvedIndirectBranch`] at fixed point with
 ///   unresolved branches remaining.
 /// * Propagates strider / cfg / opt errors verbatim.
-pub fn run<B>(config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
+pub fn run<B>(mut config: OrchestratorConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
 {
-    let (graph, _stats) = run_with_stats(config)?;
-    Ok(graph)
-}
-
-/// Variant of [`run`] that also returns an [`OrchestratorStats`].
-/// Tests pin pipeline-tier / rebuild / in-place-edit counts via this
-/// entry point.
-///
-/// # Trace ordering (cr H1)
-///
-/// When [`OrchestratorConfig::debug`] enables tracing,
-/// `IterationSnapshot::edits_applied` is populated in two passes per
-/// iteration:
-///
-///   1. **Classification pass** — for each unresolved anchor whose
-///      classifier returns `Some(_)` and which is routed to a
-///      structural rebuild, an [`EditEvent::KnownTargetUpdate`] event
-///      is pushed BEFORE the rebuild fires.  The event records the
-///      classification at the moment it's enqueued for `next_known`.
-///   2. **In-place edit pass** — for each anchor routed to an
-///      in-place edit, an [`EditEvent::LinkRegister`] or
-///      [`EditEvent::TailCall`] event is pushed at the apply site.
-///
-/// As a result, within `edits_applied[i]`, `KnownTargetUpdate` events
-/// appear in classification order, BEFORE `LinkRegister` /
-/// `TailCall` events even though structurally the rebuild they
-/// correspond to happens later in the iteration.  Tests that pin trace
-/// ordering must respect this two-phase shape.
-///
-/// # Errors
-///
-/// Same as [`run`].
-pub fn run_with_stats<B>(
-    mut config: OrchestratorConfig<'_, B>,
-) -> Result<(ir::BuiltFunctionGraph, OrchestratorStats)>
-where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
-{
-    let mut stats = OrchestratorStats::default();
-    // F4 — opt-in trace allocation.  When `config.debug` is `Some`,
-    // allocate the accumulator up-front so capture sites just push
-    // to it.  When `None`, `stats.trace` stays `None` and capture
-    // sites short-circuit on `is_some()` / `as_mut()` checks (zero
-    // allocations, no `IterationSnapshot` construction).
-    if config.debug.is_some() {
-        stats.trace = Some(Vec::new());
-    }
-    // F4 capture toggles, hoisted once.  When `config.debug` is
-    // `None` both bools fold to `false` constants and the per-anchor
-    // capture sites' `if capture_X` guards collapse to dead code in
-    // the hot loop.  `is_some_and` is the clippy-preferred form for
-    // `Option<T>::map(...).unwrap_or(false)`.
-    let capture_classifications = config
-        .debug
-        .as_ref()
-        .is_some_and(|d| d.capture_classifications);
-    let capture_edits = config.debug.as_ref().is_some_and(|d| d.capture_edits);
     // The `known_targets` map accumulates tier-2 resolutions across
     // iterations.  Each iteration replaces the map (we don't merge
     // — see spec's "Resolution feedback semantics" section: each
@@ -404,13 +191,7 @@ where
     //
     //   * `region_ir_cache` accumulates `RegionIrEntry` records.  In
     //     round 1 each rebuild clears + repopulates entries (the
-    //     fresh FunctionBuilder produces fresh NodeIds), but the
-    //     `LiftStats` returned by `lift_new_regions_into_with_stats`
-    //     reports counts under the cache contract: regions already
-    //     present pre-call do NOT contribute to lift counters.  This
-    //     pins the spec's "lifted at most once" contract at the API
-    //     surface, even while round 1's physical lift is still
-    //     non-incremental.
+    //     fresh FunctionBuilder produces fresh NodeIds).
     //
     //   * `prev_snapshot` retains a per-region insn-count snapshot of
     //     the previous iteration's CFG so [`apply_split_invalidation`]
@@ -435,12 +216,6 @@ where
     //     per iteration would re-load the SLA spec — a measurable
     //     hot-path cost the orchestrator's fixed-point loop pays for
     //     every CFG rebuild.
-    //
-    //   * `known_targets` and the lift counters in `stats` (see the
-    //     `pcode_insns_lifted` / `regions_newly_lifted` fields) make
-    //     the round-2 transition local: a future round that persists
-    //     the IR graph across iterations can drop in alongside this
-    //     orchestrator without changing the loop control flow.
     let mut region_ir_cache: RegionIrCache = std::collections::HashMap::new();
     let mut prev_snapshot: Option<CfgSplitSnapshot> = None;
     // Take ownership of the Sleigh out of the config (W5).  The
@@ -459,7 +234,6 @@ where
         sleigh,
         &config,
         &known_targets,
-        &mut stats,
         &mut region_ir_cache,
         prev_snapshot.as_ref(),
     )?;
@@ -479,8 +253,8 @@ where
     // final — there are no future iterations to break a destructive
     // rewrite.
     if unresolved.is_empty() {
-        run_destructive(&config, &mut graph, &mut stats)?;
-        return Ok((graph, stats));
+        run_destructive(&config, &mut graph)?;
+        return Ok(graph);
     }
 
     let pending_at_iter_0 = unresolved.len();
@@ -493,19 +267,7 @@ where
     // hitting it indicates a soundness bug in the resolver.
     let cap = 2usize.saturating_mul(pending_at_iter_0).saturating_add(4);
 
-    for iter_idx in 0..cap {
-        stats.iterations += 1;
-        // F4 — start a fresh per-iteration snapshot when tracing is
-        // enabled.  Stays `None` (zero allocation) when disabled.
-        let mut snapshot: Option<IterationSnapshot> = stats.trace.as_ref().map(|_| {
-            IterationSnapshot {
-                iteration_index: iter_idx,
-                unresolved_count_at_entry: unresolved.len(),
-                classifications: Vec::new(),
-                edits_applied: Vec::new(),
-                cfg_rebuild_triggered: false,
-            }
-        });
+    for _iter_idx in 0..cap {
         // Classify every unresolved anchor on the current optimised
         // IR.  Build the next `known_targets` map from scratch — see
         // the spec's "Resolution feedback semantics" — so a per-
@@ -519,11 +281,7 @@ where
         // the placeholder Return; passing the same `known_targets`
         // through to a CFG rebuild would re-emit the same placeholder
         // and we'd be stuck in a cycle).
-        //
-        // F4 — also track each anchor's `addr` alongside the placeholder
-        // node id so the per-edit capture site can record the pcode-
-        // insn address in the trace's [`EditEvent`].
-        let mut in_place_edits: Vec<(NodeId, ResolvedTargets, PcodeInsnAddr)> = Vec::new();
+        let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
         for (addr, anchor_output) in &unresolved {
             // R4: pass the rom through so the jump-table arm can
             // read table entries.  Cloning the Arc is cheap
@@ -532,18 +290,6 @@ where
             let rom_ref: Option<&dyn ReadOnlyMemory> = config.rom.as_deref();
             let resolved_opt =
                 classify_anchor_with_rom_and_sp(&graph, *anchor_output, lr_vn, rom_ref, sp_vn);
-
-            // F4 — record the per-anchor classification outcome
-            // before dispatch consumes the resolution.
-            if capture_classifications
-                && let Some(snap) = snapshot.as_mut()
-            {
-                let outcome = match &resolved_opt {
-                    Some(r) => ClassificationOutcome::Resolved(r.clone()),
-                    None => ClassificationOutcome::StillUnresolved,
-                };
-                snap.classifications.push((*addr, outcome));
-            }
 
             let Some(resolved) = resolved_opt else {
                 continue;
@@ -570,22 +316,11 @@ where
             if can_inplace
                 && let Some(ret) = placeholder_return
             {
-                in_place_edits.push((ret, resolved.clone(), *addr));
+                in_place_edits.push((ret, resolved.clone()));
                 // Don't add to next_known — the in-place edit
                 // erases the placeholder; the cfg builder must
                 // not see this address again.
                 continue;
-            }
-            // F4 — record `KnownTargetUpdate` BEFORE `next_known` is
-            // populated so the recorded order matches the iteration
-            // order over `unresolved`.
-            if capture_edits
-                && let Some(snap) = snapshot.as_mut()
-            {
-                snap.edits_applied.push(EditEvent::KnownTargetUpdate {
-                    addr: *addr,
-                    kind: resolved.clone(),
-                });
             }
             next_known.insert(*addr, resolved);
         }
@@ -596,34 +331,14 @@ where
         // (`apply_link_register` keeps the same NodeId; `apply_tail_call`
         // patches the cache's `exit_control` via the helper threaded
         // into `apply_in_place_edit`).
-        for (placeholder, resolved, addr) in &in_place_edits {
+        for (placeholder, resolved) in &in_place_edits {
             apply_in_place_edit(
                 &mut graph,
                 &config,
                 *placeholder,
                 resolved,
-                &mut stats,
                 &mut region_ir_cache,
             )?;
-            // F4 — record the actual edit that fired.
-            if capture_edits
-                && let Some(snap) = snapshot.as_mut()
-            {
-                let event = match resolved {
-                    ResolvedTargets::LinkRegister => EditEvent::LinkRegister { addr: *addr },
-                    ResolvedTargets::Single(target) => EditEvent::TailCall {
-                        addr: *addr,
-                        target: *target,
-                    },
-                    // `Multiple` is not an in-place case; record as
-                    // `KnownTargetUpdate` for diagnostic completeness.
-                    ResolvedTargets::Multiple(_) => EditEvent::KnownTargetUpdate {
-                        addr: *addr,
-                        kind: resolved.clone(),
-                    },
-                };
-                snap.edits_applied.push(event);
-            }
         }
 
         // Recompute unresolved AFTER in-place edits — the edits
@@ -648,12 +363,6 @@ where
         // unresolved (error).
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&known_targets);
         if !edge_set_changed && in_place_edits.is_empty() {
-            // F4 — push snapshot before the success-or-error exit.
-            if let Some(trace) = stats.trace.as_mut()
-                && let Some(snap) = snapshot.take()
-            {
-                trace.push(snap);
-            }
             // Fixed point.  Any branch in `unresolved_after_edits`
             // not in `next_known` is genuinely unresolvable.
             if !unresolved_after_edits.is_empty() {
@@ -669,8 +378,8 @@ where
             // Run the destructive subset exactly once at the fixed
             // point.  The IR shape is now final — see spec's
             // "Pipeline split" rationale.
-            run_destructive(&config, &mut graph, &mut stats)?;
-            return Ok((graph, stats));
+            run_destructive(&config, &mut graph)?;
+            return Ok(graph);
         }
 
         // Update unresolved for the next iteration / rebuild path.
@@ -680,18 +389,12 @@ where
         // rebuild — re-run the stable subset on the freshly-edited
         // IR and re-classify in the next loop turn.
         if !edge_set_changed {
-            run_stable_only(&config, &mut graph, &mut stats)?;
-            // F4 — push snapshot before continuing/returning.
-            if let Some(trace) = stats.trace.as_mut()
-                && let Some(snap) = snapshot.take()
-            {
-                trace.push(snap);
-            }
+            run_stable_only(&config, &mut graph)?;
             // After in-place edits, if no unresolved branches remain
             // we're done — run the destructive subset and return.
             if unresolved.is_empty() {
-                run_destructive(&config, &mut graph, &mut stats)?;
-                return Ok((graph, stats));
+                run_destructive(&config, &mut graph)?;
+                return Ok(graph);
             }
             continue;
         }
@@ -700,22 +403,11 @@ where
         // currently-held Sleigh into the next build, then harvest it
         // back from the new CFG so the next iteration sees the same
         // handle (no re-construction).
-        //
-        // F4 — mark the rebuild flag in the snapshot before pushing.
-        if let Some(snap) = snapshot.as_mut() {
-            snap.cfg_rebuild_triggered = true;
-        }
-        if let Some(trace) = stats.trace.as_mut()
-            && let Some(snap) = snapshot.take()
-        {
-            trace.push(snap);
-        }
         known_targets = next_known;
         let (g, u, new_cfg) = build_lift_stable(
             sleigh,
             &config,
             &known_targets,
-            &mut stats,
             &mut region_ir_cache,
             prev_snapshot.as_ref(),
         )?;
@@ -729,8 +421,8 @@ where
         // Convergence shortcut: if the rebuild produced no
         // unresolved branches, we're done.
         if unresolved.is_empty() {
-            run_destructive(&config, &mut graph, &mut stats)?;
-            return Ok((graph, stats));
+            run_destructive(&config, &mut graph)?;
+            return Ok(graph);
         }
     }
 
@@ -783,8 +475,8 @@ fn find_placeholder_return_for_anchor(
 }
 
 /// Dispatch on the resolution variant: LinkRegister → append ABI
-/// ret-val regs; tail-call Single → splice Call+Return.  Updates
-/// `stats` and propagates IR errors.
+/// ret-val regs; tail-call Single → splice Call+Return.  Propagates
+/// IR errors.
 ///
 /// Threads the [`RegionIrCache`] so the tail-call arm can patch the
 /// affected region's `exit_control` handle after [`apply_tail_call`]
@@ -794,7 +486,6 @@ fn apply_in_place_edit<B>(
     config: &OrchestratorConfig<'_, B>,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
-    stats: &mut OrchestratorStats,
     cache: &mut RegionIrCache,
 ) -> Result<()>
 where
@@ -807,7 +498,6 @@ where
             // chain — the cache's exit_control handle stays valid.
             let ctx = build_anchor_calling_context(graph, placeholder, config, cache);
             apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
-            stats.link_register_edits += 1;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
@@ -869,7 +559,6 @@ where
                     );
                 }
             }
-            stats.tail_call_edits += 1;
             Ok(())
         }
         ResolvedTargets::Multiple(_) => {
@@ -1041,7 +730,7 @@ fn read_or_init_var(
 }
 
 /// Builds the CFG, lifts to IR, runs the **stable** optimiser
-/// subset.  Increments `stats.cfg_rebuilds` and `stats.stable_runs`.
+/// subset.
 ///
 /// CORRECTNESS — Sleigh persistence: `sleigh` is **passed in by value**
 /// rather than constructed inside this function.  The orchestrator
@@ -1069,7 +758,6 @@ fn build_lift_stable<B>(
     sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
     config: &OrchestratorConfig<'_, B>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
-    stats: &mut OrchestratorStats,
     region_ir_cache: &mut RegionIrCache,
     prev_snapshot: Option<&CfgSplitSnapshot>,
 ) -> Result<(
@@ -1100,7 +788,6 @@ where
         Builder::with_endianness(sleigh, config.start_addr, opts, arch_endianness)
             .with_known_targets(known_targets.clone())
             .build()?;
-    stats.cfg_rebuilds += 1;
 
     // CORRECTNESS — split-invalidation: if a previous snapshot exists,
     // detect regions whose insn count shrank (a `split_region` event
@@ -1108,18 +795,10 @@ where
     // cache entries.  The next lift will re-lift the now-shorter first
     // half from pcode; the second half lifts as a brand-new entry.
     if let Some(prev) = prev_snapshot {
-        let evictions = apply_split_invalidation(region_ir_cache, prev, &cfg)?;
-        stats.cache_evictions_on_split += evictions;
+        apply_split_invalidation(region_ir_cache, prev, &cfg)?;
     }
 
-    // Use the cache-aware lift.  In round 1 this still physically
-    // rebuilds the IR (fresh FunctionBuilder), but `LiftStats`
-    // reports counts under the cache contract — see `LiftStats`'s
-    // round-1 / round-2 correctness note.
-    let (outcome, lift_stats) =
-        lift_new_regions_into_with_stats(config.strider, region_ir_cache, &cfg)?;
-    stats.pcode_insns_lifted += lift_stats.pcode_insns_lifted;
-    stats.regions_newly_lifted += lift_stats.regions_lifted;
+    let outcome = lift_new_regions_into(config.strider, region_ir_cache, &cfg)?;
     let unresolved = outcome.unresolved_branches.clone();
     let mut graph = outcome.graph;
 
@@ -1130,7 +809,6 @@ where
     // cache pins by `NodeId` survive across iterations.
     let pipeline = config.strider.build_stable_optimizer_pipeline();
     pipeline.run_on_built(&mut graph)?;
-    stats.stable_runs += 1;
 
     Ok((graph, unresolved, cfg))
 }
@@ -1140,7 +818,6 @@ where
 fn run_stable_only<B>(
     config: &OrchestratorConfig<'_, B>,
     graph: &mut ir::BuiltFunctionGraph,
-    stats: &mut OrchestratorStats,
 ) -> Result<()>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
@@ -1151,7 +828,6 @@ where
     // would risk removing nodes that a future iteration's edit needs.
     let pipeline = config.strider.build_stable_optimizer_pipeline();
     pipeline.run_on_built(graph)?;
-    stats.stable_runs += 1;
     Ok(())
 }
 
@@ -1161,7 +837,6 @@ where
 fn run_destructive<B>(
     config: &OrchestratorConfig<'_, B>,
     graph: &mut ir::BuiltFunctionGraph,
-    stats: &mut OrchestratorStats,
 ) -> Result<()>
 where
     B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
@@ -1171,7 +846,6 @@ where
     // `RedundantPhis` / `DeadBranchElimination` are safe to run.
     let pipeline = config.strider.build_destructive_optimizer_pipeline();
     pipeline.run_on_built(graph)?;
-    stats.destructive_runs += 1;
     Ok(())
 }
 
@@ -1329,7 +1003,7 @@ mod tests {
         assert_eq!(cap, usize::MAX);
     }
 
-    // ── G1-COMPLETE: cache-exit-handle / stats unit tests ───────────────────
+    // ── G1-COMPLETE: cache-exit-handle unit tests ───────────────────
 
     #[test]
     fn update_cache_exit_handle_replaces_matching_entries_only() {
@@ -1414,26 +1088,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn orchestrator_stats_default_is_zero() {
-        // OrchestratorStats fields all start at zero — pinning the
-        // contract that callers can assume `Default::default()`
-        // means "nothing has run yet".
-        let s = OrchestratorStats::default();
-        assert_eq!(s.stable_runs, 0);
-        assert_eq!(s.destructive_runs, 0);
-        assert_eq!(s.cfg_rebuilds, 0);
-        assert_eq!(s.link_register_edits, 0);
-        assert_eq!(s.tail_call_edits, 0);
-        assert_eq!(s.iterations, 0);
-        // G1-COMPLETE: new cache contract counters are also zeroed.
-        assert_eq!(s.pcode_insns_lifted, 0);
-        assert_eq!(s.regions_newly_lifted, 0);
-        assert_eq!(s.cache_evictions_on_split, 0);
-        // F4: trace defaults to None (zero-overhead-when-disabled).
-        assert!(s.trace.is_none());
-    }
-
     // ── Sleigh persistence: split-snapshot helpers ─────────────────────────
 
     #[test]
@@ -1463,11 +1117,8 @@ mod tests {
         )
         .build()
         .expect("cfg");
-        let evictions =
-            apply_split_invalidation(&mut cache, &snapshot, &new_cfg).expect("invalidation");
-        // Empty snapshot → no comparisons → no evictions, regardless of
-        // what's already in the cache.
-        assert_eq!(evictions, 0);
+        apply_split_invalidation(&mut cache, &snapshot, &new_cfg).expect("invalidation");
+        // Empty snapshot → no comparisons → cache untouched.
         assert_eq!(cache.len(), 1);
     }
 
@@ -1528,73 +1179,6 @@ mod tests {
         .build()
         .expect("cfg2");
         assert!(cfg2.graph.node_count() >= 1);
-    }
-
-    // ── F4: debug-trace data-type unit tests ───────────────────────────────
-
-    #[test]
-    fn iteration_snapshot_constructed_via_struct_literal_starts_empty() {
-        // Pin: a freshly-constructed `IterationSnapshot` (the shape the
-        // orchestrator emits at the top of each iteration) carries
-        // empty classification + edit lists and a clean rebuild flag.
-        let snap = IterationSnapshot {
-            iteration_index: 0,
-            unresolved_count_at_entry: 0,
-            classifications: Vec::new(),
-            edits_applied: Vec::new(),
-            cfg_rebuild_triggered: false,
-        };
-        assert_eq!(snap.iteration_index, 0);
-        assert_eq!(snap.unresolved_count_at_entry, 0);
-        assert!(snap.classifications.is_empty());
-        assert!(snap.edits_applied.is_empty());
-        assert!(!snap.cfg_rebuild_triggered);
-    }
-
-    #[test]
-    fn classification_outcome_resolved_round_trips_via_debug_format() {
-        // Pin: `ClassificationOutcome::Resolved` carries the inner
-        // `ResolvedTargets` and survives a round-trip through Clone +
-        // PartialEq.  Debug formatting confirms the variant name +
-        // payload are visible.
-        let outcome = ClassificationOutcome::Resolved(ResolvedTargets::Single(0x4000));
-        let cloned = outcome.clone();
-        assert_eq!(outcome, cloned);
-        let dbg = format!("{outcome:?}");
-        assert!(dbg.contains("Resolved"), "Debug must surface variant name; got {dbg:?}");
-        assert!(dbg.contains("Single"), "Debug must surface inner kind; got {dbg:?}");
-        assert!(dbg.contains("16384"), "Debug must surface inner addr; got {dbg:?}");
-    }
-
-    #[test]
-    fn edit_event_link_register_carries_addr() {
-        // Pin: `EditEvent::LinkRegister` records the placeholder's
-        // pcode address; equality compares structurally.
-        let addr = pcode_addr(0x1234);
-        let ev = EditEvent::LinkRegister { addr };
-        match &ev {
-            EditEvent::LinkRegister { addr: a } => assert_eq!(*a, addr),
-            other => panic!("expected LinkRegister, got {other:?}"),
-        }
-        assert_eq!(ev.clone(), ev);
-    }
-
-    #[test]
-    fn edit_event_tail_call_carries_addr_and_target() {
-        // Pin: `EditEvent::TailCall` records BOTH the placeholder's
-        // pcode address AND the tail-call target.  Both are needed for
-        // diagnostics (which placeholder fired, where it jumps).
-        let addr = pcode_addr(0x1234);
-        let target: u64 = 0x500;
-        let ev = EditEvent::TailCall { addr, target };
-        match &ev {
-            EditEvent::TailCall { addr: a, target: t } => {
-                assert_eq!(*a, addr);
-                assert_eq!(*t, target);
-            }
-            other => panic!("expected TailCall, got {other:?}"),
-        }
-        assert_eq!(ev.clone(), ev);
     }
 
     /// CORRECTNESS — H0 follow-up: `build_anchor_calling_context`'s
@@ -1675,7 +1259,6 @@ mod tests {
             rom: None,
             fn_max_size: None,
             allow_code_before_start_addr: false,
-            debug: None,
         };
 
         let ctx = build_anchor_calling_context(&mut graph, placeholder, &config, &cache);

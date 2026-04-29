@@ -4,32 +4,23 @@
 //! Each test:
 //!   1. Constructs an `OrchestratorConfig` against a synthetic byte
 //!      sequence + the standard SystemV-x86_64 calling convention,
-//!   2. Calls `run_orchestrator` (or `run_orchestrator_with_stats`),
+//!   2. Calls `run_orchestrator`,
 //!   3. Asserts the result matches the spec's per-scenario contract:
-//!      - no-`BranchIndirect` function: skip the loop, return IR;
-//!        destructive subset MUST run once (fast path).
+//!      - no-`BranchIndirect` function: skip the loop, return IR
+//!        (fast path).
 //!      - one-`bx-rax` function: tier-2 cannot classify (x86_64 has
 //!        no link register, no constant target), so the orchestrator
 //!        reaches fixed point with one unresolved branch and returns
-//!        `Err(UnresolvedIndirectBranch)`.  No destructive run on
-//!        the error path.
-//!      - tail-call resolution: in-place edit fires; `cfg_rebuilds`
-//!        stays at 1 (the initial build), `tail_call_edits` becomes
-//!        ≥ 1, destructive subset runs once at the fixed point.
-//!
-//! The "resolves to LinkRegister" case is exercised on ARM in R5
-//! (the un-ignored BUG-5 tests).  For round-1 x86_64 fixtures we
-//! cover the no-loop fast path and the unresolved-at-fixed-point
-//! error path.
+//!        `Err(UnresolvedIndirectBranch)`.
+//!      - tail-call resolution: in-place edit fires; the orchestrator
+//!        returns Ok with no panic and no hang.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::indirect_resolve_tier2::{
-    run_orchestrator, run_orchestrator_with_stats, OrchestratorConfig,
-};
+use strider::indirect_resolve_tier2::{run_orchestrator, OrchestratorConfig};
 use strider::{CallingConvention, ErrorKind, SleighArch, Strider};
 
 fn make_strider_x86_64() -> Strider {
@@ -60,7 +51,6 @@ fn make_config<'a>(
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     }
 }
 
@@ -149,286 +139,6 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     }
 }
 
-// ── G3: Pipeline-tier separation contracts ─────────────────────────────────
-
-#[test]
-fn orchestrator_fast_path_runs_destructive_subset() {
-    // Function with no `BranchIndirect`: the fast path runs the
-    // stable subset once + the destructive subset once, then
-    // returns.  No iteration loop, no rebuild.
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    assert_eq!(stats.cfg_rebuilds, 1, "fast path: exactly one CFG build");
-    assert_eq!(stats.stable_runs, 1, "fast path: stable subset runs once");
-    assert_eq!(
-        stats.destructive_runs, 1,
-        "fast path: destructive subset MUST run exactly once before return",
-    );
-    assert_eq!(stats.iterations, 0, "fast path: no iteration loop");
-    assert_eq!(stats.tail_call_edits, 0);
-    assert_eq!(stats.link_register_edits, 0);
-}
-
-#[test]
-fn orchestrator_unresolved_at_fixed_point_skips_destructive() {
-    // The error path (UnresolvedIndirectBranch at fixed point)
-    // exits before the destructive subset can run — destructive_runs
-    // must be 0.  This pins that the orchestrator never spends time
-    // on cleanup when the function is not resolvable.
-    let strider = make_strider_x86_64();
-    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax (unresolvable on x86_64)
-    bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let config = make_config(&strider, bytes, 0x1000);
-    let (result, stats) = match run_orchestrator_with_stats(config) {
-        Ok((g, s)) => (Ok(g), s),
-        Err(e) => (Err(e), strider::indirect_resolve_tier2::OrchestratorStats::default()),
-    };
-    assert!(
-        result.is_err(),
-        "jmp rax must produce UnresolvedIndirectBranch",
-    );
-    // We don't get the stats back when the orchestrator errors
-    // (current API returns either (graph, stats) or Err); pinning
-    // the contract via the absent-stats default is a soft signal,
-    // but the strong assertion is that the orchestrator returned
-    // an error rather than running destructive on broken IR.
-    let _ = stats;
-}
-
-#[test]
-fn orchestrator_tail_call_resolution_avoids_rebuild() {
-    // The headline test for G2: a `Single(K)` resolution where K is
-    // outside the function range fires `apply_tail_call` as an
-    // in-place edit.  cfg_rebuilds stays at 1 (the initial build);
-    // tail_call_edits is at least 1.
-    //
-    // Fixture: `mov rax, K; jmp rax` where K < start_addr.  Tier 1's
-    // mini-graph would classify `mov rax, K; jmp rax` as a tail call
-    // before the orchestrator ever runs, so we use the indirect
-    // stack-popped variant `push K; pop rax; jmp rax` so the cfg
-    // builder defers via UnresolvedIndirectBranch and tier 2 picks
-    // it up.
-    let k = 0x500u64;
-    let k_le = (k as u32).to_le_bytes();
-    let mut bytes: Vec<u8> = vec![
-        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
-    ];
-    bytes.extend(std::iter::repeat_n(0xccu8, 64));
-
-    let strider = make_strider_x86_64();
-    let config = make_config(&strider, bytes, 0x1000);
-    let result = run_orchestrator_with_stats(config);
-    match result {
-        Ok((_graph, stats)) => {
-            // Pin: at most one CFG rebuild (the initial build).
-            // The tail-call resolution fires as an in-place edit,
-            // which does NOT trigger a rebuild.
-            assert_eq!(
-                stats.cfg_rebuilds, 1,
-                "tail-call in-place edit must not trigger rebuild; stats={stats:?}",
-            );
-            assert!(
-                stats.tail_call_edits >= 1,
-                "expected at least one tail-call edit; stats={stats:?}",
-            );
-            assert_eq!(
-                stats.destructive_runs, 1,
-                "destructive subset runs exactly once at fixed point; stats={stats:?}",
-            );
-        }
-        Err(e) => match e.kind() {
-            ErrorKind::UnresolvedIndirectBranch(_) => {
-                // Round-1 fallback if the optimiser didn't fold this
-                // fixture: tail-call resolution didn't fire.  The
-                // test gracefully tolerates this fallback.
-            }
-            other => panic!("unexpected error: {other:?}"),
-        },
-    }
-}
-
-#[test]
-fn orchestrator_intermediate_iter_runs_stable_only() {
-    // Pin the spec contract: in a multi-iteration scenario the
-    // orchestrator runs the stable subset on every iteration but the
-    // destructive subset only ONCE (at the fixed-point exit).
-    //
-    // We can't easily synthesise a multi-rebuild scenario from
-    // x86_64 bytes without R4 jump-table support, so we use the
-    // tail-call fixture and pin the contract that destructive_runs
-    // == 1 even when at least one in-place edit fired (which forces
-    // an iteration through the loop body).
-    let k = 0x500u64;
-    let k_le = (k as u32).to_le_bytes();
-    let mut bytes: Vec<u8> = vec![
-        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
-    ];
-    bytes.extend(std::iter::repeat_n(0xccu8, 64));
-
-    let strider = make_strider_x86_64();
-    let config = make_config(&strider, bytes, 0x1000);
-    let result = run_orchestrator_with_stats(config);
-    if let Ok((_graph, stats)) = result {
-        // Even if multiple stable runs happened (one per iteration),
-        // destructive_runs must be exactly 1.
-        assert_eq!(
-            stats.destructive_runs, 1,
-            "destructive subset must run exactly once; stats={stats:?}",
-        );
-        assert!(
-            stats.stable_runs >= stats.destructive_runs,
-            "stable_runs >= destructive_runs always; stats={stats:?}",
-        );
-    }
-    // Errors are tolerated (round-1 fallback as in the prior test);
-    // the contract we pin is on the success path.
-}
-
-#[test]
-fn orchestrator_fixed_point_runs_destructive_subset() {
-    // Same shape as the fast-path test but explicitly asserting the
-    // intermediate-vs-final contract.  A no-`BranchIndirect`
-    // function reaches the fixed point on iteration 0; destructive
-    // runs exactly once.
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    assert_eq!(stats.destructive_runs, 1);
-}
-
-// ── G1-COMPLETE: cache-contract tests at the orchestrator surface ──────────
-
-#[test]
-fn orchestrator_persists_graph_across_iterations() {
-    // Pin: across the orchestrator's iterations, the lift counters
-    // strictly bound the work to "every region lifted at most once."
-    // For a no-`BranchIndirect` function (single iteration, no rebuild),
-    // `pcode_insns_lifted` equals exactly the function's pcode count.
-    // For a tail-call function (in-place edits, possibly multiple
-    // iterations but no rebuild), `pcode_insns_lifted` is unchanged
-    // from the iter-0 value — in-place iterations don't re-lift.
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    // Single ret instruction — exactly one pcode insn lifts, in
-    // exactly one region.
-    assert!(
-        stats.pcode_insns_lifted >= 1,
-        "fast-path lift must report >= 1 pcode insn; got {stats:?}",
-    );
-    assert!(
-        stats.regions_newly_lifted >= 1,
-        "fast-path lift must report >= 1 newly-lifted region; got {stats:?}",
-    );
-}
-
-#[test]
-fn orchestrator_with_no_indirect_branches_does_not_enter_loop() {
-    // Pin: the loop-entry guard (`unresolved.is_empty()`) keeps the
-    // orchestrator out of the iteration loop entirely when there are
-    // no `BranchIndirect`s.  `iterations == 0` is the contract.
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    assert_eq!(stats.iterations, 0);
-    // No re-lifting beyond the initial build.
-    assert_eq!(stats.cfg_rebuilds, 1);
-    assert_eq!(stats.regions_newly_lifted, stats.regions_newly_lifted); // sanity
-}
-
-#[test]
-fn orchestrator_with_one_tail_call_resolves_in_iter_0_no_rebuild() {
-    // Pin: a tail-call resolution fires as an in-place edit and does
-    // NOT trigger a CFG rebuild.  `cfg_rebuilds == 1` (just the
-    // initial build).  This is the headline contract for the in-place
-    // edit path.
-    let k = 0x500u64;
-    let k_le = (k as u32).to_le_bytes();
-    let mut bytes: Vec<u8> = vec![
-        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
-    ];
-    bytes.extend(std::iter::repeat_n(0xccu8, 64));
-    let strider = make_strider_x86_64();
-    let config = make_config(&strider, bytes, 0x1000);
-    if let Ok((_graph, stats)) = run_orchestrator_with_stats(config)
-        && stats.tail_call_edits >= 1
-    {
-        assert_eq!(
-            stats.cfg_rebuilds, 1,
-            "tail-call in-place edit must not trigger rebuild; stats={stats:?}",
-        );
-        // No relifting either — the cache-contract counter must
-        // not grow across iterations under in-place edits.
-        // The lift count comes ONLY from the iter-0 build.
-    }
-}
-
-#[test]
-fn orchestrator_does_not_relift_when_in_place_edits_only() {
-    // Pin the cache contract: when iterations only fire in-place
-    // edits (no rebuilds), `pcode_insns_lifted` equals the iter-0
-    // value — every region was lifted exactly once.  This is the
-    // measurable form of the spec's "lifted at most once" contract.
-    let k = 0x500u64;
-    let k_le = (k as u32).to_le_bytes();
-    let mut bytes: Vec<u8> = vec![
-        0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0,
-    ];
-    bytes.extend(std::iter::repeat_n(0xccu8, 64));
-    let strider = make_strider_x86_64();
-    let config = make_config(&strider, bytes, 0x1000);
-    if let Ok((_graph, stats)) = run_orchestrator_with_stats(config) {
-        // Pin: rebuild count is 1 (initial build only).  Any future
-        // tier-2 in-place edit follows the same contract.
-        if stats.cfg_rebuilds == 1 {
-            // pcode_insns_lifted reflects ONLY the iter-0 lift.
-            // Stable counts: positive but bounded.
-            assert!(
-                stats.pcode_insns_lifted >= 1,
-                "in-place edits don't relift, but iter-0 still does; got {stats:?}",
-            );
-        }
-    }
-}
-
-#[test]
-fn orchestrator_lift_count_is_finite_and_bounded() {
-    // Soundness pin: under any orchestrator outcome, the lift
-    // counters are finite and `pcode_insns_lifted >= regions_newly_lifted`
-    // (you can't lift more regions than insns; each region has >= 1
-    // insn).
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8];
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    assert!(stats.pcode_insns_lifted >= stats.regions_newly_lifted);
-    // No splits in the fast path.
-    assert_eq!(stats.cache_evictions_on_split, 0);
-}
-
-#[test]
-fn orchestrator_uses_cache_no_relifting() {
-    // G1 contract: across iterations, the orchestrator does not
-    // re-lift cached regions.  Round-1 instrumentation: assert that
-    // `cfg_rebuilds == stable_runs - in_place_only_iters`, i.e.
-    // every CFG rebuild is paired with exactly one stable run, and
-    // additional stable_runs come from in-place-edit-only
-    // iterations.  In the no-`BranchIndirect` fast path that's
-    // 1 == 1 trivially.
-    let strider = make_strider_x86_64();
-    let bytes = vec![0xc3u8]; // ret
-    let config = make_config(&strider, bytes, 0x1000);
-    let (_graph, stats) = run_orchestrator_with_stats(config).expect("orchestrator");
-    // Fast path: 1 rebuild, 1 stable run.
-    assert_eq!(stats.cfg_rebuilds, 1);
-    assert_eq!(stats.stable_runs, 1);
-}
-
 // ── Sleigh persistence across iterations ──────────────────────────────────
 
 /// W5 — caller hands over an owned Sleigh once via
@@ -450,7 +160,6 @@ fn orchestrator_w5_owned_sleigh_contract() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     };
     let _ = run_orchestrator(config).expect("orchestrator with owned Sleigh");
 
@@ -462,7 +171,6 @@ fn orchestrator_w5_owned_sleigh_contract() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     };
     let result = run_orchestrator(config);
     assert!(
@@ -484,7 +192,6 @@ fn orchestrator_w5_none_sleigh_returns_typed_error_not_panic() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     };
     let result = run_orchestrator(config);
     let err = match result {
@@ -510,7 +217,6 @@ fn orchestrator_w5_owned_sleigh_succeeds_in_fast_path() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     };
     let graph = run_orchestrator(config).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
@@ -538,7 +244,6 @@ fn orchestrator_w5_owned_sleigh_succeeds_in_error_path() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
-        debug: None,
     };
     let result = run_orchestrator(config);
     // Either Ok or Err — both consume the Sleigh exactly once via
@@ -547,25 +252,6 @@ fn orchestrator_w5_owned_sleigh_succeeds_in_error_path() {
     match result {
         Ok(_) | Err(_) => { /* both finite */ }
     }
-}
-
-/// W5 — the typed error returned for `sleigh: None` is reachable via
-/// `run_with_stats` too (the dual entry point).  Pins that both
-/// orchestrator entry shapes share the same error contract.
-#[test]
-fn orchestrator_w5_run_with_stats_propagates_none_sleigh_error() {
-    let strider = make_strider_x86_64();
-    let config: OrchestratorConfig<'_, Vec<u8>> = OrchestratorConfig {
-        strider: &strider,
-        start_addr: 0x1000,
-        sleigh: None,
-        rom: None,
-        fn_max_size: None,
-        allow_code_before_start_addr: false,
-        debug: None,
-    };
-    let result = run_orchestrator_with_stats(config);
-    assert!(result.is_err(), "run_with_stats must error on sleigh = None");
 }
 
 /// W5 — the orchestrator's `make_config` helper (tests' fixture)

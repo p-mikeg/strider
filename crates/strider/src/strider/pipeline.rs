@@ -69,17 +69,10 @@ pub struct AnalyzeOutcome {
 }
 
 /// W10 — single-line summary of an [`AnalyzeOutcome`] for diagnostics
-/// ("why didn't tier 2 resolve X?").  Pairs naturally with F4's debug-
-/// config story: when a user runs the orchestrator and inspects the
-/// outcome, formatting the outcome with `{}` gives a quick readout of
-/// the data the outcome actually carries — unresolved-branch count and
-/// per-region handle count.
-///
-/// Iteration and cfg-rebuild counts live on
-/// [`crate::indirect_resolve_tier2::OrchestratorStats`], not on
-/// `AnalyzeOutcome` (the outcome is the lift result, not the
-/// orchestrator's bookkeeping).  Format `OrchestratorStats` directly
-/// to surface those counters.
+/// ("why didn't tier 2 resolve X?").  When a user runs the orchestrator
+/// and inspects the outcome, formatting the outcome with `{}` gives a
+/// quick readout of the data the outcome actually carries — unresolved-
+/// branch count and per-region handle count.
 impl std::fmt::Display for AnalyzeOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
