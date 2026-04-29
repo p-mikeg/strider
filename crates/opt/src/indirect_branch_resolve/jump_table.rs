@@ -306,7 +306,8 @@ pub fn bound_via_predecessor_if(
     let control_in = *graph.node_inputs(return_node).get(0)?;
 
     let mut visited: HashSet<NodeId> = HashSet::new();
-    walk_control_for_if_bound(fg, control_in, idx_output, &mut visited)
+    let mut trail: Vec<NodeId> = Vec::new();
+    walk_control_for_if_bound(fg, control_in, idx_output, &mut visited, &mut trail)
 }
 
 /// Locates the (single) Return node that consumes `anchor_output` —
@@ -335,6 +336,7 @@ fn walk_control_for_if_bound(
     control_out: NodeOutputId,
     idx_output: NodeOutputId,
     visited: &mut HashSet<NodeId>,
+    trail: &mut Vec<NodeId>,
 ) -> Option<u64> {
     let graph = &fg.graph;
     let producer = graph.get_node_from_output(control_out);
@@ -344,6 +346,7 @@ fn walk_control_for_if_bound(
         // the loop entry doesn't hold inside the body.  Fail closed.
         return None;
     }
+    trail.push(producer);
 
     match graph.node_kind(producer) {
         // If's outputs: [true_control, false_control].
@@ -367,7 +370,7 @@ fn walk_control_for_if_bound(
             if let Some(b) = bound_from_if_condition(fg, cond_out, idx_output, on_true) {
                 return Some(b);
             }
-            walk_control_for_if_bound(fg, if_inputs[0], idx_output, visited)
+            walk_control_for_if_bound(fg, if_inputs[0], idx_output, visited, trail)
         }
         // ControlState merges multiple predecessors — every
         // predecessor's path must independently prove the bound, and
@@ -383,14 +386,16 @@ fn walk_control_for_if_bound(
             }
             let mut combined: u64 = 0;
             for &pred in &inputs {
-                // Clone visited so cycles in one predecessor's
-                // sub-walk don't poison the others.  Without this,
-                // a back-edge from one predecessor would mark the
-                // whole join unreachable for every later
-                // predecessor.
-                let mut local = visited.clone();
-                let bound = walk_control_for_if_bound(fg, pred, idx_output, &mut local)?;
-                combined = combined.max(bound);
+                // Save trail length so we can drop the predecessor's
+                // visited additions on return — without this rollback,
+                // a back-edge in one predecessor's sub-walk would mark
+                // the whole join unreachable for every later predecessor.
+                let mark = trail.len();
+                let bound = walk_control_for_if_bound(fg, pred, idx_output, visited, trail);
+                for n in trail.drain(mark..) {
+                    visited.remove(&n);
+                }
+                combined = combined.max(bound?);
             }
             Some(combined)
         }
@@ -409,7 +414,7 @@ fn walk_control_for_if_bound(
             if !graph.output_kind(first).is_control() {
                 return None;
             }
-            walk_control_for_if_bound(fg, first, idx_output, visited)
+            walk_control_for_if_bound(fg, first, idx_output, visited, trail)
         }
     }
 }
