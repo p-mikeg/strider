@@ -148,20 +148,31 @@ enum ResolveShape {
     },
 }
 
-/// Read-only walk of the memory chain backward from `mem` looking for a
-/// provable source of the bytes `[offset, offset + load_size)` at type
-/// `load_ty`.  Mirrors the structure of the previous `resolve` but does
-/// not touch `fg.graph`; on success, returns a [`ResolveShape`] tree that
-/// [`realize`] can turn into IR nodes.  Returns `None` if forwarding
-/// cannot be proven.
+/// Iterative read-only walk of the memory chain backward from `mem`
+/// looking for a provable source of the bytes
+/// `[offset, offset + load_size)` at type `load_ty`.  Mirrors the
+/// structure of the previous recursive `probe` but is stack-safe at
+/// any memory-chain depth (a long sequence of disjoint StackStores
+/// or non-aliasing Stores no longer burns one stack frame per node).
+///
+/// **Frame model:**
+/// * Linear walks (StackStore offset-disjoint, Store passthrough) are
+///   a tight inner loop with zero heap allocation.
+/// * MemPhi (the only multi-pred case) pushes a continuation frame
+///   storing the partial `collected: Vec<ResolveShape>`; after each
+///   predecessor's sub-walk returns a result, the continuation
+///   pushes it into `collected` and either chains the next pred or
+///   assembles the final `ResolveShape::Phi`.
+///
+/// Returns `None` if forwarding cannot be proven.
 // Eight arguments are the minimum needed to thread cycle-guards, the SP
-// decomposition memo, and the search-target byte range through a recursive
-// memory-chain probe; bundling them into a context struct would just add
-// indirection without clarifying the call sites.
+// decomposition memo, and the search-target byte range through the probe;
+// bundling them into a context struct would just add indirection without
+// clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
     fg: &BuiltFunctionGraph,
-    mem: NodeOutputId,
+    initial_mem: NodeOutputId,
     offset: i64,
     load_size: i64,
     load_ty: ir::node::NodeOutputType,
@@ -169,73 +180,132 @@ fn probe(
     memo: &mut SpExprMemo,
     visited: &mut rustc_hash::FxHashSet<NodeOutputId>,
 ) -> Option<ResolveShape> {
-    let node = fg.graph.get_node_from_output(mem);
-    match *fg.graph.node_kind(node) {
-        NodeKind::StackStore {
-            offset: k,
-            space: _,
-        } => {
-            // StackStore inputs: [MEM, SP, DATA].
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() < 3 {
-                return None;
-            }
-            let data = inputs[2];
-            let data_ty = fg.graph.output_kind(data).as_value()?;
-            let store_size = data_ty.byte_size() as i64;
-            if k == offset {
-                if data_ty == load_ty {
-                    Some(ResolveShape::Existing(data))
-                } else if data_ty.is_integer()
-                    && load_ty.is_integer()
-                    && load_ty.byte_size() < data_ty.byte_size()
-                {
-                    Some(ResolveShape::Narrow { data, data_ty })
-                } else {
-                    None
+    struct PhiFrame {
+        phi_node: NodeId,
+        phi_token: NodeOutputId,
+        // Number of mem-predecessor slots; mem preds are at slots
+        // 1..total_preds + 1 of `phi_node`'s inputs (slot 0 is the phi token).
+        total_preds: usize,
+        // Number of preds whose results are already in `collected`.
+        // Equivalently the index of the next mem-pred slot to process,
+        // offset by one (so the slot to read is `done_count + 1`).
+        done_count: usize,
+        collected: Vec<ResolveShape>,
+    }
+
+    let mut work: Vec<PhiFrame> = Vec::new();
+    let mut mem = initial_mem;
+
+    'outer: loop {
+        // Linear walk inside one path — no heap allocation on any
+        // chain of disjoint StackStores or non-aliasing Stores.
+        let inner_result: Option<ResolveShape> = loop {
+            let node = fg.graph.get_node_from_output(mem);
+            match *fg.graph.node_kind(node) {
+                NodeKind::StackStore {
+                    offset: k,
+                    space: _,
+                } => {
+                    let inputs = fg.graph.node_inputs(node);
+                    if inputs.len() < 3 {
+                        break None;
+                    }
+                    let data = inputs[2];
+                    let Some(data_ty) = fg.graph.output_kind(data).as_value() else {
+                        break None;
+                    };
+                    let store_size = data_ty.byte_size() as i64;
+                    if k == offset {
+                        if data_ty == load_ty {
+                            break Some(ResolveShape::Existing(data));
+                        } else if data_ty.is_integer()
+                            && load_ty.is_integer()
+                            && load_ty.byte_size() < data_ty.byte_size()
+                        {
+                            break Some(ResolveShape::Narrow { data, data_ty });
+                        } else {
+                            break None;
+                        }
+                    } else if ranges_disjoint(k, store_size, offset, load_size) {
+                        mem = inputs[0];
+                        continue;
+                    } else {
+                        break None;
+                    }
                 }
-            } else if ranges_disjoint(k, store_size, offset, load_size) {
-                let prev_mem = inputs[0];
-                probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
-            } else {
-                None
+                NodeKind::Store(_) => {
+                    match step_through_store(&fg.graph, node, sp_vn, memo, offset, load_size) {
+                        AliasStep::MayAlias => break None,
+                        AliasStep::PassThrough { prev_mem } => {
+                            mem = prev_mem;
+                            continue;
+                        }
+                    }
+                }
+                NodeKind::MemPhi => {
+                    // Cycle guard: loop-header MemPhis feed their own
+                    // region indirectly.  Guard only at MemPhi
+                    // boundaries — other memory nodes walk backward to
+                    // strictly earlier producers and cannot cycle on
+                    // their own.
+                    if !visited.insert(mem) {
+                        break None;
+                    }
+                    // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
+                    let inputs = fg.graph.node_inputs(node);
+                    if inputs.len() < 2 {
+                        break None;
+                    }
+                    let phi_token = inputs[0];
+                    let total_preds = inputs.len() - 1;
+                    let first_pred = inputs[1];
+                    work.push(PhiFrame {
+                        phi_node: node,
+                        phi_token,
+                        total_preds,
+                        done_count: 0,
+                        collected: Vec::with_capacity(total_preds),
+                    });
+                    mem = first_pred;
+                    continue;
+                }
+                _ => break None,
             }
+        };
+
+        // Feed the inner result to the topmost PhiFrame, if any.
+        let mut last_result = inner_result;
+        loop {
+            let Some(top) = work.last_mut() else {
+                return last_result;
+            };
+            let Some(shape) = last_result else {
+                // This MemPhi fails closed; pop and propagate.
+                work.pop();
+                last_result = None;
+                continue;
+            };
+            top.collected.push(shape);
+            top.done_count += 1;
+            if top.done_count >= top.total_preds {
+                // All preds collected; assemble the Phi shape.
+                let frame = work.pop().expect("just-checked top frame");
+                last_result = Some(ResolveShape::Phi {
+                    phi_token: frame.phi_token,
+                    preds: frame.collected,
+                });
+                continue;
+            }
+            // Schedule the next pred.  Re-fetch inputs from the
+            // graph (cheap, slice access) rather than caching the
+            // pred list on the frame — saves a Vec allocation per
+            // MemPhi.
+            let next_slot = top.done_count + 1;
+            let phi_inputs = fg.graph.node_inputs(top.phi_node);
+            let next_mem = phi_inputs[next_slot];
+            mem = next_mem;
+            continue 'outer;
         }
-        // cause #2 also affects this pass: a non-aliasing `Store`
-        // (a write to global / heap memory, which `StackStoreDetect`
-        // didn't rewrite to `StackStore` because its address didn't
-        // resolve to `sp + K`) on the memory chain previously
-        // terminated forwarding.  Mirror `CallStackArgCollect`'s
-        // resilience: probe the address via the shared
-        // `step_through_store` and walk if non-aliasing.
-        NodeKind::Store(_) => match step_through_store(&fg.graph, node, sp_vn, memo, offset, load_size) {
-            AliasStep::MayAlias => None,
-            AliasStep::PassThrough { prev_mem } => {
-                probe(fg, prev_mem, offset, load_size, load_ty, sp_vn, memo, visited)
-            }
-        },
-        NodeKind::MemPhi => {
-            // Cycle guard: loop-header MemPhis feed their own region
-            // indirectly.  Guard only at MemPhi boundaries — other memory
-            // nodes walk backward to strictly earlier producers and cannot
-            // cycle on their own, and guarding them would prevent sibling
-            // branches from re-reaching a shared upstream node.
-            if !visited.insert(mem) {
-                return None;
-            }
-            // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-            let inputs = fg.graph.node_inputs(node);
-            if inputs.len() < 2 {
-                return None;
-            }
-            let phi_token = inputs[0];
-            let mut preds: Vec<ResolveShape> = Vec::with_capacity(inputs.len() - 1);
-            for pred_mem in inputs.into_iter().skip(1) {
-                preds.push(probe(fg, pred_mem, offset, load_size, load_ty, sp_vn, memo, visited)?);
-            }
-            Some(ResolveShape::Phi { phi_token, preds })
-        }
-        _ => None,
     }
 }
 

@@ -36,6 +36,65 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -
 
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
 /// and the return sources from the stored constant.
+/// Stress test for the iterative `probe`: a long chain of disjoint
+/// StackStores between an early store and a load that targets it.
+/// The recursive version this replaces would burn one stack frame
+/// per StackStore in the chain — pathological input would
+/// stack-overflow.  The iterative worklist must complete on any
+/// chain depth.
+#[test]
+fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    const CHAIN_LEN: usize = 500;
+
+    let sp = sp32_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Store 0x99 at sp+0 first (the value we'll forward to).
+        let zero = b.build_int_const(0u64, NodeOutputType::U32)?;
+        let target_addr = b.build_int_binary_operation(
+            sp_val, zero, IntBinaryOp::Add, NodeOutputType::U32,
+        )?;
+        let target_val = b.build_int_const(0x99u64, NodeOutputType::U32)?;
+        b.build_store(target_addr, target_val, rsleigh::VnSpace::RAM)?;
+
+        // CHAIN_LEN disjoint stores at increasing offsets.  Each is
+        // a fresh StackStore in the memory chain that the probe must
+        // walk past to reach the target store.
+        for i in 1..=CHAIN_LEN {
+            let off = b.build_int_const(((i * 4) as u64) + 8, NodeOutputType::U32)?;
+            let addr = b.build_int_binary_operation(
+                sp_val, off, IntBinaryOp::Add, NodeOutputType::U32,
+            )?;
+            let val = b.build_int_const(i as u64, NodeOutputType::U32)?;
+            b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        }
+
+        // Load from sp+0 — this drives `probe` backward through every
+        // store in the chain.  After forwarding, the load and the
+        // intermediate stores at irrelevant offsets should still exist
+        // (they're side-effecting writes), but the load itself must
+        // disappear.
+        let loaded = b.build_load(target_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add(StackLoadForward::new(sp, Endianness::Little));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let reachable_loads = reachable_count(&fg, |k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 0,
+        "Load at sp+0 must forward past all {CHAIN_LEN} disjoint stack stores"
+    );
+    Ok(())
+}
+
 #[test]
 fn forward_basic() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
