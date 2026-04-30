@@ -48,7 +48,7 @@ fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u64>)
     }
     // Pad with int3 so any speculative look-ahead past the last
     // ret doesn't fault the BufMemReader.  16 bytes is overkill
-    // for the tests but matches the fixture pattern in tier2_helpers.
+    // for the tests but matches the fixture pattern in indirect_resolve_helpers.
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let branch_indirect_addr = base; // first pcode insn at the entry
     (bytes, base, branch_indirect_addr, target_addrs)

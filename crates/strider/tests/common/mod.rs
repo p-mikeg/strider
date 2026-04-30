@@ -31,7 +31,7 @@ use std::path::PathBuf;
 // integration tests in `tests/tier2_classify.rs`.  Kept as a sub-module
 // so the rest of the per-arch fixture infrastructure above remains
 // unchanged.
-pub mod tier2_helpers;
+pub mod indirect_resolve_helpers;
 
 // ── Architecture enum ────────────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@
 //! [`ir::FunctionBuilder::new_raw`] (and `graph.create_node` for
 //! shapes the validator otherwise rejects), then invokes the
 //! piece-under-test in isolation.  Helpers are scoped to the
-//! module rather than promoted to `tier2_helpers.rs` so the
+//! module rather than promoted to `indirect_resolve_helpers.rs` so the
 //! unit tests stay self-contained.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]

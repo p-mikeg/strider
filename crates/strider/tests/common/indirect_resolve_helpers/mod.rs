@@ -21,7 +21,7 @@
 pub mod classify;
 pub mod orchestrator;
 
-// Each integration test compiles `common::tier2_helpers` independently
+// Each integration test compiles `common::indirect_resolve_helpers` independently
 // and uses only a subset of these helpers, so per-test the unused
 // re-exports look "unused".  `#[allow(unused_imports)]` silences the
 // per-test compile noise; the underlying definitions in the

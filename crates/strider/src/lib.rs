@@ -35,7 +35,7 @@
 
 mod orchestrator;
 mod strider;
-pub mod indirect_resolve_tier2;
+pub mod indirect_resolve;
 pub mod rewrite;
 
 pub use orchestrator::{run, RunConfig};

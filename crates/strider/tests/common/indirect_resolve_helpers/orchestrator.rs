@@ -1,7 +1,7 @@
 //! Shared end-to-end pipeline runners + placeholder-anchor finders for the
 //! tier-2 fixture builders.
 //!
-//! Split out from the previous monolithic `tier2_helpers.rs` (W7) so each
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7) so each
 //! sub-module imports only the helpers it actually needs.  This module owns
 //! the lift-and-optimise harness used by every classify / inplace / cache
 //! fixture; it does not build any specific scenario itself.

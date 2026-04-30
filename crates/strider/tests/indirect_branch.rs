@@ -167,7 +167,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         }
         let mut any_resolved = false;
         for live in &live_anchors {
-            let resolved = strider::indirect_resolve_tier2::classify_anchor_with_rom_and_sp(
+            let resolved = strider::indirect_resolve::classify_anchor_with_rom_and_sp(
                 &graph.graph,
                 *live,
                 lr_vn,

@@ -1,12 +1,12 @@
-//! Integration tests for [`strider::indirect_resolve_tier2::inplace`].
+//! Integration tests for [`strider::indirect_resolve::inplace`].
 //!
 //! Drives the in-place editors against full strider lifts (not the
 //! unit-test scaffold in `inplace.rs::tests`).  Asserts that the
 //! placeholder Return is mutated correctly, the use-list stays
 //! consistent, and `ir::validate::validate` keeps passing post-edit.
 //!
-//! The fixtures use the existing tier-2 helper at
-//! `tests/common/tier2_helpers.rs` (which lifts an x86_64 byte
+//! The fixtures use the existing helper at
+//! `tests/common/indirect_resolve_helpers.rs` (which lifts an x86_64 byte
 //! sequence + runs the strider optimiser pipeline).  `apply_tail_call`
 //! is round-2 work; tests here only pin its current "returns
 //! Unimplemented" contract.
@@ -14,10 +14,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
-use common::tier2_helpers::build_initial_var_target_scenario_x86_64;
+use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use ir::node::{NodeId, NodeKind};
-use strider::indirect_resolve_tier2::{apply_link_register, apply_tail_call};
+use strider::indirect_resolve::{apply_link_register, apply_tail_call};
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
@@ -224,7 +224,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     }
 }
 
-// ── H0: ABI threading for tier-2 in-place tail-call resolution ───────────
+// ── H0: ABI threading for in-place tail-call resolution ─────────────────
 
 /// Drive a real strider lift to produce a placeholder Return, run
 /// `apply_tail_call` with non-empty `arg_passing_outputs` /
@@ -240,10 +240,10 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 ///
 /// **Post-H0:** with the convention threaded, the Call has arg slot 0
 /// and the pattern query matches.  This is the load-bearing claim of
-/// H0: pattern queries against tier-2-resolved indirect Calls now
+/// H0: pattern queries against resolved indirect Calls now
 /// work.
 #[test]
-fn tier2_apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
+fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use pattern::{any, call, IntoPat, Matcher, Capture};
 

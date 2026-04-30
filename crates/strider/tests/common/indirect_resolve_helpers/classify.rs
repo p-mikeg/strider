@@ -1,6 +1,6 @@
 //! Fixture builders feeding the tier-2 *classifier* unit / integration tests.
 //!
-//! Split out from the previous monolithic `tier2_helpers.rs` (W7).  Every
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7).  Every
 //! helper here builds a `BuiltFunctionGraph` whose unique placeholder
 //! Return's value-input is shaped to exercise one specific classifier arm
 //! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).

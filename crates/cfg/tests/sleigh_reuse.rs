@@ -4,7 +4,7 @@
 //! multiple [`Builder::build`] calls.
 //!
 //! These tests guard the contract relied on by
-//! [`strider::indirect_resolve_tier2::orchestrator`] which threads the
+//! [`strider::indirect_resolve::orchestrator`] which threads the
 //! Sleigh from one iteration's [`Cfg::sleigh`] into the next iteration's
 //! [`Builder::with_endianness`].  Re-using the Sleigh across builds is
 //! the entire point — re-constructing it would re-load the SLA spec.

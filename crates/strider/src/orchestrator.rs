@@ -10,7 +10,7 @@
 //! 2. Lift the CFG to IR via [`Strider::analyze_cfg`].
 //! 3. Run the **stable** optimiser subset
 //!    ([`Strider::build_stable_optimizer_pipeline`]).
-//! 4. For each unresolved anchor, run [`indirect_resolve_tier2::classify_anchor_with_rom_and_sp`].
+//! 4. For each unresolved anchor, run [`indirect_resolve::classify_anchor_with_rom_and_sp`].
 //! 5. Apply in-place IR edits for terminal classifications:
 //!    [`opt::apply_link_register`] for `LinkRegister`,
 //!    [`opt::apply_tail_call`] for `Single(K)` where `K` is outside
@@ -47,7 +47,7 @@ use cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use ir::node::{NodeId, NodeOutputId};
 use opt::ReadOnlyMemory;
 
-use crate::indirect_resolve_tier2::{
+use crate::indirect_resolve::{
     apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp,
 };
 use crate::strider::Strider;

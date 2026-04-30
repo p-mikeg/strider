@@ -23,7 +23,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod common;
-use common::tier2_helpers::build_initial_var_target_scenario_x86_64;
+use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use opt::{destructive_default_pipeline, stable_default_pipeline};
 
@@ -123,7 +123,7 @@ fn tier_2_classification_robust_to_destructive_subset() {
     // same `Option<ResolvedTargets>` — the spec's "Tier 2's
     // classification is robust to whether the destructive subset
     // has run" guarantee.
-    use strider::indirect_resolve_tier2::classify_anchor;
+    use strider::indirect_resolve::classify_anchor;
 
     let (graph_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
     let (graph_full, anchor_full) = build_initial_var_target_scenario_x86_64();

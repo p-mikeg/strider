@@ -1,10 +1,10 @@
-//! Integration tests for [`strider::indirect_resolve_tier2::classify_anchor`].
+//! Integration tests for [`strider::indirect_resolve::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
 //! to IR via `Strider::analyze_cfg_with_unresolved`, runs the strider
 //! optimiser pipeline, then calls `classify_anchor` on the placeholder
 //! anchor that was recorded at lift time.  The fixture builders live
-//! in `common::tier2_helpers`.
+//! in `common::indirect_resolve_helpers`.
 //!
 //! These tests exercise the classifier end-to-end against optimised IR
 //! — i.e. the exact graph shapes the orchestrator (R3) will hand to
@@ -14,9 +14,9 @@
 
 mod common;
 
-use strider::indirect_resolve_tier2::{ResolvedTargets, classify_anchor};
+use strider::indirect_resolve::{ResolvedTargets, classify_anchor};
 
-use common::tier2_helpers::{
+use common::indirect_resolve_helpers::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
     build_int_const_target_scenario_via_stack, build_pop_pc_via_stack_load_forward_scenario,
     build_push_target_pop_pc_scenario, build_value_phi_target_scenario,
@@ -34,7 +34,7 @@ use common::tier2_helpers::{
 /// the load back to the pushed constant K.  The classifier then
 /// sees `IntConst(K)` and returns `Single(K)`.
 #[test]
-fn tier_2_int_const_to_single() {
+fn int_const_to_single() {
     let (graph, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
     let result = classify_anchor(&graph, anchor, /* link_register */ None);
     assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
@@ -46,7 +46,7 @@ fn tier_2_int_const_to_single() {
 /// placeholder Return whose value-input is `InitialVar(lr_vn)` —
 /// exactly the shape the classifier's LinkRegister arm matches.
 #[test]
-fn tier_2_initial_var_lr_to_link_register() {
+fn initial_var_lr_to_link_register() {
     let (graph, anchor, lr_vn) = build_bx_lr_scenario();
     let result = classify_anchor(&graph, anchor, Some(lr_vn));
     assert_eq!(result, Some(ResolvedTargets::LinkRegister));
@@ -58,7 +58,7 @@ fn tier_2_initial_var_lr_to_link_register() {
 /// a link register is supplied.  Uses x86_64 `jmp *rax` with no LR
 /// configured — `InitialVar(rax)`'s VN cannot equal a `None` lr.
 #[test]
-fn tier_2_initial_var_non_lr_returns_none() {
+fn initial_var_non_lr_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
     // No link register on x86_64; the classifier must not classify
     // `InitialVar(rax)` as LinkRegister.
@@ -76,7 +76,7 @@ fn tier_2_initial_var_non_lr_returns_none() {
 /// `ValuePhi` whose value inputs are exactly the two stored
 /// constants — the producer-shape this arm classifies.
 #[test]
-fn tier_2_phi_of_int_consts_to_multiple() {
+fn phi_of_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
     let result = classify_anchor(&graph, anchor, None);
     match result {
@@ -95,7 +95,7 @@ fn tier_2_phi_of_int_consts_to_multiple() {
 /// distinct constants.  Verifies the `Multiple` arm doesn't truncate
 /// or duplicate at higher arity.
 #[test]
-fn tier_2_phi_of_three_int_consts_to_multiple() {
+fn phi_of_three_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
     let result = classify_anchor(&graph, anchor, None);
     match result {
@@ -126,7 +126,7 @@ fn tier_2_phi_of_three_int_consts_to_multiple() {
 /// "Why this is sound across iterations" + "Tier 2 — post-IR resolver"
 /// for the full argument.
 #[test]
-fn tier_2_pop_pc_resolves_via_stack_load_forward_to_link_register() {
+fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     let (graph, anchor, lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
     let result = classify_anchor(&graph, anchor, Some(lr_vn));
     assert_eq!(
@@ -155,7 +155,7 @@ fn tier_2_pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
 /// "Tier 2 — post-IR resolver" for the soundness rules.
 #[test]
-fn tier_2_push_target_pop_pc_does_not_resolve_to_link_register() {
+fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
     let (graph, anchor, lr_vn) = build_push_target_pop_pc_scenario(target);
     let result = classify_anchor(&graph, anchor, Some(lr_vn));
@@ -174,16 +174,16 @@ fn tier_2_push_target_pop_pc_does_not_resolve_to_link_register() {
 }
 
 /// Spec test #15: opaque target produces `None`/Unresolved (no
-/// error inside tier 2).  The orchestrator (R3) is responsible for
+/// error inside the resolver).  The orchestrator (R3) is responsible for
 /// surfacing `UnresolvedIndirectBranch` at fixed point if every
 /// iteration's classifier returns `None` for the same anchor.
 ///
 /// We reuse the x86_64 `jmp *rax` fixture from
-/// `tier_2_initial_var_non_lr_returns_none` — the producer is
+/// `initial_var_non_lr_returns_none` — the producer is
 /// `InitialVar(rax)` with no lr supplied, which the classifier
 /// must treat as opaque (None) rather than erroring.
 #[test]
-fn tier_2_opaque_target_returns_none() {
+fn opaque_target_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
     let result = classify_anchor(&graph, anchor, /* link_register */ None);
     assert_eq!(

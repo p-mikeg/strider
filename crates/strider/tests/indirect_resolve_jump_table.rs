@@ -1,7 +1,7 @@
-//! Integration tests for the tier-2 jump-table classifier (R4).
+//! Integration tests for the jump-table classifier (R4).
 //!
 //! Each test builds a synthetic `BuiltFunctionGraph` via the fixture
-//! helpers in `common::tier2_helpers`, runs the stable optimiser
+//! helpers in `common::indirect_resolve_helpers`, runs the stable optimiser
 //! subset (matching what intermediate orchestrator iterations will
 //! see), then invokes [`classify_anchor_with_rom`] on the placeholder
 //! Return's value-input.  The fixtures are FunctionBuilder-driven
@@ -27,9 +27,9 @@
 mod common;
 
 use rsleigh::VnSpace;
-use strider::indirect_resolve_tier2::{ResolvedTargets, classify_anchor_with_rom};
+use strider::indirect_resolve::{ResolvedTargets, classify_anchor_with_rom};
 
-use common::tier2_helpers::{
+use common::indirect_resolve_helpers::{
     build_jump_table_known_bits_scenario, build_jump_table_predecessor_if_scenario,
     build_jump_table_unbounded_scenario, build_non_jump_table_load_scenario,
 };
@@ -101,7 +101,7 @@ impl opt::ReadOnlyMemory for PartialRom {
 /// is 8.  The classifier reads 8 entries from rom and produces a
 /// canonical (sorted, deduplicated) Multiple.
 #[test]
-fn tier_2_jump_table_known_bits_bound_resolves_to_multiple() {
+fn jump_table_known_bits_bound_resolves_to_multiple() {
     let base = 0x4000;
     let stride = 4;
     let idx_mask = 0x7u64;
@@ -130,7 +130,7 @@ fn tier_2_jump_table_known_bits_bound_resolves_to_multiple() {
 /// `if (idx < 4) { jmp *table[idx] }` → `Multiple([table[0], …,
 /// table[3]])`.  Bound proved via the predecessor-If walk.
 #[test]
-fn tier_2_jump_table_predecessor_if_bound_resolves_to_multiple() {
+fn jump_table_predecessor_if_bound_resolves_to_multiple() {
     let base = 0x5000;
     let stride = 4;
     let bound = 4u64;
@@ -157,7 +157,7 @@ fn tier_2_jump_table_predecessor_if_bound_resolves_to_multiple() {
 /// index could be any U32 value; we'd be enumerating an arbitrary
 /// prefix of memory as "targets".
 #[test]
-fn tier_2_jump_table_unbounded_idx_returns_none() {
+fn jump_table_unbounded_idx_returns_none() {
     let base = 0x6000;
     let stride = 4;
     let rom = TableRom {
@@ -180,7 +180,7 @@ fn tier_2_jump_table_unbounded_idx_returns_none() {
 /// orchestrator might later try again once a rom is wired (in
 /// production it always is).
 #[test]
-fn tier_2_jump_table_no_rom_returns_none() {
+fn jump_table_no_rom_returns_none() {
     let base = 0x7000;
     let stride = 4;
     let idx_mask = 0x3u64;
@@ -194,7 +194,7 @@ fn tier_2_jump_table_no_rom_returns_none() {
 /// real edges.  See the soundness rationale in `jump_table.rs`'s
 /// `read_table_entries` doc comment.
 #[test]
-fn tier_2_jump_table_partial_rom_returns_none() {
+fn jump_table_partial_rom_returns_none() {
     let base = 0x8000;
     let stride = 4;
     let idx_mask = 0x7u64; // bound = 8
@@ -238,7 +238,7 @@ fn tier_2_jump_table_partial_rom_returns_none() {
 /// In real code this is dead-by-construction, but the classifier
 /// must still answer cleanly.
 #[test]
-fn tier_2_jump_table_zero_bound_returns_none() {
+fn jump_table_zero_bound_returns_none() {
     let base = 0xa000;
     let stride = 4;
     let bound = 0u64; // `idx < 0` — never true for unsigned idx
@@ -263,7 +263,7 @@ fn tier_2_jump_table_zero_bound_returns_none() {
 /// neither a jump-table dispatch nor a recognised non-Load shape, so
 /// no resolution is sound.
 #[test]
-fn tier_2_non_jump_table_load_shape_falls_through() {
+fn non_jump_table_load_shape_falls_through() {
     // Build a `Load(IntConst(addr))` — no IntAdd, no IntMul.
     let (graph, anchor) = build_non_jump_table_load_scenario();
     // Provide a rom anyway so the test pins that the falsethrough
