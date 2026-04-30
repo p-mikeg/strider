@@ -17,10 +17,10 @@ use ir::{BuiltFunctionGraph, ExtendOp, FunctionBuilder};
 use opt::{Optimizer, RedundantPhis};
 use pattern::{CastMask, Matcher, Pat, Capture, add, any_int_const, initial_var_for};
 
-/// Collapses single-predecessor `ControlPhi` / `MemPhi` / `ControlState`
+/// Collapses single-predecessor `VarPhi` / `MemPhi` / `ControlState`
 /// nodes the FunctionBuilder inserts at the entry region for every
 /// tracked variable.  Without this pass, `read_variable(vn)` returns the
-/// `ControlPhi(vn)` output (with `InitialVar(vn)` as its sole input),
+/// `VarPhi(vn)` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar
 /// the patterns are looking for.
 fn collapse_phis(g: &mut BuiltFunctionGraph) {
@@ -42,7 +42,7 @@ fn x_vn() -> rsleigh::Vn {
 
 /// Builds a small function whose return is
 /// `Add(wrap(read(vn)), IntConst(7) : ty) : ty` after collapsing the
-/// region's single-predecessor `ControlPhi` for `vn`.  After that
+/// region's single-predecessor `VarPhi` for `vn`.  After that
 /// collapse, the matcher sees `Add(wrap(InitialVar(vn)), IntConst(7))`.
 ///
 /// `wrap` may emit any chain of nodes around the InitialVar read; `ty`

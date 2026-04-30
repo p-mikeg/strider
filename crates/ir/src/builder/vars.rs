@@ -84,7 +84,7 @@ impl FunctionBuilder {
     }
 
     /// Creates a new region in the graph with fresh `ControlState`,
-    /// `MemPhi`, and per-variable `ControlPhi` nodes.
+    /// `MemPhi`, and per-variable `VarPhi` nodes.
     ///
     /// # Errors
     ///
@@ -104,9 +104,9 @@ impl FunctionBuilder {
         let [control, phi_token] = self.graph().node_outputs_exact(control_node)?;
 
         // Wire the ControlPhi dispatch token as MemPhi.inputs[0], mirroring how
-        // ControlPhi nodes are linked.  This gives MemPhi a direct back-reference to
+        // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
         // its ControlState so that dead-branch elimination and redundant-phi removal
-        // can treat MemPhi and ControlPhi identically (same positional logic, same
+        // can treat MemPhi and VarPhi identically (same positional logic, same
         // automatic discovery via output_uses(cs_phi_out)).
         self.graph_mut().add_node_input(memory_node, phi_token)?;
 

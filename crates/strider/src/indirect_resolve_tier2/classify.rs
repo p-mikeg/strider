@@ -157,14 +157,14 @@ mod tests {
         let graph = builder.build().expect("build");
 
         // RedundantPhis hasn't run, so the producer might be a
-        // ControlPhi rather than InitialVar directly.  Inspect.
+        // VarPhi rather than InitialVar directly.  Inspect.
         // For the LinkRegister arm to match, the producer must be
         // `InitialVar(lr_vn)` — we walk past a single-input
-        // ControlPhi in the test if we hit one, since
+        // VarPhi in the test if we hit one, since
         // RedundantPhis would have done that in production.
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
-            // ControlPhi inputs: [phi_token, ...per-pred values].
+        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
+            // VarPhi inputs: [phi_token, ...per-pred values].
             // With one predecessor, slot 1 is the value.
             let pid = graph.graph.get_node_from_output(producer_output);
             let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
@@ -206,7 +206,7 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
+        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
             let pid = graph.graph.get_node_from_output(producer_output);
             let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
@@ -244,7 +244,7 @@ mod tests {
         let graph = builder.build().expect("build");
 
         let mut producer_output = anchor;
-        while let NodeKind::ControlPhi(_) = graph.graph.kind_of_output(producer_output) {
+        while let NodeKind::VarPhi(_) = graph.graph.kind_of_output(producer_output) {
             let pid = graph.graph.get_node_from_output(producer_output);
             let inputs: Vec<_> = graph.graph.node_inputs(pid).into_iter().collect();
             if inputs.len() != 2 {
@@ -297,14 +297,14 @@ mod tests {
         builder.build_return(Some(dummy), &[]).expect("build_return");
         let mut graph = builder.build().expect("build");
 
-        // Synthesise a fake phi-token node.  ControlPhi nodes
+        // Synthesise a fake phi-token node.  VarPhi nodes
         // produce ControlPhi outputs, but the dedup cache keys
         // them by (NodeKind, inputs, outputs), so we can hand-
         // construct one with no inputs.  We need the phi-token
         // output kind for the ValuePhi's first input slot to
         // typecheck against `expected_signature`'s `PHI` slot.
         let fake_token_node = graph.graph.create_node(
-            NodeKind::ControlPhi(rsleigh::Vn {
+            NodeKind::VarPhi(rsleigh::Vn {
                 addr: rsleigh::VnAddr {
                     space: rsleigh::VnSpace::REGISTER,
                     off: 0xdead,
@@ -374,7 +374,7 @@ mod tests {
         builder.build_return(Some(dummy), &[]).expect("build_return");
         let mut graph = builder.build().expect("build");
         let fake_token_node = graph.graph.create_node(
-            NodeKind::ControlPhi(rsleigh::Vn {
+            NodeKind::VarPhi(rsleigh::Vn {
                 addr: rsleigh::VnAddr {
                     space: rsleigh::VnSpace::REGISTER,
                     off: 0xdead,

@@ -14,7 +14,7 @@
 //! |------|-------------|
 //! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, …) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
-//! | [`RedundantPhis`] | Eliminates `ControlPhi`, `MemPhi`, and `ControlState` nodes with a single reachable predecessor |
+//! | [`RedundantPhis`] | Eliminates `VarPhi`, `MemPhi`, and `ControlState` nodes with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
 //! | [`LoadReadOnly`] | Folds constant-address loads by reading from a caller-supplied read-only memory region |
 
@@ -118,7 +118,7 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// nodes.  The orchestrator runs them exactly once at fixed point.
 ///
 /// Passes (in order):
-/// 1. [`RedundantPhis`] — eliminates `ControlPhi` / `MemPhi` /
+/// 1. [`RedundantPhis`] — eliminates `VarPhi` / `MemPhi` /
 ///    `ControlState` nodes with a single reachable predecessor.
 ///    Detaches inputs and rewires consumers — destructive.
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
@@ -153,7 +153,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// Passes included (in order):
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
-/// 3. [`RedundantPhis`] — `ControlPhi` / `MemPhi` / `ControlState` elimination
+/// 3. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
 /// 4. [`DeadBranchElimination`] — `If(const)` branch pruning
 /// 5. [`CallOtherElide`] — drops opaque `CallOther`s whose user-op name is a
 ///    known no-op in the IR's value/memory model (e.g. ARM `setISAMode`).

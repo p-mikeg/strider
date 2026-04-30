@@ -91,10 +91,10 @@ pub(super) fn check_layer_c_control_state(
     }
 }
 
-/// Layer C: every phi node (`ControlPhi`, `MemPhi`, `StackStorePhi`) must take
+/// Layer C: every phi node (`VarPhi`, `MemPhi`, `StackStorePhi`) must take
 /// its dispatch token (input[0]) from a `ControlState`'s `ControlPhi` output.
 ///
-/// For `ControlPhi` and `MemPhi` (variadic phis), the number of value inputs
+/// For `VarPhi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
 /// has fixed arity `[token, memory, data]` (Layer A enforces this) — its
 /// per-predecessor information lives in the side-table
@@ -104,7 +104,7 @@ pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>)
     for node in graph.nodes.keys() {
         let is_phi = matches!(
             graph.node_kind(node),
-            NodeKind::ControlPhi(_)
+            NodeKind::VarPhi(_)
                 | NodeKind::MemPhi
                 | NodeKind::StackStorePhi { .. }
                 | NodeKind::ValuePhi

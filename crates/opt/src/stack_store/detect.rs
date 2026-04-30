@@ -42,7 +42,7 @@ fn try_detect_stack_store(
             fg.graph.node_outputs_exact::<1>(new_node)?[0]
         }
         SpExpr::Phi { phi_node, offsets } => {
-            // The ControlPhi's inputs[0] is the dispatch token from its
+            // The VarPhi's inputs[0] is the dispatch token from its
             // owning ControlState — the same token `StackStorePhi` will
             // consume so that `RedundantPhis` collapses it when only one
             // predecessor is live.

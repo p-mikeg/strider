@@ -17,7 +17,7 @@ per_arch_test!("memory", "tagged_union_read",  union_read_has_two_loads);
 
 fn array_sum_has_load_and_loop(g: &ir::BuiltFunctionGraph) {
     assert!(count_loads(g) >= 1, "array_sum must have ≥1 Load");
-    assert!(count_loops(g) >= 1, "array_sum loop missing ControlPhi");
+    assert!(count_loops(g) >= 1, "array_sum loop missing VarPhi");
 }
 fn array_fill_has_store_and_loop(g: &ir::BuiltFunctionGraph) {
     assert!(count_stores(g) >= 1, "array_fill must have ≥1 Store");

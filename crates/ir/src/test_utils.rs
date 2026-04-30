@@ -26,7 +26,7 @@ where
 }
 
 /// Builds a single-region function with a tracked variable `vn`.  The closure
-/// receives the read-back value (a `ControlPhi` over `InitialVar(vn)`) and
+/// receives the read-back value (a `VarPhi` over `InitialVar(vn)`) and
 /// returns the value to wire into the function's `Return`.  Returns the built
 /// graph and the read-back `Value` so the caller can refer to it later.
 ///

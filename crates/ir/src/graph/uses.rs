@@ -75,7 +75,7 @@ impl Graph {
     /// Appends a new input to `node_id` referencing `output_id`.
     ///
     /// Only valid for non-cacheable nodes (those whose inputs can grow after
-    /// creation, e.g. `ControlState` and `ControlPhi`).
+    /// creation, e.g. `ControlState` and `VarPhi`).
     ///
     /// # Errors
     ///

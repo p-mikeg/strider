@@ -35,7 +35,7 @@ fn remove_phis(
     reachable: &ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
     match function.graph.node_kind(node_id) {
-        // ControlPhi and MemPhi have identical input layouts after the builder
+        // VarPhi and MemPhi have identical input layouts after the builder
         // links phi_token as inputs[0] for both:
         //
         //   inputs[0]   = ControlPhi dispatch token from the owning ControlState
@@ -46,7 +46,7 @@ fn remove_phis(
         // ControlState.inputs[j]'s producer is in the CFG-reachable set.
         // We deduplicate by NodeOutputId so that two edges from the same
         // predecessor (unusual but valid) count as one.
-        NodeKind::ControlPhi(..) | NodeKind::MemPhi => {
+        NodeKind::VarPhi(..) | NodeKind::MemPhi => {
             let inputs = function.graph.node_inputs(node_id);
             if inputs.is_empty() {
                 return Ok(OptimizationResult::NoChange);
@@ -135,7 +135,7 @@ fn remove_phis(
     }
 }
 
-/// Eliminates `ControlPhi`, `MemPhi`, and `ControlState` nodes that have only
+/// Eliminates `VarPhi`, `MemPhi`, and `ControlState` nodes that have only
 /// one reachable predecessor, replacing them with that predecessor's value.
 /// Also detaches the inputs of any node that is not reachable from the entry.
 ///
@@ -164,7 +164,7 @@ impl RedundantPhis {
             .filter(|&n| {
                 matches!(
                     function.graph.node_kind(n),
-                    NodeKind::ControlPhi(_)
+                    NodeKind::VarPhi(_)
                         | NodeKind::MemPhi
                         | NodeKind::ControlState
                 )

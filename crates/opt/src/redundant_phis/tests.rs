@@ -8,7 +8,7 @@ use ir::{FunctionBuilder, IntBinaryOp};
 // ── Original test ─────────────────────────────────────────────────────────────
 
 /// Two reachable CFG predecessors feed the same `NodeOutputId` into the
-/// ControlPhi at the join — exactly the shape the analyzer produces for
+/// VarPhi at the join — exactly the shape the analyzer produces for
 /// SP across an `if/else` where both arms write the same pre-computed
 /// value (e.g. the loop-prologue `sub esp, 4` shared by the loop-entry
 /// and loop-continue edges).  Without the "all live values identical"
@@ -56,17 +56,17 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    // The only ControlPhi(sp) at `c` had both predecessors feeding the
+    // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let surviving_sp_phis = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ControlPhi(vn) if *vn == sp))
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(vn) if *vn == sp))
         .count();
     assert_eq!(
         surviving_sp_phis, 0,
-        "ControlPhi(sp) with identical data inputs must be removed"
+        "VarPhi(sp) with identical data inputs must be removed"
     );
     Ok(())
 }

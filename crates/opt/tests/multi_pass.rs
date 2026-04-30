@@ -79,7 +79,7 @@ fn known_bits_then_constant_fold() -> opt::Result<()> {
 
 /// Two-region `if/else` where each arm writes a distinct constant to a tracked
 /// var. With `if(true)`, DBE removes the false branch, leaving the join's
-/// ControlPhi with one live predecessor; RedundantPhis then collapses the phi
+/// VarPhi with one live predecessor; RedundantPhis then collapses the phi
 /// to that predecessor's value; ConstantFold sees the chain end with a const.
 #[test]
 fn dbe_strips_phi_then_redundant_phis_collapses() -> opt::Result<()> {
@@ -129,7 +129,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     // After full collapse, the return-value-producing node must NOT be an
     // arithmetic op — the (x+8)-8 chain must have been replaced by `x` (a
-    // ControlPhi/InitialVar read).
+    // VarPhi/InitialVar read).
     let kind = return_kind(&fg)?;
     assert!(
         !matches!(

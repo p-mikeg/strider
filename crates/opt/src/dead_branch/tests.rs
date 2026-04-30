@@ -239,7 +239,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     Ok(())
 }
 
-/// A ControlPhi at a 2-input join — when the dead branch is removed, the
+/// A VarPhi at a 2-input join — when the dead branch is removed, the
 /// phi must lose exactly one input slot (the dead position).
 #[test]
 fn control_phi_loses_dead_slot() -> Result<()> {
@@ -272,16 +272,16 @@ fn control_phi_loses_dead_slot() -> Result<()> {
     let mut fg = b.build()?;
     let pre_phi_count = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ControlPhi(_)))
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(_)))
         .count();
     assert!(pre_phi_count > 0);
 
     DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
-    // A ControlPhi at the join should now have only the live predecessor's
+    // A VarPhi at the join should now have only the live predecessor's
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::ControlPhi(v) if *v == var))
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(v) if *v == var))
         .expect("control phi at join must exist");
     let phi_inputs = fg.graph.node_inputs(join_phi);
     assert_eq!(phi_inputs.len(), 2, "phi must have exactly 1 live value");

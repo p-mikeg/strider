@@ -624,7 +624,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
 /// `if (idx < bound) { dispatch } else { exit }`, and the
 /// dispatch region's placeholder Return uses an
 /// `idx_in_dispatch` value (the dispatch's read of the same
-/// idx_var, which travels through a single-input ControlPhi).
+/// idx_var, which travels through a single-input VarPhi).
 /// Returns the graph, the anchor (placeholder Return's
 /// value-input), and the dispatch's view of idx.
 fn build_pred_if_graph(
@@ -657,7 +657,7 @@ fn build_pred_if_graph(
     // Use idx_in_dispatch as the placeholder anchor — exercises
     // the bound walk against the dispatch's own idx-output, which
     // (without RedundantPhis) wraps the entry idx in a
-    // single-input ControlPhi.
+    // single-input VarPhi.
     b.build_return(Some(idx_in_dispatch), &[]).unwrap();
 
     b.set_region(exit);
@@ -966,7 +966,7 @@ fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
     // Diamond: both predecessors *could* prove `idx < bound` against
     // the dispatch's own `idx` reading.  But the dispatch region
     // joins two control predecessors, so its `idx` read is a
-    // ControlPhi with two value inputs (one per path) — `same_value`
+    // VarPhi with two value inputs (one per path) — `same_value`
     // only walks through *trivial* (single-input) phis, so the
     // predecessor `If`s' `idx` LHS does not unify with the
     // dispatch's `idx_in_dispatch` and `bound_from_if_condition`

@@ -1,4 +1,4 @@
-//! SSA-shaped patterns: `ControlPhi`, `InitialVar`, `FunctionArg`.
+//! SSA-shaped patterns: `VarPhi`, `InitialVar`, `FunctionArg`.
 //!
 //! Covers: `phi()` / `phi_for(vn)`, `initial_var()` / `initial_var_for(vn)`,
 //! `function_arg(i)` / `_any()` / `_reg(vn)` / `_stack(space, off)`.
@@ -38,9 +38,9 @@ fn initial_var_capture_binds_value() {
     assert!(m.output(v).is_some());
 }
 
-// ── ControlPhi ───────────────────────────────────────────────────────────────
+// ── VarPhi ───────────────────────────────────────────────────────────────────
 
-/// `if (reg != 0) { reg = 1 } else { reg = 2 }` — after merge, a ControlPhi
+/// `if (reg != 0) { reg = 1 } else { reg = 2 }` — after merge, a VarPhi
 /// materialises the new value of `reg`.
 fn graph_phi_for_reg() -> (ir::BuiltFunctionGraph, rsleigh::Vn) {
     let reg = reg_vn(0, 8);

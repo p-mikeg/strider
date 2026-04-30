@@ -228,7 +228,7 @@ fn layer_c_phi_token_from_wrong_node() {
     let cs_control_out = graph.node_outputs(cs).into_iter().next().unwrap(); // index 0 = Control
     let vn = test_vn();
     let _phi = graph.create_node(
-        NodeKind::ControlPhi(vn),
+        NodeKind::VarPhi(vn),
         [cs_control_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
@@ -270,7 +270,7 @@ fn layer_c_phi_value_arity_mismatch() {
     let c2_out = graph.node_outputs(c2).into_iter().next().unwrap();
     let vn = test_vn();
     let _phi = graph.create_node(
-        NodeKind::ControlPhi(vn),
+        NodeKind::VarPhi(vn),
         [cs_phi_out, c1_out, c2_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
@@ -293,7 +293,7 @@ fn layer_c_phi_value_arity_mismatch() {
 fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
     // StackStorePhi has fixed arity [token, memory, data] regardless of
     // how many predecessors the owning ControlState has.  The
-    // per-predecessor arity rule that applies to ControlPhi/MemPhi must
+    // per-predecessor arity rule that applies to VarPhi/MemPhi must
     // not fire on it.  Here the owning ControlState has 1 predecessor;
     // before the fix this produced a spurious
     // PhiValueArityMismatch { expected_predecessors: 1, actual_values: 2 }.
@@ -471,7 +471,7 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
 
 #[test]
 fn layer_a_accepts_bool_value_phi_inputs() {
-    // ControlPhi / ValuePhi value inputs (the IN_PHI variadic tail) must
+    // VarPhi / ValuePhi value inputs (the IN_PHI variadic tail) must
     // accept Bool-typed values: real binaries phi-merge x86 flag registers
     // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
     let mut graph = Graph::new();

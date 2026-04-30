@@ -315,7 +315,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let mut fg = b.build().expect("build");
 
     // Include `RedundantPhis` so the trivial single-input
-    // ControlPhi(lr) at the entry region collapses back to
+    // VarPhi(lr) at the entry region collapses back to
     // `InitialVar(lr)` — that's the shape tier 2's LinkRegister
     // arm classifies, and it's what the production strider
     // pipeline (`default_pipeline()` includes RedundantPhis)
@@ -326,7 +326,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     // RedundantPhis again post-StackLoadForward to collapse any
-    // single-input ControlPhi the forward inserts (e.g. wrapping
+    // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
     pipeline.add(opt::RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");

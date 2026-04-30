@@ -23,7 +23,7 @@ pub struct RegionLiftHandles {
     pub exit_control: ir::node::NodeOutputId,
     /// Exit memory output (consumed by the region's terminator).
     pub exit_memory: ir::node::NodeOutputId,
-    /// Per-var entry-boundary `ControlPhi` `NodeId`s, keyed by `Vn`.
+    /// Per-var entry-boundary `VarPhi` `NodeId`s, keyed by `Vn`.
     pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId>,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
     pub exit_vn_to_value: std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>,

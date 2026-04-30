@@ -2,7 +2,7 @@
 //! (`stack_store::detect`, `stack_load_forward`, `function_args::stack_args`).
 //!
 //! `decompose_sp` is the workhorse: given an output that may be `InitialVar(sp)`
-//! transformed by `Add`/`Sub` of constants and joined by `ControlPhi(sp)`, it
+//! transformed by `Add`/`Sub` of constants and joined by `VarPhi(sp)`, it
 //! returns either a `Terminal { base, offset }` or a `Phi { node, offsets[] }`.
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
@@ -29,7 +29,7 @@ use ir::{Graph, IntBinaryOp};
 pub enum SpExpr {
     /// `base + offset`, where `base` is an SP-rooted node.
     Terminal { base: NodeOutputId, offset: i64 },
-    /// `ControlPhi(stack_ptr)` where every predecessor resolves to
+    /// `VarPhi(stack_ptr)` where every predecessor resolves to
     /// `InitialVar(stack_ptr) + offsets[j]`.
     Phi { phi_node: NodeId, offsets: Vec<i64> },
 }
@@ -203,7 +203,7 @@ pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 
 /// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`. The `visiting` set guards against
-/// cycles through `ControlPhi` back-edges; cycle-broken results are NOT
+/// cycles through `VarPhi` back-edges; cycle-broken results are NOT
 /// memoized (so a different call path can still resolve the same output).
 pub fn decompose_sp(
     g: &Graph,
@@ -248,7 +248,7 @@ fn decompose_sp_inner(
             base: out,
             offset: 0,
         }),
-        NodeKind::ControlPhi(vn) if vn == sp_vn => {
+        NodeKind::VarPhi(vn) if vn == sp_vn => {
             decompose_sp_phi(g, node, sp_vn, memo, visiting)
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
@@ -289,7 +289,7 @@ fn decompose_sp_phi(
     visiting: &mut FxHashSet<NodeId>,
 ) -> Option<SpExpr> {
     let inputs = g.node_inputs(node);
-    // A ControlPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
+    // A VarPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
     // values. Fewer than 2 inputs means no actual predecessor — the phi is
     // either malformed or has been simplified mid-pass; we cannot prove
     // SP-rooted, so return None rather than fabricate a Terminal that lies
@@ -401,7 +401,7 @@ mod tests {
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
         let fg = b.build()?;
-        // sp_val is a ControlPhi-of-InitialVar; the phi has 1 predecessor →
+        // sp_val is a VarPhi-of-InitialVar; the phi has 1 predecessor →
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
         let mut visiting = FxHashSet::default();
@@ -528,7 +528,7 @@ mod tests {
 
         // After one top-level walk, all three intermediate outputs must be
         // memoized. (sp_val itself is cached too, but its NodeOutputId is
-        // ControlPhi-of-InitialVar, which we don't directly check here.)
+        // VarPhi-of-InitialVar, which we don't directly check here.)
         assert!(memo.contains_key(&s3), "expected memo entry for s3");
         assert!(memo.contains_key(&s2), "expected memo entry for s2");
         assert!(memo.contains_key(&s1), "expected memo entry for s1");
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn decompose_sp_phi_with_non_sp_pred_returns_none() -> crate::Result<()> {
-        // A ControlPhi(sp) whose predecessor value is NOT SP-rooted must
+        // A VarPhi(sp) whose predecessor value is NOT SP-rooted must
         // decompose to None.  Previously decompose_sp_phi fabricated a
         // Terminal{base: phi_output, offset: 0} on this path; callers
         // ignored `base` but trusted `offset == 0`, which on conventions
@@ -612,7 +612,7 @@ mod tests {
         let r = decompose_sp(&fg.graph, sp_at_c, sp, &mut memo, &mut visiting);
         assert!(
             r.is_none(),
-            "expected None for ControlPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
+            "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
         );
         Ok(())
     }

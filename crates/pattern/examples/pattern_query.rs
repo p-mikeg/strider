@@ -555,8 +555,8 @@ fn example_initial_vars() {
     ); // 1
 
     // ── Match an add of two values ────────────────────────────────────────────
-    // In a single-region graph, `read_variable` returns a ControlPhi node
-    // rather than the InitialVar directly.  The ControlPhi holds the InitialVar
+    // In a single-region graph, `read_variable` returns a VarPhi node
+    // rather than the InitialVar directly.  The VarPhi holds the InitialVar
     // as one of its inputs.
     let lhs_v = Capture::new();
     let rhs_v = Capture::new();
@@ -565,13 +565,13 @@ fn example_initial_vars() {
     if let Some(hit) = hits.first() {
         let lhs = graph.graph.get_node_from_output(hit.output(lhs_v).unwrap());
         let rhs = graph.graph.get_node_from_output(hit.output(rhs_v).unwrap());
-        // Both inputs are ControlPhi(vn) nodes wrapping the InitialVar.
+        // Both inputs are VarPhi(vn) nodes wrapping the InitialVar.
         println!("  lhs kind: {:?}", graph.graph.node_kind(lhs),);
         println!("  rhs kind: {:?}", graph.graph.node_kind(rhs),);
     }
 
     // ── Match "add where lhs comes from rax's phi" ───────────────────────────
-    // Use phi_for() to match the ControlPhi node for rax.
+    // Use phi_for() to match the VarPhi node for rax.
     let hits = m.find_all(&add(phi_for(rax_vn), any()).into());
     println!("add(rax_phi, _): {}", hits.len()); // 1
 

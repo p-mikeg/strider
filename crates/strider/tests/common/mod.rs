@@ -295,7 +295,7 @@ pub fn count_return_paths(g: &ir::BuiltFunctionGraph) -> usize {
     }
     total
 }
-pub fn count_loops (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::ControlPhi(_))) }
+pub fn count_loops (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::VarPhi(_))) }
 pub fn count_loads (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
 pub fn count_stores(g: &ir::BuiltFunctionGraph) -> usize {
     // Both raw Store and StackStore count as "writes to memory" from the user's POV.

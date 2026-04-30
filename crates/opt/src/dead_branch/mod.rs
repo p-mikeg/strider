@@ -19,10 +19,10 @@ mod tests;
 ///   control directly without going through the `If`.
 /// * The **dead** control output is removed from the successor `ControlState`'s
 ///   input list, and the corresponding position is also removed from every
-///   `ControlPhi` node of that region.
+///   `VarPhi` node of that region.
 ///
 /// After this pass, dead `ControlState` nodes end up with zero control inputs
-/// and `ControlPhi` nodes with a single value input; `RedundantPhis` then
+/// and `VarPhi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
     fg: &mut BuiltFunctionGraph,
@@ -78,17 +78,17 @@ fn try_eliminate_dead_branch(
         }
         let cs_phi_out = cs_outputs[1];
 
-        // Collect ControlPhi nodes that consume the phi token before we mutate.
+        // Collect VarPhi nodes that consume the phi token before we mutate.
         let phi_nodes: Vec<NodeId> = fg
             .graph
             .output_uses(cs_phi_out)
             .map(|(phi, _)| phi)
             .collect();
 
-        // Remove the dead variable-value input from each ControlPhi.
-        // ControlPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
+        // Remove the dead variable-value input from each VarPhi.
+        // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
         // So the variable value for predecessor at ControlState index `dead_idx`
-        // lives at ControlPhi index `dead_idx + 1`.
+        // lives at VarPhi index `dead_idx + 1`.
         let phi_input_idx = dead_idx + 1;
         for phi_node in phi_nodes {
             let phi_len = fg.graph.node_inputs(phi_node).len() as u32;
@@ -119,7 +119,7 @@ fn try_eliminate_dead_branch(
 ///
 /// Works together with [`crate::RedundantPhis`]: after dead-branch elimination
 /// the previously-live successor region may have a single-input `ControlState`
-/// and `ControlPhi` nodes, which `RedundantPhis` can then collapse.
+/// and `VarPhi` nodes, which `RedundantPhis` can then collapse.
 pub struct DeadBranchElimination;
 
 impl OptimizerOnBuilt for DeadBranchElimination {

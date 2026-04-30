@@ -483,7 +483,7 @@ fn bound_from_if_condition(
     // single-input phis, which patterns can't express directly:
     // intermediate orchestrator iterations omit RedundantPhis, so
     // the dispatch region's read of `idx` is wrapped in a
-    // single-input ControlPhi distinct from the `If`'s direct read.
+    // single-input VarPhi distinct from the `If`'s direct read.
     let lhs = m.output(idx_var)?;
     if !same_value(graph, lhs, idx_output) {
         return None;
@@ -504,7 +504,7 @@ fn bound_from_if_condition(
 ///
 /// Two `NodeOutputId`s match when:
 ///   * They refer to the same output (the trivial case).
-///   * One is the OUTPUT of a single-input `ControlPhi` / `ValuePhi`
+///   * One is the OUTPUT of a single-input `VarPhi` / `ValuePhi`
 ///     whose only value input is the other.  This covers the common
 ///     pattern where the entry region's `If(idx < N)` reads idx
 ///     directly while the dispatch region's `Load[..idx*stride..]`
@@ -526,7 +526,7 @@ fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
         while budget > 0 && visited.insert(out) {
             let node = graph.get_node_from_output(out);
             match graph.node_kind(node) {
-                NodeKind::ControlPhi(_) | NodeKind::ValuePhi => {
+                NodeKind::VarPhi(_) | NodeKind::ValuePhi => {
                     let inputs: Vec<NodeOutputId> =
                         graph.node_inputs(node).into_iter().collect();
                     // Slot 0 is the phi-token; slots 1.. are values.

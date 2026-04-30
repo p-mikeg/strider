@@ -21,7 +21,7 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 ///
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
 /// which basic-block headers are live and which predecessor slots on `ControlState`,
-/// `ControlPhi`, and `MemPhi` nodes are dead.
+/// `VarPhi`, and `MemPhi` nodes are dead.
 #[must_use]
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     let mut visited = DenseEntitySet::new();

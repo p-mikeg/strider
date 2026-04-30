@@ -58,17 +58,20 @@ pub enum NodeKind {
     ControlState,
     /// Memory phi: selects the live memory token at a join point.
     MemPhi,
-    /// Control phi: selects the value of varnode `Vn` at a join point,
-    /// corresponding to the SSA φ-function from the literature.
-    ControlPhi(rsleigh::Vn),
+    /// SSA φ for varnode `Vn` at a join point.  Inputs:
+    /// `[phi_token, val_0, val_1, …]` where `phi_token` is the
+    /// `PhiToken` output of the joining `ControlState` and the rest
+    /// are one value per CFG predecessor in the same order as the
+    /// `ControlState`'s `Control` inputs.  Output: `[value]`.
+    VarPhi(rsleigh::Vn),
     /// Value phi not tied to any source varnode.  Synthesized by
     /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward.rs) when
     /// forwarding a `Load[sp+K]` across a `MemPhi`: each predecessor
     /// resolves to a stored value, and those values are merged here.  Shape
-    /// matches `ControlPhi` — inputs `[phi_token, val_0, val_1, …]`, output
+    /// matches `VarPhi` — inputs `[phi_token, val_0, val_1, …]`, output
     /// is a single value — but without a `Vn` tag since the merged value
     /// has no source-level register/memory identity.  Non-cacheable for the
-    /// same reason as `ControlPhi`/`MemPhi`: phi identity matters.
+    /// same reason as `VarPhi`/`MemPhi`: phi identity matters.
     ValuePhi,
 
     // ── Conditional branch ─────────────────────────────────────────────────────
@@ -91,7 +94,7 @@ pub enum NodeKind {
     // ── Stack-slot stores (produced by StackStoreDetect) ──────────────────────
     /// Store whose address has been resolved to `base + offset`, where `base`
     /// is an SP-rooted node (either `InitialVar(stack_ptr)` or a
-    /// `ControlPhi(stack_ptr)` that could not be further reduced — typically
+    /// `VarPhi(stack_ptr)` that could not be further reduced — typically
     /// a loop-header SP phi with a back-edge to itself).
     ///
     /// Inputs: `[memory, base, data]`.  Outputs: `[Memory]`.
@@ -228,7 +231,7 @@ impl NodeKind {
     /// cache.
     ///
     /// Nodes whose inputs are added incrementally after construction (e.g.
-    /// `ControlState`, `ControlPhi`) or that must always produce a fresh node
+    /// `ControlState`, `VarPhi`) or that must always produce a fresh node
     /// (e.g. `Return`) are not cacheable.
     #[inline]
     #[must_use]
@@ -242,7 +245,7 @@ impl NodeKind {
                 | Self::Return
                 | Self::ControlState
                 | Self::MemPhi
-                | Self::ControlPhi(..)
+                | Self::VarPhi(..)
                 | Self::ValuePhi
                 | Self::Call
                 | Self::CallOther { .. }

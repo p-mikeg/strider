@@ -52,17 +52,17 @@ fn select_three_has_two_ifs(g: &ir::BuiltFunctionGraph) {
     assert!(count_ifs(g) >= 2, "select_three has 2 conditionals; got {}", count_ifs(g));
 }
 fn sum_to_n_has_loop(g: &ir::BuiltFunctionGraph) {
-    assert!(count_loops(g) >= 1, "sum_to_n loop header missing ControlPhi");
+    assert!(count_loops(g) >= 1, "sum_to_n loop header missing VarPhi");
 }
 fn factorial_has_loop(g: &ir::BuiltFunctionGraph) {
-    assert!(count_loops(g) >= 1, "factorial loop header missing ControlPhi");
+    assert!(count_loops(g) >= 1, "factorial loop header missing VarPhi");
 }
 fn count_bits_has_loop_and_shr(g: &ir::BuiltFunctionGraph) {
     assert!(count_loops(g) >= 1);
     assert!(count_int_binop(g, ir::IntBinaryOp::ShiftRight) >= 1, "count_bits has x>>=1");
 }
 fn nested_loops_has_two_loops(g: &ir::BuiltFunctionGraph) {
-    assert!(count_loops(g) >= 2, "nested_loops expected ≥2 ControlPhi; got {}", count_loops(g));
+    assert!(count_loops(g) >= 2, "nested_loops expected ≥2 VarPhi; got {}", count_loops(g));
 }
 fn early_return_has_loop_and_two_returns(g: &ir::BuiltFunctionGraph) {
     assert!(count_loops(g) >= 1);

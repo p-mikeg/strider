@@ -18,7 +18,7 @@ entity_impl!(RegionId);
 /// - A `MemPhi` node (and its output) that selects the memory token at the join.
 /// - A current variable map (`variables`) that is updated by writes.
 /// - An initial variable map (`initial_variables`) recording the
-///   `ControlPhi` outputs; these receive incoming values as predecessor
+///   `VarPhi` outputs; these receive incoming values as predecessor
 ///   regions are linked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Region {
@@ -34,7 +34,7 @@ pub(crate) struct Region {
     cur_memory: NodeOutputId,
     /// Current SSA value of each variable in this region.
     variables: SecondaryMap<VarId, NodeOutputId>,
-    /// `ControlPhi` outputs — one per variable — that gather incoming values
+    /// `VarPhi` outputs — one per variable — that gather incoming values
     /// from predecessor regions (filled in as predecessors are linked).
     initial_variables: SecondaryMap<VarId, NodeOutputId>,
 }
@@ -129,7 +129,7 @@ impl FunctionBuilder {
         self.cur_region = Some(region);
     }
 
-    /// Adds incoming variable values from `variables` to the `ControlPhi`
+    /// Adds incoming variable values from `variables` to the `VarPhi`
     /// nodes of `region`.
     pub(crate) fn link_region_variables(
         &mut self,
@@ -328,7 +328,7 @@ impl FunctionBuilder {
         }
     }
 
-    /// Returns an iterator over `(VarId, ControlPhi NodeOutputId)`
+    /// Returns an iterator over `(VarId, VarPhi NodeOutputId)`
     /// pairs for `region`'s entry-boundary per-var phi nodes.  Used
     /// by the cache to pin the per-var phi `NodeOutputId`s.
     pub fn region_initial_variables(

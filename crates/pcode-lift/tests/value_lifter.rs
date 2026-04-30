@@ -395,7 +395,7 @@ fn lift_returns_false_for_nop() {
 fn read_vn_unknown_returns_initial_var_or_phi() {
     // First read of an architectural register that's never been
     // written in this region should yield either an `InitialVar` (the
-    // value at function entry) or a `ControlPhi` (the SSA-style merge
+    // value at function entry) or a `VarPhi` (the SSA-style merge
     // node the FunctionBuilder lazily inserts at region entries
     // pointing back to the entry InitialVar).  Either is correct —
     // the producer is NOT some random arithmetic node.
@@ -408,9 +408,9 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     assert!(
         matches!(
             kind,
-            ir::node::NodeKind::InitialVar(_) | ir::node::NodeKind::ControlPhi(_)
+            ir::node::NodeKind::InitialVar(_) | ir::node::NodeKind::VarPhi(_)
         ),
-        "first read of an unwritten register should produce InitialVar or ControlPhi, got {kind:?}"
+        "first read of an unwritten register should produce InitialVar or VarPhi, got {kind:?}"
     );
 }
 

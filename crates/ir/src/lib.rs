@@ -21,7 +21,7 @@
 //!
 //! Use [`FunctionBuilder`] to construct the IR for a single function.  The
 //! builder tracks SSA-like variable state per basic block and inserts
-//! [`node::NodeKind::ControlPhi`] nodes automatically at join points.
+//! [`node::NodeKind::VarPhi`] nodes automatically at join points.
 //!
 //! The high-level entry point is the `strider` crate, which drives
 //! [`FunctionBuilder`] from a p-code CFG produced by `rsleigh`.

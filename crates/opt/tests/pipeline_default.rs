@@ -34,7 +34,7 @@ fn default_pipeline_folds_int_chain() -> opt::Result<()> {
 }
 
 /// `if(true) return 1 else return 2` — pipeline must eliminate the If and
-/// the ControlPhi at the join.
+/// the VarPhi at the join.
 #[test]
 fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     use ir::FunctionBuilder;

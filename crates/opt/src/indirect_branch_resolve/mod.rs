@@ -429,10 +429,10 @@ mod tests {
         // LinkRegister in-place edit fires.
         //
         // Pre-condition: run RedundantPhis to collapse the trivial
-        // single-input ControlPhi over `lr` → InitialVar(lr) directly.
+        // single-input VarPhi over `lr` → InitialVar(lr) directly.
         // The classifier only matches `InitialVar`; without
         // RedundantPhis, the anchor's producer would still be a
-        // ControlPhi and the classifier would defer.
+        // VarPhi and the classifier would defer.
         let lr_vn = rsleigh::Vn {
             addr: rsleigh::VnAddr {
                 space: rsleigh::VnSpace::REGISTER,
@@ -448,7 +448,7 @@ mod tests {
         b.build_return(Some(lr_in), &[]).unwrap();
         let mut built = b.build().unwrap();
         let entry = built.entry;
-        // Collapse the trivial ControlPhi(lr) so the Return's slot 2
+        // Collapse the trivial VarPhi(lr) so the Return's slot 2
         // input is `InitialVar(lr_vn)` directly.
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::RedundantPhis);

@@ -36,12 +36,12 @@ pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
-/// Starts building a `ControlPhi` pattern.  Matches any phi node.
+/// Starts building a `VarPhi` pattern.  Matches any phi node.
 #[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
 }
-/// Starts building a `ControlPhi` pattern pinned to varnode `vn`.
+/// Starts building a `VarPhi` pattern pinned to varnode `vn`.
 #[must_use]
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     PhiPat::new().for_vn(vn)
