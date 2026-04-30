@@ -41,9 +41,9 @@ fn example_arithmetic() {
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
-    let c4 = b.build_int_const(4u64, NodeOutputType::U64);
-    let c7 = b.build_int_const(7u64, NodeOutputType::U64);
-    let c1 = b.build_int_const(1u64, NodeOutputType::U64);
+    let c4 = b.build_int_const(4u64, NodeOutputType::U64).unwrap();
+    let c7 = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
+    let c1 = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
     let band = b
         .build_int_binary_operation(c4, c7, IntBinaryOp::And, NodeOutputType::U64)
         .expect("build");
@@ -80,7 +80,7 @@ fn example_arithmetic() {
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
-    let small = b2.build_int_const(42u64, NodeOutputType::U32);
+    let small = b2.build_int_const(42u64, NodeOutputType::U32).unwrap();
     let inner = b2
         .build_int_binary_operation(small, small, IntBinaryOp::Add, NodeOutputType::U32)
         .expect("build");
@@ -109,8 +109,8 @@ fn example_arithmetic() {
     let f = b3.build_boolean_const(false);
     // bool_and(true, false) constant-folds to BoolConst(false), so use
     // a non-const path to get an actual BoolBinaryOp node.
-    let v1 = b3.build_int_const(5u64, NodeOutputType::U64);
-    let v2 = b3.build_int_const(3u64, NodeOutputType::U64);
+    let v1 = b3.build_int_const(5u64, NodeOutputType::U64).unwrap();
+    let v2 = b3.build_int_const(3u64, NodeOutputType::U64).unwrap();
     let cmp = b3
         .build_int_cmp_operation(v1, v2, IntCmpOp::Less, NodeOutputType::U64)
         .expect("build");
@@ -152,8 +152,8 @@ fn example_calls_and_returns() {
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
-    let t1 = b.build_int_const(0x1000u64, NodeOutputType::U64);
-    let t2 = b.build_int_const(0x2000u64, NodeOutputType::U64);
+    let t1 = b.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
+    let t2 = b.build_int_const(0x2000u64, NodeOutputType::U64).unwrap();
     b.build_call(t1).expect("build");
     b.build_call(t2).expect("build");
     b.build_return(None, &[]).expect("build");
@@ -239,7 +239,7 @@ fn example_if_branches() {
     b.set_entry_region(entry).expect("build");
 
     b.set_region(true_r);
-    let tgt = b.build_int_const(0xAAAAu64, NodeOutputType::U64);
+    let tgt = b.build_int_const(0xAAAAu64, NodeOutputType::U64).unwrap();
     b.build_call(tgt).expect("build");
     b.build_return(None, &[]).expect("build");
 
@@ -247,8 +247,8 @@ fn example_if_branches() {
     b.build_return(None, &[]).expect("build");
 
     b.set_region(entry);
-    let c5 = b.build_int_const(5u64, NodeOutputType::U64);
-    let c1 = b.build_int_const(1u64, NodeOutputType::U64);
+    let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+    let c1 = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
     let cond = b
         .build_int_cmp_operation(c5, c1, IntCmpOp::Equal, NodeOutputType::U64)
         .expect("build");
@@ -301,16 +301,16 @@ fn example_captures() {
     b.set_entry_region(entry).expect("build");
 
     b.set_region(true_r);
-    let c10 = b.build_int_const(10u64, NodeOutputType::U64);
+    let c10 = b.build_int_const(10u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(c10), &[]).expect("build");
 
     b.set_region(false_r);
-    let c20 = b.build_int_const(20u64, NodeOutputType::U64);
+    let c20 = b.build_int_const(20u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(c20), &[]).expect("build");
 
     b.set_region(entry);
-    let cx = b.build_int_const(0u64, NodeOutputType::U64);
-    let cy = b.build_int_const(1u64, NodeOutputType::U64);
+    let cx = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+    let cy = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
     let cond = b
         .build_int_cmp_operation(cx, cy, IntCmpOp::Equal, NodeOutputType::U64)
         .expect("build");
@@ -351,7 +351,7 @@ fn example_captures() {
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
-    let c5 = b2.build_int_const(5u64, NodeOutputType::U64);
+    let c5 = b2.build_int_const(5u64, NodeOutputType::U64).unwrap();
     let self_add = b2
         .build_int_binary_operation(c5, c5, IntBinaryOp::Add, NodeOutputType::U64)
         .expect("build");
@@ -379,7 +379,7 @@ fn example_load_store() {
     let r = b.create_region().expect("build");
     b.set_entry_region(r).expect("build");
     b.set_region(r);
-    let addr = b.build_int_const(0x100u64, NodeOutputType::U64);
+    let addr = b.build_int_const(0x100u64, NodeOutputType::U64).unwrap();
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, ir::node::NodeOutputType::U64)
         .expect("build");
@@ -425,8 +425,8 @@ fn example_load_store() {
     let r2 = b2.create_region().expect("build");
     b2.set_entry_region(r2).expect("build");
     b2.set_region(r2);
-    let addr2 = b2.build_int_const(0x200u64, NodeOutputType::U64);
-    let data2 = b2.build_int_const(42u64, NodeOutputType::U64);
+    let addr2 = b2.build_int_const(0x200u64, NodeOutputType::U64).unwrap();
+    let data2 = b2.build_int_const(42u64, NodeOutputType::U64).unwrap();
     b2.build_store(addr2, data2, rsleigh::VnSpace::RAM)
         .expect("build");
     // A load immediately after consumes the store's memory output, making it
@@ -477,9 +477,9 @@ fn example_load_store() {
     let r3 = b3.create_region().expect("build");
     b3.set_entry_region(r3).expect("build");
     b3.set_region(r3);
-    let c_arg = b3.build_int_const(42u64, NodeOutputType::U64);
+    let c_arg = b3.build_int_const(42u64, NodeOutputType::U64).unwrap();
     b3.write_variable(&arg_vn, c_arg).expect("build");
-    let tgt3 = b3.build_int_const(0xABCDu64, NodeOutputType::U64);
+    let tgt3 = b3.build_int_const(0xABCDu64, NodeOutputType::U64).unwrap();
     b3.build_call(tgt3).expect("build");
     b3.build_return(None, &[]).expect("build");
     let g_call = b3.build().expect("build failed");

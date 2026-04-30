@@ -183,7 +183,7 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
-        let target = builder.build_int_const(0xdeadu64, NodeOutputType::U64);
+        let target = builder.build_int_const(0xdeadu64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(target), &[]).expect("build_return");
         let built = builder.build().expect("build");
         // Locate the unique Return.

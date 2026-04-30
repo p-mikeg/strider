@@ -29,7 +29,7 @@ fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let v = b.build_int_const(k, NodeOutputType::U64);
+    let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     b.build().unwrap()
 }
@@ -45,8 +45,8 @@ fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let lhs = b.build_int_const(x, NodeOutputType::U64);
-    let rhs = b.build_int_const(0u64, NodeOutputType::U64);
+    let lhs = b.build_int_const(x, NodeOutputType::U64).unwrap();
+    let rhs = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let sum = b
         .build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, NodeOutputType::U64)
         .unwrap();
@@ -70,9 +70,9 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
     let region = bd.create_region().unwrap();
     bd.set_entry_region(region).unwrap();
     bd.set_region(region);
-    let ac = bd.build_int_const(a, NodeOutputType::U64);
-    let bc = bd.build_int_const(b, NodeOutputType::U64);
-    let z0 = bd.build_int_const(0u64, NodeOutputType::U64);
+    let ac = bd.build_int_const(a, NodeOutputType::U64).unwrap();
+    let bc = bd.build_int_const(b, NodeOutputType::U64).unwrap();
+    let z0 = bd.build_int_const(0u64, NodeOutputType::U64).unwrap();
     let lhs = bd
         .build_int_binary_operation(ac, z0, IntBinaryOp::Add, NodeOutputType::U64)
         .unwrap();

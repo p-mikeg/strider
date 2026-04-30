@@ -28,7 +28,7 @@ fn analysis_loop_without_build_round_trips() {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let v = b.build_int_const(0u64, NodeOutputType::U64);
+    let v = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
 
     // Capture the entry once - it must remain stable across iterations.
@@ -66,7 +66,7 @@ fn final_build_after_extended_use_yields_valid_built() {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let v = b.build_int_const(7u64, NodeOutputType::U64);
+    let v = b.build_int_const(7u64, NodeOutputType::U64).unwrap();
     b.build_return(Some(v), &[]).unwrap();
 
     // N rounds of in-place mutation via graph_mut() - the same

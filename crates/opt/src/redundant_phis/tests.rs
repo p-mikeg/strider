@@ -36,7 +36,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     // entry: shared = sp - 4; if cond goto a else goto b
     b.set_region(entry);
     let sp_entry = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let shared_sp =
         b.build_int_binary_operation(sp_entry, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
     let cond = b.build_boolean_const(true);
@@ -95,8 +95,8 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     b.set_region(entry);
     b.build_branch(body)?;
     b.set_region(body);
-    let addr = b.build_int_const(0x1000u64, NodeOutputType::U64);
-    let data = b.build_int_const(0x42u64, NodeOutputType::U64);
+    let addr = b.build_int_const(0x1000u64, NodeOutputType::U64)?;
+    let data = b.build_int_const(0x42u64, NodeOutputType::U64)?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
 
@@ -152,8 +152,8 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
     let cond = b.build_boolean_const(false);
     b.build_if(cond, dead, live)?;
     b.set_region(dead);
-    let addr_d = b.build_int_const(0xDEADu64, NodeOutputType::U64);
-    let data_d = b.build_int_const(0xBADCu64, NodeOutputType::U64);
+    let addr_d = b.build_int_const(0xDEADu64, NodeOutputType::U64)?;
+    let data_d = b.build_int_const(0xBADCu64, NodeOutputType::U64)?;
     b.build_store(addr_d, data_d, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     b.set_region(live);
@@ -189,7 +189,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
-    let c = b.build_int_const(0u64, NodeOutputType::U64);
+    let c = b.build_int_const(0u64, NodeOutputType::U64)?;
     b.build_return(Some(c), &[])?;
     let mut fg = b.build()?;
 

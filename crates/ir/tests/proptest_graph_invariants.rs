@@ -88,7 +88,7 @@ fn replay(steps: &[Step]) -> Option<BuiltFunctionGraph> {
 
     for s in steps {
         match s {
-            Step::IntConst(v, t) => pool.push(b.build_int_const(*v, *t)),
+            Step::IntConst(v, t) => pool.push(b.build_int_const(*v, *t).ok()?),
             Step::BoolConst(v) => pool.push(b.build_boolean_const(*v)),
             Step::IntBinary(i, j, op, t) => {
                 if pool.is_empty() {

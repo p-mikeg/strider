@@ -157,7 +157,7 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(output_id)? {
-            return Ok(self.build_int_const(val, output_type));
+            return self.build_int_const(val, output_type);
         }
 
         if curr_output_type.byte_size() <= output_type.byte_size() {
@@ -183,11 +183,13 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
-            return Ok(match op {
-                // signed_val is i64; reinterpret bits as u128 (sign-extended to i128 then cast)
+            // signed_val is i64; `i64 as u128` sign-extends to fill the
+            // high 64 bits, and build_int_const masks to output_type's
+            // width.
+            return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
-            });
+            };
         }
 
         if !output_type.is_integer() {
@@ -203,8 +205,14 @@ impl FunctionBuilder {
             return self.convert_to_int_if_needed(output_id, output_type);
         }
 
-        if curr_output_type.byte_size() >= output_type.byte_size() {
+        if curr_output_type.byte_size() == output_type.byte_size() {
             return Ok(output_id);
+        }
+        if curr_output_type.byte_size() > output_type.byte_size() {
+            // Caller asked to extend a value that is already wider than the
+            // target.  Truncate so the returned id always carries
+            // `output_type`.
+            return self.truncate_if_needed(output_id, output_type);
         }
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [output_id], output_type))
     }

@@ -78,27 +78,28 @@ impl FunctionBuilder {
     /// `val` is masked to `output_type`'s bit width before storage.  Accepts
     /// any value convertible to `u128` — most callers pass a `u64` literal.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `output_type` is not an integer type, or is `U256` (which
-    /// is not yet representable in the u128 storage; no current consumer
-    /// produces a U256 IntConst, see plan
-    /// `2026-04-25-int-const-u256-and-pattern-width-aware.md`).
+    /// Returns an error when `output_type` is not an integer type, or is
+    /// `U256` (which is not yet representable in the u128 storage that
+    /// `IntConst` uses).
     pub fn build_int_const(
         &mut self,
         val: impl Into<u128>,
         output_type: NodeOutputType,
-    ) -> NodeOutputId {
-        assert!(
-            output_type.is_integer(),
-            "build_int_const called with non-integer type {output_type:?}"
-        );
-        assert!(
-            !matches!(output_type, NodeOutputType::U256),
-            "build_int_const(U256) not yet supported — IntConst storage is u128"
-        );
+    ) -> Result<NodeOutputId> {
+        if !output_type.is_integer() {
+            return Err(anyhow!(
+                "build_int_const called with non-integer type {output_type:?}"
+            ));
+        }
+        if matches!(output_type, NodeOutputType::U256) {
+            return Err(anyhow!(
+                "build_int_const(U256) not yet supported - IntConst storage is u128"
+            ));
+        }
         let val = val.into() & output_type.bit_mask_u128();
-        self.build_single_output_pure(NodeKind::IntConst(val), [], output_type)
+        Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
     }
 
     /// Emits an integer binary operation node with automatic type coercion.
@@ -409,7 +410,7 @@ impl FunctionBuilder {
         if let NodeKind::FloatConst(bits) = *self.graph().kind_of_output(input)
             && input_ty != NodeOutputType::F80
         {
-            return Ok(self.build_int_const(bits, int_type));
+            return self.build_int_const(bits, int_type);
         }
         Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))
     }

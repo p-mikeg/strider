@@ -321,7 +321,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        let v = b.build_int_const(k, NodeOutputType::U64);
+        let v = b.build_int_const(k, NodeOutputType::U64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.build().unwrap()
     }

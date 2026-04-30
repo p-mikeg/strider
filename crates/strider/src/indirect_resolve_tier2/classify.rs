@@ -123,7 +123,7 @@ mod tests {
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
             // also fold via the `as u64` cast in the classifier.
-            fb.build_int_const(0x1234u64, NodeOutputType::U64)
+            fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap()
         });
         let result = classify_anchor(&graph, anchor, None);
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
@@ -135,7 +135,7 @@ mod tests {
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
         let (graph, anchor) = empty_graph_returning(|fb| {
-            fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64)
+            fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64).unwrap()
         });
         assert_eq!(
             classify_anchor(&graph, anchor, None),
@@ -299,14 +299,14 @@ mod tests {
         // output ids so we can wire them into the ValuePhi below.
         let const_outputs: Vec<NodeOutputId> = per_pred_consts
             .iter()
-            .map(|k| builder.build_int_const(*k, NodeOutputType::U64))
+            .map(|k| builder.build_int_const(*k, NodeOutputType::U64).unwrap())
             .collect();
 
         // Use a dummy IntConst as the synthetic placeholder anchor
         // so `build_return` succeeds and `build()` validates.  The
         // ValuePhi we synthesise after build is unreachable from
         // entry, so it can have any shape we want.
-        let dummy = builder.build_int_const(0u64, NodeOutputType::U64);
+        let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         let mut graph = builder.build().expect("build");
 
@@ -381,9 +381,9 @@ mod tests {
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
-        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64);
+        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         let var_out = builder.read_variable(&other_vn).expect("read_variable");
-        let dummy = builder.build_int_const(0u64, NodeOutputType::U64);
+        let dummy = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         let mut graph = builder.build().expect("build");
         let fake_token_node = graph.graph.create_node(
@@ -439,8 +439,8 @@ mod tests {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
         let (graph, anchor) = empty_graph_returning(|fb| {
-            let lhs = fb.build_int_const(1u64, NodeOutputType::U64);
-            let rhs = fb.build_int_const(2u64, NodeOutputType::U64);
+            let lhs = fb.build_int_const(1u64, NodeOutputType::U64).unwrap();
+            let rhs = fb.build_int_const(2u64, NodeOutputType::U64).unwrap();
             fb.build_int_binary_operation(lhs, rhs, ir::IntBinaryOp::Add, NodeOutputType::U64)
                 .expect("build_int_binary_operation")
         });

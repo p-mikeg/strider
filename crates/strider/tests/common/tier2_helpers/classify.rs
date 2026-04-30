@@ -205,11 +205,11 @@ pub fn build_value_phi_target_scenario(
     for (arm, k) in arm_regions.iter().zip(per_pred.iter().copied()) {
         b.set_region(*arm);
         let sp_v = b.read_variable(&sp).expect("read sp in arm");
-        let four = b.build_int_const(4u64, NodeOutputType::U32);
+        let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
         let addr = b
             .build_int_binary_operation(sp_v, four, IntBinaryOp::Add, NodeOutputType::U32)
             .expect("addr");
-        let v = b.build_int_const(k, NodeOutputType::U32);
+        let v = b.build_int_const(k, NodeOutputType::U32).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).expect("store");
         b.build_branch(merge).expect("branch to merge");
     }
@@ -217,7 +217,7 @@ pub fn build_value_phi_target_scenario(
     // Merge: load `*(sp+4)` and Return it as the placeholder anchor.
     b.set_region(merge);
     let sp_m = b.read_variable(&sp).expect("read sp in merge");
-    let four_m = b.build_int_const(4u64, NodeOutputType::U32);
+    let four_m = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let addr_m = b
         .build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::U32)
         .expect("merge addr");
@@ -290,7 +290,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     // Compute `sp - 4` — the slot we'll push lr to.
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let store_addr = b
         .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
         .expect("sp - 4");
@@ -304,7 +304,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     // StackLoadForward will fold the load directly to lr_v after
     // StackStoreDetect rewrites the store.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, NodeOutputType::U32);
+    let four2 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let load_addr = b
         .build_int_binary_operation(sp_v2, four2, IntBinaryOp::Sub, NodeOutputType::U32)
         .expect("sp - 4 (load)");
@@ -393,16 +393,16 @@ pub fn build_push_target_pop_pc_scenario(
     b.set_region(region);
 
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, NodeOutputType::U32);
+    let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let store_addr = b
         .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
         .expect("sp - 4");
-    let stored_const = b.build_int_const(k, NodeOutputType::U32);
+    let stored_const = b.build_int_const(k, NodeOutputType::U32).unwrap();
     b.build_store(store_addr, stored_const, rsleigh::VnSpace::RAM)
         .expect("store K");
 
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, NodeOutputType::U32);
+    let four2 = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     let load_addr = b
         .build_int_binary_operation(sp_v2, four2, IntBinaryOp::Sub, NodeOutputType::U32)
         .expect("sp - 4 (load)");
@@ -489,15 +489,15 @@ pub fn build_jump_table_known_bits_scenario(
     b.set_region(region);
 
     let raw_idx = b.read_variable(&idx_var).expect("read idx");
-    let mask_c = b.build_int_const(idx_mask, NodeOutputType::U32);
+    let mask_c = b.build_int_const(idx_mask, NodeOutputType::U32).unwrap();
     let masked = b
         .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, NodeOutputType::U32)
         .expect("idx & mask");
-    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32).unwrap();
     let mul = b
         .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let base_c = b.build_int_const(base, NodeOutputType::U32).unwrap();
     let addr = b
         .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
         .expect("add");
@@ -559,7 +559,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
     let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
-    let bound_c = b.build_int_const(bound, NodeOutputType::U32);
+    let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
     let cond = b
         .build_int_cmp_operation(raw_idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::U32)
         .expect("idx < bound");
@@ -568,11 +568,11 @@ pub fn build_jump_table_predecessor_if_scenario(
     // Dispatch: build the jump-table-shaped load.
     b.set_region(dispatch);
     let idx = b.read_variable(&idx_var).expect("read idx (dispatch)");
-    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32).unwrap();
     let mul = b
         .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let base_c = b.build_int_const(base, NodeOutputType::U32).unwrap();
     let addr = b
         .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
         .expect("add");
@@ -630,11 +630,11 @@ pub fn build_jump_table_unbounded_scenario(
     b.set_region(region);
 
     let idx = b.read_variable(&idx_var).expect("read idx");
-    let stride_c = b.build_int_const(stride, NodeOutputType::U32);
+    let stride_c = b.build_int_const(stride, NodeOutputType::U32).unwrap();
     let mul = b
         .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::U32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::U32);
+    let base_c = b.build_int_const(base, NodeOutputType::U32).unwrap();
     let addr = b
         .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::U32)
         .expect("add");
@@ -668,7 +668,7 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     b.set_entry_region(region).expect("set_entry");
     b.set_region(region);
 
-    let addr = b.build_int_const(0x1234_u64, NodeOutputType::U32);
+    let addr = b.build_int_const(0x1234_u64, NodeOutputType::U32).unwrap();
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");

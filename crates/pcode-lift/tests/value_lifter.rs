@@ -420,7 +420,7 @@ fn write_vn_then_read_vn_round_trip() {
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     // Write 42 to reg(0).
-    let const_42 = lifter.builder.build_int_const(42u64, ir::ValueType::U32);
+    let const_42 = lifter.builder.build_int_const(42u64, ir::ValueType::U32).unwrap();
     lifter.write_vn(&reg(0), const_42).expect("write_vn");
     // Read it back.
     let value = lifter.read_vn(&reg(0)).expect("read_vn");
@@ -437,7 +437,7 @@ fn write_vn_to_const_space_errors() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let val = lifter.builder.build_int_const(0u64, ir::ValueType::U32);
+    let val = lifter.builder.build_int_const(0u64, ir::ValueType::U32).unwrap();
     let res = lifter.write_vn(&const_vn(0, 4), val);
     assert!(res.is_err(), "writing to CONST space should error");
 }
