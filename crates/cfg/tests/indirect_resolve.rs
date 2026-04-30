@@ -97,14 +97,6 @@ fn branch_indirect(target_vn: Vn) -> Insn {
     }
 }
 
-/// Convenience PcodeInsnAddr for the tests' branch-indirect site.
-fn br_addr() -> PcodeInsnAddr {
-    PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: 0x2000 },
-        insn_index: 0,
-    }
-}
-
 // ── ResolvedTargets::Single ───────────────────────────────────────────
 
 /// `Copy reg, K; BranchIndirect reg` resolves to `Single(K)`.
@@ -130,7 +122,6 @@ fn resolves_direct_const_to_single() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
@@ -170,7 +161,6 @@ fn resolves_arithmetic_chain_to_single() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
@@ -232,7 +222,6 @@ fn resolves_sub_register_aliasing_to_single() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
@@ -267,7 +256,6 @@ fn resolves_link_register_to_link_register() {
         &sleigh,
         Some(lr_like),
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
@@ -320,7 +308,6 @@ fn resolves_rodata_load_to_single() {
         &sleigh,
         None,
         Some(&rom),
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
@@ -350,7 +337,6 @@ fn unknown_memory_returns_ok_none() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
@@ -416,7 +402,6 @@ fn runtime_input_returns_ok_none() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
@@ -437,7 +422,6 @@ fn empty_region_returns_ok_none() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
@@ -476,7 +460,6 @@ fn malformed_branch_indirect_returns_ok_none() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("soft contract: Ok(None) on unresolved");
@@ -503,7 +486,6 @@ fn tier_1_unresolved_returns_ok_none() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
@@ -538,39 +520,9 @@ fn tier_1_resolved_const_returns_ok_some_single() {
         &sleigh,
         None,
         None,
-        br_addr(),
         target::Endianness::Little,
     )
     .expect("resolver");
     assert_eq!(res, Some(ResolvedTargets::Single(0xdead_beef)));
 }
 
-/// Pre-R1.2 the resolver returned `Err(UnresolvedIndirectBranch(addr))`
-/// to surface the offending pcode address.  Under the soft contract
-/// the resolver returns `Ok(None)` and the *caller* (region_builder)
-/// is responsible for stamping `addr` onto the deferred terminator.
-/// The resolver no longer threads the address back through its return
-/// value, so this test pins that the call signature still accepts an
-/// `insn_addr` argument and that an unresolvable input produces
-/// `Ok(None)` regardless of the supplied address.
-#[test]
-fn addr_is_threaded_into_resolver_signature() {
-    let sleigh = make_x86_sleigh();
-    let target = reg4(0);
-    let bad_addr = PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: 0xFEED_BEEF },
-        insn_index: 7,
-    };
-    let region = vec![ri(0x1000, 0, branch_indirect(target))];
-    let res = resolve_indirect_target_for_test(
-        &region,
-        target,
-        &sleigh,
-        None,
-        None,
-        bad_addr,
-        target::Endianness::Little,
-    )
-    .expect("soft contract");
-    assert!(res.is_none());
-}

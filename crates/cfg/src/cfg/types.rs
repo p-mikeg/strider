@@ -212,4 +212,4 @@ impl Region {
 /// values that describe the type of control transfer.  `StableDiGraph` is
 /// used so that `NodeIndex` values remain stable when regions are removed or
 /// re-wired (e.g. during `split_region`).
-pub type RegionGraph = StableDiGraph<Region, RegionEdgeKind>;
+pub(crate) type RegionGraph = StableDiGraph<Region, RegionEdgeKind>;

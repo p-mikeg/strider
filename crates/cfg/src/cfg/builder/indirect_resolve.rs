@@ -45,7 +45,7 @@
 
 use opt::ReadOnlyMemory;
 
-use crate::cfg::types::{PcodeInsnAddr, RegionInstruction};
+use crate::cfg::types::RegionInstruction;
 use crate::error::Result;
 
 /// Re-export of the canonical [`opt::ResolvedTargets`].  Kept under the
@@ -91,26 +91,12 @@ pub use opt::ResolvedTargets;
 /// [`crate::RegionTerminator::UnresolvedIndirectBranch`] so the
 /// strider-level fixed-point loop can attempt tier-2 resolution
 /// against the optimised IR.
-//
-// `pub(super)` so [`crate::cfg::builder::region_builder`] (the only
-// in-crate caller) can dispatch into us in Phase 5.  Until then no other
-// code path invokes the resolver — the function would otherwise be
-// flagged by `dead_code` / clippy.  Phase 4's unit tests exercise it
-// through a `pub` test forwarder declared at the bottom of this file.
 pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
     target_vn: rsleigh::Vn,
     sleigh: &rsleigh::Sleigh<R>,
     cc_link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    // R1.2: the address is no longer used as the payload of an
-    // `UnresolvedIndirectBranch` error inside the resolver — the soft
-    // contract returns `Ok(None)` for that path.  We retain the
-    // argument so the call signature stays stable across the
-    // softening (region_builder still passes it through unchanged) and
-    // so a future strict-failure bypass — should one ever be needed —
-    // has the address available without a signature change.
-    _insn_addr: PcodeInsnAddr,
     endianness: target::Endianness,
 ) -> Result<Option<ResolvedTargets>> {
     // ── Step 1: collect every varnode the region touches so the IR
@@ -342,7 +328,7 @@ pub mod test_api {
     //! exposing the helper to downstream crates.
 
     use super::resolve_indirect_target;
-    use crate::cfg::types::{PcodeInsnAddr, RegionInstruction};
+    use crate::cfg::types::RegionInstruction;
     use crate::error::Result;
     use opt::ReadOnlyMemory;
 
@@ -350,22 +336,20 @@ pub mod test_api {
 
     /// Test-only forwarder for [`super::resolve_indirect_target`].
     ///
-    /// R1.2 soft contract: returns `Ok(None)` when the resolver
-    /// cannot classify the target.  Genuine builder / opt errors
-    /// still propagate via the `Result`.
+    /// Returns `Ok(None)` when the resolver cannot classify the
+    /// target; genuine builder / opt errors still propagate via the
+    /// `Result`.
     ///
     /// # Errors
     /// Propagates whatever the underlying resolver returns: builder
-    /// failures, opt failures, malformed pcode-lift inputs.  The
-    /// previous `UnresolvedIndirectBranch` error variant is no
-    /// longer produced — unclassifiable targets surface as `Ok(None)`.
+    /// failures, opt failures, malformed pcode-lift inputs.
+    /// Unclassifiable targets surface as `Ok(None)`.
     pub fn resolve_indirect_target_for_test<R: rsleigh::MemReader>(
         region_insns: &[RegionInstruction],
         target_vn: rsleigh::Vn,
         sleigh: &rsleigh::Sleigh<R>,
         cc_link_register_vn: Option<rsleigh::Vn>,
         rom: Option<&dyn ReadOnlyMemory>,
-        insn_addr: PcodeInsnAddr,
         endianness: target::Endianness,
     ) -> Result<Option<ResolvedTargets>> {
         resolve_indirect_target(
@@ -374,7 +358,6 @@ pub mod test_api {
             sleigh,
             cc_link_register_vn,
             rom,
-            insn_addr,
             endianness,
         )
     }

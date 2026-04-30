@@ -361,7 +361,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         &self.builder.sleigh,
                         self.builder.options.link_register_vn,
                         self.builder.options.read_only_memory.as_deref(),
-                        addr,
                         self.builder.endianness,
                     )?
                 };

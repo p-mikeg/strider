@@ -9,20 +9,6 @@ use anyhow::anyhow;
 use crate::error::Result;
 
 impl<R: rsleigh::MemReader> Cfg<R> {
-    /// Renders a varnode to a printable name. Fetches Sleigh registers per
-    /// call. Used by the `test_api` forwarder for ad-hoc callers; the DOT
-    /// dumper bypasses this and calls [`vn_to_name_with_regs`] directly so
-    /// it only fetches the register list once per render.
-    pub(super) fn vn_to_name(&self, vn: &rsleigh::Vn) -> Result<String> {
-        match vn.addr.space {
-            rsleigh::VnSpace::REGISTER => {
-                let regs = self.sleigh.regs().map_err(anyhow::Error::from)?;
-                vn_to_name_with_regs(&regs, vn)
-            }
-            _ => vn_to_name_non_register(vn),
-        }
-    }
-
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
     #[must_use]
     pub fn dot_dumper(&self) -> CfgDotDumper<'_, R> {
@@ -30,56 +16,47 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     }
 }
 
-/// Render `vn` to a name, using a pre-fetched [`rsleigh::SleighRegs`] for
-/// REGISTER lookups. The non-REGISTER spaces don't need `regs`.
+/// Render `vn` to a name.  REGISTER-space varnodes need a pre-fetched
+/// [`rsleigh::SleighRegs`] to resolve their canonical name; other
+/// spaces format from the varnode alone.
 ///
-/// Currently `regs` is fetched once per node rendered by the DOT dumper.
-/// If profiling later flags this as hot, lift the fetch into per-dump
-/// state by changing `CfgDotDumper`'s `GraphDotDumper::State` from `()`
-/// to `SleighRegs`.
-fn vn_to_name_with_regs(regs: &rsleigh::SleighRegs, vn: &rsleigh::Vn) -> Result<String> {
-    if vn.addr.space == rsleigh::VnSpace::REGISTER {
-        return Ok(regs
-            .vn_to_name(*vn)
-            .ok_or_else(|| anyhow!("invalid register vn {vn:?}"))?
-            .to_string());
-    }
-    vn_to_name_non_register(vn)
-}
-
-/// Render `vn` for non-REGISTER spaces. REGISTER input is a caller-routing
-/// bug (the caller should have gone through [`vn_to_name_with_regs`])
-/// and yields an "invalid register vn" error.
-fn vn_to_name_non_register(vn: &rsleigh::Vn) -> Result<String> {
+/// `regs` may be `None` when the caller already knows the varnode is
+/// not in REGISTER space.  Passing `None` for a REGISTER varnode
+/// returns an error.
+fn vn_to_name(regs: Option<&rsleigh::SleighRegs>, vn: &rsleigh::Vn) -> Result<String> {
     let offset = vn.addr.off;
     let size = vn.size;
     match vn.addr.space {
+        rsleigh::VnSpace::REGISTER => {
+            let regs = regs.ok_or_else(|| anyhow!("REGISTER vn {vn:?} requires SleighRegs"))?;
+            Ok(regs
+                .vn_to_name(*vn)
+                .ok_or_else(|| anyhow!("invalid register vn {vn:?}"))?
+                .to_string())
+        }
         rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
         rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
         rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-        rsleigh::VnSpace::REGISTER => {
-            // Caller error: should have routed through with-regs path.
-            Err(anyhow!("invalid register vn {vn:?}"))
-        }
         s => Err(anyhow!("unsupported varnode space for display: {s:?}")),
     }
 }
 
 #[doc(hidden)]
 pub mod test_api {
-    //! Test-only forwarder for `Cfg::vn_to_name`.
+    //! Test-only forwarder for varnode-name rendering.
 
-    use super::Cfg;
+    use super::{vn_to_name as inner, Cfg};
     use crate::error::Result;
 
     /// # Errors
-    /// Propagates errors from the underlying `Cfg::vn_to_name` (invalid reg vn,
+    /// Propagates errors from the underlying renderer (invalid reg vn,
     /// unsupported varnode space, or Sleigh lookup failure).
     pub fn vn_to_name<R: rsleigh::MemReader>(
         cfg: &Cfg<R>,
         vn: &rsleigh::Vn,
     ) -> Result<String> {
-        cfg.vn_to_name(vn)
+        let regs = cfg.sleigh.regs().map_err(anyhow::Error::from)?;
+        inner(Some(&regs), vn)
     }
 }
 
@@ -124,7 +101,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 .output
                 .iter()
                 .chain(insn.insn.inputs.iter())
-                .map(|vn| vn_to_name_with_regs(&regs, vn))
+                .map(|vn| vn_to_name(Some(&regs), vn))
                 .collect::<Result<_>>()?;
             let insn_addr = insn.addr.machine_addr.addr;
             write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode)

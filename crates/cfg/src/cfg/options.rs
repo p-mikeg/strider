@@ -101,24 +101,16 @@ impl PartialEq for Options {
 ///     .build();
 /// # let _ = opts;
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OptionsBuilder {
     lifter_options: Options,
-}
-
-impl Default for OptionsBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl OptionsBuilder {
     /// Creates an `OptionsBuilder` with all options at their defaults.
     #[must_use]
     pub fn new() -> Self {
-        OptionsBuilder {
-            lifter_options: Options::default(),
-        }
+        Self::default()
     }
 
     /// Sets the maximum size (in bytes) of the function being analysed.
