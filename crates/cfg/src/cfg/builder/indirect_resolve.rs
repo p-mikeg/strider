@@ -23,14 +23,12 @@
 //!    - `IntConst(k)` → [`ResolvedTargets::Single(k as u64)`].
 //!    - `InitialVar(vn)` where `vn == cc_link_register_vn` →
 //!      [`ResolvedTargets::LinkRegister`].
-//!    - anything else → `Ok(None)`.  R1.2 softened the failure
-//!      mode: the resolver no longer raises
-//!      [`crate::ErrorKind::UnresolvedIndirectBranch`] when it
-//!      cannot classify a target.  Callers (region_builder) defer
-//!      the branch via [`crate::RegionTerminator::UnresolvedIndirectBranch`]
-//!      and the strider-level fixed-point loop runs tier-2
-//!      resolution against the optimised IR.  Genuine errors
-//!      (builder/opt failures, malformed graph) still propagate.
+//!    - anything else → `Ok(None)`.  Unclassifiable targets are not
+//!      errors at this layer: callers (region_builder) defer the
+//!      branch via [`crate::RegionTerminator::UnresolvedIndirectBranch`]
+//!      and the strider-level fixed-point loop runs tier-2 resolution
+//!      against the optimised IR.  Genuine errors (builder/opt
+//!      failures, malformed graph) still propagate.
 //!
 //! The mini graph never contains calls, branches, or stores — control-flow
 //! opcodes (which make [`pcode_lift::ValueLifter::lift`] return
@@ -84,21 +82,15 @@ pub use opt::ResolvedTargets;
 /// optimizer pipeline so that loads from the binary's `.rodata` /
 /// `.text` resolve to constants.  `None` skips the pass.
 ///
-/// `insn_addr` is the pcode address of the offending `BranchIndirect`.
-/// R1.2 softened the soft-failure semantic: when the mini-graph cannot
-/// classify the target, the resolver returns `Ok(None)` and the caller
-/// stamps `insn_addr` onto a [`crate::RegionTerminator::UnresolvedIndirectBranch`].
-/// The address is still threaded through the signature for symmetry
-/// with future error paths (e.g. malformed-region diagnostics) and
-/// for the test_api forwarder.
-///
 /// # Errors
 ///
-/// Genuine errors from the underlying mini-graph build / opt run
-/// ([`crate::ErrorKind::IrError`], [`crate::ErrorKind::OptError`],
-/// [`crate::ErrorKind::PcodeLiftError`]) still propagate.  Failure to
-/// classify the target itself is *not* an error and returns
-/// `Ok(None)`.
+/// Propagates errors from the underlying mini-graph build, opt run,
+/// or pcode lifting.  Failure to classify the target itself is *not*
+/// an error and returns `Ok(None)` — the caller stamps the offending
+/// pcode address onto a
+/// [`crate::RegionTerminator::UnresolvedIndirectBranch`] so the
+/// strider-level fixed-point loop can attempt tier-2 resolution
+/// against the optimised IR.
 //
 // `pub(super)` so [`crate::cfg::builder::region_builder`] (the only
 // in-crate caller) can dispatch into us in Phase 5.  Until then no other

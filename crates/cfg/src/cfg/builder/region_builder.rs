@@ -17,8 +17,8 @@ use crate::error::Result;
 ///   instruction.
 ///
 /// # Errors
-/// Returns [`ErrorKind::MachineAddrOverflow`] when the current machine
-/// address plus `lift_res.machine_insn_len` overflows `u64`.
+/// Returns an error when the current machine address plus
+/// `lift_res.machine_insn_len` overflows `u64`.
 fn next_pcode_addr(
     addr: PcodeInsnAddr,
     lift_res: &rsleigh::LiftRes,
@@ -212,7 +212,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// A well-formed tail call must target the *first* pcode instruction of a
     /// machine instruction (`insn_index == 0`).  A branch whose address bounds
     /// indicate a tail call but whose `insn_index != 0` is malformed and
-    /// returns [`ErrorKind::InvalidTailCall`].
+    /// returns an error.
     pub(super) fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
 
@@ -322,8 +322,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::BranchIndirect => {
-                // Phase 5: dispatch into the lazy mini-graph resolver.
-                // The resolver folds the region's value-producing pcode
+                // Dispatch into the lazy mini-graph resolver.  The
+                // resolver folds the region's value-producing pcode
                 // insns into an isolated IR graph and inspects the
                 // producer of `target_vn` after constant folding.
                 // - `Single(K)` inside the function range → intra-fn
@@ -331,19 +331,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // - `Single(K)` outside the function range →
                 //   `TailCall { target: K }` (no successor edge).
                 // - `LinkRegister` → `Return` (no successor edge).
-                // - unresolvable → propagate
-                //   [`ErrorKind::UnresolvedIndirectBranch`].
+                // - unresolvable → defer via `UnresolvedIndirectBranch`
+                //   for the strider-level outer loop.
                 //
                 // `CallIndirect` is intentionally NOT routed here — it
                 // remains a non-terminator opcode handled by the IR
-                // layer.  See plan
-                // `2026-04-27-indirect-branch-resolution.md` Phase 5.
+                // layer.
                 //
-                // R3.6 feedback path: if `known_targets` has an entry
-                // for `addr`, use it directly — tier 2 from a prior
+                // Feedback path: if `known_targets` has an entry for
+                // `addr`, use it directly — tier 2 from a prior
                 // iteration already classified this branch and we'd
-                // re-derive the same answer.  Hot-path on second-and-
-                // later iterations of the strider fixed-point loop.
+                // re-derive the same answer.
                 let target_vn = *insn
                     .inputs
                     .first()
@@ -363,22 +361,19 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         self.builder.endianness,
                     )?
                 };
-                // R1.3: tier-1 None means "I can't classify this from
-                // the current region's pcode alone" — defer to the
+                // Tier-1 None means "I can't classify this from the
+                // current region's pcode alone" — defer to the
                 // strider-level outer loop.  Stamp `target_vn` and
-                // `addr` onto the new `UnresolvedIndirectBranch`
+                // `addr` onto the `UnresolvedIndirectBranch`
                 // terminator so the strider lifter can read the
                 // dispatch varnode at region exit and emit a
                 // placeholder `Return(target_value)` that anchors the
                 // value for tier-2 inspection.  No outgoing edge —
-                // the target is unknown at cfg-build time.
-                //
-                // The strict-failure semantic for unresolved indirect
-                // branches has moved to the outer fixed-point loop
-                // (R3): once the optimiser has run on the full graph
-                // and tier 2 has had its chance, any leftover
-                // `UnresolvedIndirectBranch` regions surface as
-                // `ErrorKind::UnresolvedIndirectBranch(addr)`.
+                // the target is unknown at cfg-build time.  Once the
+                // optimiser has run on the full graph and tier 2 has
+                // had its chance, any leftover
+                // `UnresolvedIndirectBranch` regions surface as an
+                // error at the orchestrator's fixed point.
                 let Some(resolved) = resolved else {
                     self.finish_current_region(
                         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
@@ -468,9 +463,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Finalises the region that has been accumulating instructions.
     ///
-    /// Calls `Builder::add_region` (which enforces non-emptiness via
-    /// [`ErrorKind::EmptyRegion`]) and, if there is a parent edge, adds that
-    /// edge to the graph. Returns the new region's [`NodeIndex`].
+    /// Calls `Builder::add_region` (which rejects empty regions) and, if
+    /// there is a parent edge, adds that edge to the graph. Returns the
+    /// new region's [`NodeIndex`].
     fn finish_current_region(&mut self, terminator: RegionTerminator) -> Result<NodeIndex> {
         let region = self.builder.add_region(Region {
             start_addr: self.start_addr,
@@ -569,8 +564,8 @@ pub mod test_api {
     /// Test-only forwarder for the private free function `next_pcode_addr`.
     ///
     /// # Errors
-    /// Returns [`crate::ErrorKind::MachineAddrOverflow`] when advancing past
-    /// the last pcode op overflows the 64-bit machine-address space.
+    /// Returns an error when advancing past the last pcode op overflows
+    /// the 64-bit machine-address space.
     pub fn next_pcode_addr(
         addr: PcodeInsnAddr,
         lift: &rsleigh::LiftRes,
@@ -671,8 +666,7 @@ pub mod test_api {
         }
 
         /// # Errors
-        /// Returns [`crate::ErrorKind::EmptyRegion`] if the region has no
-        /// instructions.
+        /// Returns an error if the region has no instructions.
         pub fn finish_current_region(
             &mut self,
             terminator: RegionTerminator,

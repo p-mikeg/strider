@@ -453,9 +453,9 @@ fn empty_region_returns_ok_none() {
 /// returns `Ok(false)` so lifting stops; resolution proceeds but the
 /// target VN is never written → `Ok(None)`.
 ///
-/// In production, the [`crate::ErrorKind::MissingBranchTarget`] arm in
+/// In production, the BranchIndirect-without-target check in
 /// `RegionBuilder::process_new_insn` short-circuits before we ever call
-/// the resolver — see Phase 5 wiring at
+/// the resolver — see
 /// `crates/cfg/src/cfg/builder/region_builder.rs`.
 #[test]
 fn malformed_branch_indirect_returns_ok_none() {

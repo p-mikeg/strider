@@ -35,26 +35,20 @@ use petgraph::graph::NodeIndex;
 pub struct Cfg<R: rsleigh::MemReader> {
     /// The Sleigh context used during construction.
     ///
-    /// **Persistence contract** (W11 / Sleigh persistence work): the
-    /// Sleigh handle is owned by the [`Cfg`] across the analysis
-    /// lifetime and threaded through every iteration of the indirect-
-    /// branch fixed-point orchestrator.  Each iteration: (1) builds a
-    /// new [`Cfg`] via [`Builder`] (consuming the Sleigh by value);
-    /// (2) harvests the Sleigh out of [`Cfg::sleigh`] before dropping
-    /// the [`Cfg`]; (3) re-uses the same Sleigh in the next iteration
-    /// build.  This avoids re-loading the SLA spec on every CFG
-    /// rebuild — a measurable hot-path cost the orchestrator's
-    /// fixed-point loop pays for every indirect-branch resolution.
+    /// Owned by the [`Cfg`] across the analysis lifetime; `strider::run`
+    /// harvests it out of `Cfg::sleigh` between iterations of the
+    /// indirect-branch fixed-point loop and threads it back into the
+    /// next [`Builder`] so the SLA spec is loaded once per analysis,
+    /// not once per CFG rebuild.  See `tests/sleigh_reuse.rs` for the
+    /// round-trip pin.
     ///
     /// Reusing one Sleigh across many `lift_one` calls is sound:
     /// `lift_one` mutates only Sleigh's internal decode buffers,
     /// which are reset on every call; there is no per-CFG state in
-    /// Sleigh.  This is the same pattern `cfg::region_builder`
-    /// already uses within a single CFG build; doing it across
-    /// iterations gives the same property at the orchestrator scale.
+    /// Sleigh.
     ///
     /// The field is also retained so register names can be resolved
-    /// for visualisation (the historical reason it was kept).
+    /// for visualisation.
     pub sleigh: rsleigh::Sleigh<R>,
     /// The underlying directed graph.  Nodes are regions; edges are labeled
     /// with [`RegionEdgeKind`].

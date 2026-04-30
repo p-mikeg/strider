@@ -144,7 +144,7 @@ pub enum RegionTerminator {
     /// optimizer pipeline over the lifted IR and tier-2 resolution
     /// inspects the producer of `target_vn` in the optimised graph.
     /// At fixed point any remaining `UnresolvedIndirectBranch` regions
-    /// surface as `ErrorKind::UnresolvedIndirectBranch(addr)`.
+    /// surface as an "unresolved indirect branch" error.
     ///
     /// This variant has **no outgoing edge**: the target is unknown
     /// at cfg-build time.  Strider lifts the region by emitting a
@@ -157,8 +157,8 @@ pub enum RegionTerminator {
         target_vn: rsleigh::Vn,
         /// Pcode address of the offending `BranchIndirect`.  Used
         /// as the key for the strider-level `known_targets` map and
-        /// for any `ErrorKind::UnresolvedIndirectBranch` raised at
-        /// fixed point.
+        /// for any unresolved-indirect-branch error raised at fixed
+        /// point.
         addr: PcodeInsnAddr,
     },
 }

@@ -22,8 +22,8 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// or `None` if no such edge exists.
     ///
     /// # Errors
-    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one outgoing
-    /// edge of `kind` is attached to `region_id`.
+    /// Returns an error when more than one outgoing edge of `kind` is
+    /// attached to `region_id`.
     fn unique_outgoing(&self, region_id: RegionId, kind: RegionEdgeKind) -> Result<Option<NodeIndex>> {
         let mut found: Option<NodeIndex> = None;
         for edge in self.graph.edges_directed(region_id, petgraph::Outgoing) {
@@ -41,21 +41,22 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns the unconditional-branch successor of `region_id`, if any.
     ///
     /// # Errors
-    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one `Branch`
-    /// edge leaves `region_id`.
+    /// Returns an error when more than one `Branch` edge leaves
+    /// `region_id`.
     pub fn region_branch(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
         self.unique_outgoing(region_id, RegionEdgeKind::Branch)
     }
 
     /// Returns the fallthrough successor of `region_id`, if any.
     ///
-    /// Used by the analyzer to detect BUG-25-normalised unconditional
-    /// branches: a CFG `Branch` p-code op whose target was reclassified
-    /// as `Fallthrough` because it pointed at `pc + insn_len`.
+    /// A region's fallthrough edge is its successor on the
+    /// `Fallthrough` edge kind — emitted either by sequential decode
+    /// reaching a known region OR by the builder reclassifying a
+    /// `Branch` whose target was the next machine instruction.
     ///
     /// # Errors
-    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one
-    /// `Fallthrough` edge leaves `region_id`.
+    /// Returns an error when more than one `Fallthrough` edge leaves
+    /// `region_id`.
     pub fn region_fallthrough(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
         self.unique_outgoing(region_id, RegionEdgeKind::Fallthrough)
     }
@@ -82,34 +83,14 @@ impl<R: rsleigh::MemReader> Cfg<R> {
         self.graph.node_indices()
     }
 
-    /// Returns the number of incoming edges (predecessors) for
-    /// `region_id`.  Used by the strider fixed-point orchestrator's
-    /// `RegionIrCache` to detect when a cached region has gained a
-    /// new predecessor across iterations.
-    #[must_use]
-    pub fn predecessor_count(&self, region_id: RegionId) -> usize {
-        self.graph
-            .neighbors_directed(region_id, petgraph::Incoming)
-            .count()
-    }
-
     /// Returns the `RegionId` of the region whose **start machine
     /// address** equals `addr`, or `None` if no such region exists.
     ///
-    /// Used by the strider fixed-point orchestrator's
-    /// `invalidate_split_regions` primitive to correlate cache entries
-    /// (keyed by `MachineInsnAddr`) with regions in a freshly rebuilt
-    /// CFG.  Distinct from [`Self::predecessor_count`] / region lookup
-    /// by id: this is a content-keyed lookup that is stable across CFG
-    /// rebuilds (same machine address always produces the same key).
-    ///
-    /// Also used by the **`opt` crate's** `IndirectBranchResolve`
-    /// pass when resolving an indirect branch's anchor to the
-    /// region that owns it.  The method is `pub` (not `pub(crate)`
-    /// / `test_api`) precisely so that cross-crate consumers —
-    /// `opt`, `strider`, future analysis crates — can correlate
-    /// machine addresses with regions without going through a
-    /// private channel.
+    /// Content-keyed lookup that is stable across CFG rebuilds (same
+    /// machine address always produces the same key).  Used by the
+    /// `opt` crate's `IndirectBranchResolve` pass and by `strider`'s
+    /// switch handler to correlate a machine address with the region
+    /// that owns it.
     ///
     /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
     /// equals `addr` exactly.  Mid-region matches return `None` — the

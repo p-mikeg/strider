@@ -76,8 +76,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     ///
     /// The endianness defaults to [`target::Endianness::Little`].
     /// Callers that analyse big-endian binaries should use
-    /// [`Self::with_endianness`] (or equivalently call
-    /// [`Self::set_endianness`] before [`Self::build`]).
+    /// [`Self::with_endianness`].
     #[must_use]
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
         Self::with_endianness(sleigh, start_addr, options, target::Endianness::Little)
@@ -108,7 +107,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// lookup map.  Returns the assigned [`NodeIndex`].
     ///
     /// # Errors
-    /// Returns [`ErrorKind::EmptyRegion`] if `region.insns` is empty.
+    /// Returns an error when `region.insns` is empty.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty() {
             bail!("region at {:?} has no instructions", region.start_addr);

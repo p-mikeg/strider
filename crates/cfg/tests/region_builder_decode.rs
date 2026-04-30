@@ -198,8 +198,8 @@ fn decode_branch_target_const_space_index_past_end_errors() {
 }
 
 /// Pinned contract: advancing past the last pcode op of the machine insn
-/// at the very top of the address space returns
-/// `ErrorKind::MachineAddrOverflow` rather than silently wrapping.
+/// at the very top of the address space returns an error rather than
+/// silently wrapping.
 #[test]
 fn next_pcode_addr_machine_address_overflow_errors() {
     // 1 pcode op, machine_insn_len = 16. The current addr is the only valid
