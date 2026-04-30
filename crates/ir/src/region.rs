@@ -283,21 +283,29 @@ impl FunctionBuilder {
     /// (graph-construction bug).
     pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
         let cs_id = self.regions[region].control_node;
-        let outputs: Vec<NodeOutputId> = self.graph().node_outputs(cs_id).into_iter().collect();
-        for &out in &outputs {
+        // Find the first Control output without materialising a Vec
+        // first.  Track the first observed output for the error path
+        // (so the message points at concrete data when no control
+        // output exists).
+        let mut first_seen: Option<NodeOutputId> = None;
+        for out in self.graph().node_outputs(cs_id) {
+            if first_seen.is_none() {
+                first_seen = Some(out);
+            }
             if self.graph().output_kind(out).is_control() {
                 return Ok(out);
             }
         }
-        if let Some(&first) = outputs.first() {
-            let kind = self.graph().output_kind(first);
-            Err(anyhow!(
-                "output {first:?} is not a control edge (got {kind:?})"
-            ))
-        } else {
-            Err(anyhow!(
+        match first_seen {
+            Some(first) => {
+                let kind = self.graph().output_kind(first);
+                Err(anyhow!(
+                    "output {first:?} is not a control edge (got {kind:?})"
+                ))
+            }
+            None => Err(anyhow!(
                 "region {region:?} ControlState {cs_id:?} has no outputs"
-            ))
+            )),
         }
     }
 
@@ -310,21 +318,25 @@ impl FunctionBuilder {
     /// does not have a Memory output (graph-construction bug).
     pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
         let mp_id = self.regions[region].memory_node;
-        let outputs: Vec<NodeOutputId> = self.graph().node_outputs(mp_id).into_iter().collect();
-        for &out in &outputs {
+        let mut first_seen: Option<NodeOutputId> = None;
+        for out in self.graph().node_outputs(mp_id) {
+            if first_seen.is_none() {
+                first_seen = Some(out);
+            }
             if self.graph().output_kind(out).is_memory() {
                 return Ok(out);
             }
         }
-        if let Some(&first) = outputs.first() {
-            let kind = self.graph().output_kind(first);
-            Err(anyhow!(
-                "output {first:?} is not a memory edge (got {kind:?})"
-            ))
-        } else {
-            Err(anyhow!(
+        match first_seen {
+            Some(first) => {
+                let kind = self.graph().output_kind(first);
+                Err(anyhow!(
+                    "output {first:?} is not a memory edge (got {kind:?})"
+                ))
+            }
+            None => Err(anyhow!(
                 "region {region:?} MemPhi {mp_id:?} has no outputs"
-            ))
+            )),
         }
     }
 

@@ -94,7 +94,13 @@ impl StackStoreDetect {
 
 impl OptimizerOnBuilt for StackStoreDetect {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
-        let nodes: Vec<NodeId> = function.preorder().collect();
+        // Only Store nodes can be promoted to StackStore — kind-filter at
+        // the iterator level so we don't allocate a Vec sized to all
+        // reachable nodes.  Mirrors the established pattern in
+        // `StackLoadForward` and `CallStackArgCollect`.
+        let nodes: Vec<NodeId> = function
+            .preorder_kind(|k| matches!(k, NodeKind::Store(_)))
+            .collect();
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         for node_id in nodes {

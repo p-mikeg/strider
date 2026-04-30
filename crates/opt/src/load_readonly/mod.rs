@@ -48,7 +48,12 @@ pub struct LoadReadOnly<M>(pub M);
 
 impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let nodes: Vec<_> = function.preorder().collect();
+        // Only Load nodes are candidates — kind-filter at the iterator
+        // level rather than collecting all N reachable nodes and
+        // skipping non-Loads in the body.
+        let nodes: Vec<_> = function
+            .preorder_kind(|k| matches!(k, NodeKind::Load(_)))
+            .collect();
         let mut result = OptimizationResult::NoChange;
 
         for node_id in nodes {
