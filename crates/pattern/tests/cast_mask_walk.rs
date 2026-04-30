@@ -251,3 +251,56 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
         1
     );
 }
+
+// ── Stress test: deep cast chain ─────────────────────────────────────────
+//
+// Verifies the iterative cast walk-through is stack-safe at any cast
+// chain depth.  The recursive version this replaces would burn one
+// stack frame per cast in the chain — this test builds a 500-deep
+// alternating Truncate / ZeroExtend tower so the walk-through must
+// unwrap 500 cast nodes before it can match the InitialVar.
+
+/// Builds `Add(<truncate-extend tower>(InitialVar : U64), IntConst(7) : U64)`
+/// with `levels` round-trips of `Truncate(U64 → U32)` → `Extend(U32 → U64)`.
+fn fixture_deep_cast_chain(levels: usize) -> BuiltFunctionGraph {
+    build_add_wrapped(x_vn(), NodeOutputType::U64, |fb, x| {
+        let mut current = x;
+        for _ in 0..levels {
+            current = fb.truncate_if_needed(current, NodeOutputType::U32).unwrap();
+            current = fb
+                .extend_if_needed(current, NodeOutputType::U64, ExtendOp::ZeroExtend)
+                .unwrap();
+        }
+        current
+    })
+}
+
+#[test]
+fn deep_cast_chain_walks_through_all_levels() {
+    let g = fixture_deep_cast_chain(500);
+    // With both TRUNCATE and ZERO_EXTEND in the mask the walk-through
+    // must unwrap every cast in the 500-deep tower and find the
+    // InitialVar.  The iterative walk-through is stack-safe at any
+    // depth; the recursive version would have stack-overflowed here.
+    let count = Matcher::new(&g)
+        .ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND)
+        .find_all(&pat())
+        .len();
+    assert_eq!(
+        count, 1,
+        "iterative cast walk-through must unwrap 500-deep cast tower"
+    );
+}
+
+#[test]
+fn deep_cast_chain_with_partial_mask_does_not_match() {
+    // Same fixture, but only TRUNCATE in the mask.  At the first
+    // ZeroExtend the walk-through must stop (mask doesn't permit it),
+    // and the match must fail rather than spin forever.
+    let g = fixture_deep_cast_chain(500);
+    let count = Matcher::new(&g)
+        .ignore_casts_mask(CastMask::TRUNCATE)
+        .find_all(&pat())
+        .len();
+    assert_eq!(count, 0);
+}

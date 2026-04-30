@@ -14,7 +14,6 @@
 use ir::node::{NodeKind, NodeOutputId};
 
 use crate::matcher::Bindings;
-use crate::matcher::cast_mask::cast_mask_of;
 use crate::pat::Pat;
 use crate::pat::traits::MatchCtx;
 
@@ -28,39 +27,6 @@ use crate::pat::traits::MatchCtx;
 /// rollback because the snapshot is shared with the direct-match attempt
 /// in `match_one`.
 ///
-/// Returns `false` immediately if the producer is not a cast, the cast's
-/// bit is not set in the mask, or the cast has no inputs (defensive —
-/// every cast in our IR has exactly one value input by signature).
-#[must_use]
-pub(crate) fn try_walk_through_cast(
-    ctx: &MatchCtx,
-    target: NodeOutputId,
-    pat: &Pat,
-    b: &mut Bindings,
-) -> bool {
-    let producer = ctx.graph.graph.get_node_from_output(target);
-    let bit = cast_mask_of(ctx.graph.graph.node_kind(producer));
-    // Non-cast kinds yield `empty()`, and `empty().is_subset(anything)` is
-    // true — so we must filter out non-casts up front before the mask
-    // membership test, otherwise every node would walk through.
-    if bit.is_empty() || !ctx.matcher.options.ignore_cast_mask.contains(bit) {
-        return false;
-    }
-    // Casts have exactly one input by IR signature; if the IR ever
-    // produces a malformed cast (validator regression), treat it as
-    // "can't walk through" rather than walking into garbage.
-    let inputs = ctx.graph.graph.node_inputs(producer);
-    if inputs.len() != 1 {
-        return false;
-    }
-    let Some(value_input) = inputs.into_iter().next() else {
-        return false;
-    };
-    // Recurse via the walk-through entry point so chained casts
-    // (e.g. `Extend(Truncate(Mul))`) also resolve.
-    ctx.matcher.match_output_with_walk_through(value_input, pat, b)
-}
-
 /// Backward walk-through of a `ControlState` (region-join) node.  If
 /// `target`'s producer is a `ControlState`, try matching `pat` against
 /// each of the ControlState's control-typed inputs (one per
@@ -102,7 +68,7 @@ pub(crate) fn try_walk_through_control_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::matcher::cast_mask::CastMask;
+    use crate::matcher::cast_mask::{CastMask, cast_mask_of};
     use ir::ExtendOp;
 
     /// All eight value-passthrough cast kinds must yield a non-empty mask.

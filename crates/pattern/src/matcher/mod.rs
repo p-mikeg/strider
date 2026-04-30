@@ -316,35 +316,75 @@ impl<'g> Matcher<'g> {
 
     /// Top-level "match with options" entry point used by `NodePat::try_once`
     /// when walking sub-pattern inputs.  Tries direct match first; on
-    /// failure, falls back to the walk-through helpers gated by
-    /// [`MatcherOptions`].  The walk-through helpers call this method
-    /// recursively so chained casts (e.g. `Extend(Truncate(Mul))`) also
-    /// resolve.
+    /// failure, falls back to walk-through helpers gated by
+    /// [`MatcherOptions`].
+    ///
+    /// **Cast walk-through is iterative** (a tight inner loop) so chained
+    /// casts (e.g. `Extend(Truncate(Mul))`, x86 register-merge towers,
+    /// or an adversarial input with thousands of nested casts) cannot
+    /// blow the stack.  At each cast level we re-attempt the direct
+    /// match before unwrapping further, exactly matching the
+    /// semantics of the previous recursive helper.
+    ///
+    /// **ControlState walk-through stays recursive** through
+    /// [`walk_through::try_walk_through_control_state`]: each branch
+    /// of a region join is tried as a separate alternative, and the
+    /// recursion depth equals the nested-join depth (bounded by CFG
+    /// structure, not graph size).
     pub(crate) fn match_output_with_walk_through(
         &self,
         out: NodeOutputId,
         pat: &Pat,
         b: &mut Bindings,
     ) -> bool {
-        let mark = b.mark();
-        if self.match_output(out, pat, b) {
-            return true;
-        }
-        b.restore(mark);
+        // Iterative cast-chain unwrapping.  Each iteration tries direct
+        // match at the current `out`; on failure, if the producer is a
+        // walk-through cast, advance `out` to its value input and
+        // re-try.  Restores bindings between attempts so a successful
+        // match never sees stale partial state from a failed sibling.
+        let mut out = out;
+        loop {
+            let mark = b.mark();
+            if self.match_output(out, pat, b) {
+                return true;
+            }
+            b.restore(mark);
 
-        if !self.options.ignore_cast_mask.is_empty()
-            && walk_through::try_walk_through_cast(&self.ctx(), out, pat, b)
-        {
-            return true;
+            // Cast walk-through: if `out`'s producer is a registered
+            // cast, unwrap and loop.  Inlines what
+            // `try_walk_through_cast` did via recursion.
+            if self.options.ignore_cast_mask.is_empty() {
+                break;
+            }
+            let producer = self.fn_graph.graph.get_node_from_output(out);
+            let bit = cast_mask::cast_mask_of(
+                self.fn_graph.graph.node_kind(producer),
+            );
+            if bit.is_empty() || !self.options.ignore_cast_mask.contains(bit) {
+                break;
+            }
+            let inputs = self.fn_graph.graph.node_inputs(producer);
+            if inputs.len() != 1 {
+                break;
+            }
+            let Some(value_input) = inputs.into_iter().next() else {
+                break;
+            };
+            out = value_input;
+            // Loop: at the new `out`, try direct match (which may
+            // succeed if the inner pattern matches the unwrapped
+            // value), and on failure unwrap further.
         }
-        b.restore(mark);
 
+        // ControlState walk-through fan-out — try each region join
+        // input as an alternative.  Recursion here is bounded by the
+        // CS-nesting depth of the IR, not by graph size, so the
+        // helper stays recursive.
         if self.options.ignore_control_states
             && walk_through::try_walk_through_control_state(&self.ctx(), out, pat, b)
         {
             return true;
         }
-        b.restore(mark);
 
         false
     }
