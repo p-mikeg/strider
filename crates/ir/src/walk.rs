@@ -1,12 +1,16 @@
 use core::{iter, ops::ControlFlow};
-use std::collections::HashSet;
 
-use entity_utils::set::DenseEntitySet;
+pub use entity_utils::set::DenseEntitySet;
 
 use crate::{
     graph::Graph,
     node::{NodeId, NodeOutputId},
 };
+
+/// Convenience alias for the `cfg_reachable` return shape.  Re-exported so
+/// downstream crates can take `&NodeIdSet` parameters without depending on
+/// `entity_utils` directly.
+pub type NodeIdSet = DenseEntitySet<NodeId>;
 
 /// Returns the set of all nodes reachable from `entry` following only
 /// `Control`-kind edges — the CFG skeleton.
@@ -18,14 +22,15 @@ use crate::{
 /// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
 /// which basic-block headers are live and which predecessor slots on `ControlState`,
 /// `ControlPhi`, and `MemPhi` nodes are dead.
-#[must_use] 
-pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> HashSet<NodeId> {
-    let mut visited = HashSet::new();
+#[must_use]
+pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
+    let mut visited = DenseEntitySet::new();
     let mut worklist = vec![entry];
     while let Some(node) = worklist.pop() {
-        if !visited.insert(node) {
+        if visited.contains(node) {
             continue;
         }
+        visited.insert(node);
         for succ in cfg_succs(graph, node) {
             worklist.push(succ);
         }

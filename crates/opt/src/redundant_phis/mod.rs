@@ -48,7 +48,7 @@ fn try_detach_dead_inputs(
 fn remove_phis(
     function: &mut ir::BuiltFunctionGraph,
     node_id: NodeId,
-    reachable: &std::collections::HashSet<NodeId>,
+    reachable: &ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
     match function.graph.node_kind(node_id) {
         // ControlPhi and MemPhi have identical input layouts after the builder
@@ -77,7 +77,7 @@ fn remove_phis(
             let mut reachable_ctrl: FxHashSet<NodeOutputId> = FxHashSet::default();
             let mut live_values: FxHashSet<NodeOutputId> = FxHashSet::default();
             for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
-                if reachable.contains(&function.graph.output_definition(ctrl_in).0) {
+                if reachable.contains(function.graph.output_definition(ctrl_in).0) {
                     reachable_ctrl.insert(ctrl_in);
                     live_values.insert(inputs[j + 1]);
                 }
@@ -126,7 +126,7 @@ fn remove_phis(
             let node_inputs = function.graph.node_inputs(node_id);
             let reachable_inputs: FxHashSet<NodeOutputId> = node_inputs
                 .into_iter()
-                .filter(|inp| reachable.contains(&function.graph.output_definition(*inp).0))
+                .filter(|inp| reachable.contains(function.graph.output_definition(*inp).0))
                 .collect();
 
             let mut iter = reachable_inputs.iter();
