@@ -55,16 +55,17 @@ impl Graph {
     #[inline]
     #[must_use]
     pub fn stack_phi_offsets(&self, node_id: NodeId) -> &[i64] {
-        self.stack_phi_offsets
-            .get(&node_id)
-            .map_or(&[], |v| v.as_slice())
+        // SecondaryMap returns the default value (empty Vec) for unset
+        // ids, so an unset node yields an empty slice — same contract as
+        // the previous HashMap-keyed accessor.
+        self.stack_phi_offsets[node_id].as_slice()
     }
 
     /// Associates a list of per-predecessor SP-relative offsets with a
     /// [`NodeKind::StackStorePhi`] node.  Replaces any prior value.
     #[inline]
     pub fn set_stack_phi_offsets(&mut self, node_id: NodeId, offsets: Vec<i64>) {
-        self.stack_phi_offsets.insert(node_id, offsets);
+        self.stack_phi_offsets[node_id] = offsets;
     }
 
     /// Returns the user-op name associated with a [`NodeKind::CallOther`]
@@ -72,14 +73,14 @@ impl Graph {
     #[inline]
     #[must_use]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        self.call_other_names.get(&node_id).map(|s| s.as_str())
+        self.call_other_names[node_id].as_deref()
     }
 
     /// Associates a user-op name with a [`NodeKind::CallOther`] node.
     /// Replaces any prior value.
     #[inline]
     pub fn set_call_other_name(&mut self, node_id: NodeId, name: String) {
-        self.call_other_names.insert(node_id, name);
+        self.call_other_names[node_id] = Some(name);
     }
 
     /// Creates a new node with the given kind, inputs, and output kinds.

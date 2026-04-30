@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use cranelift_entity::{ListPool, PrimaryMap};
+use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
 use crate::node::{
     Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
@@ -50,7 +50,12 @@ pub struct Graph {
     /// Side-map from [`crate::node::NodeKind::StackStorePhi`] nodes to their
     /// per-predecessor SP-relative offsets.  Kept external so that
     /// `NodeKind` stays `Copy`.
-    pub(crate) stack_phi_offsets: HashMap<NodeId, Vec<i64>>,
+    ///
+    /// Stored as a `SecondaryMap<NodeId, Vec<i64>>` (dense entity-indexed
+    /// array) instead of a `HashMap` for O(1) cache-local lookup with no
+    /// hashing.  The default value is an empty `Vec`, which is the same
+    /// "no entry" sentinel the previous `HashMap`-keyed accessor returned.
+    pub(crate) stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>>,
     /// Side-map from [`crate::node::NodeKind::CallOther`] nodes to the user-op
     /// name resolved from Sleigh.  Kept external so that `NodeKind::CallOther`
     /// keeps its single-`u64` payload (and stays `Copy`).  `CallOther` is
@@ -61,7 +66,12 @@ pub struct Graph {
     /// Populated at IR construction time by the analyzer.  Not all `CallOther`
     /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
     /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
-    pub(crate) call_other_names: HashMap<NodeId, String>,
+    ///
+    /// Stored as a `SecondaryMap<NodeId, Option<String>>`: O(1) array index
+    /// without hashing.  The `Option` distinguishes "name not set" from
+    /// "name set to empty string"; the previous `HashMap` accessor returned
+    /// `None` for the former and `Some("")` for the latter.
+    pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
 }
 
 impl Default for Graph {
@@ -81,8 +91,8 @@ impl Graph {
             output_pool: ListPool::new(),
             input_pool: ListPool::new(),
             node_to_id: HashMap::new(),
-            stack_phi_offsets: HashMap::new(),
-            call_other_names: HashMap::new(),
+            stack_phi_offsets: SecondaryMap::new(),
+            call_other_names: SecondaryMap::new(),
         }
     }
 
