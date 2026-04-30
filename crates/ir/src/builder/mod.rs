@@ -190,7 +190,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Propagates whatever [`Self::new_raw`] would return — currently
-    /// [`ErrorKind::UnsupportedOutputSize`] from the entry-block setup when
+    /// `UnsupportedOutputSize` from the entry-block setup when
     /// a tracked variable's byte size has no matching `NodeOutputType`.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
@@ -233,7 +233,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::UnsupportedOutputSize`] when any tracked variable
+    /// Returns `UnsupportedOutputSize` when any tracked variable
     /// has a byte size with no matching `NodeOutputType` (the entry-block
     /// builder allocates an `InitialVar` per tracked variable).
     pub fn new_raw(
@@ -369,10 +369,9 @@ impl FunctionBuilder {
 
     /// Returns the [`rsleigh::Vn`] tracked at the given [`VarId`], or
     /// `None` if `var_id` is not in the variable map.  Used by the
-    /// strider [`crate::ir_cache::RegionIrCache`] to convert per-region
-    /// `(VarId, NodeOutputId)` pairs (returned by
-    /// [`Self::region_initial_variables`]) into the `Vn`-keyed maps
-    /// the cache stores.
+    /// `strider` crate to convert per-region `(VarId, NodeOutputId)`
+    /// pairs (returned by [`Self::region_initial_variables`]) into the
+    /// `Vn`-keyed maps the per-iteration region index stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
         self.variables.get(var_id).copied()
@@ -397,7 +396,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ValidationFailed`] wrapping a
+    /// Returns `ValidationFailed` wrapping a
     /// [`crate::validate::ValidationErrors`] bundle if the built graph fails
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).

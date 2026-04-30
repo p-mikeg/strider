@@ -12,7 +12,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::NoCurrentRegion`] when no region is active. (Does
+    /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
     pub fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
         if let Some(variable_id) = self.variable_to_id.get(var) {
@@ -28,8 +28,8 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::VariableNotFound`] when `variable` is not tracked
-    /// by the builder, or [`ErrorKind::NoCurrentRegion`] when no region is
+    /// Returns `VariableNotFound` when `variable` is not tracked
+    /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<NodeOutputId> {
         let &id = self
@@ -43,8 +43,8 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::VariableNotFound`] when `variable` is not tracked
-    /// by the builder, or [`ErrorKind::NoCurrentRegion`] when no region is
+    /// Returns `VariableNotFound` when `variable` is not tracked
+    /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: NodeOutputId) -> Result<()> {
         let var_id = *self
@@ -60,7 +60,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::UnsupportedOutputSize`] when any tracked variable
+    /// Returns `UnsupportedOutputSize` when any tracked variable
     /// has a byte size with no matching [`crate::node::NodeOutputType`].
     /// Other variants from [`Self::link_control_regions`] /
     /// [`Self::link_memory_regions`] / [`Self::link_region_variables`] also
@@ -88,7 +88,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::WrongOutputCount`] if the freshly created
+    /// Returns `WrongOutputCount` if the freshly created
     /// `ControlState` or `MemPhi` does not have its expected output shape
     /// (this would indicate a graph-construction bug, not a user error).
     /// Other variants from [`Self::build_control_phi`] propagate.

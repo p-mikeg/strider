@@ -174,7 +174,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::NoCurrentRegion`] when no region is active.
+    /// Returns `NoCurrentRegion` when no region is active.
     pub fn write_variable_from_id(&mut self, var_id: VarId, value: NodeOutputId) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value;
@@ -235,7 +235,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Propagates the variants from [`Self::link_region`] —
-    /// [`crate::ErrorKind::ExpectedControl`] / [`crate::ErrorKind::ExpectedMemory`]
+    /// `ExpectedControl` / `ExpectedMemory`
     /// when `parent_region`'s snapshotted edges are mistyped, plus any
     /// `add_node_input` errors when wiring per-variable phi inputs.
     pub fn link_regions(&mut self, parent_region: RegionId, child_region: RegionId) -> Result<()> {
@@ -247,9 +247,8 @@ impl FunctionBuilder {
     }
 
     /// Returns the entry-boundary `ControlState` `NodeId` of `region`.
-    /// Used by the strider [`crate::ir_cache::RegionIrCache`] (in the
-    /// `strider` crate) to pin per-region phi-extension targets across
-    /// orchestrator iterations.
+    /// Used by the `strider` crate's per-iteration region index to
+    /// look up phi-extension targets across orchestrator iterations.
     #[must_use]
     pub fn region_control_node(&self, region: RegionId) -> NodeId {
         self.regions[region].control_node
@@ -287,7 +286,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedControl`] if `region`'s
+    /// Returns `ExpectedControl` if `region`'s
     /// `ControlState` does not have a Control output at index 0
     /// (graph-construction bug).
     pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
@@ -310,7 +309,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedMemory`] if `region`'s `MemPhi`
+    /// Returns `ExpectedMemory` if `region`'s `MemPhi`
     /// does not have a Memory output (graph-construction bug).
     pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
         let mp_id = self.regions[region].memory_node;

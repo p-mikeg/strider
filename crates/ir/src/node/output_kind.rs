@@ -44,7 +44,7 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is
+    /// Returns `ExpectedValueOutput` when `self` is
     /// `Control`, `Memory`, or `ControlPhi`.
     #[track_caller]
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
@@ -53,13 +53,13 @@ impl NodeOutputKind {
     }
 
     /// Returns the value type, asserting it is integer. Errors as
-    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
-    /// [`crate::ErrorKind::ExpectedIntegerType`] for bool/float value kinds.
+    /// `ExpectedValueOutput` for non-value kinds and as
+    /// `ExpectedIntegerType` for bool/float value kinds.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is not a
-    /// value edge, or [`crate::ErrorKind::ExpectedIntegerType`] when the value
+    /// Returns `ExpectedValueOutput` when `self` is not a
+    /// value edge, or `ExpectedIntegerType` when the value
     /// is `Bool`, `F32`, or `F64`.
     #[track_caller]
     pub fn as_integer_or_err(self) -> crate::Result<NodeOutputType> {
@@ -72,13 +72,13 @@ impl NodeOutputKind {
     }
 
     /// Returns the value type, asserting it is float. Errors as
-    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
-    /// [`crate::ErrorKind::ExpectedFloatType`] for bool/int value kinds.
+    /// `ExpectedValueOutput` for non-value kinds and as
+    /// `ExpectedFloatType` for bool/int value kinds.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is not a
-    /// value edge, or [`crate::ErrorKind::ExpectedFloatType`] when the value
+    /// Returns `ExpectedValueOutput` when `self` is not a
+    /// value edge, or `ExpectedFloatType` when the value
     /// is `Bool` or any integer type.
     #[track_caller]
     pub fn as_float_or_err(self) -> crate::Result<NodeOutputType> {

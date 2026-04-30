@@ -58,7 +58,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// Returns `WrongOutputCount` if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         let node = self.create_node(
@@ -73,7 +73,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// Returns `WrongOutputCount` if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_bool_const(&mut self, val: bool) -> Result<NodeOutputId> {
         let node = self.create_node(
@@ -88,7 +88,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// Returns `WrongOutputCount` if the freshly-created
     /// node does not have exactly one output (would indicate a graph bug).
     pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         let node = self.create_node(

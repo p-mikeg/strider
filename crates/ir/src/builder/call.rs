@@ -11,11 +11,11 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
-    /// when there is no active region to advance, [`ErrorKind::ExpectedValue`]
+    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// when there is no active region to advance, `ExpectedValue`
     /// when `call_address` or any read clobbered/arg-passing variable is not
-    /// a value edge, [`ErrorKind::VariableNotFound`] when an arg-passing or
-    /// clobbered varnode is not tracked, and [`ErrorKind::UnsupportedOutputSize`]
+    /// a value edge, `VariableNotFound` when an arg-passing or
+    /// clobbered varnode is not tracked, and `UnsupportedOutputSize`
     /// when the stack-pointer varnode's byte size has no matching
     /// [`NodeOutputType`] (only applicable on stack-push ISAs).
     pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
@@ -103,8 +103,8 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
-    /// when there is no active region, or [`ErrorKind::ExpectedValue`] when
+    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// when there is no active region, or `ExpectedValue` when
     /// any element of `args` is not a value edge.
     pub fn build_call_other(
         &mut self,

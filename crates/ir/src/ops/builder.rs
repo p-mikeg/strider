@@ -14,7 +14,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// Returns `WrongOutputCount` if the freshly-created
     /// node does not have exactly one output (this would indicate a graph or
     /// signature-table bug, not user error).
     pub fn make_value_node(

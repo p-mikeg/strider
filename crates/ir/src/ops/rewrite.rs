@@ -16,7 +16,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::NullCursorUse`] if the use-list is corrupted
+    /// Returns `NullCursorUse` if the use-list is corrupted
     /// such that `replace_current_with` is invoked on a null cursor (would
     /// indicate a graph-construction bug, not user error).
     pub fn replace_all_uses(
