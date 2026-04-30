@@ -136,19 +136,18 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );
     for (anchor_addr, anchor_output) in &unresolved {
-        // After the optimizer runs, the placeholder Return's current
-        // 3rd-input may differ from the cached `anchor_output` (an opt
-        // pass can `replace_all_uses` the anchor with a folded
+        // After the optimizer runs, the placeholder IndirectBranch's
+        // current 3rd-input may differ from the cached `anchor_output`
+        // (an opt pass can `replace_all_uses` the anchor with a folded
         // expression and leave the Load detached).  Walk every
-        // reachable single-input-Return-shaped node (3 inputs:
-        // [ctrl, mem, target]) and use its current slot 2 as the
-        // live anchor for classification.  This mirrors what the
+        // reachable IndirectBranch node and use its current slot 2 as
+        // the live anchor for classification.  This mirrors what the
         // orchestrator's `find_placeholder_return_for_anchor` does
         // for each per-iteration classify — but here we just consume
-        // the surviving Return on the post-optimizer graph.
+        // the surviving placeholder on the post-optimizer graph.
         let mut live_anchors: Vec<ir::node::NodeOutputId> = Vec::new();
         for n in graph.graph.preorder() {
-            if matches!(graph.graph.graph.node_kind(n), ir::node::NodeKind::Return) {
+            if matches!(graph.graph.graph.node_kind(n), ir::node::NodeKind::IndirectBranch) {
                 let inputs: Vec<ir::node::NodeOutputId> =
                     graph.graph.graph.node_inputs(n).into_iter().collect();
                 if inputs.len() == 3 {

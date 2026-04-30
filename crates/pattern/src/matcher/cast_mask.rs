@@ -64,6 +64,7 @@ pub(crate) const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::Call
         | NodeKind::CallOther { .. }
         | NodeKind::Return
+        | NodeKind::IndirectBranch
         | NodeKind::Load(_)
         | NodeKind::Store(_)
         | NodeKind::StackStore { .. }

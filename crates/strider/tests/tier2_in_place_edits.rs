@@ -19,26 +19,21 @@ use common::tier2_helpers::build_initial_var_target_scenario_x86_64;
 use ir::node::{NodeId, NodeKind};
 use strider::indirect_resolve_tier2::{apply_link_register, apply_tail_call};
 
-/// Locate the unique placeholder Return in `graph` (a Return with
-/// exactly 3 inputs: ctrl, mem, target_value).  Panics if 0 or
-/// multiple are found.
+/// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
+/// if 0 or multiple are found.
 fn locate_placeholder_return(graph: &ir::BuiltFunctionGraph) -> NodeId {
     let mut found: Option<NodeId> = None;
     for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
-            continue;
-        }
-        let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
+        if !matches!(graph.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         assert!(
             found.is_none(),
-            "fixture must have exactly one placeholder Return"
+            "fixture must have exactly one IndirectBranch placeholder"
         );
         found = Some(nid);
     }
-    found.expect("no placeholder Return found")
+    found.expect("no IndirectBranch placeholder found")
 }
 
 #[test]

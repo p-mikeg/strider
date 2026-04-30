@@ -281,21 +281,16 @@ fn tier_2_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
         count_int_consts_eq(&g, targets[0]) >= 1,
         "K_0 comparison constant must appear in the lifted IR",
     );
-    // No leftover placeholder Return: the orchestrator's
+    // No leftover IndirectBranch placeholder: the orchestrator's
     // unresolved-branch table should be empty here because the
     // BranchIndirect was fully classified to Multiple before lift
-    // (no UnresolvedIndirectBranch placeholder generated).  The
-    // 3-input Return shape is the placeholder marker; check it's
-    // absent.
-    let placeholder_returns = g
+    // (no UnresolvedIndirectBranch placeholder generated).
+    let placeholder_count = g
         .preorder()
-        .filter(|nid| {
-            matches!(g.graph.node_kind(*nid), NodeKind::Return)
-                && g.graph.node_inputs(*nid).into_iter().count() == 3
-        })
+        .filter(|nid| matches!(g.graph.node_kind(*nid), NodeKind::IndirectBranch))
         .count();
     assert_eq!(
-        placeholder_returns, 0,
-        "tier-2 `Multiple` resolution must NOT leave a placeholder Return",
+        placeholder_count, 0,
+        "tier-2 `Multiple` resolution must NOT leave an IndirectBranch placeholder",
     );
 }

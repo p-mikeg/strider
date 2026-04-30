@@ -35,7 +35,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
         NodeKind::CPoolRef => "folder",
         NodeKind::New => "component",
 
-        NodeKind::Return => "doublecircle",
+        NodeKind::Return | NodeKind::IndirectBranch => "doublecircle",
 
         NodeKind::IntConst(_) | NodeKind::BoolConst(_) | NodeKind::FloatConst(_) => "ellipse",
 
@@ -67,7 +67,7 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
         NodeKind::CPoolRef => "\"#2a1a3a\"",         // violet — JVM metadata
         NodeKind::New => "\"#103a2a\"",              // dark green — allocation
 
-        NodeKind::Return => "\"#103a10\"",
+        NodeKind::Return | NodeKind::IndirectBranch => "\"#103a10\"",
 
         NodeKind::FloatConst(_)
         | NodeKind::FloatBinaryOp(_)

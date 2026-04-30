@@ -474,6 +474,39 @@ impl FunctionBuilder {
         Ok(())
     }
 
+    /// Terminates the current region with an `IndirectBranch` placeholder
+    /// node anchoring `target_value`.  Inputs: `[control, memory,
+    /// target_value]`.  Outputs: `[]`.
+    ///
+    /// Used by the lifter when the CFG terminator is
+    /// `RegionTerminator::UnresolvedIndirectBranch`: the value at the
+    /// dispatch site is anchored as a value-typed slot on the placeholder
+    /// so the indirect-branch resolver can later inspect its producer and
+    /// either rewrite the placeholder into a real `Return` or splice in a
+    /// `Call`+`Return` pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` / `RegionTerminated` when there is no
+    /// active region; `ExpectedControl` or `ExpectedMemory` if the
+    /// region's snapshotted control/memory edges are mistyped
+    /// (graph-construction bug); or `ExpectedValue` when `target_value`
+    /// is not a value edge.
+    pub fn build_indirect_branch(&mut self, target_value: NodeOutputId) -> Result<()> {
+        let res = self.terminate_cur_region()?;
+
+        self.require_control_kind(res.control)?;
+        self.require_memory_kind(res.memory)?;
+        self.validate_value_inputs(std::slice::from_ref(&target_value))?;
+
+        self.create_node(
+            NodeKind::IndirectBranch,
+            [res.control, res.memory, target_value],
+            [],
+        );
+        Ok(())
+    }
+
     /// Terminates the current region with an unconditional branch to `dest`.
     ///
     /// # Errors

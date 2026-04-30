@@ -315,19 +315,22 @@ impl IndirectBranchResolve {
 }
 
 /// Walk the use-list of `anchor_output` and return the unique
-/// 3-input Return whose value-input slot equals `anchor_output` —
-/// the placeholder Return shape pinned at strider's lift time.
+/// 3-input `IndirectBranch` whose `target_value` input equals
+/// `anchor_output` — the placeholder shape pinned at strider's lift
+/// time.
 ///
-/// Returns `None` when no such Return exists (e.g. an earlier in-
-/// place edit already replaced it).  Public so strider's orchestrator
-/// can reuse the same lookup for its own bookkeeping.
+/// Returns `None` when no such placeholder exists (e.g. an earlier
+/// in-place edit already replaced it: `apply_tail_call` detaches the
+/// node, and `apply_link_register` mutates the kind to
+/// [`NodeKind::Return`]).  Public so strider's orchestrator can reuse
+/// the same lookup for its own bookkeeping.
 #[must_use]
 pub fn find_placeholder_return_for_anchor(
     graph: &Graph,
     anchor_output: NodeOutputId,
 ) -> Option<NodeId> {
     for (consumer, _input_index) in graph.output_uses(anchor_output) {
-        if !matches!(graph.node_kind(consumer), NodeKind::Return) {
+        if !matches!(graph.node_kind(consumer), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = graph.node_inputs(consumer).into_iter().collect();
@@ -356,7 +359,7 @@ mod tests {
     }
 
     /// Build a placeholder graph: one region terminated by
-    /// `Return(ctrl, mem, IntConst(target))`.  The IntConst's
+    /// `IndirectBranch(ctrl, mem, IntConst(target))`.  The IntConst's
     /// NodeOutputId is the anchor.  Returns the graph + anchor +
     /// entry id.
     fn placeholder_graph_with_int_const(target: u64) -> (ir::Graph, NodeId, NodeOutputId) {
@@ -365,7 +368,7 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let anchor = b.build_int_const(target, NodeOutputType::U64).unwrap();
-        b.build_return(Some(anchor), &[]).unwrap();
+        b.build_indirect_branch(anchor).unwrap();
         let built = b.build().unwrap();
         let entry = built.entry;
         (built.graph, entry, anchor)
@@ -397,19 +400,19 @@ mod tests {
         let anchor = b
             .build_int_binary_operation(lhs, rhs, ir::IntBinaryOp::Add, NodeOutputType::U64)
             .unwrap();
-        b.build_return(Some(anchor), &[]).unwrap();
+        b.build_indirect_branch(anchor).unwrap();
         let mut built = b.build().unwrap();
         let entry = built.entry;
 
         // Locate the LIVE anchor on the post-build graph: the
         // build step doesn't run any optimization, so the IntBinaryOp
-        // is still the Return's value-input.
+        // is still the IndirectBranch's value-input.
         let placeholder_inputs: Vec<_> = built
             .graph
             .node_inputs(
                 built
                     .preorder()
-                    .find(|&n| matches!(built.graph.node_kind(n), NodeKind::Return))
+                    .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
                     .unwrap(),
             )
             .into_iter()
@@ -445,21 +448,21 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let lr_in = b.read_variable(&lr_vn).unwrap();
-        b.build_return(Some(lr_in), &[]).unwrap();
+        b.build_indirect_branch(lr_in).unwrap();
         let mut built = b.build().unwrap();
         let entry = built.entry;
-        // Collapse the trivial VarPhi(lr) so the Return's slot 2
+        // Collapse the trivial VarPhi(lr) so the IndirectBranch's slot 2
         // input is `InitialVar(lr_vn)` directly.
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::RedundantPhis);
         p.run(&mut built.graph, entry)?;
 
-        let return_id = built
+        let placeholder_id = built
             .all_node_ids()
-            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::Return))
+            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
             .unwrap();
         let live_anchor: Vec<_> =
-            built.graph.node_inputs(return_id).into_iter().collect();
+            built.graph.node_inputs(placeholder_id).into_iter().collect();
         let live_anchor = live_anchor[2];
 
         let mut pass = IndirectBranchResolve::new();

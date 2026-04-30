@@ -101,7 +101,7 @@ fn build_with_anchor(
     builder.set_entry_region(region).expect("set_entry_region");
     builder.set_region(region);
     let anchor = anchor_inputs(&mut builder);
-    builder.build_return(Some(anchor), &[]).expect("build_return");
+    builder.build_indirect_branch(anchor).expect("build_indirect_branch");
     let graph = builder.build().expect("build");
     (graph, anchor)
 }
@@ -298,7 +298,7 @@ fn bound_via_known_bits_handles_zero_extend() {
     // Provide a placeholder return value so build() succeeds; we
     // rewire the Return's value input to the new Extend below.
     let placeholder = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
-    builder.build_return(Some(placeholder), &[]).expect("build_return");
+    builder.build_indirect_branch(placeholder).expect("build_indirect_branch");
     let mut g = builder.build().expect("build");
     let extend_node = g.graph.create_node(
         NodeKind::Extend(ir::ExtendOp::ZeroExtend),
@@ -336,7 +336,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     builder.set_region(region);
     // Build a placeholder Return so build() succeeds.
     let placeholder = builder.build_int_const(0u64, NodeOutputType::U64).unwrap();
-    builder.build_return(Some(placeholder), &[]).unwrap();
+    builder.build_indirect_branch(placeholder).unwrap();
     let mut g = builder.build().unwrap();
 
     // Build a detached AND that's narrower than U64 — definitely a
@@ -547,7 +547,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
         .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::U32)
         .unwrap();
     // Anchor with a placeholder return so build() succeeds.
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ true);
     assert_eq!(bound, Some(4));
@@ -565,7 +565,7 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     let cmp = builder
         .build_int_cmp_operation(idx, n, IntCmpOp::Less, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ false);
     assert_eq!(bound, None);
@@ -596,7 +596,7 @@ fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
     let cmp = builder
         .build_int_cmp_operation(idx, n, IntCmpOp::Sless, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, /* on_true */ true);
     assert_eq!(bound, Some(8), "Sless bounds via N (current behavior)");
@@ -614,7 +614,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     let cmp = builder
         .build_int_cmp_operation(idx, n, IntCmpOp::LessEqual, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, true);
     assert_eq!(bound, Some(5));
@@ -658,7 +658,7 @@ fn build_pred_if_graph(
     // the bound walk against the dispatch's own idx-output, which
     // (without RedundantPhis) wraps the entry idx in a
     // single-input VarPhi.
-    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+    b.build_indirect_branch(idx_in_dispatch).unwrap();
 
     b.set_region(exit);
     b.build_return(None, &[]).unwrap();
@@ -667,7 +667,7 @@ fn build_pred_if_graph(
     // The placeholder Return is the 3-input one in dispatch.
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
@@ -705,11 +705,11 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     let idx = b.read_variable(&idx_var).unwrap();
-    b.build_return(Some(idx), &[]).unwrap();
+    b.build_indirect_branch(idx).unwrap();
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
@@ -759,14 +759,14 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
 
     b.set_region(dispatch);
     let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
-    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+    b.build_indirect_branch(idx_in_dispatch).unwrap();
     b.set_region(exit);
     b.build_return(None, &[]).unwrap();
 
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
@@ -796,7 +796,7 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     let cmp = builder
         .build_int_cmp_operation(idx, n, IntCmpOp::Equal, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     assert_eq!(
         bound_from_if_condition(&g, cmp, idx, /* on_true */ true),
@@ -827,7 +827,7 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     let cmp = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     // True branch of `N < idx` ↔ `idx > N` — no upper bound (and
     // the pattern wouldn't bind to the desired `idx_var` anyway).
@@ -852,7 +852,7 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     let cmp = builder
         .build_int_cmp_operation(other, n, IntCmpOp::Less, NodeOutputType::U32)
         .unwrap();
-    builder.build_return(Some(idx), &[]).unwrap();
+    builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();
     let bound = bound_from_if_condition(&g, cmp, idx, true);
     assert_eq!(bound, None);
@@ -940,7 +940,7 @@ fn build_diamond_two_bounds(
     // dispatch: placeholder Return on idx.
     b.set_region(dispatch);
     let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
-    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+    b.build_indirect_branch(idx_in_dispatch).unwrap();
 
     b.set_region(exit_a);
     b.build_return(None, &[]).unwrap();
@@ -950,7 +950,7 @@ fn build_diamond_two_bounds(
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
@@ -1032,7 +1032,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
 
     b.set_region(dispatch);
     let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
-    b.build_return(Some(idx_in_dispatch), &[]).unwrap();
+    b.build_indirect_branch(idx_in_dispatch).unwrap();
 
     b.set_region(exit_a);
     b.build_return(None, &[]).unwrap();
@@ -1040,7 +1040,7 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     let g = b.build().unwrap();
     let mut anchor = None;
     for nid in g.preorder() {
-        if !matches!(g.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();

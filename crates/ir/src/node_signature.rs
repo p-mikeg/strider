@@ -329,6 +329,12 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // calling convention's ret_val_regs when built by the analyzer; synthetic
         // test builds may supply a single explicit value via `build_return`.
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
+        // IndirectBranch: [control, memory, target_value].  Placeholder for
+        // an unresolved indirect branch; mutated in-place by the indirect-
+        // branch resolver into a real Return / Call+Return.  Memory is
+        // anchored so the resolver can wire the replacement at the same
+        // program point.
+        NodeKind::IndirectBranch => sig!(inputs: [CTRL, MEM, TARGET], outputs: []),
 
         // ── Memory operations ───────────────────────────────────────────────
         NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
@@ -686,6 +692,7 @@ mod tests {
             NodeKind::If,
             NodeKind::Call,
             NodeKind::Return,
+            NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
             NodeKind::StackStore { space, offset: 0 },

@@ -296,34 +296,34 @@ pub fn bound_via_predecessor_if(
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,
 ) -> Option<u64> {
-    // Find the placeholder Return that consumes the anchor.  This
-    // is the start of our backward walk.
+    // Find the placeholder IndirectBranch that consumes the anchor.
+    // This is the start of our backward walk.
     //
-    // The placeholder Return's input slot 0 is its Control input; we
-    // walk upward through Controls looking for an If whose true
-    // branch leads to this Return.
+    // The placeholder's input slot 0 is its Control input; we walk
+    // upward through Controls looking for an If whose true branch
+    // leads to this placeholder.
     let graph = &fg.graph;
-    let return_node = find_anchor_consumer_return(graph, anchor_output)?;
+    let placeholder = find_anchor_consumer_placeholder(graph, anchor_output)?;
     // Slot 0 = control; see node_signature::expected_signature for
-    // Return: `inputs: [CTRL, MEM]; in_tail: RET`.
-    let control_in = *graph.node_inputs(return_node).get(0)?;
+    // IndirectBranch: `inputs: [CTRL, MEM, TARGET]`.
+    let control_in = *graph.node_inputs(placeholder).get(0)?;
 
     let mut visited: HashSet<NodeId> = HashSet::new();
     let mut trail: Vec<NodeId> = Vec::new();
     walk_control_for_if_bound(fg, control_in, idx_output, &mut visited, &mut trail)
 }
 
-/// Locates the (single) Return node that consumes `anchor_output` —
-/// that's the placeholder `Return(target_value)` the strider lift
-/// emits for `UnresolvedIndirectBranch` regions.  Returns None when
-/// no consumer is a Return — the producer-shape match should have
+/// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
+/// `anchor_output` — that's the placeholder the strider lift emits
+/// for `UnresolvedIndirectBranch` regions.  Returns None when no
+/// consumer is a placeholder — the producer-shape match should have
 /// gated us out before reaching this point, so this is defensive.
-fn find_anchor_consumer_return(
+fn find_anchor_consumer_placeholder(
     graph: &Graph,
     anchor_output: NodeOutputId,
 ) -> Option<NodeId> {
     for (consumer_id, _) in graph.output_uses(anchor_output) {
-        if matches!(graph.node_kind(consumer_id), NodeKind::Return) {
+        if matches!(graph.node_kind(consumer_id), NodeKind::IndirectBranch) {
             return Some(consumer_id);
         }
     }

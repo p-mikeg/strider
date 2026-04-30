@@ -84,6 +84,21 @@ pub enum NodeKind {
     Call,
     /// Function return.  Consumes the outgoing control edge and any return-value outputs.
     Return,
+    /// Unresolved indirect-branch placeholder.  Emitted by the lifter when
+    /// the CFG terminator is `UnresolvedIndirectBranch`.  Inputs:
+    /// `[control, memory, target_value]`.  Outputs: `[]`.
+    ///
+    /// The indirect-branch resolver inspects the producer of `target_value`
+    /// after the stable optimiser pipeline has run, then either rewrites
+    /// this node into a `Return` (link-register tail-return shapes) or
+    /// splices in a `Call`+`Return` pair (tail-call shape).  An
+    /// `IndirectBranch` surviving the destructive pipeline means the
+    /// resolver couldn't classify the producer; the IR is still valid.
+    ///
+    /// The `memory` slot is anchored alongside `control` so the resolver
+    /// can wire a real `Return` (or `Call`+`Return`) at the same program
+    /// point without re-walking the CFG to find the live memory token.
+    IndirectBranch,
 
     // ── Memory operations ──────────────────────────────────────────────────────
     /// Load from the given address space.
@@ -243,6 +258,7 @@ impl NodeKind {
                 | Self::InitialVar(..)
                 | Self::FunctionArg { .. }
                 | Self::Return
+                | Self::IndirectBranch
                 | Self::ControlState
                 | Self::MemPhi
                 | Self::VarPhi(..)

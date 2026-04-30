@@ -15,28 +15,28 @@ use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider::{CallingConvention, SleighArch, Strider};
 
-/// Walk every reachable Return node's inputs and return the value-input
-/// (slot 2) of the unique placeholder Return.  Returns `None` if no
-/// such Return exists; panics if more than one is found (every fixture
-/// in this module has exactly one indirect branch).
+/// Walk every reachable `IndirectBranch` node and return the value-
+/// input (slot 2) of the unique placeholder.  Returns `None` if none
+/// exists; panics if more than one is found (every fixture in this
+/// module has exactly one indirect branch).
 ///
-/// The placeholder Return has exactly 3 inputs:
-/// `[control, memory, target_value]`.  Real ABI Returns have either
-/// 2 inputs or `2 + ret_val_regs.len()` inputs; filtering by
-/// `inputs.len() == 3` uniquely picks out the placeholder.
+/// The placeholder `IndirectBranch` has exactly 3 inputs:
+/// `[control, memory, target_value]`.
 pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
     let mut found: Option<ir::Value> = None;
     for nid in graph.preorder() {
-        if !matches!(graph.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(graph.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = graph.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
+        assert!(
+            inputs.len() == 3,
+            "IndirectBranch placeholder must have exactly 3 inputs; got {}",
+            inputs.len(),
+        );
         assert!(
             found.is_none(),
-            "fixture must have exactly one placeholder Return; found a second",
+            "fixture must have exactly one IndirectBranch placeholder; found a second",
         );
         found = Some(inputs[2]);
     }
@@ -94,6 +94,6 @@ pub fn run_pipeline_x86_64(
     // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
     // IntConst).  See module-level docs for the full contract.
     let anchor = anchor_value_input(&graph)
-        .expect("fixture must have one placeholder Return after optimisation");
+        .expect("fixture must have one IndirectBranch placeholder after optimisation");
     (graph, anchor, lr_vn)
 }

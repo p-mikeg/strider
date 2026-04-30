@@ -678,3 +678,29 @@ fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
 
     validate(&graph, entry).expect("zombie ControlState must not trigger validation error");
 }
+
+/// IndirectBranch consumes (control, memory, target_value) and produces no
+/// outputs; the validator must accept this exact shape.  IndirectBranch is
+/// the lifter's placeholder for `RegionTerminator::UnresolvedIndirectBranch`
+/// — it's mutated in-place by the indirect-branch resolver into a real
+/// `Return` (LinkRegister) or replaced by a `Call+Return` pair (tail call).
+#[test]
+fn indirect_branch_with_control_memory_and_value_validates() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let target = graph.create_node(
+        NodeKind::IntConst(0x1234),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let target_val = graph.node_outputs(target).into_iter().next().unwrap();
+    let _ib = graph.create_node(
+        NodeKind::IndirectBranch,
+        [entry_ctrl, mem, target_val],
+        [],
+    );
+    validate(&graph, entry).expect("IndirectBranch with [ctrl, mem, target] must validate");
+}

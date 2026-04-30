@@ -246,19 +246,19 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     /// Lifts a region whose CFG terminator is
     /// [`cfg::RegionTerminator::UnresolvedIndirectBranch`] by emitting
-    /// a single-input `Return(target_value)` that anchors `target_vn`'s
-    /// lifted value in the IR.  This is the placeholder the tier-2
-    /// resolver inspects after the optimiser runs.
+    /// an `IndirectBranch(target_value)` placeholder anchoring
+    /// `target_vn`'s lifted value in the IR.  The indirect-branch
+    /// resolver inspects this placeholder after the optimiser runs.
     ///
-    /// The single-input shape (no `ret_val_regs` appended) gives the
-    /// resolver a stable anchor at input slot 2.  Tier 2 promotes the
-    /// placeholder into the convention's full ABI Return for
-    /// `LinkRegister` resolutions, or splices in a Call+Return pair
-    /// for `Single` tail-call resolutions.
+    /// `IndirectBranch [ctrl, mem, target]` carries the same control
+    /// and memory snapshot a real `Return` would, so the resolver can
+    /// rewrite it in place into a real `Return` for `LinkRegister`
+    /// resolutions or splice in a `Call+Return` pair for `Single`
+    /// tail-call resolutions without re-walking the CFG.
     ///
     /// The `(addr, target_value)` pair is recorded on
-    /// `IrStrider::unresolved_branches` so tier 2 can correlate each
-    /// placeholder with the offending pcode address.
+    /// `IrStrider::unresolved_branches` so the resolver can correlate
+    /// each placeholder with the offending pcode address.
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,
         target_vn: &rsleigh::Vn,
@@ -269,9 +269,9 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // correctly via the same Piece/Insert chain the rest of the
         // lifter uses.
         let target_value = self.read_vn(target_vn)?;
-        // Single-input Return — no `ret_val_regs`.  Tier 2 reads the
-        // value at slot 2 of this Return and inspects its producer.
-        self.builder.build_return(Some(target_value), &[])?;
+        // IndirectBranch placeholder — the resolver reads target_value
+        // at slot 2 of this node and inspects its producer.
+        self.builder.build_indirect_branch(target_value)?;
         self.unresolved_branches.push((addr, target_value));
         Ok(())
     }

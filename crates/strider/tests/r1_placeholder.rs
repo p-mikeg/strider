@@ -1,14 +1,15 @@
 //! strider lifts a `RegionTerminator::UnresolvedIndirectBranch`
-//! region by emitting a placeholder `Return(target_value)` that
-//! anchors the dispatch varnode in the IR for tier-2 resolution.
+//! region by emitting a placeholder `IndirectBranch(target_value)`
+//! that anchors the dispatch varnode in the IR for the indirect-
+//! branch resolver.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
 //! function-entry value, not constant, so cfg-tier-1 cannot classify
 //! the target).  Pre-fix, `analyze_cfg` either errored or emitted an
 //! ABI Return that discarded the dispatch value.  Post-fix, it
-//! succeeds and produces an IR with exactly one Return node whose
-//! single value-input is `target_vn`'s value at the BranchIndirect
-//! site.
+//! succeeds and produces an IR with exactly one IndirectBranch node
+//! whose single value-input is `target_vn`'s value at the
+//! BranchIndirect site.
 //!
 //! These tests intentionally do NOT use the per-arch fixture suite —
 //! that infrastructure runs the full optimizer pipeline against a real
@@ -50,16 +51,17 @@ fn make_unresolved_indirect_branch_cfg(
 
 /// Placeholder contract: a region terminated with
 /// `UnresolvedIndirectBranch` lifts to an IR that is well-formed
-/// (no error, one Return node).  Pre-restructure, the strider lifter
-/// dispatched the `BranchIndirect` opcode to `handle_return`, which
-/// produced an ABI Return whose inputs were the convention's
+/// (no error, one IndirectBranch node).  Pre-restructure, the strider
+/// lifter dispatched the `BranchIndirect` opcode to `handle_return`,
+/// which produced an ABI Return whose inputs were the convention's
 /// `ret_val_regs` — NOT the dispatch varnode.  Post-fix, strider
-/// inspects the region's terminator and emits a single-input
-/// `Return(target_value)` that anchors `target_vn` in the IR.
+/// inspects the region's terminator and emits an
+/// `IndirectBranch(target_value)` placeholder that anchors `target_vn`
+/// in the IR.
 ///
-/// Side-effect anchor expectation: the IR's unique Return must have
-/// at least one value-input (the placeholder anchors target_value
-/// at slot 2 — slots 0/1 are control/memory).
+/// Side-effect anchor expectation: the IR's unique IndirectBranch
+/// must have a value-input slot wired (the placeholder anchors
+/// target_value at slot 2 — slots 0/1 are control/memory).
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
@@ -68,31 +70,32 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
         .expect("Strider::new");
     let graph = strider
         .analyze_cfg(&cfg)
-        .expect("strider must lift unresolved branches as placeholder Return")
+        .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .graph;
 
-    // Exactly one Return node — strider emitted the placeholder, did
-    // not double-emit, and did not lift the BranchIndirect via the
-    // pre-fix ABI handle_return path (which would also produce a
-    // Return, but with different inputs).
-    let return_count = graph
+    // Exactly one IndirectBranch node — strider emitted the
+    // placeholder, did not double-emit, and did not lift the
+    // BranchIndirect via the pre-fix ABI handle_return path.
+    let placeholder_count = graph
         .preorder()
-        .filter(|nid| matches!(graph.graph.node_kind(*nid), ir::node::NodeKind::Return))
+        .filter(|nid| matches!(graph.graph.node_kind(*nid), ir::node::NodeKind::IndirectBranch))
         .count();
-    assert_eq!(return_count, 1, "expected exactly one Return placeholder, got {return_count}");
+    assert_eq!(
+        placeholder_count, 1,
+        "expected exactly one IndirectBranch placeholder, got {placeholder_count}"
+    );
 
-    // The placeholder Return must have a value-input slot wired —
-    // its layout is [control, memory, target_value].  That's exactly
-    // 3 inputs (no ABI ret_val_regs appended).
-    let return_node = graph
+    // The placeholder must have a value-input slot wired — its layout
+    // is [control, memory, target_value].  That's exactly 3 inputs.
+    let placeholder = graph
         .preorder()
-        .find(|nid| matches!(graph.graph.node_kind(*nid), ir::node::NodeKind::Return))
-        .expect("must have a Return node");
-    let inputs = graph.graph.node_inputs(return_node);
+        .find(|nid| matches!(graph.graph.node_kind(*nid), ir::node::NodeKind::IndirectBranch))
+        .expect("must have an IndirectBranch node");
+    let inputs = graph.graph.node_inputs(placeholder);
     assert_eq!(
         inputs.len(),
         3,
-        "placeholder Return must have layout [control, memory, target_value]; got {} inputs",
+        "placeholder must have layout [control, memory, target_value]; got {} inputs",
         inputs.len()
     );
 }

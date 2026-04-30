@@ -12,10 +12,10 @@ use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
 use opt::{IndirectBranchResolve, OptimizerPipeline};
 
-/// Build a minimal placeholder graph whose Return's value-input is
-/// `IntConst(target)` — the same shape strider lifts for an
-/// `UnresolvedIndirectBranch` placeholder after `mov rax, K; jmp *rax`
-/// folds.
+/// Build a minimal placeholder graph whose `IndirectBranch`'s
+/// value-input is `IntConst(target)` — the same shape strider lifts
+/// for an `UnresolvedIndirectBranch` placeholder after `mov rax, K;
+/// jmp *rax` folds.
 fn placeholder_graph_with_int_const(
     target: u64,
 ) -> (ir::Graph, ir::node::NodeId, ir::node::NodeOutputId) {
@@ -24,7 +24,7 @@ fn placeholder_graph_with_int_const(
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     let anchor = b.build_int_const(target, NodeOutputType::U64).unwrap();
-    b.build_return(Some(anchor), &[]).unwrap();
+    b.build_indirect_branch(anchor).unwrap();
     let built = b.build().unwrap();
     let entry = built.entry;
     (built.graph, entry, anchor)
@@ -99,11 +99,12 @@ fn pass_round_trips_through_existing_orchestrator() {
         .expect("first run must succeed");
     assert!(matches!(r1, opt::OptimizationResult::Changed));
 
-    // Second run: anchor's placeholder Return is gone (replaced by a
-    // Call → fresh Return), so the classifier has nothing to reclassify
-    // and the pass returns NoChange.  Confirms a re-run on the same
-    // anchor list is idempotent (the orchestrator's stable subset
-    // re-runs the pass after each iteration).
+    // Second run: anchor's `IndirectBranch` placeholder is gone
+    // (replaced by a Call → fresh Return), so the classifier has
+    // nothing to reclassify and the pass returns NoChange.  Confirms
+    // a re-run on the same anchor list is idempotent (the
+    // orchestrator's stable subset re-runs the pass after each
+    // iteration).
     let r2 = pass
         .optimize(&mut graph, entry)
         .expect("second run must succeed");

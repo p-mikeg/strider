@@ -224,10 +224,9 @@ pub fn build_value_phi_target_scenario(
     let loaded = b
         .build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    // The placeholder Return: single-input, slot 2 = anchor.  R1.4
-    // contract-shape.
-    b.build_return(Some(loaded), &[])
-        .expect("placeholder return");
+    // The IndirectBranch placeholder: slot 2 = anchor.
+    b.build_indirect_branch(loaded)
+        .expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     // Run the stable subset that produces the ValuePhi.  We omit
@@ -239,7 +238,7 @@ pub fn build_value_phi_target_scenario(
     pipeline.add(StackLoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg.graph, fg.entry).expect("opt pipeline");
 
-    let anchor = anchor_value_input(&fg).expect("no placeholder Return");
+    let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
     (fg, anchor)
 }
 
@@ -311,7 +310,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     let loaded = b
         .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     // Include `RedundantPhis` so the trivial single-input
@@ -333,17 +332,14 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     let mut found: Option<ir::Value> = None;
     for nid in fg.preorder() {
-        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(fg.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
-        assert!(found.is_none(), "multiple 3-input Returns");
+        assert!(found.is_none(), "multiple IndirectBranch placeholders");
         found = Some(inputs[2]);
     }
-    let anchor = found.expect("no placeholder Return");
+    let anchor = found.expect("no IndirectBranch placeholder");
     (fg, anchor, lr)
 }
 
@@ -409,7 +405,7 @@ pub fn build_push_target_pop_pc_scenario(
     let loaded = b
         .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
@@ -420,17 +416,14 @@ pub fn build_push_target_pop_pc_scenario(
 
     let mut found: Option<ir::Value> = None;
     for nid in fg.preorder() {
-        if !matches!(fg.graph.node_kind(nid), NodeKind::Return) {
+        if !matches!(fg.graph.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
         }
         let inputs: Vec<_> = fg.graph.node_inputs(nid).into_iter().collect();
-        if inputs.len() != 3 {
-            continue;
-        }
-        assert!(found.is_none(), "multiple 3-input Returns");
+        assert!(found.is_none(), "multiple IndirectBranch placeholders");
         found = Some(inputs[2]);
     }
-    let anchor = found.expect("no placeholder Return");
+    let anchor = found.expect("no IndirectBranch placeholder");
     (fg, anchor, lr)
 }
 
@@ -504,8 +497,7 @@ pub fn build_jump_table_known_bits_scenario(
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[])
-        .expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     // Stable optimiser subset.  We deliberately omit RedundantPhis
@@ -579,18 +571,12 @@ pub fn build_jump_table_predecessor_if_scenario(
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[])
-        .expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
 
-    // Exit: a real, non-placeholder Return.  We use a non-1-input
-    // shape (3 returns of 0) so the placeholder-resolver helpers in
-    // this module can still distinguish placeholder from real
-    // Return by input count == 3.  We add zero ret_val_regs and a
-    // single dummy explicit value — total 3 inputs (control,
-    // memory, value) which matches the placeholder shape.  To
-    // avoid confusion, we use 0 explicit values (just control +
-    // memory, total 2 inputs) — a real ABI Return shape distinct
-    // from the 3-input placeholder.
+    // Exit: a real, non-placeholder Return.  Now that the placeholder
+    // is its own `NodeKind::IndirectBranch`, distinguishing real vs
+    // placeholder is by NodeKind, not input count — but we still emit
+    // a 2-input Return (just control + memory) as a clean exit shape.
     b.set_region(exit);
     b.build_return(None, &[]).expect("exit return");
 
@@ -641,8 +627,7 @@ pub fn build_jump_table_unbounded_scenario(
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[])
-        .expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
@@ -672,7 +657,7 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     let loaded = b
         .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)
         .expect("load");
-    b.build_return(Some(loaded), &[]).expect("placeholder return");
+    b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
@@ -748,6 +733,6 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         "bx lr fixture must have exactly one tier-2 placeholder",
     );
     let anchor = anchor_value_input(&graph)
-        .expect("bx lr fixture must have one placeholder Return after optimisation");
+        .expect("bx lr fixture must have one IndirectBranch placeholder after optimisation");
     (graph, anchor, lr_vn)
 }

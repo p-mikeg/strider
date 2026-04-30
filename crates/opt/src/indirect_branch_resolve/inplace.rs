@@ -2,16 +2,17 @@
 //!
 //! Two variants are supported:
 //!
-//!   * **`LinkRegister`**: the placeholder `Return(target_value)`
-//!     already has the right control-flow shape.  We append the
-//!     convention's `ret_val_regs` as additional value inputs to the
-//!     existing Return node.
+//!   * **`LinkRegister`**: the placeholder `IndirectBranch(target_value)`
+//!     is rewritten in place into a real `Return [ctrl, mem,
+//!     ret_val_*]`.  The placeholder's `target_value` slot is dropped
+//!     and the convention's `ret_val_regs` are appended.  The node
+//!     `NodeKind` is mutated from `IndirectBranch` to `Return` so the
+//!     same `NodeId` flows through.
 //!   * **`Single` tail call**: replace the placeholder
-//!     `Return(target_vn)` with `Call(IntConst(target)) →
-//!     Return(ret_vars)`.  The placeholder Return is detached
-//!     (becoming a zombie unreachable node) and a fresh
-//!     `IntConst → Call → Return` chain is wired on the same control
-//!     and memory inputs.
+//!     `IndirectBranch(target_value)` with `Call(IntConst(target)) →
+//!     Return(ret_vars)`.  The placeholder is detached (becoming a
+//!     zombie unreachable node) and a fresh `IntConst → Call → Return`
+//!     chain is wired on the same control and memory inputs.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -23,61 +24,64 @@ use anyhow::anyhow;
 use crate::error::Result;
 
 /// Applies the `LinkRegister` resolution to a placeholder
-/// `Return(control, memory, target_value)` node, dropping the
-/// `target_value` slot (no longer meaningful — the LR-targeted branch
-/// IS the return) and appending `ret_val_outputs` as the actual return
-/// values.
+/// `IndirectBranch(control, memory, target_value)` node, mutating it
+/// into a real `Return [control, memory, ret_val_0, …]` in place.
+/// The placeholder's `target_value` slot is dropped (no longer
+/// meaningful — the LR-targeted branch IS the return) and
+/// `ret_val_outputs` are appended as the actual return values.  The
+/// node's `NodeId` is preserved so any cached handle (e.g. the
+/// orchestrator's `exit_control`) remains valid.
 ///
-/// Pre-edit: `[control, memory, target_value]`
-/// Post-edit: `[control, memory, ret_val_0, …]`
-///
-/// Removing the `target_value` slot keeps `RetPat::ret_val(idx)` 0-indexed
-/// over actual return values, matching the pattern crate's documented
-/// contract.  Without this, downstream pattern queries that look at
-/// `ret_val(0)` would hit the dead anchor placeholder.
+/// Pre-edit: `IndirectBranch [control, memory, target_value]`
+/// Post-edit: `Return [control, memory, ret_val_0, …]`
 ///
 /// # Errors
 ///
-/// Returns an error when `placeholder_return` is not a
-/// [`NodeKind::Return`], or when the IR mutation calls
-/// ([`Graph::add_node_input`] / [`Graph::remove_node_input`]) fail.
+/// Returns an error when `placeholder` is not a
+/// [`NodeKind::IndirectBranch`], or when the IR mutation calls
+/// ([`Graph::add_node_input`] / [`Graph::remove_node_input`] /
+/// [`Graph::set_node_kind`]) fail.
 pub fn apply_link_register(
     fg: &mut BuiltFunctionGraph,
-    placeholder_return: NodeId,
+    placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
     let graph = &mut fg.graph;
-    let kind = *graph.node_kind(placeholder_return);
-    if !matches!(kind, NodeKind::Return) {
-        return Err(anyhow!("expected Return node, got {kind:?}"));
+    let kind = *graph.node_kind(placeholder);
+    if !matches!(kind, NodeKind::IndirectBranch) {
+        return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
     for &ret in ret_val_outputs {
-        graph.add_node_input(placeholder_return, ret)?;
+        graph.add_node_input(placeholder, ret)?;
     }
     // Drop the placeholder `target_value` at slot 2 (after [control, memory]).
-    // Done last so `add_node_input` above appended after the placeholder; the
-    // shift moves ret_val_0 from slot 3 to slot 2 and so on.
-    let inputs = graph.node_inputs(placeholder_return);
+    // Done after `add_node_input` above so the appended ret_vals shift down
+    // from slot 3+ to slot 2+ post-removal.
+    let inputs = graph.node_inputs(placeholder);
     if inputs.len() > 2 && inputs.len() > ret_val_outputs.len() + 2 {
-        graph.remove_node_input(placeholder_return, 2)?;
+        graph.remove_node_input(placeholder, 2)?;
     }
+    // Mutate the kind: IndirectBranch → Return.  Same input/output
+    // signature shape (control + memory + variadic value tail; no
+    // outputs); both kinds are non-cacheable.
+    graph.set_node_kind(placeholder, NodeKind::Return)?;
     Ok(())
 }
 
 /// Applies the `Single`-tail-call resolution by replacing the
-/// placeholder `Return(target_value)` with `Call(IntConst(target)) →
-/// Return(ret_vars)`.
+/// placeholder `IndirectBranch(target_value)` with
+/// `Call(IntConst(target)) → Return(ret_vars)`.
 ///
-/// Pre-edit: `Return(control, memory, target_value)`
+/// Pre-edit: `IndirectBranch(control, memory, target_value)`
 /// Post-edit: `IntConst(target) →
 ///   Call(control, memory, IntConst, arg_passing_0, …) [outs:
 ///   Control, Memory, clob_0, …] →
 ///   Return(call.ctrl_out, call.mem_out, ret_val_0, …)`
 ///
-/// The placeholder Return is detached (becomes a zombie unreachable
-/// from `entry`).  The new Return is wired on the Call's control and
-/// memory outputs.  Returns the new Return's [`NodeId`] so callers
-/// can patch any cached exit-control handles.
+/// The placeholder is detached (becomes a zombie unreachable from
+/// `entry`).  The new Return is wired on the Call's control and memory
+/// outputs.  Returns the new Return's [`NodeId`] so callers can patch
+/// any cached exit-control handles.
 ///
 /// `arg_passing_outputs`, `clobbered_kinds`, and `ret_val_outputs`
 /// thread the calling-convention context through the freshly-spliced
@@ -89,29 +93,29 @@ pub fn apply_link_register(
 ///
 /// # Errors
 ///
-/// Returns an error when `placeholder_return` is not a
-/// [`NodeKind::Return`] node, when its input arity isn't the
+/// Returns an error when `placeholder` is not a
+/// [`NodeKind::IndirectBranch`] node, when its input arity isn't the
 /// expected 3 (i.e. not a placeholder shape), or when IR
 /// construction fails.
 pub fn apply_tail_call(
     fg: &mut BuiltFunctionGraph,
-    placeholder_return: NodeId,
+    placeholder: NodeId,
     target: u64,
     arg_passing_outputs: &[NodeOutputId],
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
     let graph = &mut fg.graph;
-    let kind = *graph.node_kind(placeholder_return);
-    if !matches!(kind, NodeKind::Return) {
-        return Err(anyhow!("expected Return node, got {kind:?}"));
+    let kind = *graph.node_kind(placeholder);
+    if !matches!(kind, NodeKind::IndirectBranch) {
+        return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
-    let inputs: Vec<NodeOutputId> = graph.node_inputs(placeholder_return).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = graph.node_inputs(placeholder).into_iter().collect();
     if inputs.len() != 3 {
-        // Not a placeholder Return.  Surface as a typed error so
+        // Not a placeholder shape.  Surface as a typed error so
         // callers don't silently mis-apply.
         return Err(anyhow!(
-            "expected Return with [control, memory, target_value] (3 inputs) node, got {kind:?}"
+            "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, got {kind:?}"
         ));
     }
     let control_in = inputs[0];
@@ -125,7 +129,7 @@ pub fn apply_tail_call(
 
     // CORRECTNESS — detach BEFORE creating the new chain: removes the
     // placeholder's three inputs from their use-lists.
-    graph.detach_node_inputs(placeholder_return);
+    graph.detach_node_inputs(placeholder);
 
     let masked_target = u128::from(target) & target_int_ty.bit_mask_u128();
     let int_const = graph.create_node(
@@ -184,38 +188,40 @@ mod tests {
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
         let target = builder.build_int_const(0xdeadu64, NodeOutputType::U64).unwrap();
-        builder.build_return(Some(target), &[]).expect("build_return");
+        builder.build_indirect_branch(target).expect("build_indirect_branch");
         let built = builder.build().expect("build");
-        // Locate the unique Return.
+        // Locate the unique IndirectBranch placeholder.
         let mut found: Option<NodeId> = None;
         for nid in built.preorder() {
-            if matches!(built.graph.node_kind(nid), NodeKind::Return) {
-                assert!(found.is_none(), "more than one Return");
+            if matches!(built.graph.node_kind(nid), NodeKind::IndirectBranch) {
+                assert!(found.is_none(), "more than one IndirectBranch");
                 found = Some(nid);
             }
         }
-        (built, found.expect("Return"))
+        (built, found.expect("IndirectBranch"))
     }
 
     #[test]
     fn apply_link_register_keeps_return_node_id() {
-        let (mut fg, return_id_before) = build_placeholder_graph();
+        // Pre-edit: IndirectBranch [ctrl, mem, target_value].  Post-edit:
+        // Return [ctrl, mem] — same NodeId, kind mutated in place.
+        let (mut fg, placeholder) = build_placeholder_graph();
         let inputs_before: Vec<_> =
-            fg.graph.node_inputs(return_id_before).into_iter().collect();
+            fg.graph.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
-        apply_link_register(&mut fg, return_id_before, &[]).expect("apply");
-        assert!(matches!(fg.graph.node_kind(return_id_before), NodeKind::Return));
+        apply_link_register(&mut fg, placeholder, &[]).expect("apply");
+        assert!(matches!(fg.graph.node_kind(placeholder), NodeKind::Return));
     }
 
     #[test]
-    fn apply_link_register_rejects_non_return_node() {
-        let (mut fg, _return_id) = build_placeholder_graph();
+    fn apply_link_register_rejects_non_indirect_branch_node() {
+        let (mut fg, _placeholder) = build_placeholder_graph();
         let int_const_id = fg.graph
             .all_node_ids()
             .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
         let result = apply_link_register(&mut fg, int_const_id, &[]);
-        assert!(result.is_err(), "must reject non-Return: {result:?}");
+        assert!(result.is_err(), "must reject non-IndirectBranch: {result:?}");
     }
 
     #[test]
@@ -237,8 +243,10 @@ mod tests {
     }
 
     #[test]
-    fn apply_tail_call_rejects_wrong_arity_return() {
-        // A Return with 2 inputs (no value) is not a placeholder; reject.
+    fn apply_tail_call_rejects_non_indirect_branch_node() {
+        // A real Return is not a placeholder; reject.  (The arity check
+        // is unreachable through any non-placeholder path, since the
+        // builder doesn't emit malformed IndirectBranch nodes.)
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("region");
@@ -251,7 +259,7 @@ mod tests {
             .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let result = apply_tail_call(&mut fg, ret_id, 0xc0de, &[], &[], &[]);
-        assert!(result.is_err(), "must reject 2-input Return: {result:?}");
+        assert!(result.is_err(), "must reject Return: {result:?}");
     }
 
     /// Spawns a value-typed `IntConst` and returns its single output id —

@@ -23,6 +23,33 @@ impl Graph {
         &self.nodes[node_id].kind
     }
 
+    /// Replaces the [`NodeKind`] of `node_id`.  Only valid when the
+    /// pre-edit and post-edit kinds share the SAME input and output
+    /// signatures (so the existing edges remain well-typed) and BOTH
+    /// kinds are non-cacheable (so the dedup cache stays consistent —
+    /// cacheable kinds key on `(kind, inputs, outputs)` so a kind
+    /// mutation could orphan or collide cache entries).
+    ///
+    /// Used by the indirect-branch resolver to rewrite an
+    /// `IndirectBranch` placeholder into a real `Return` in place,
+    /// keeping the same `NodeId` so cached `exit_control` handles stay
+    /// valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either the old or the new kind is
+    /// cacheable.
+    pub fn set_node_kind(&mut self, node_id: NodeId, kind: NodeKind) -> crate::Result<()> {
+        let old_kind = self.nodes[node_id].kind;
+        if old_kind.is_cacheable() || kind.is_cacheable() {
+            return Err(anyhow::anyhow!(
+                "set_node_kind requires both kinds non-cacheable: old={old_kind:?}, new={kind:?}"
+            ));
+        }
+        self.nodes[node_id].kind = kind;
+        Ok(())
+    }
+
     /// Returns the per-predecessor SP-relative offsets associated with a
     /// [`NodeKind::StackStorePhi`] node, or an empty slice if none are set.
     #[inline]
