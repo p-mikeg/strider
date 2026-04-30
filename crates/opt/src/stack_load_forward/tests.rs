@@ -41,20 +41,16 @@ fn forward_basic() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let addr =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
-    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -76,27 +72,23 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
-    let addr4 =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let addr12 =
-        b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-    let b_val = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
-    // Order: store at +4 first, then +12, then load +4.  The load's
-    // memory input chain is store12 -> store4 -> InitialMemory.
-    b.build_store(addr4, b_val, rsleigh::VnSpace::RAM)?;
-    b.build_store(addr12, a, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let addr12 =
+            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        let b_val = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        // Order: store at +4 first, then +12, then load +4.  The load's
+        // memory input chain is store12 -> store4 -> InitialMemory.
+        b.build_store(addr4, b_val, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr12, a, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -121,21 +113,17 @@ fn bail_on_overlapping_store() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U64)?;
-    let addr4 =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
-    // Store U64 at sp+0 (covers [0,8)), then load U32 from sp+4 ([4,8)).
-    let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
-    b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U64)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U64)?;
+        // Store U64 at sp+0 (covers [0,8)), then load U32 from sp+4 ([4,8)).
+        let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, NodeOutputType::U64)?;
+        b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -160,17 +148,13 @@ fn bail_on_type_mismatch() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let narrow = b.build_int_const(0x11u64, NodeOutputType::U32)?;
-    b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let narrow = b.build_int_const(0x11u64, NodeOutputType::U32)?;
+        b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -198,26 +182,22 @@ fn forwards_across_non_sp_store_between() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let addr4 =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
-    b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
-    // Opaque store to a non-SP address (a compile-time constant address —
-    // can't be SP-relative because SP is an InitialVar reading the entry
-    // SP, while the address here is a literal IntConst).
-    let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
-    let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
-    b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let a = b.build_int_const(0xAAu64, NodeOutputType::U32)?;
+        b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
+        // Opaque store to a non-SP address (a compile-time constant address —
+        // can't be SP-relative because SP is an InitialVar reading the entry
+        // SP, while the address here is a literal IntConst).
+        let heap_addr = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        let other = b.build_int_const(0xBBu64, NodeOutputType::U32)?;
+        b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -522,24 +502,20 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     use crate::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let store_addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let data = b.build_int_const(0x4242u64, NodeOutputType::U32)?;
+        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
 
-    let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let store_addr =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    let data = b.build_int_const(0x4242u64, NodeOutputType::U32)?;
-    b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-
-    let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
-    let load_addr =
-        b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
-    let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::U32)?;
+        let load_addr =
+            b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     // Intentionally omit `ConstantFold` so both encodings reach
     // `decompose_sp` as-lifted.
@@ -580,21 +556,17 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
-    let addr =
-        b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    // Store the full 4-byte value, then load only the low byte.
-    let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
-    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        // Store the full 4-byte value, then load only the low byte.
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -635,20 +607,16 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
-    let addr =
-        b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
-    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U16)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U16)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -690,21 +658,17 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     use crate::{OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
-    let addr =
-        b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
-    // Store the full 4-byte value, then load only the high byte (BE).
-    let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
-    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        // Store the full 4-byte value, then load only the high byte (BE).
+        let wide = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::U32)?;
+        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(RedundantPhis);
@@ -866,22 +830,22 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let addr =
-        b.build_int_binary_operation(sp_val, twentyfour, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64)?;
-    b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
-    // Touch the stored memory token so it survives DCE: emit a load of the
-    // same slot and return the loaded value.
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let addr = b.build_int_binary_operation(
+            sp_val,
+            twentyfour,
+            IntBinaryOp::Sub,
+            NodeOutputType::U64,
+        )?;
+        let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64)?;
+        b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
+        // Touch the stored memory token so it survives DCE: emit a load of the
+        // same slot and return the loaded value.
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     // Run StackStoreDetect so the raw Store becomes a StackStore (the helper
     // matches StackStore, not raw Store, mirroring probe's primary arm).
@@ -924,27 +888,23 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    // Two stores at distinct offsets that both belong to the chain reaching
-    // a final load — mimics the array-of-labels prologue.
-    let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
-    let addr_24 =
-        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let addr_16 =
-        b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
-    let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
-    b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
-    b.build_store(addr_16, v_16, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Two stores at distinct offsets that both belong to the chain reaching
+        // a final load — mimics the array-of-labels prologue.
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
+        let addr_24 =
+            b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let addr_16 =
+            b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
+        let v_16 = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
+        b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr_16, v_16, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -995,20 +955,16 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let addr_24 =
-        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
-    b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let addr_24 =
+            b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let v_24 = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
+        b.build_store(addr_24, v_24, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -1045,23 +1001,19 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let addr_24 =
-        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let first = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
-    let second = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
-    // Two stores at the SAME offset; the second alias-overwrites the first.
-    b.build_store(addr_24, first, rsleigh::VnSpace::RAM)?;
-    b.build_store(addr_24, second, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let addr_24 =
+            b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let first = b.build_int_const(0xAAAAu64, NodeOutputType::U64)?;
+        let second = b.build_int_const(0xBBBBu64, NodeOutputType::U64)?;
+        // Two stores at the SAME offset; the second alias-overwrites the first.
+        b.build_store(addr_24, first, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr_24, second, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -1100,21 +1052,17 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let addr_24 =
-        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    // Store U32, then load U64 — overlapping byte ranges intersect.
-    let stored = b.build_int_const(0xAAAAu64, NodeOutputType::U32)?;
-    b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let addr_24 =
+            b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        // Store U32, then load U64 — overlapping byte ranges intersect.
+        let stored = b.build_int_const(0xAAAAu64, NodeOutputType::U32)?;
+        b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -1153,30 +1101,26 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp64_vn();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    let sp_val = b.read_variable(&sp)?;
-    // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
-    let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
-    let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
-    let addr_24 =
-        b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let addr_16 =
-        b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
-    let target0 = b.build_int_const(0x401190u64, NodeOutputType::U64)?;
-    let target1 = b.build_int_const(0x401180u64, NodeOutputType::U64)?;
-    b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
-    b.build_store(addr_16, target1, rsleigh::VnSpace::RAM)?;
-    // The actual load uses a symbolic address, but for THIS helper test we
-    // only exercise the "look up by concrete offset" API — the symbolic
-    // shape match lives in the classifier (tested separately in
-    // `tier2_classify`).
-    let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
-    b.build_return(Some(loaded), &[])?;
-    let mut fg = b.build()?;
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64)?;
+        let off16 = b.build_int_const(16u64, NodeOutputType::U64)?;
+        let addr_24 =
+            b.build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let addr_16 =
+            b.build_int_binary_operation(sp_val, off16, IntBinaryOp::Sub, NodeOutputType::U64)?;
+        let target0 = b.build_int_const(0x401190u64, NodeOutputType::U64)?;
+        let target1 = b.build_int_const(0x401180u64, NodeOutputType::U64)?;
+        b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr_16, target1, rsleigh::VnSpace::RAM)?;
+        // The actual load uses a symbolic address, but for THIS helper test we
+        // only exercise the "look up by concrete offset" API — the symbolic
+        // shape match lives in the classifier (tested separately in
+        // `tier2_classify`).
+        let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);

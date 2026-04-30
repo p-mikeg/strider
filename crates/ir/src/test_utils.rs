@@ -73,3 +73,46 @@ pub fn sp_vn_x86() -> rsleigh::Vn {
 pub fn sp_vn_x86_64() -> rsleigh::Vn {
     reg_vn(0x20, 8)
 }
+
+/// Builds a single-region function with `sp_vn` tracked as a stack-pointer
+/// variable.  The closure receives the builder and the read-back SP value
+/// (`InitialVar(sp_vn)`) and is responsible for emitting the function body
+/// — including the `Return`.  This matches `FunctionBuilder::new_raw(vec![sp],
+/// &[], &[sp], &[], None, 0)?` + region setup, which appears verbatim in
+/// dozens of opt tests.
+///
+/// # Errors
+///
+/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
+pub fn make_sp_fn<F>(sp_vn: rsleigh::Vn, f: F) -> Result<BuiltFunctionGraph>
+where
+    F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
+{
+    let mut b = FunctionBuilder::new_raw(vec![sp_vn], &[], &[sp_vn], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let sp_val = b.read_variable(&sp_vn)?;
+    f(&mut b, sp_val)?;
+    b.build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::NodeKind;
+
+    #[test]
+    fn make_sp_fn_emits_initial_var_for_sp() -> Result<()> {
+        let sp = sp_vn_x86_64();
+        let fg = make_sp_fn(sp, |b, sp_val| {
+            b.build_return(Some(sp_val), &[])?;
+            Ok(())
+        })?;
+        let has_initial_var_sp = fg
+            .all_node_ids()
+            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::InitialVar(v) if *v == sp));
+        assert!(has_initial_var_sp);
+        Ok(())
+    }
+}
