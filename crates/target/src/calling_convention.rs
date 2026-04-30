@@ -3,8 +3,8 @@ use anyhow::anyhow;
 use crate::error::Result;
 
 /// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
-/// [`ErrorKind::UnknownRegName`] if the name is not known.  Single source of
-/// truth for the name-to-varnode error path.
+/// an error if the name is not known.  Single source of truth for the
+/// name-to-varnode error path.
 fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
@@ -432,9 +432,9 @@ impl CallingConvention {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::UnknownRegName`] if any register name listed in
-    /// this convention (including the stack pointer) does not resolve against
-    /// `sleigh_regs`.  The resolution short-circuits on the first failure.
+    /// Returns an error if any register name listed in this convention
+    /// (including the stack pointer) does not resolve against `sleigh_regs`.
+    /// The resolution short-circuits on the first failure.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
         let arg_passing_regs = regs_to_vns(sleigh_regs, self.arg_passing_regs)?;
         let callee_saved_regs = regs_to_vns(sleigh_regs, self.callee_saved_regs)?;

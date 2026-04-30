@@ -451,8 +451,8 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Uses client-side Graphviz WASM rendering — no local `dot` binary needed.
     ///
     /// # Errors
-    /// - [`ErrorKind::DotDumpError`] propagated from the dumper.
-    /// - [`ErrorKind::IoError`] if writing `out_path` fails.
+    /// - Propagated from the dumper.
+    /// - Returns an error if writing `out_path` fails.
     pub fn dump_as_html(&self, out_path: impl AsRef<Path>) -> anyhow::Result<()> {
         std::fs::write(out_path, self.as_html_from_dot()?)?;
         Ok(())

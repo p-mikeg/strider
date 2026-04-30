@@ -288,10 +288,11 @@ impl OptimizerPipeline {
     ///
     /// Delegates to [`Self::run`] by extracting `(&mut graph.graph,
     /// graph.entry)`.  Tests and downstream code that already hold a
-    /// `BuiltFunctionGraph` keep working unchanged through F2's trait
-    /// refactor; new code is encouraged to call [`Self::run`] directly with
-    /// a `(graph, entry)` pair (e.g. from
-    /// [`ir::FunctionBuilder::graph_mut`] + [`ir::FunctionBuilder::entry`]).
+    /// `BuiltFunctionGraph` keep working unchanged through the
+    /// `Optimizer` / `OptimizerOnBuilt` split; new code is encouraged
+    /// to call [`Self::run`] directly with a `(graph, entry)` pair
+    /// (e.g. from [`ir::FunctionBuilder::graph_mut`] +
+    /// [`ir::FunctionBuilder::entry`]).
     ///
     /// # Errors
     ///
@@ -327,8 +328,8 @@ mod tests {
     }
 
     /// `run(graph, entry)` and `run_on_built(built)` produce the same
-    /// resulting graph state.  Pins F2's "the new entry point is a
-    /// drop-in replacement" contract.
+    /// resulting graph state.  Pins the "new entry point is a drop-in
+    /// replacement" contract for the Optimizer / OptimizerOnBuilt split.
     #[test]
     fn pipeline_run_with_graph_and_entry_replicates_old_built_behavior() -> crate::Result<()> {
         let mut a = one_const_fn(7);

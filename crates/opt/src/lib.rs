@@ -75,9 +75,9 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 /// Every pass listed here MUST produce IR that is robust against a
 /// future predecessor arriving at any region — i.e. it rewrites nodes
 /// in place but never *removes* phi / `ControlState` / `If` nodes that
-/// the strider [`RegionIrCache`] pins by `NodeId`.  Adding a pass
-/// here that detaches dependents would invalidate cached body
-/// references in the next iteration.
+/// the strider orchestrator's per-iteration `RegionIndex` pins by
+/// `NodeId`.  Adding a pass here that detaches dependents would
+/// invalidate cached body references in the next iteration.
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
 /// — section "Stable vs destructive optimizer passes" — for the
@@ -112,10 +112,10 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 ///
 /// # Correctness
 ///
-/// Running these passes mid-iteration would invalidate the
-/// [`RegionIrCache`] because the cache's pinned phi `NodeId`s and
-/// body-side `NodeOutputId`s could point at detached nodes.  The
-/// orchestrator runs them exactly once at fixed point.
+/// Running these passes mid-iteration would invalidate the strider
+/// orchestrator's per-iteration `RegionIndex` because its pinned phi
+/// `NodeId`s and body-side `NodeOutputId`s could point at detached
+/// nodes.  The orchestrator runs them exactly once at fixed point.
 ///
 /// Passes (in order):
 /// 1. [`RedundantPhis`] — eliminates `ControlPhi` / `MemPhi` /

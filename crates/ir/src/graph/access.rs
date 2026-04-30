@@ -40,8 +40,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::ErrorKind::WrongOutputCount`] if the node does
-    /// not have exactly `N` outputs.
+    /// Returns an error if the node does not have exactly `N` outputs.
     #[inline]
     pub fn node_outputs_exact<const N: usize>(
         &self,
@@ -75,8 +74,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::ErrorKind::WrongInputCount`] if the node does
-    /// not have exactly `N` inputs.
+    /// Returns an error if the node does not have exactly `N` inputs.
     #[inline]
     pub fn node_inputs_exact<const N: usize>(
         &self,
@@ -118,8 +116,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::ErrorKind::InputIndexOutOfBounds`] if `idx` is
-    /// past the node's current input count.
+    /// Returns an error if `idx` is past the node's current input count.
     #[inline]
     pub fn node_input_id_at(
         &self,

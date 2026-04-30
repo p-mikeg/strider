@@ -278,7 +278,7 @@ fn elf_exec_segments_include_pf_x_and_exclude_others() {
 
 /// Pinned contract: when the filter rejects a section, the converter must
 /// NOT call `section.data()` on it — so a malformed rejected section
-/// cannot spuriously surface as an `ErrorKind::Object(_)`.
+/// cannot spuriously surface as a parse error from the `object` crate.
 ///
 /// This is the complement of `elf_sections_to_mem_regions_propagates_data_error`:
 /// that test uses `filter: |_| true` and pins the "accepted-and-malformed ⇒
@@ -341,14 +341,14 @@ fn elf_sections_to_mem_regions_skips_rejected_malformed_section() {
 // ── Pinned contract: RegionOverflow from MemRegion::new propagates ──────
 
 /// Pinned contract: when an accepted section's `sh_addr + sh_size` would
-/// overflow `u64`, `MemRegion::new` returns `ErrorKind::RegionOverflow`,
-/// and the converter must propagate that — *not* silently drop it and not
-/// rewrap it as `ErrorKind::Object(_)`.
+/// overflow `u64`, `MemRegion::new` returns an overflow error, and the
+/// converter must propagate that — *not* silently drop it and not
+/// rewrap it as an `object`-crate parse error.
 ///
 /// This complements `elf_sections_to_mem_regions_propagates_data_error`:
 /// that test pins the `object::Error` arm of the converter's error set;
-/// this test pins the `RegionOverflow` arm. Together they enumerate
-/// every error variant the converters can return.
+/// this test pins the overflow arm. Together they enumerate every error
+/// path the converters can take.
 ///
 /// We synthesize the failure by building a section whose `sh_addr` is one
 /// less than `u64::MAX` and whose `sh_size` is 4. The data block fits in

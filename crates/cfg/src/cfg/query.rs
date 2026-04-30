@@ -96,8 +96,8 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns both conditional-branch successors of `region_id`.
     ///
     /// # Errors
-    /// Returns [`ErrorKind::DuplicateEdgeKind`] when more than one
-    /// `IfCaseTrue` or `IfCaseFalse` edge leaves `region_id`.
+    /// Returns an error when more than one `IfCaseTrue` or `IfCaseFalse`
+    /// edge leaves `region_id`.
     pub fn region_if(&self, region_id: RegionId) -> Result<IfRegionState> {
         Ok(IfRegionState {
             if_true_region: self.unique_outgoing(region_id, RegionEdgeKind::IfCaseTrue)?,

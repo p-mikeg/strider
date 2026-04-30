@@ -121,11 +121,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::UnsupportedVnSpace`] if `reg` is not in a
-    /// fixed-offset space (REGISTER or UNIQUE).  Returns
-    /// [`ErrorKind::NoRegisterContainer`] if no variable in the builder
-    /// covers `reg`'s byte range — this should never happen because every
-    /// varnode at least contains itself.
+    /// Returns an error if `reg` is not in a fixed-offset space (REGISTER
+    /// or UNIQUE), or if no variable in the builder covers `reg`'s byte
+    /// range — the latter should never happen because every varnode at
+    /// least contains itself.
     pub(crate) fn find_largest_fitting_register(
         &self,
         reg: &rsleigh::Vn,
@@ -377,7 +376,7 @@ mod shift_formula_tests {
     }
 }
 
-// ── BUG-9 regression tests for positioned reg-mask ────────────────────────────
+// ── Positioned reg-mask: AArch64 SIMD upper-half write regression tests ──────
 //
 // Sub-register writes in `write_reg_vn` need a mask that picks out **reg's
 // position inside the container**, not reg's bits in low-bytes domain.  The
@@ -405,7 +404,7 @@ mod positioned_mask_tests {
         let q0 = reg_at(0, 16);
         let s0 = reg_at(0, 4);    // lower 4 bytes
         let d0 = reg_at(0, 8);    // lower 8 bytes
-        let v0_upper8 = reg_at(8, 8); // upper 8 bytes (the BUG-9 hot spot)
+        let v0_upper8 = reg_at(8, 8); // upper 8 bytes (the AArch64 SIMD upper-half hot spot)
 
         let q0_mask = vn_mask(&q0).unwrap();
         assert_eq!(q0_mask, u128::MAX, "container mask should be all-ones");
@@ -446,7 +445,7 @@ mod positioned_mask_tests {
         assert_ne!(
             container_mask,
             0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
-            "BUG-9 regression check: container_mask must NOT be the upper-half mask"
+            "regression check: container_mask must NOT be the upper-half mask"
         );
     }
 
