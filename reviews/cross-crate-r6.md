@@ -1139,3 +1139,83 @@ The "yes — clear win" patterns are concentrated in `opt`.  `pattern`, `strider
 - **The `RegionTerminator::Switch::target_value` field is always `None`** from the cfg builder (cfg review F-030 outcome was "Skipped — orchestrator already supports the field's None case. Reworded the docstring instead"). Field still exists; still unused. Out of scope here because already-flagged-and-deferred.
 - **`crates/strider/tests/common/mod.rs:124-139` and `crates/strider/src/orchestrator.rs:687-696`** test scaffolding duplication discussed in F-019; the proposed fix depends on the test-utils strategy decision.
 - **`per_arch_test!` macro**: 800-line scaffolding that's mechanical but not buggy. Recommendation in F-020 is leave alone.
+
+## Outcomes (2026-04-29 — apply pass on `review/cross-crate-r6`)
+
+Branch: `review/cross-crate-r6` (8 commits on top of `feature/ai`).
+
+Final test status: `cargo test --workspace` passes; `cargo clippy --workspace --all-targets` clean.
+
+| ID | Outcome | Notes |
+| --- | --- | --- |
+| F-001 | Applied | error.rs dropped from cfg/dot/pcode-lift/reader/target; replaced with `pub type Result<T> = anyhow::Result<T>;` directly in lib.rs. opt/ir/pattern keep theirs (real consumer / real types / explanatory doc). |
+| F-002 | Applied | `vn_to_display_name` now lives in `ir::dot::label`; cfg + GraphDotDumper delegate. |
+| F-003 | Applied | `decode_space_id` + `first_input_or_err` lifted to `pcode_lift`; strider's handle_store + handle_call_other delegate. |
+| F-004 | Applied | `pcode_lift::vn_sort_key` shared by cfg::indirect_resolve and strider::pipeline. |
+| F-005 | Applied | `cfg::is_addr_tail_call` shared by cfg::Builder and strider::orchestrator. |
+| F-006 | Applied | RegionIrCache cites in opt/lib.rs replaced with "strider orchestrator's per-iteration RegionIndex". |
+| F-007 | Applied | "F2's trait refactor" → "the Optimizer / OptimizerOnBuilt split" in opt/pipeline.rs. |
+| F-008 | Applied | Stale `ErrorKind::*` doc links scrubbed in ir/graph/access.rs (3 sites), pcode-lift/vn_io.rs, dot/lib.rs, target/calling_convention.rs (2 sites), cfg/cfg/query.rs. |
+| F-009 | Skipped | ~77 BUG-N codenames in tests; per cross-crate-r6 analysis the cleanup costs more than it saves. Policy: don't introduce new BUG-N. |
+| F-010 | Obviated | `opt::AnchorAddr` IS used externally — by 2 sites in `opt/tests/indirect_branch_resolve.rs`. The original analysis missed the integration tests. |
+| F-011 | Applied | See F-001. |
+| F-012 | Skipped | `EntityMap<E,V>` for entity-utils — premature; current `RegionIndex` doesn't directly benefit (keyed by `NodeOutputId`). Defer until a real consumer appears. |
+| F-013 | Skipped | OptimizerOnBuilt blanket-impl pattern is locally clean and architecturally consistent for opt. Per the user-confirmed skip list. |
+| F-014 | Applied | `target::SleighArch::probe_regs()` added; 6 sites collapsed (orchestrator test mod, tests/common, tier2 helpers, jump_table_lifting, r1_placeholder, graph_rewriter, pipeline display test). |
+| F-015 | N/A | Inventory section, no fix-action. |
+| F-016 | Applied | `make_fn` / `make_fn_with_var` consolidated into `ir::test_utils` (feature `test-utils`). Both opt copies replaced with re-exports. |
+| F-017 | Applied | `reg_vn` consolidated into `ir::test_utils::reg_vn`. 6 inline copies replaced with `use ir::test_utils::reg_vn`. |
+| F-018 | Applied | `sp_vn` split by width: `sp_vn_x86()` (4-byte) and `sp_vn_x86_64()` (8-byte). 6 inline copies updated to choose the explicit width. |
+| F-019 | Partial | `make_strider_x86_64` / `strider_for(arch)` both reduced to ~3 lines via `probe_regs()`. The remaining duplication is too small to justify reaching across the test compile-unit boundary. |
+| F-020 | Skipped | Per the cross-crate-r6 recommendation: 15 per-arch `__scan_ignore_<arch>!` macros are mechanical, not buggy; either replacement (proc-macro or runtime-skip) costs more than it saves. |
+| F-021 | Obviated | Already applied per strider-r6 F-028; only `anchor_value_input` remains in tier2_helpers. |
+| F-022 | Applied | `FunctionBuilder::empty()` added as a public IR API. ~77 inline `new_raw(vec![],&[],&[],&[],None,0)` calls converted via sed. |
+| F-023 | Applied | `rustc-hash` workspace dep moved to opt's direct dep. |
+| F-024 | Applied | `paste` workspace dep moved to strider's direct dev-dep. |
+| F-025 | Applied | `tempfile` workspace dep moved to reader's direct dev-dep. |
+| F-026 | Skipped | criterion direct dep on opt — single consumer, leave alone. |
+| F-027 | Skipped | bitflags direct dep on pattern — single consumer, leave alone. |
+| F-028 | Applied | CLAUDE.md strider section reordered: leads with `strider::run(config)` as canonical entry. |
+| F-029 | Applied | pcode-lift/vn_io.rs ErrorKind:: doc refs replaced with prose. |
+| F-030 | Applied | BUG-9 codename refs in pcode-lift/vn_io.rs replaced with "AArch64 SIMD upper-half hot spot" context. |
+| F-031 | Applied | `NodeOutputType::float_for_byte_size` added; pcode-lift's `float_type_from_vn` is now a one-liner delegate. |
+| F-032 | Applied | target/calling_convention.rs ErrorKind::UnknownRegName doc refs (2 sites) replaced with prose. |
+| F-033 | Applied | calling_convention.rs's 657-line `mod tests` extracted to `target/src/calling_convention/tests.rs`; calling_convention.rs becomes calling_convention/mod.rs. |
+| F-034 | Applied | See F-001. |
+| F-035 | Skipped | MemRegion::new overflow check on hypothetical 128-bit. Per the user-confirmed skip list. |
+| F-036 | Applied | reader/tests/elf_converters.rs ErrorKind doc refs replaced with prose. |
+| F-037 | Applied | See F-001. |
+| F-038 | Applied | dot/lib.rs ErrorKind doc refs replaced with prose. |
+| F-039 | Applied | See F-001. |
+| F-040 | Skipped | graphwalk PostOrder/etc demote-to-pub(crate) breaks integration tests; the unused public surface is harmless. Per the cross-crate-r6 recommendation. |
+| F-041 | N/A | Analysis-only finding (no fix-action). |
+| F-042 | N/A | No findings. |
+| F-043 | Skipped | graphmock consolidation. Per the user-confirmed skip list. |
+| F-044 | Skipped | graphmock panic doc — minor editorial; deferred. |
+| F-045 | N/A | Analysis-only finding (no fix-action). |
+| F-046 | Applied | See F-001. |
+| F-047 | Skipped | `cfg_attr(test, allow(...))` block — workspace `[lints.clippy]` doesn't support cfg(test) selectivity. Boilerplate is mechanical and not a hazard. Per the cross-crate-r6 recommendation. |
+
+### Algorithmic patterns
+
+| ID | Outcome | Notes |
+| --- | --- | --- |
+| P-001 | Applied | **Silent regression caught.** `replace_output_uses` was deleted in opt-r6 commit 6255d10 but resurrected by the anyhow-merge ebec8eb. 3 call sites in redundant_phis + 2 inlined cursors in call_other_elide all routed through `Graph::replace_all_uses`. |
+| P-002 | Skipped | Memory-chain walker generic backbone — non-trivial refactor; per-site reductions are too divergent in practice to share without a tedious closure-callback API. Documented in cross-crate-r6.md and skipped. |
+| P-003 | Skipped | PathGuard RAII for sp_expr.rs — only ONE site actually pairs `visiting.insert/.remove` (`decompose_sp` itself; `decompose_sp_inner` and `decompose_sp_phi` forward the set). RAII is overkill for a single site. |
+| P-004 | Skipped | Per the user-confirmed skip list (looks-like-duplication-but-isn't). |
+| P-005 | Applied | `BuiltFunctionGraph::preorder_kind<P>(P)` added; 4 production sites converted (call_other_elide, stack_load_forward, function_args, cfg::find_unique_return). |
+| P-006 | Partial | Addressed via `preorder_kind`; the find-unique-by-kind shape collapses to `iter.next()` with a uniqueness check. |
+| P-007 | Skipped | Per the user-confirmed skip list. |
+| P-008 | Skipped | Per the user-confirmed skip list. |
+| P-009 | Skipped | Per the user-confirmed skip list. |
+
+### Silent regressions caught (besides P-001)
+
+None. The opt-r6 outcomes-table re-verification scanned F-007/F-008/F-009/F-010/F-026/F-029/F-037 — all clean.
+
+### Surprising findings
+
+- **F-010 was wrong**: `opt::AnchorAddr` IS used externally by `opt/tests/indirect_branch_resolve.rs`. Integration tests are separate compile units, so they count as external. The cross-crate analysis's grep missed them.
+- **F-019's collapse turns out to be cosmetic-only post-`probe_regs()`**: with the boilerplate down to 3 lines per copy, the duplication is too small to justify reaching across the `cfg(test)` ↔ `tests/common` compile-unit boundary.
+- **P-003 had only one actual `visiting.insert/.remove` pair**, not the 3 sites the analysis suggested. The other two sites in sp_expr forward the same set without owning its lifecycle, so RAII would be overkill.

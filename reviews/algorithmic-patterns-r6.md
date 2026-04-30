@@ -750,3 +750,17 @@ end up as a separate code path.
   finding-by-finding outcomes covers the alias-disambiguation half
   (F-015) as already-applied via `step_through_store`. The walker
   backbone half (F-014) is what this pass argues remains a clear win.
+
+## Outcomes (2026-04-29 — apply pass on `review/cross-crate-r6`)
+
+| ID | Outcome | Notes |
+| --- | --- | --- |
+| P-001 | Applied | Silent opt-r6 F-013 regression caught by P-001's read pass; `replace_output_uses` removed, all 5 sites delegate to `Graph::replace_all_uses`. |
+| P-002 | Skipped | Per-site reductions are too divergent to share without a tedious callback API. |
+| P-003 | Skipped | Only one actual `visiting.insert/remove` pair in sp_expr (the other recursive helpers forward the set). RAII overkill. |
+| P-004 | Skipped | Per the user-confirmed skip list. |
+| P-005 | Applied | `BuiltFunctionGraph::preorder_kind<P>(P)` added; 4 production call sites converted. |
+| P-006 | Partial | Subsumed by `preorder_kind`; `find_unique_return` rewritten as `iter.next() / iter.next()`. |
+| P-007 | Skipped | Per the user-confirmed skip list. |
+| P-008 | Skipped | Per the user-confirmed skip list. |
+| P-009 | Skipped | Per the user-confirmed skip list. |
