@@ -24,26 +24,27 @@
 //! closure (built via [`pattern::rewrite_rule`]) into
 //! [`GraphRewriter::apply_rule`].
 //!
-//! # Use case — collapse a jump table
+//! # Use case — wrap a built graph and apply a no-op rule
 //!
-//! ```ignore
-//! // After Strider::analyze_cfg lifted a function with a tier-2-resolved
-//! // jump table (the If-ladder lifted from `RegionTerminator::Switch`)
-//! // into `built`:
-//! let mut built: ir::BuiltFunctionGraph = strider.analyze_cfg(&cfg)?.graph;
+//! ```
+//! # use anyhow::Result;
+//! # fn doc() -> Result<()> {
+//! use ir::node::NodeOutputType;
 //!
-//! // Pattern that matches the switch's index-input slot, then replace it
-//! // with IntConst(4) so DeadBranchElim can prune the dead arms.
-//! let idx = pattern::Capture::new();
-//! let rule = pattern::rewrite_rule(
-//!     pattern::int_eq(pattern::var(idx), pattern::any_int_const(idx_const_var)),
-//!     pattern::int_const(4),
-//! );
+//! // Build a minimal graph: `fn() -> 0u64`.
+//! let mut built = ir::test_utils::make_empty_fn(|b| {
+//!     b.build_int_const(0u64, NodeOutputType::U64)
+//! })?;
 //!
-//! let pipeline = strider.build_optimizer_pipeline();
-//! let mut rewriter = strider::GraphRewriter::new(&mut built);
-//! rewriter.apply_rule(rule)?;
-//! rewriter.re_optimize(&pipeline)?;  // collapses the now-constant if-ladder
+//! // A no-op rule: matches anything, returns `Ok(false)` (didn't fire).
+//! // Real rules come from `pattern::rewrite_rule(matcher_pat, replacement_pat)`
+//! // and would mutate the graph here.
+//! let mut rewriter = strider::GraphRewriter::wrap_built(&mut built);
+//! let fired = rewriter.apply_rule(|_g, _n| Ok(false))?;
+//! assert_eq!(fired, 0);
+//! # Ok(())
+//! # }
+//! # doc().unwrap();
 //! ```
 
 use anyhow::Result;
