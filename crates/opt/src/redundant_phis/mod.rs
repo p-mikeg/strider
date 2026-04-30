@@ -6,22 +6,6 @@ use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
-/// Replaces all uses of `output` with `value`.  Returns `true` if at least one
-/// use was replaced.
-fn replace_output_uses(
-    function: &mut ir::BuiltFunctionGraph,
-    output: NodeOutputId,
-    value: NodeOutputId,
-) -> Result<bool> {
-    let mut changed = false;
-    let mut cursor = function.graph.output_use_cursor(output);
-    while cursor.current().is_some() {
-        cursor.replace_current_with(value)?;
-        changed = true;
-    }
-    Ok(changed)
-}
-
 /// If every output of `node_id` has no uses and the node still has inputs,
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
@@ -100,7 +84,7 @@ fn remove_phis(
                     };
                     let value = function.graph.node_inputs(node_id)[j + 1];
                     let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
-                    replace_output_uses(function, output, value)?
+                    function.graph.replace_all_uses(output, value)?
                 }
                 _ => match (value_iter.next(), value_iter.next()) {
                     // Distinct live ctrl predecessors all feed the same data
@@ -109,7 +93,7 @@ fn remove_phis(
                     // predecessors, so we don't touch it here.)
                     (Some(&value), None) => {
                         let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
-                        replace_output_uses(function, output, value)?
+                        function.graph.replace_all_uses(output, value)?
                     }
                     _ => false,
                 },
@@ -134,7 +118,7 @@ fn remove_phis(
                 (Some(&input), None) => {
                     let [output, _phi_token] =
                         function.graph.node_outputs_exact::<2>(node_id)?;
-                    replace_output_uses(function, output, input)?
+                    function.graph.replace_all_uses(output, input)?
                 }
                 _ => false,
             };

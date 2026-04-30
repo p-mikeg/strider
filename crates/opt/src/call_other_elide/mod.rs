@@ -129,17 +129,9 @@ fn elide_call_other(
     }
 
     // Rewire all consumers of ctrl_out → ctrl_in, mem_out → mem_in.
-    let mut changed = false;
-    let mut cursor = fg.graph.output_use_cursor(ctrl_out);
-    while cursor.current().is_some() {
-        cursor.replace_current_with(ctrl_in)?;
-        changed = true;
-    }
-    let mut cursor = fg.graph.output_use_cursor(mem_out);
-    while cursor.current().is_some() {
-        cursor.replace_current_with(mem_in)?;
-        changed = true;
-    }
+    let ctrl_changed = fg.graph.replace_all_uses(ctrl_out, ctrl_in)?;
+    let mem_changed = fg.graph.replace_all_uses(mem_out, mem_in)?;
+    let changed = ctrl_changed || mem_changed;
 
     // Detach our own inputs so the node becomes a zero-input zombie that
     // walk_graph won't reach (matches the convention used by
