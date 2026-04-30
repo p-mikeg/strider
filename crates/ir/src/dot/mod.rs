@@ -5,7 +5,7 @@ use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId};
 use crate::node_signature::{SlotRole, expected_signature};
 
-mod label;
+pub mod label;
 mod render;
 #[cfg(test)]
 mod tests;

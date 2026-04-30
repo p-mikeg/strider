@@ -17,7 +17,7 @@ pub use dot::test_api as dot_test_api;
 pub use builder::indirect_resolve_test_api;
 #[doc(hidden)]
 pub use builder::region_builder_test_api;
-pub use query::IfRegionState;
+pub use query::{IfRegionState, is_addr_tail_call};
 pub use types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, RegionInstruction, RegionTerminator,
 };

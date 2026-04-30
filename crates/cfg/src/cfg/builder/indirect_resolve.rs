@@ -127,10 +127,8 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // Determinism: sort by (space-shortcut, offset, size) so VarId
     // numbering inside FunctionBuilder is reproducible across runs
     // (HashSet iteration order would otherwise depend on the random
-    // hasher seed).  This sort key is duplicated in
-    // `strider::pipeline::find_all_unique_vns` and must stay in
-    // lockstep — both downstream IRs key VarId off the same order.
-    all_vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
+    // hasher seed).
+    all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
 
     // Stand up a minimal FunctionBuilder.  No calling convention
     // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
@@ -304,20 +302,16 @@ fn resolve_const_loads(
 /// Iterates the full reachable graph; with one Return the early-exit
 /// is immediate after the second hit (which itself indicates a bug).
 fn find_unique_return(fg: &ir::BuiltFunctionGraph) -> Result<ir::node::NodeId> {
-    let mut found: Option<ir::node::NodeId> = None;
-    for node_id in fg.preorder() {
-        if matches!(fg.graph.node_kind(node_id), ir::node::NodeKind::Return) {
-            if found.is_some() {
-                return Err(anyhow::anyhow!(
-                    "indirect_resolve mini-graph contains more than one Return node"
-                ));
-            }
-            found = Some(node_id);
-        }
+    let mut iter = fg.preorder_kind(|k| matches!(k, ir::node::NodeKind::Return));
+    let first = iter
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("indirect_resolve mini-graph contains no Return node"))?;
+    if iter.next().is_some() {
+        return Err(anyhow::anyhow!(
+            "indirect_resolve mini-graph contains more than one Return node"
+        ));
     }
-    found.ok_or_else(|| {
-        anyhow::anyhow!("indirect_resolve mini-graph contains no Return node")
-    })
+    Ok(first)
 }
 
 #[doc(hidden)]

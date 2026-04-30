@@ -39,7 +39,7 @@
 //!   [`BoolUnaryOp`], [`ExtendOp`] — operation enumerations used in node kinds
 
 mod builder;
-mod dot;
+pub mod dot;
 pub mod error;
 mod function;
 pub mod graph;

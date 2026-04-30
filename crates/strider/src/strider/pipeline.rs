@@ -203,7 +203,7 @@ impl Strider {
             }
         }
         let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
-        vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
+        vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
         vns
     }
 

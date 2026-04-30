@@ -7,6 +7,38 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 
+/// Decides whether `target` is a tail call — i.e. lies outside the
+/// half-open function range `[start_addr, start_addr + fn_max_size)`.
+///
+/// Shared by [`crate::Builder::is_branch_tail_call_nocheck`] (cfg-time
+/// classification) and `strider`'s orchestrator (post-cfg `Single(K)`
+/// resolution).  Both layers must agree on the predicate.
+///
+/// `allow_code_before_start_addr = true` disables the lower-bound check
+/// (relevant for binaries whose function bodies legitimately reach back
+/// into the prelude / unwind area).
+#[must_use]
+pub fn is_addr_tail_call(
+    target: u64,
+    start_addr: u64,
+    fn_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+) -> bool {
+    if target < start_addr && !allow_code_before_start_addr {
+        return true;
+    }
+    if let Some(fn_max_size) = fn_max_size {
+        // Half-open range: targets at or above `end_exclusive` are tail
+        // calls.  `saturating_add` caps at `u64::MAX` so the boundary
+        // case `target == u64::MAX` is still classified correctly.
+        let end_exclusive = start_addr.saturating_add(fn_max_size);
+        if end_exclusive <= target {
+            return true;
+        }
+    }
+    false
+}
+
 /// The two successors of a conditional-branch region.
 ///
 /// Returned by [`Cfg::region_if`].

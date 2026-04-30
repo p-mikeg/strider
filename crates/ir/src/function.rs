@@ -89,9 +89,20 @@ impl BuiltFunctionGraph {
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from [`BuiltFunctionGraph::entry`].
-    #[must_use] 
+    #[must_use]
     pub fn preorder(&self) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(&self.graph, self.entry)
+    }
+
+    /// Reachable preorder filtered by a predicate over the node's
+    /// [`crate::node::NodeKind`].  Convenience for the common
+    /// `.preorder().filter(|n| matches!(graph.node_kind(n), …))` pattern.
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&crate::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
     }
 
     /// Iterates over **every** node id in the graph, including nodes that are

@@ -93,3 +93,59 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("instruction has no output varnode for opcode {:?}", insn.opcode))
 }
+
+/// Stable sort key for varnodes.  Used by the cfg + strider lifting paths
+/// to give `FunctionBuilder` the same VarId numbering across runs (a
+/// `HashSet` iteration order would otherwise depend on the random hasher
+/// seed).  Both lifters key off this same order so downstream IRs that
+/// share VarIds (e.g. mini-IR for indirect-branch resolution and the
+/// final per-region IR) stay aligned.
+#[must_use]
+pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
+    (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size)
+}
+
+/// Returns `insn.inputs[0]` or a typed "too few inputs" error.  Used by
+/// LOAD/STORE space decoding and any other opcode that requires a
+/// distinguished varnode at slot 0.
+///
+/// # Errors
+///
+/// Returns an error when `insn.inputs` is empty.
+pub fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
+    insn.inputs.first().ok_or_else(|| {
+        anyhow::anyhow!(
+            "opcode {:?} has too few inputs: expected at least 1, got 0",
+            insn.opcode
+        )
+    })
+}
+
+/// Decodes the target address space of a p-code `LOAD` / `STORE`.
+///
+/// P-code encodes the target space as a CONST-space varnode at `inputs[0]`
+/// whose offset is a pointer to a Sleigh `AddrSpace` object.  Reading
+/// `.addr.space` directly yields `CONST` (the encoding's space), not the
+/// actual target space — callers that care about the target must decode
+/// via [`rsleigh::VnSpace::by_id`].
+///
+/// # Errors
+///
+/// Returns an error when `insn.inputs` is empty or the input-0 varnode is
+/// not in CONST space.
+pub fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
+    let space_id_vn = *first_input_or_err(insn)?;
+    if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
+        anyhow::bail!(
+            "opcode {:?} expects a CONST input at position 0",
+            insn.opcode
+        );
+    }
+    // SAFETY: `VnSpace::by_id`'s precondition is that `space_id_vn`'s
+    // offset is a valid pointer to a Sleigh `AddrSpace`.  This holds
+    // because the pcode comes from `rsleigh::Sleigh::lift_one`, which
+    // only emits LOAD/STORE with a valid space-pointer encoding.  The
+    // CONST-space tag check above is a structural sanity gate, not the
+    // safety condition itself.
+    Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
+}

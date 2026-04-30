@@ -59,8 +59,7 @@ impl OptimizerOnBuilt for CallOtherElide {
         // Collect candidates first — we can't iterate while mutating the
         // graph, and `preorder` borrows `function` immutably.
         let candidates: Vec<NodeId> = function
-            .preorder()
-            .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::CallOther { .. }))
+            .preorder_kind(|k| matches!(k, NodeKind::CallOther { .. }))
             .filter(|&n| {
                 function
                     .graph

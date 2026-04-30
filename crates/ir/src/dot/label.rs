@@ -4,6 +4,38 @@ use std::io;
 use super::{GraphDotDumper, node_fillcolor, node_shape};
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
+/// Render a varnode to its display name.  REGISTER varnodes resolve through
+/// `sleigh`'s register table; CONST / RAM / UNIQUE format from the varnode
+/// alone; the architecture's default code space renders as `ram[…]` even if
+/// it is not literally `VnSpace::RAM`.
+///
+/// # Errors
+///
+/// Returns an error when (i) `sleigh.regs()` fails, (ii) the varnode is in
+/// REGISTER space but no register name covers its byte range, or
+/// (iii) the varnode is in an unrecognised space.
+pub fn vn_to_display_name<R: MemReader>(
+    sleigh: &rsleigh::Sleigh<R>,
+    vn: &rsleigh::Vn,
+) -> anyhow::Result<String> {
+    let offset = vn.addr.off;
+    let size = vn.size;
+    match vn.addr.space {
+        rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
+        rsleigh::VnSpace::REGISTER => {
+            let regs = sleigh.regs()?;
+            let name = regs
+                .vn_to_name(*vn)
+                .ok_or_else(|| anyhow::anyhow!("invalid register vn {vn:?}"))?;
+            Ok(name.to_string())
+        }
+        rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
+        rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
+        s if s == sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
+        s => Err(anyhow::anyhow!("unsupported varnode space for display: {s:?}")),
+    }
+}
+
 /// Formats a signed SP-relative offset so that the sign is always shown
 /// (e.g. `0` → ` + 0`, `-4` → ` - 4`, `8` → ` + 8`).  Used by the StackStore
 /// / StackStorePhi labels.
@@ -17,25 +49,7 @@ fn signed_offset(o: i64) -> String {
 
 impl<'a, R: MemReader> GraphDotDumper<'a, R> {
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> io::Result<String> {
-        let offset = vn.addr.off;
-        let size = vn.size;
-        match vn.addr.space {
-            rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
-            rsleigh::VnSpace::REGISTER => {
-                let regs = self
-                    .sleigh
-                    .regs()
-                    .map_err(|e| io::Error::other(e.to_string()))?;
-                let name = regs
-                    .vn_to_name(*vn)
-                    .ok_or_else(|| io::Error::other(format!("register not found: {vn:?}")))?;
-                Ok(name.to_string())
-            }
-            rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
-            rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-            s if s == self.sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
-            s => Err(io::Error::other(format!("unsupported VnSpace: {s:?}"))),
-        }
+        vn_to_display_name(self.sleigh, vn).map_err(|e| io::Error::other(e.to_string()))
     }
 
     /// Returns the display name for a VnSpace, checking the default code space

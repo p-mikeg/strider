@@ -58,8 +58,7 @@ impl StackLoadForward {
 impl OptimizerOnBuilt for StackLoadForward {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
         let loads: Vec<NodeId> = function
-            .preorder()
-            .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Load(_)))
+            .preorder_kind(|k| matches!(k, NodeKind::Load(_)))
             .collect();
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;

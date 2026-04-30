@@ -445,22 +445,15 @@ where
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// function's address range `[start_addr, start_addr + fn_max_size)`.
-/// Mirrors `cfg::Builder::is_branch_tail_call_nocheck`.
+/// Delegates to [`cfg::is_addr_tail_call`] so the cfg-time and orchestrator
+/// classifications stay in lockstep.
 fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
-    if target < opts.start_addr && !opts.allow_code_before_start_addr {
-        return true;
-    }
-    if let Some(fn_max_size) = opts.fn_max_size {
-        // Half-open range: targets at or above `end_exclusive` are
-        // tail calls.  `saturating_add` caps at `u64::MAX` so the
-        // boundary case `target == u64::MAX` is still classified
-        // correctly.
-        let end_exclusive = opts.start_addr.saturating_add(fn_max_size);
-        if end_exclusive <= target {
-            return true;
-        }
-    }
-    false
+    cfg::is_addr_tail_call(
+        target,
+        opts.start_addr,
+        opts.fn_max_size,
+        opts.allow_code_before_start_addr,
+    )
 }
 
 fn apply_in_place_edit(

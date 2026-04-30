@@ -185,35 +185,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// Checks whether `branch_target_addr` should be treated as a tail call
     /// using only address-bounds reasoning (no `insn_index` validation).
     ///
-    /// A branch is a tail call if:
-    /// - Its target lies *before* the function start AND
-    ///   `allow_code_before_start_addr` is `false`, **OR**
-    /// - `fn_max_size` is set AND the target lies at or beyond
-    ///   `start_addr + fn_max_size`.
+    /// Delegates to [`crate::is_addr_tail_call`] for the predicate; this
+    /// method is the cfg-builder convenience wrapper that pulls
+    /// `start_addr` / `fn_max_size` / `allow_code_before_start_addr` from
+    /// the builder's options.
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
-        // Only the machine insn address matters for bounds checking; the pcode
-        // insn index is irrelevant here.
-        let addr = branch_target_addr.machine_addr;
-
-        if addr < self.builder.start_addr && !self.builder.options.allow_code_before_start_addr {
-            return true;
-        }
-
-        if let Some(fn_max_size) = self.builder.options.fn_max_size {
-            // Half-open range `[start, start + fn_max_size)`: targets
-            // at or above `end_exclusive` are tail calls.  Saturate
-            // on overflow: if `start + max` would exceed `u64::MAX`,
-            // no target can be at-or-beyond the sum, so `addr >=
-            // sat_sum` only when `sat_sum == u64::MAX && addr ==
-            // u64::MAX` — that boundary case is the correct
-            // semantics (an address past addressable memory is by
-            // definition outside any reasonable function).
-            let end_exclusive = self.builder.start_addr.addr.saturating_add(fn_max_size);
-            if addr.addr >= end_exclusive {
-                return true;
-            }
-        }
-        false
+        crate::is_addr_tail_call(
+            branch_target_addr.machine_addr.addr,
+            self.builder.start_addr.addr,
+            self.builder.options.fn_max_size,
+            self.builder.options.allow_code_before_start_addr,
+        )
     }
 
     /// Determines whether `branch_target_addr` is a tail call, validating the

@@ -75,7 +75,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = decode_space_id(insn)?;
+        let space = pcode_lift::decode_space_id(insn)?;
         let addr = self.read_vn(&insn.inputs[1])?;
         let data = self.read_vn(&insn.inputs[2])?;
         self.builder.build_store(addr, data, space)?;
@@ -83,7 +83,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let id_vn = first_input_or_err(insn)?;
+        let id_vn = pcode_lift::first_input_or_err(insn)?;
         if id_vn.addr.space != rsleigh::VnSpace::CONST {
             bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
@@ -123,32 +123,3 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     }
 }
 
-/// Returns `insn.inputs[0]` or a typed "too few inputs" error.  Shared
-/// by `handle_call_other` and `decode_space_id`, both of which expect a
-/// distinguished input at slot 0.
-fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
-    insn.inputs.first().ok_or_else(|| {
-        anyhow!(
-            "opcode {:?} has too few inputs: expected at least 1, got 0",
-            insn.opcode
-        )
-    })
-}
-
-/// Decodes the target address space of a p-code `LOAD`/`STORE`.
-///
-/// P-code encodes the target space as a CONST-space varnode at `inputs[0]`
-/// whose offset is a pointer to a Sleigh `AddrSpace` object.
-fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
-    let space_id_vn = *first_input_or_err(insn)?;
-    if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
-        bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
-    }
-    // SAFETY: `VnSpace::by_id`'s precondition is that `space_id_vn`'s
-    // offset is a valid pointer to a Sleigh `AddrSpace`.  This holds
-    // because the pcode comes from `rsleigh::Sleigh::lift_one`, which
-    // only emits LOAD/STORE with a valid space-pointer encoding.  The
-    // CONST-space tag check above is a structural sanity gate, not the
-    // safety condition itself.
-    Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
-}

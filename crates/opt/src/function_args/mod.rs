@@ -229,11 +229,8 @@ fn detect_stack_args(
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> =
         rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let node_ids: Vec<NodeId> = fg.preorder().collect();
+    let node_ids: Vec<NodeId> = fg.preorder_kind(|k| matches!(k, NodeKind::Load(_))).collect();
     for node_id in node_ids {
-        if !matches!(fg.graph.node_kind(node_id), NodeKind::Load(_)) {
-            continue;
-        }
         let [memory, addr] = fg.graph.node_inputs_exact::<2>(node_id)?;
         let [load_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
         let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
