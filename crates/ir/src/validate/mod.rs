@@ -9,12 +9,10 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
-use std::collections::HashSet;
-
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::node_signature::ExpectedOutputKind;
-use crate::walk::walk_graph;
+use crate::walk::{NodeIdSet, walk_graph};
 
 mod layer_a;
 mod layer_b;
@@ -48,11 +46,16 @@ use layer_c::{
 /// violation found in `graph`. Validation does not fail fast — every layer
 /// runs to completion so the caller sees the full set of problems at once.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
-    let reachable: HashSet<NodeId> = walk_graph(graph, entry).collect();
+    // Drive the walk to completion and reuse its internal DenseEntitySet
+    // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
+    // and one extra allocation per validate call.
+    let mut walk = walk_graph(graph, entry);
+    walk.by_ref().for_each(|_| {});
+    let reachable: NodeIdSet = walk.visited;
     let mut errs: Vec<ValidationError> = Vec::new();
 
     for node in graph.nodes.keys() {
-        if !reachable.contains(&node) {
+        if !reachable.contains(node) {
             continue;
         }
         check_layer_a(graph, node, &mut errs);

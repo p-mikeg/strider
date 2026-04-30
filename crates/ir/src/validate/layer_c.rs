@@ -1,7 +1,6 @@
-use std::collections::HashSet;
-
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
@@ -56,7 +55,7 @@ pub(super) fn check_layer_c_uniqueness(graph: &Graph, errs: &mut Vec<ValidationE
 /// output. Emits `ControlStateNonControlPredecessor` per offending input.
 pub(super) fn check_layer_c_control_state(
     graph: &Graph,
-    reachable: &HashSet<NodeId>,
+    reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     for node in graph.nodes.keys() {
@@ -69,7 +68,7 @@ pub(super) fn check_layer_c_control_state(
             // behind by `RedundantPhis::detach_unreachable_nodes`; they live
             // in the arena but are not reachable from the entry. The
             // invariant only applies to reachable ControlState nodes.
-            if reachable.contains(&node) {
+            if reachable.contains(node) {
                 errs.push(ValidationError::EmptyControlStatePredecessors {
                     control_state: node,
                 });

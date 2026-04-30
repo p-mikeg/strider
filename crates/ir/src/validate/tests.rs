@@ -134,6 +134,59 @@ fn layer_b_stale_input_in_use_list() {
     );
 }
 
+/// Layer B's forward check must still flag missing-from-use-list cases
+/// at non-zero input slots (covers the O(E) refactor — the existing
+/// `layer_b_input_missing_from_use_list` only covers slot 0).
+#[test]
+fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
+    use crate::node::NodeOutputType;
+    use crate::ops::IntBinaryOp;
+
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+    let a = graph.create_node(
+        NodeKind::IntConst(11),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let a_out = graph.node_outputs(a).into_iter().next().unwrap();
+
+    let b = graph.create_node(
+        NodeKind::IntConst(13),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let b_out = graph.node_outputs(b).into_iter().next().unwrap();
+
+    // Add(a, b) — a at slot 0, b at slot 1.
+    let _add = graph.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [a_out, b_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    // Corrupt only b's use-list head, leaving a's intact.  Only the
+    // slot-1 input should be flagged as missing.
+    graph.test_only_clear_first_use(b_out);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    let missing: Vec<_> = errs
+        .0
+        .iter()
+        .filter_map(|e| match e {
+            ValidationError::InputMissingFromUseList { input_idx, .. } => Some(*input_idx),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        missing,
+        vec![1],
+        "only slot-1 input must be flagged; got: {errs:?}"
+    );
+}
+
 #[test]
 fn layer_c_missing_initial_memory() {
     let mut graph = Graph::new();
