@@ -124,10 +124,12 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     if let Some(lr) = cc_link_register_vn {
         push_vn(lr, &mut seen, &mut all_vns);
     }
-    // Determinism: sort by (space-shortcut, offset, size) like
-    // strider's `find_all_unique_vns` so VarId numbering inside
-    // FunctionBuilder is reproducible across runs (HashSet iteration
-    // order would otherwise depend on the random hasher seed).
+    // Determinism: sort by (space-shortcut, offset, size) so VarId
+    // numbering inside FunctionBuilder is reproducible across runs
+    // (HashSet iteration order would otherwise depend on the random
+    // hasher seed).  This sort key is duplicated in
+    // `strider::pipeline::find_all_unique_vns` and must stay in
+    // lockstep — both downstream IRs key VarId off the same order.
     all_vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
 
     // ── Step 2: stand up a minimal FunctionBuilder.  No calling
@@ -164,47 +166,26 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     };
     builder.build_return(Some(target_value), &[])?;
 
-    // ── Step 5: build the graph and run the resolver pipeline.
+    // Build the graph and run the resolver pipeline.  The pipeline is
+    // rebuilt per invocation; most binaries have only a handful of
+    // indirect branches, so the per-site construction cost (a handful
+    // of small allocs) is dominated by the actual fold work.
     //
-    // TODO(perf): the pipeline is rebuilt per resolver invocation.  The
-    // user explicitly deferred caching (plan Q4) until measured — most
-    // binaries have only a handful of indirect branches, so the
-    // construction cost is in the noise.  Revisit if profiling shows
-    // otherwise.
+    // `LoadReadOnly` is NOT added to the pipeline: its
+    // `OptimizerOnBuilt` impl requires `M: 'static` (the pipeline
+    // stores passes as `Box<dyn Optimizer + 'static>`), and `rom`
+    // here is borrowed for an arbitrary lifetime.  The with-rom
+    // branch below drives an inlined load-folder by hand — see
+    // `resolve_const_loads`.
     let mut fg = builder.build()?;
-
-    // Run the core fixed-point pipeline.  `LoadReadOnly` is *not* added
-    // here because its `Optimizer` impl requires `M: 'static` (the
-    // pipeline stores passes as `Box<dyn Optimizer + 'static>`), and
-    // `rom: Option<&dyn ReadOnlyMemory>` is borrowed for an arbitrary
-    // (non-'static) lifetime.  We instead drive `LoadReadOnly` by hand
-    // alongside the pipeline below, which keeps the per-resolver
-    // pipeline construction borrow-free.
-    {
-        let mut pipeline = opt::OptimizerPipeline::new();
-        pipeline.add(opt::ConstantFold);
-        pipeline.add(opt::KnownBits);
-        pipeline.add(opt::RedundantPhis);
-        pipeline.run_on_built(&mut fg)?;
-    }
+    make_resolver_pipeline().run_on_built(&mut fg)?;
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
     // loads against it and re-run the core fold pipeline so the loaded
     // constants propagate.
-    //
-    // We can't add an `opt::LoadReadOnly` to the pipeline above because
-    // its `Optimizer` impl requires `M: 'static` (`Box<dyn Optimizer +
-    // 'static>` storage) and our `rom: &dyn ReadOnlyMemory` is borrowed
-    // for an arbitrary lifetime.  Inlining the load-folding loop here
-    // (it's ~20 lines) keeps the pipeline construction borrow-free and
-    // matches `opt::LoadReadOnly::optimize` line-for-line.
     if let Some(rom) = rom {
         resolve_const_loads(&mut fg, rom)?;
-        let mut pipeline = opt::OptimizerPipeline::new();
-        pipeline.add(opt::ConstantFold);
-        pipeline.add(opt::KnownBits);
-        pipeline.add(opt::RedundantPhis);
-        pipeline.run_on_built(&mut fg)?;
+        make_resolver_pipeline().run_on_built(&mut fg)?;
     }
 
     // Classify by inspecting the `Return` node's value-input (slot
@@ -249,16 +230,34 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     }
 }
 
-/// Inlined equivalent of [`opt::LoadReadOnly::optimize`] that takes a
-/// borrowed `&dyn ReadOnlyMemory` instead of an owned `M: 'static`.
+/// Builds a fresh fixed-point pipeline of `ConstantFold + KnownBits +
+/// RedundantPhis` — the resolver runs this once initially and again
+/// after the with-rom load-folding pass to propagate any constants
+/// that loads exposed.  Hoisted into a helper so both call sites pin
+/// the same pass set.
+fn make_resolver_pipeline() -> opt::OptimizerPipeline {
+    let mut pipeline = opt::OptimizerPipeline::new();
+    pipeline.add(opt::ConstantFold);
+    pipeline.add(opt::KnownBits);
+    pipeline.add(opt::RedundantPhis);
+    pipeline
+}
+
+/// Inlined equivalent of [`opt::LoadReadOnly::optimize_built`] that
+/// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
+/// `M: 'static`.
 ///
 /// Walks every `Load(space)` node in `fg`, asks the read-only memory
 /// for the constant value at the load's compile-time address, and
 /// rewrites the load's value output to the resulting `IntConst`.
 ///
-/// Mirrors the LoadReadOnly impl line-for-line; kept in sync via
-/// `crates/opt/src/load_readonly/mod.rs`'s test suite (the
-/// optimizer-side tests would catch any divergence in shared behaviour).
+/// Why a copy: `OptimizerPipeline::add` requires `O: 'static` because
+/// the pipeline stores passes as `Box<dyn Optimizer + 'static>`.  The
+/// resolver's `rom` is borrowed for an arbitrary (non-'static)
+/// lifetime so it can't be wrapped in `LoadReadOnly` and registered
+/// directly.  Must stay in lockstep with `opt::LoadReadOnly`'s impl
+/// — `crates/opt/src/load_readonly/tests.rs` covers the shared
+/// behaviour.
 fn resolve_const_loads(
     fg: &mut ir::BuiltFunctionGraph,
     rom: &dyn ReadOnlyMemory,
