@@ -128,10 +128,13 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // and the bounds check below incorrectly rejects the target.
                 let raw = branch_target_var.addr.off;
                 let off: i64 = match branch_target_var.size {
-                    1 => (raw as i8) as i64,
-                    2 => (raw as i16) as i64,
-                    4 => (raw as i32) as i64,
-                    _ => raw.cast_signed(),
+                    1 => i64::from(raw as i8),
+                    2 => i64::from(raw as i16),
+                    4 => i64::from(raw as i32),
+                    8 => raw.cast_signed(),
+                    other => bail!(
+                        "unsupported branch-target varnode size {other} at opcode {branch_insn_addr:?}"
+                    ),
                 };
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
                     || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
@@ -197,13 +200,16 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         }
 
         if let Some(fn_max_size) = self.builder.options.fn_max_size {
-            // Saturate on overflow: if start + max would exceed u64::MAX, no target can
-            // be at-or-beyond the sum, so the only way `addr >= sat_sum` is when
-            // `sat_sum == u64::MAX && addr == u64::MAX`. That tiny boundary case is
-            // the correct semantics — an address past the end of addressable memory
-            // is, by definition, outside any reasonable function.
+            // Half-open range `[start, start + fn_max_size)`: targets
+            // at or above `end_exclusive` are tail calls.  Saturate
+            // on overflow: if `start + max` would exceed `u64::MAX`,
+            // no target can be at-or-beyond the sum, so `addr >=
+            // sat_sum` only when `sat_sum == u64::MAX && addr ==
+            // u64::MAX` — that boundary case is the correct
+            // semantics (an address past addressable memory is by
+            // definition outside any reasonable function).
             let end_exclusive = self.builder.start_addr.addr.saturating_add(fn_max_size);
-            if end_exclusive <= addr.addr {
+            if addr.addr >= end_exclusive {
                 return true;
             }
         }
@@ -257,23 +263,24 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
                 let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
-                // BUG-25: clang at -O0 (used for the aarch64be / ppc32le
+                // clang at -O0 (used for the aarch64be / ppc32le
                 // fixtures, where no Debian gcc cross exists) emits
-                // explicit unconditional `b <next-instr>` between adjacent
-                // basic blocks instead of letting control fall through.
-                // Without normalisation every such transition shows up as
-                // a `Branch` edge and the CFG never has any `Fallthrough`
-                // edges, breaking downstream passes / queries that
-                // distinguish the two.  When the branch target is exactly
-                // the address that decoding would naturally advance to
-                // next (`next_pcode_addr(addr, lift_res)`) AND is the
-                // start of a machine instruction (`insn_index == 0`),
-                // classify the edge as `Fallthrough`.  Restricting to
-                // machine-instruction boundaries avoids reclassifying any
-                // intra-machine-instruction p-code `Branch` whose target
-                // happens to be the next p-code op in the same insn.
-                // This is an edge-classification change only — the target
-                // is still enqueued for exploration the same way.
+                // explicit unconditional `b <next-instr>` between
+                // adjacent basic blocks instead of letting control
+                // fall through.  Without normalisation every such
+                // transition shows up as a `Branch` edge and the CFG
+                // never has any `Fallthrough` edges, breaking
+                // downstream passes / queries that distinguish the
+                // two.  When the branch target is exactly the address
+                // that decoding would naturally advance to next AND
+                // is the start of a machine instruction (`insn_index
+                // == 0`), classify the edge as `Fallthrough`.
+                // Restricting to machine-instruction boundaries
+                // avoids reclassifying any intra-machine-instruction
+                // p-code `Branch` whose target happens to be the
+                // next p-code op in the same insn.  This is an
+                // edge-classification change only — the target is
+                // still enqueued for exploration the same way.
                 let edge_kind = if !is_tail_call
                     && branch_target_addr.insn_index == 0
                     && next_pcode_addr(addr, lift_res)
@@ -325,143 +332,110 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 self.finish_current_region(RegionTerminator::Return)?;
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
-            rsleigh::Opcode::BranchIndirect => {
-                // Dispatch into the lazy mini-graph resolver.  The
-                // resolver folds the region's value-producing pcode
-                // insns into an isolated IR graph and inspects the
-                // producer of `target_vn` after constant folding.
-                // - `Single(K)` inside the function range → intra-fn
-                //   `Branch` to K (enqueue successor for exploration).
-                // - `Single(K)` outside the function range →
-                //   `TailCall { target: K }` (no successor edge).
-                // - `LinkRegister` → `Return` (no successor edge).
-                // - unresolvable → defer via `UnresolvedIndirectBranch`
-                //   for the strider-level outer loop.
-                //
-                // `CallIndirect` is intentionally NOT routed here — it
-                // remains a non-terminator opcode handled by the IR
-                // layer.
-                //
-                // Feedback path: if `known_targets` has an entry for
-                // `addr`, use it directly — tier 2 from a prior
-                // iteration already classified this branch and we'd
-                // re-derive the same answer.
-                let target_vn = *insn
-                    .inputs
-                    .first()
-                    .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
-                let resolved = if let Some(cached) =
-                    self.builder.options.known_targets.get(&addr).cloned()
-                {
-                    Some(cached)
+            rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
+            _ => Ok(ProcessInsnRes::DidntFinishProcessing),
+        }
+    }
+
+    /// Handles a `BranchIndirect` opcode by classifying its target via
+    /// the mini-graph resolver (or a cached `known_targets` entry from
+    /// the strider orchestrator's tier-2 feedback path) and finalising
+    /// the region with the matching terminator:
+    /// - `Single(K)` inside the function range → `Branch` to K
+    ///   (enqueue successor for exploration).
+    /// - `Single(K)` outside the function range → `TailCall { target:
+    ///   K }` (no successor edge).
+    /// - `LinkRegister` → `Return` (no successor edge).
+    /// - `Multiple` → `Switch` (one `Branch` edge per target).  If
+    ///   any target is OOB, defer the whole site via
+    ///   `UnresolvedIndirectBranch` — Switch has no per-target
+    ///   tail-call escape, and encoding mixed in-range / tail-call
+    ///   targets in a single Switch would misroute the OOB cases.
+    /// - unresolvable → defer via `UnresolvedIndirectBranch` for the
+    ///   strider-level outer loop.
+    ///
+    /// `CallIndirect` is intentionally NOT routed here — it remains a
+    /// non-terminator opcode handled by the IR layer.
+    fn process_branch_indirect(
+        &mut self,
+        insn: &rsleigh::Insn,
+        addr: PcodeInsnAddr,
+    ) -> Result<ProcessInsnRes> {
+        let target_vn = *insn
+            .inputs
+            .first()
+            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let resolved = if let Some(cached) =
+            self.builder.options.known_targets.get(&addr).cloned()
+        {
+            Some(cached)
+        } else {
+            super::indirect_resolve::resolve_indirect_target(
+                &self.insns,
+                target_vn,
+                &self.builder.sleigh,
+                self.builder.options.link_register_vn,
+                self.builder.options.read_only_memory.as_deref(),
+                self.builder.endianness,
+            )?
+        };
+        // None means "I can't classify this from the current region's
+        // pcode alone" — defer to the strider outer loop, which runs
+        // tier 2 on the optimised IR.  Stamp `target_vn` and `addr`
+        // onto the deferred terminator so the strider lifter can
+        // emit a placeholder `Return(target_value)` anchoring the
+        // value for tier-2 inspection.  No outgoing edge.
+        let Some(resolved) = resolved else {
+            self.finish_current_region(
+                RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
+            )?;
+            return Ok(ProcessInsnRes::FinishedProcessing);
+        };
+        match resolved {
+            super::indirect_resolve::ResolvedTargets::LinkRegister => {
+                self.finish_current_region(RegionTerminator::Return)?;
+            }
+            super::indirect_resolve::ResolvedTargets::Single(target) => {
+                let target_addr = PcodeInsnAddr::at_machine_start(target);
+                // `_nocheck` is sufficient: `at_machine_start` pins
+                // `insn_index == 0`, so the validating variant has
+                // nothing to validate.
+                if self.is_branch_tail_call_nocheck(target_addr) {
+                    self.finish_current_region(RegionTerminator::TailCall { target })?;
                 } else {
-                    super::indirect_resolve::resolve_indirect_target(
-                        &self.insns,
-                        target_vn,
-                        &self.builder.sleigh,
-                        self.builder.options.link_register_vn,
-                        self.builder.options.read_only_memory.as_deref(),
-                        self.builder.endianness,
-                    )?
-                };
-                // Tier-1 None means "I can't classify this from the
-                // current region's pcode alone" — defer to the
-                // strider-level outer loop.  Stamp `target_vn` and
-                // `addr` onto the `UnresolvedIndirectBranch`
-                // terminator so the strider lifter can read the
-                // dispatch varnode at region exit and emit a
-                // placeholder `Return(target_value)` that anchors the
-                // value for tier-2 inspection.  No outgoing edge —
-                // the target is unknown at cfg-build time.  Once the
-                // optimiser has run on the full graph and tier 2 has
-                // had its chance, any leftover
-                // `UnresolvedIndirectBranch` regions surface as an
-                // error at the orchestrator's fixed point.
-                let Some(resolved) = resolved else {
+                    let region = self.finish_current_region(RegionTerminator::Branch)?;
+                    self.builder
+                        .work_queue
+                        .push((Some((region, RegionEdgeKind::Branch)), target_addr));
+                }
+            }
+            super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
+                // `Multiple` is exclusively a tier-2 feedback shape;
+                // tier 1's mini-graph resolver only ever returns
+                // Single / LinkRegister / None.
+                let any_out_of_range = targets.iter().any(|t| {
+                    self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
+                });
+                if any_out_of_range {
                     self.finish_current_region(
                         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
                     )?;
                     return Ok(ProcessInsnRes::FinishedProcessing);
-                };
-                match resolved {
-                    super::indirect_resolve::ResolvedTargets::LinkRegister => {
-                        self.finish_current_region(RegionTerminator::Return)?;
-                    }
-                    super::indirect_resolve::ResolvedTargets::Single(target) => {
-                        let target_addr = PcodeInsnAddr::at_machine_start(target);
-                        // `at_machine_start` pins `insn_index == 0`,
-                        // so the `_nocheck` variant is the right one
-                        // here — there's no insn-index validation to
-                        // perform.
-                        if self.is_branch_tail_call_nocheck(target_addr) {
-                            self.finish_current_region(
-                                RegionTerminator::TailCall { target },
-                            )?;
-                        } else {
-                            // Intra-fn target — finish region with
-                            // `Branch` and enqueue the successor for
-                            // exploration.
-                            let region = self
-                                .finish_current_region(RegionTerminator::Branch)?;
-                            self.builder.work_queue.push((
-                                Some((region, RegionEdgeKind::Branch)),
-                                target_addr,
-                            ));
-                        }
-                    }
-                    super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
-                        // `Multiple` is fed back by the strider
-                        // orchestrator's tier-2 resolver via
-                        // `known_targets`; tier 1's mini-graph
-                        // resolver only ever returns `Single` /
-                        // `LinkRegister` / `None`.  Each target gets
-                        // its own intra-fn `Branch` edge; the region
-                        // terminator is `Switch { target_vn, targets,
-                        // target_value }` and strider's
-                        // `handle_switch` reads `target_vn` at region
-                        // exit to emit an If-ladder of `IntCmpOp::Equal
-                        // + If` against each `targets[i]`.
-                        // `target_value` is `None` here; the
-                        // orchestrator's feedback path may populate
-                        // it later for rounds that preserve the
-                        // previous iteration's IR across rebuilds.
-                        //
-                        // If any target lies outside the function
-                        // range, defer the whole site to the strider
-                        // outer loop via `UnresolvedIndirectBranch`:
-                        // `Switch` has no per-target tail-call
-                        // escape, so encoding mixed in-range /
-                        // tail-call targets in a single Switch would
-                        // misroute the OOB cases.
-                        let any_out_of_range = targets.iter().any(|t| {
-                            self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
-                        });
-                        if any_out_of_range {
-                            self.finish_current_region(
-                                RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
-                            )?;
-                            return Ok(ProcessInsnRes::FinishedProcessing);
-                        }
-                        let region = self.finish_current_region(
-                            RegionTerminator::Switch {
-                                target_vn,
-                                targets: targets.clone(),
-                                target_value: None,
-                            },
-                        )?;
-                        for target in targets {
-                            let target_addr = PcodeInsnAddr::at_machine_start(target);
-                            self.builder.work_queue.push((
-                                Some((region, RegionEdgeKind::Branch)),
-                                target_addr,
-                            ));
-                        }
-                    }
                 }
-                Ok(ProcessInsnRes::FinishedProcessing)
+                let region = self.finish_current_region(RegionTerminator::Switch {
+                    target_vn,
+                    targets: targets.clone(),
+                    target_value: None,
+                })?;
+                for target in targets {
+                    let target_addr = PcodeInsnAddr::at_machine_start(target);
+                    self.builder
+                        .work_queue
+                        .push((Some((region, RegionEdgeKind::Branch)), target_addr));
+                }
             }
-            _ => Ok(ProcessInsnRes::DidntFinishProcessing),
         }
+        Ok(ProcessInsnRes::FinishedProcessing)
     }
 
     /// Finalises the region that has been accumulating instructions.

@@ -99,12 +99,12 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: target::Endianness,
 ) -> Result<Option<ResolvedTargets>> {
-    // ── Step 1: collect every varnode the region touches so the IR
-    //    builder can pre-declare them.  Includes target_vn so we can
-    //    always read its value, even on regions that don't otherwise
-    //    write through it (e.g. `bx lr` after no prior writes to lr).
-    //    Includes cc_link_register_vn for the same reason: the LR-target
-    //    classification needs a tracked InitialVar(lr) to show up.
+    // Collect every varnode the region touches plus `target_vn` and
+    // `cc_link_register_vn` so the IR builder can pre-declare them.
+    // Including `target_vn` lets us read its value even on regions
+    // that never write through it (e.g. `bx lr` with no prior writes
+    // to lr); including the link register lets the LR-target
+    // classification's `InitialVar(lr)` show up.
     let mut seen: std::collections::HashSet<rsleigh::Vn> =
         std::collections::HashSet::new();
     let mut all_vns: Vec<rsleigh::Vn> = Vec::new();
@@ -132,10 +132,10 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // lockstep — both downstream IRs key VarId off the same order.
     all_vns.sort_unstable_by_key(|vn| (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size));
 
-    // ── Step 2: stand up a minimal FunctionBuilder.  No calling
-    //    convention plumbing — `new_raw` with empty arg/callee/ret slices,
-    //    no stack pointer, ret_stack_pop=0.  The mini-graph never emits
-    //    Call or Store nodes, so the convention is irrelevant.
+    // Stand up a minimal FunctionBuilder.  No calling convention
+    // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
+    // pointer, ret_stack_pop=0.  The mini-graph never emits Call or
+    // Store nodes, so the convention is irrelevant.
     let mut builder = ir::FunctionBuilder::new_raw(
         all_vns, &[], &[], &[], None, 0,
     )?;
@@ -143,9 +143,9 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     builder.set_entry_region(region)?;
     builder.set_region(region);
 
-    // ── Step 3: lift every value-producing insn.  Stop at the first
-    //    `Ok(false)` — that is the BranchIndirect (or any other
-    //    control-flow / call / store opcode the lifter rejects).
+    // Lift every value-producing insn.  Stop at the first `Ok(false)`
+    // — that is the BranchIndirect (or any other control-flow / call
+    // / store opcode the lifter rejects).
     {
         let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         for ri in region_insns {
@@ -155,11 +155,11 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         }
     }
 
-    // ── Step 4: read target_vn's current value into a NodeOutputId and
-    //    emit a Return so the value is reachable from the function entry.
-    //    `read_vn` uses pcode-lift's register-aliasing logic, so a
-    //    sub-register target (`jmp *eax` on x86_64) folds correctly via
-    //    KnownBits even though we tracked `rax`.
+    // Read target_vn's current value into a NodeOutputId and emit a
+    // Return so the value is reachable from the function entry.
+    // `read_vn` uses pcode-lift's register-aliasing logic, so a
+    // sub-register target (`jmp *eax` on x86_64) folds correctly via
+    // KnownBits even though we tracked `rax`.
     let target_value = {
         let mut lifter = pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         lifter.read_vn(&target_vn)?

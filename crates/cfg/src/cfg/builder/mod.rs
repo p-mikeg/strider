@@ -213,9 +213,15 @@ impl<R: rsleigh::MemReader> Builder<R> {
         while let Some((parent_region, address)) = self.work_queue.pop() {
             self.explore(parent_region, address)?;
         }
+        let start_addr = self.start_pcode_addr();
         let (starting_region, _) = self
-            .find_region_containing_addr(self.start_pcode_addr())
-            .ok_or_else(|| anyhow!("cfg failed accessing starting region"))?;
+            .find_region_containing_addr(start_addr)
+            .ok_or_else(|| {
+                anyhow!(
+                    "cfg build completed but no region contains the entry address {start_addr:?}; \
+                     check that the entry is decodable"
+                )
+            })?;
 
         Ok(Cfg {
             graph: self.graph,

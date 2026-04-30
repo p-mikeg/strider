@@ -40,7 +40,11 @@ impl<R: rsleigh::MemReader> Builder<R> {
             .insns
             .iter()
             .position(|insn| insn.addr == addr)
-            .ok_or_else(|| anyhow!("failed spliting region {region_id:?} into 2 parts at {addr:?}"))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "split address {addr:?} not found in region {region_id:?}'s instruction list"
+                )
+            })?;
 
         if split_index == 0 {
             return Ok(region_id);

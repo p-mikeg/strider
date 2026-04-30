@@ -119,6 +119,6 @@ fn split_addr_not_in_region_insns_returns_failed_splitting_region() {
     let id = test_api::add_region(&mut b, make_region(&[(0x1000, 0), (0x1010, 0)])).unwrap();
     let err = test_api::split_region(&mut b, id, addr(0x1008, 0)).unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("failed spliting region"), "got: {msg}");
+    assert!(msg.contains("not found in region"), "got: {msg}");
     assert!(msg.contains(&format!("{:?}", addr(0x1008, 0))), "got: {msg}");
 }

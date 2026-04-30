@@ -46,8 +46,8 @@ pub struct Options {
     /// CFG build.  When the cfg builder encounters a `BranchIndirect`
     /// at one of these pcode addresses, it skips tier 1's mini-graph
     /// resolver and uses the cached classification directly — this is
-    /// the feedback loop the strider fixed-point orchestrator
-    /// (R3.6) uses to wire tier-2 results into a CFG rebuild.
+    /// the feedback loop the strider fixed-point orchestrator uses to
+    /// wire tier-2 results into a CFG rebuild.
     ///
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].

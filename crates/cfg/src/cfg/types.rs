@@ -112,28 +112,20 @@ pub enum RegionTerminator {
         target: u64,
     },
     /// Jump table with N statically-known targets.  Constructed by
-    /// the cfg builder when its tier-1 resolver (or feedback from
-    /// strider's tier-2 fixed-point loop via `with_known_targets`)
-    /// classifies a `BranchIndirect` to
-    /// `indirect_resolve::ResolvedTargets::Multiple`.
-    ///
-    /// `target_vn` is the dispatch varnode (the `BranchIndirect`'s
-    /// `inputs[0]`); strider reads it at the region exit and emits
-    /// the lifted comparison value for an If-ladder (one
-    /// `IntCmpOp::Equal` + `If` per case, chained through the
-    /// false-branch — see F7 in
-    /// `2026-04-28-strider-extensions-roadmap.md`).
+    /// the cfg builder from a `ResolvedTargets::Multiple` resolution
+    /// (which only the strider tier-2 fixed-point loop produces; tier
+    /// 1 never returns Multiple).  Strider's `handle_switch` reads
+    /// `target_vn` at the region exit and emits an If-ladder of
+    /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
+    /// through the false-branch.
     ///
     /// `target_value` is an OPTIONAL pinned `NodeOutputId` for the
-    /// dispatch value (W9).  When `Some`, strider's `handle_switch`
-    /// uses this `NodeOutputId` directly instead of re-reading
-    /// `target_vn` — pinning the soundness contract that the
-    /// comparison value is the SAME value tier 2 classified.  The
-    /// cfg builder always sets this to `None`; it is plumbing for
-    /// the orchestrator's known-targets feedback path so a future
-    /// incremental rebuild round (which preserves the previous
-    /// iteration's IR across rebuilds) can wire the cached anchor
-    /// directly through.
+    /// dispatch value.  When `Some`, strider's `handle_switch` uses
+    /// it directly instead of re-reading `target_vn`, pinning the
+    /// soundness contract that the comparison value is the SAME
+    /// value tier 2 classified.  The cfg builder always sets this to
+    /// `None`; it is plumbing for an incremental-rebuild round that
+    /// preserves the previous iteration's IR.
     Switch {
         /// The dispatch varnode — the `BranchIndirect`'s
         /// `inputs[0]`.  Strider reads this at the region exit to

@@ -1,16 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Phase 5 dispatch tests for the `BranchIndirect` resolver.
+//! Dispatch tests for the `BranchIndirect` resolver.
 //!
 //! Each test drives `Builder::build` (or `RegionBuilder::process_new_insn`)
 //! against a synthetic byte sequence and asserts on the produced
-//! [`RegionTerminator`] / outgoing edges, plus the new `Options` knobs added
-//! in Phase 5 (`set_link_register` / `set_read_only_memory`).
+//! [`RegionTerminator`] / outgoing edges, plus the `Options` knobs
+//! `set_link_register` / `set_read_only_memory`.
 //!
-//! The resolver itself is exercised in `indirect_resolve.rs` (Phase 4).
-//! These tests pin the *integration* between [`cfg::Builder`] and the
-//! resolver — see `crates/cfg/src/cfg/builder/region_builder.rs` for the
-//! dispatch arm.
+//! The resolver itself is exercised in `indirect_resolve.rs`.  These
+//! tests pin the *integration* between [`cfg::Builder`] and the
+//! resolver — see `crates/cfg/src/cfg/builder/region_builder.rs` for
+//! the dispatch arm.
 
 mod common;
 use common::{
@@ -175,10 +175,9 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
     );
 }
 
-/// R1.3: synthetic CFG with an unresolvable BranchIndirect (no prior
-/// write, no link-register plugin).  Pre-R1.3 this errored at
-/// cfg-build time; under the fixed-point design the cfg builder
-/// instead defers the branch via
+/// Synthetic CFG with an unresolvable BranchIndirect (no prior
+/// write, no link-register plugin).  Under the fixed-point design
+/// the cfg builder defers the branch via
 /// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
 /// the strider-level outer loop can attempt tier-2 resolution
 /// against the optimised IR.  The test asserts the deferred
@@ -192,7 +191,7 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
         .build()
-        .expect("R1.3 soft contract: cfg build no longer errors on unresolved");
+        .expect("cfg build defers unresolved branches instead of erroring");
 
     // Single region; terminator is UnresolvedIndirectBranch with
     // target_vn naming the offending dispatch register.
@@ -219,11 +218,11 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     );
 }
 
-/// `CallIndirect` (e.g. `call rax`) is OUT OF SCOPE of Phase 5.
-/// It must NOT be reclassified as Return and must NOT terminate the
-/// region.  This test drives the call-indirect lift through
-/// `process_new_insn` and asserts no Return-terminated region was
-/// emitted.
+/// `CallIndirect` (e.g. `call rax`) is out of scope of the
+/// `BranchIndirect` resolver; it must NOT be reclassified as Return
+/// and must NOT terminate the region.  This test drives the
+/// call-indirect lift through `process_new_insn` and asserts no
+/// Return-terminated region was emitted.
 #[test]
 fn call_indirect_unchanged_when_target_is_lr() {
     // `call rax` is `0xff 0xd0` for x86-64, followed by `ret`.
@@ -247,8 +246,8 @@ fn call_indirect_unchanged_when_target_is_lr() {
     let res = rb
         .process_new_insn(&ci, addr(base, pos), &lift)
         .expect("process_new_insn");
-    // Phase 5 contract: CallIndirect is not a region terminator —
-    // process_new_insn returns DidntFinishProcessing.
+    // CallIndirect is not a region terminator — process_new_insn
+    // returns DidntFinishProcessing.
     assert_eq!(
         res,
         ProcessInsnRes::DidntFinishProcessing,
@@ -311,12 +310,11 @@ fn options_read_only_memory_round_trips() {
     assert!(test_api::options_read_only_memory(&default).is_none());
 }
 
-/// R1.3: a tier-1-resolvable BranchIndirect must NOT produce
+/// A tier-1-resolvable BranchIndirect must NOT produce
 /// `UnresolvedIndirectBranch`.  This is the negative companion to
-/// `unresolvable_branch_indirect_produces_unresolved_terminator` and
-/// guards against an over-zealous deferral that would defeat the
-/// "tier 1 closes trivial cases inline" speed argument from the
-/// fixed-point design.
+/// `unresolvable_branch_indirect_produces_unresolved_terminator`
+/// and guards against an over-zealous deferral that would defeat the
+/// "tier 1 closes trivial cases inline" speed argument.
 #[test]
 fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
     // `mov rax, K; jmp rax` with K outside fn range — tier 1 returns

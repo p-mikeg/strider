@@ -157,7 +157,7 @@ macro_rules! arch_tests {
             /// Looping functions must produce at least one fallthrough edge.
             /// `ignore_fallthrough` overrides the module-wide `ignore` for
             /// arches where clang at -O0 emits explicit `b <next-instr>`
-            /// (BUG-25 — `aarch64be`, `ppc32le`).
+            /// (`aarch64be`, `ppc32le`).
             #[test]
             $(#[ignore = $fallthrough_reason])?
             $(#[ignore = $reason])?

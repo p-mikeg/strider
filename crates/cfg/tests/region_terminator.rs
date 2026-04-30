@@ -39,8 +39,9 @@ fn find_pcode(lift: &rsleigh::LiftRes, want: rsleigh::Opcode) -> (u64, rsleigh::
 #[test]
 fn finish_with_branch_terminator() {
     // `jmp +1` — non-tail-call, non-fallthrough Branch.  Target 0x1003 is
-    // distinct from the natural fall-through 0x1002, so the BUG-25
-    // normalisation does not kick in and the edge stays `Branch`.
+    // distinct from the natural fall-through 0x1002, so the
+    // fall-through-normalisation does not kick in and the edge stays
+    // `Branch`.
     let base = 0x1000u64;
     let bytes = jmp_rel8_ret_bytes(1);
     let lift = lift_at(bytes.clone(), base, base);
@@ -199,25 +200,18 @@ fn split_first_half_becomes_fallthrough() {
     );
 }
 
-// Phase-5 update: the legacy `BranchIndirect -> Return` mapping is
-// gone.  The Phase-5 resolver classifies the target and produces
-// `Branch` / `TailCall` / `Return` based on the resolved value, or
-// errors with `UnresolvedIndirectBranch` when the target can't be
-// proven.  All of those paths are covered in `indirect_dispatch.rs`,
-// so the previous "currently terminates as Return" pin would now
-// double-cover (and contradict) those tests; it has been removed.
-//
-// The `Return` terminator is still produced — see
-// `branch_indirect_to_link_register_produces_return_terminator` in
-// `indirect_dispatch.rs` for the live coverage.
+// `BranchIndirect` terminators are covered in `indirect_dispatch.rs`:
+// the resolver classifies the target and produces `Branch` /
+// `TailCall` / `Return`, or defers via `UnresolvedIndirectBranch`
+// when the target can't be proven.
 
 #[test]
-fn switch_variant_is_constructible_with_w9_fields() {
-    // The `Switch` variant is now (W9 + F7) the active jump-table
-    // terminator: cfg builder constructs it from the resolver's
-    // `Multiple` outcome with `target_vn` carried over from the
-    // original `BranchIndirect` and `target_value` left `None`.
-    // This test pins the variant's API shape post-W9.
+fn switch_variant_is_constructible_with_optional_target_value() {
+    // The `Switch` variant is the active jump-table terminator: cfg
+    // builder constructs it from the resolver's `Multiple` outcome
+    // with `target_vn` carried over from the original
+    // `BranchIndirect` and `target_value` left `None`.  This test
+    // pins the variant's API shape.
     let target_vn = rsleigh::Vn {
         addr: rsleigh::VnAddr {
             space: rsleigh::VnSpace::REGISTER,
@@ -248,12 +242,12 @@ fn switch_variant_is_constructible_with_w9_fields() {
 
 #[test]
 fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
-    // W9 round-trip pin: construct a Switch with all three fields
+    // Round-trip pin: construct a Switch with all three fields
     // populated (incl. a non-empty `targets` list and a
     // `target_value` set to None — the cfg-built default), clone
     // it, destructure both copies, and verify each field round-
-    // trips identically.  Pins the W9 contract that `target_value`
-    // is plumbed through clone/equality without surprise.
+    // trips identically.  Pins the contract that `target_value` is
+    // plumbed through clone/equality without surprise.
     let target_vn = rsleigh::Vn {
         addr: rsleigh::VnAddr {
             space: rsleigh::VnSpace::REGISTER,
@@ -283,13 +277,12 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
     }
 }
 
-// R1.1: pin the new `UnresolvedIndirectBranch` variant.  Tier 1 will
-// fall through to this terminator when the cfg-time mini-graph
-// resolver cannot prove a `BranchIndirect`'s target.  The fixed-point
-// orchestration in strider then attempts tier-2 resolution against
-// the optimised IR.  Constructing the variant here pins its shape:
-// `(target_vn, addr)` — both fields needed to anchor the placeholder
-// `Return(target_value)` strider emits during lifting.
+// Pins the `UnresolvedIndirectBranch` variant's shape: `(target_vn,
+// addr)` — both fields needed to anchor the placeholder
+// `Return(target_value)` strider emits during lifting.  Tier 1
+// surfaces this terminator when the cfg-time mini-graph resolver
+// cannot prove a `BranchIndirect`'s target; the strider fixed-point
+// loop then attempts tier-2 resolution against the optimised IR.
 #[test]
 fn unresolved_indirect_branch_variant_is_constructible() {
     use cfg::test_api::{MachineInsnAddr, PcodeInsnAddr};

@@ -70,17 +70,14 @@ fn return_ends_region() {
     assert_eq!(res, ProcessInsnRes::FinishedProcessing);
 }
 
-/// BUG-5 regression (post-Phase-5 form): `BranchIndirect` whose target
-/// can't be statically resolved must error with
-/// `BranchIndirect` whose target tier-1 cannot prove must terminate the
-/// region rather than silently fall through to the catch-all "didn't
-/// finish processing" branch.  Pre-R1.3 the builder errored with
-/// `UnresolvedIndirectBranch` at this site; R1.3 softens cfg-build to
-/// instead defer the branch via
-/// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
-/// the strider-level outer loop can attempt tier-2 resolution against
-/// the optimised IR.  This test pins the new contract: no error, and
-/// the freshly-finished region carries the deferred terminator.
+/// `BranchIndirect` whose target tier-1 cannot prove must terminate
+/// the region rather than silently fall through to the catch-all
+/// "didn't finish processing" branch.  The builder defers the branch
+/// via `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}`
+/// so the strider-level outer loop can attempt tier-2 resolution
+/// against the optimised IR — no cfg-build error.  This test pins
+/// that contract: no error, and the freshly-finished region carries
+/// the deferred terminator.
 ///
 /// The successful-resolution paths (LinkRegister / in-range Single /
 /// out-of-range Single) are covered in `indirect_dispatch.rs`.
@@ -95,7 +92,7 @@ fn branch_indirect_ends_region() {
 
     let res = rb
         .process_new_insn(&indirect_insn, addr(base, pos), &lift)
-        .expect("R1.3: unresolvable BranchIndirect now defers, not errors");
+        .expect("unresolvable BranchIndirect must defer, not error");
     assert_eq!(
         res,
         cfg::test_api::ProcessInsnRes::FinishedProcessing,
@@ -121,7 +118,8 @@ fn branch_indirect_ends_region() {
 fn branch_non_tail_enqueues_target() {
     // `jmp +0` at 0x1000 — target is 0x1002 (absolute, via default code space).
     // 0x1002 is exactly `pc + insn_len`, i.e. the next instruction, so per
-    // BUG-25 normalisation the edge is classified as `Fallthrough`.  See
+    // fall-through normalisation the edge is classified as
+    // `Fallthrough`.  See
     // `branch_non_fallthrough_target_keeps_branch_edge` below for the
     // "real" non-fallthrough case.
     let base = 0x1000u64;
@@ -141,7 +139,7 @@ fn branch_non_tail_enqueues_target() {
     assert_eq!(kind, RegionEdgeKind::Fallthrough);
 }
 
-/// BUG-25 regression: a non-tail-call `Branch` whose target is *not* the
+/// Regression: a non-tail-call `Branch` whose target is *not* the
 /// next instruction must keep the `Branch` edge kind.  Here the branch
 /// goes forward by one byte (target 0x1003 = pc + 3, but the `jmp` itself
 /// is only 2 bytes long, so `pc + insn_len = 0x1002`).  0x1003 != 0x1002

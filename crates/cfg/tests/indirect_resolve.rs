@@ -1,5 +1,5 @@
 //! Tests for [`cfg::indirect_resolve_test_api::resolve_indirect_target_for_test`] —
-//! the lazy mini-IR resolver added in Phase 4.
+//! the lazy mini-IR resolver.
 //!
 //! Each test:
 //!   1. Builds a hand-crafted sequence of `RegionInstruction`s.  No machine
@@ -9,9 +9,9 @@
 //!      or the error variant.
 //!
 //! The resolver lives at
-//! `crates/cfg/src/cfg/builder/indirect_resolve.rs`.  It is unused by
-//! cfg's main code paths in Phase 4 — these tests are the only callers
-//! until Phase 5 wires it into `RegionBuilder::process_new_insn`.
+//! `crates/cfg/src/cfg/builder/indirect_resolve.rs`; the integration
+//! between it and `RegionBuilder::process_new_insn` is covered by
+//! `indirect_dispatch.rs`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -314,11 +314,10 @@ fn resolves_rodata_load_to_single() {
     assert_eq!(res, Some(ResolvedTargets::Single(0xcafe_babe)));
 }
 
-// ── Unresolved paths (post R1.2: `Ok(None)`, no error) ────────────────
+// ── Unresolved paths (`Ok(None)`, no error) ───────────────────────────
 
 /// Same load shape as `resolves_rodata_load_to_single` but no ROM →
-/// the resolver cannot fold the load, so target is `Ok(None)` under
-/// the soft contract introduced in R1.2.
+/// the resolver cannot fold the load, so target is `Ok(None)`.
 #[test]
 fn unknown_memory_returns_ok_none() {
     let bytes: Vec<u8> = vec![0xA1, 0x00, 0x40, 0x00, 0x00, 0xFF, 0xE0];
@@ -387,10 +386,10 @@ fn find_branch_indirect_target(region: &[RegionInstruction]) -> Vn {
 }
 
 /// `BranchIndirect reg` with no prior write to `reg` and no
-/// link-register classification → `Ok(None)` under the R1.2 soft
-/// contract.  The producer is `InitialVar(reg)` but
-/// `cc_link_register_vn` is `None`, so the LinkRegister arm doesn't
-/// fire and tier 1 defers to the strider-level outer loop.
+/// link-register classification → `Ok(None)`.  The producer is
+/// `InitialVar(reg)` but `cc_link_register_vn` is `None`, so the
+/// LinkRegister arm doesn't fire and tier 1 defers to the
+/// strider-level outer loop.
 #[test]
 fn runtime_input_returns_ok_none() {
     let sleigh = make_x86_sleigh();
@@ -466,15 +465,13 @@ fn malformed_branch_indirect_returns_ok_none() {
     assert!(res.is_none(), "got {res:?}");
 }
 
-/// R1.2: tier-1 unresolved cases now return `Ok(None)` instead of
-/// erroring.  The fixed-point design moves the strict-failure
-/// semantic from cfg-build time to the strider-level outer loop —
-/// at cfg-build time we *defer* the branch via
-/// `RegionTerminator::UnresolvedIndirectBranch`.
+/// Tier-1 unresolved cases return `Ok(None)`; the strict-failure
+/// semantic lives at the strider-level outer loop (cfg-build defers
+/// the branch via `RegionTerminator::UnresolvedIndirectBranch`).
 ///
-/// Same input shape as `runtime_input_errors_unresolved` (a bare
+/// Same input shape as `runtime_input_returns_ok_none` (a bare
 /// `BranchIndirect reg` with no prior write and no link-register
-/// classification): under the soft contract this is `Ok(None)`.
+/// classification).
 #[test]
 fn tier_1_unresolved_returns_ok_none() {
     let sleigh = make_x86_sleigh();
@@ -495,9 +492,8 @@ fn tier_1_unresolved_returns_ok_none() {
     );
 }
 
-/// R1.2: tier-1 resolved cases still return `Ok(Some(ResolvedTargets))`.
-/// Same input shape as `resolves_direct_const_to_single` to pin that
-/// the soft contract did not regress the resolved path.
+/// Tier-1 resolved cases return `Ok(Some(ResolvedTargets))`.  Same
+/// input shape as `resolves_direct_const_to_single`.
 #[test]
 fn tier_1_resolved_const_returns_ok_some_single() {
     let sleigh = make_x86_sleigh();
