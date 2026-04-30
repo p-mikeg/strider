@@ -98,7 +98,7 @@ fn bit_width_is_eight_times_byte_size() {
 fn is_value_only_for_output_type() {
     assert!(NodeOutputKind::OutputType(NodeOutputType::U64).is_value());
     assert!(!NodeOutputKind::Control.is_value());
-    assert!(!NodeOutputKind::ControlPhi.is_value());
+    assert!(!NodeOutputKind::PhiToken.is_value());
     assert!(!NodeOutputKind::Memory.is_value());
 }
 
@@ -111,7 +111,7 @@ fn is_bool_only_for_bool_output_type() {
 }
 
 /// `is_integer` must be `true` for all integer `OutputType` variants and
-/// `false` for `Bool`, `Control`, `ControlPhi`, `Memory`, and floats.
+/// `false` for `Bool`, `Control`, `PhiToken`, `Memory`, and floats.
 #[test]
 fn is_integer_for_all_integer_output_types() {
     for ty in [

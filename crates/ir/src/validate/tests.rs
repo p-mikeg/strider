@@ -191,7 +191,7 @@ fn layer_c_control_state_bad_predecessor() {
     let _bad_cs = graph.create_node(
         NodeKind::ControlState,
         [mem_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
 
     let errs = validate(&graph, entry).unwrap_err();
@@ -223,7 +223,7 @@ fn layer_c_phi_token_from_wrong_node() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_control_out = graph.node_outputs(cs).into_iter().next().unwrap(); // index 0 = Control
     let vn = test_vn();
@@ -252,7 +252,7 @@ fn layer_c_phi_value_arity_mismatch() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
 
@@ -306,7 +306,7 @@ fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
 
@@ -440,7 +440,7 @@ fn layer_a_mem_phi_variadic_tail_must_be_memory() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_outputs: Vec<_> = graph.node_outputs(cs).into_iter().collect();
     let cs_ctrl = cs_outputs[0];
@@ -483,7 +483,7 @@ fn layer_a_accepts_bool_value_phi_inputs() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
     let phi_token = graph.node_outputs(cs).into_iter().nth(1).unwrap();
@@ -520,7 +520,7 @@ fn layer_c_mem_phi_arity_mismatch() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
     let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
@@ -559,7 +559,7 @@ fn layer_c_value_phi_arity_mismatch() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_phi_out = graph.node_outputs(cs).into_iter().nth(1).unwrap();
     let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
@@ -641,7 +641,7 @@ fn layer_c_rejects_control_state_with_zero_predecessors() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
     // Return consumes entry's control (reaches Return via cfg_succs of Entry)
@@ -672,7 +672,7 @@ fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
     let _zombie_cs = graph.create_node(
         NodeKind::ControlState,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     graph.create_node(NodeKind::Return, [entry_ctrl, mem], []);
 

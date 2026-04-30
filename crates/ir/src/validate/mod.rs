@@ -80,13 +80,13 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
 ///
 /// `AnyInt` matches any integer-typed output (U8, U16, U32, U64, U128, U256);
 /// `AnyFloat` matches F32 or F64; `Bool` matches only `OutputType(Bool)`.
-/// `Control`, `Memory`, and `ControlPhi` match their identically-named
+/// `Control`, `Memory`, and `PhiToken` match their identically-named
 /// [`NodeOutputKind`] variants.
 fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
     match expected {
         ExpectedOutputKind::Control => matches!(actual, NodeOutputKind::Control),
         ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory),
-        ExpectedOutputKind::ControlPhi => matches!(actual, NodeOutputKind::ControlPhi),
+        ExpectedOutputKind::PhiToken => matches!(actual, NodeOutputKind::PhiToken),
         ExpectedOutputKind::Bool => {
             matches!(actual, NodeOutputKind::OutputType(NodeOutputType::Bool))
         }
@@ -190,7 +190,7 @@ pub enum ValidationError {
 
     #[error(
         "phi node {phi:?} input[0] token producer {producer:?} has kind \
-         {producer_kind:?}; expected ControlPhi from a ControlState"
+         {producer_kind:?}; expected PhiToken from a ControlState"
     )]
     PhiTokenNotFromControlState {
         phi: NodeId,

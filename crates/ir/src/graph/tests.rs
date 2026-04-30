@@ -941,7 +941,7 @@ fn remove_node_input_returns_error_on_out_of_bounds() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let err = graph.remove_node_input(cs, 7).expect_err("oob expected");
     let msg = err.to_string();

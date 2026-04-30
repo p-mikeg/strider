@@ -26,8 +26,8 @@ pub enum ExpectedOutputKind {
     Control,
     /// A `Memory` token.
     Memory,
-    /// A `ControlPhi` dispatch token.
-    ControlPhi,
+    /// A `PhiToken` dispatch token.
+    PhiToken,
     /// A `Bool` value.
     Bool,
     /// Any integer-typed value (U8, U16, U32, U64, U80, U128, U256).
@@ -134,7 +134,7 @@ const MEM: Slot = Slot {
     role: R::Memory,
 };
 const PHI: Slot = Slot {
-    kind: ControlPhi,
+    kind: PhiToken,
     name: "phi",
     role: R::Phi,
 };
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                ExpectedOutputKind::ControlPhi,
+                ExpectedOutputKind::PhiToken,
                 ExpectedOutputKind::Memory,
                 ExpectedOutputKind::AnyInt,
             ]
@@ -565,14 +565,14 @@ mod tests {
         assert_eq!(inputs, vec![]);
         assert_eq!(
             outputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::ControlPhi]
+            vec![ExpectedOutputKind::Control, ExpectedOutputKind::PhiToken]
         );
     }
 
     #[test]
     fn expected_signature_mem_phi() {
         let (inputs, outputs) = kinds(&NodeKind::MemPhi);
-        assert_eq!(inputs, vec![ExpectedOutputKind::ControlPhi]);
+        assert_eq!(inputs, vec![ExpectedOutputKind::PhiToken]);
         assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
     }
 

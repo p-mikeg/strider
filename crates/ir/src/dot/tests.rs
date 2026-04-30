@@ -66,7 +66,7 @@ fn dot_output_is_deterministic() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let [cs_ctrl, _] = graph.node_outputs_exact::<2>(cs).unwrap();
     graph.create_node(NodeKind::Return, [cs_ctrl], []);
@@ -185,7 +185,7 @@ fn linear_chain_node_and_edge_count() {
     let cs = graph.create_node(
         NodeKind::ControlState,
         [ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     let [cs_ctrl, _] = graph.node_outputs_exact::<2>(cs).unwrap();
     graph.create_node(NodeKind::Return, [cs_ctrl], []);
@@ -308,7 +308,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let cs_true = graph.create_node(
         NodeKind::ControlState,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     graph.add_node_input(cs_true, true_ctrl).unwrap();
     let [cs_true_ctrl, _] = graph.node_outputs_exact::<2>(cs_true).unwrap();
@@ -316,7 +316,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let cs_false = graph.create_node(
         NodeKind::ControlState,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
     graph.add_node_input(cs_false, false_ctrl).unwrap();
     let [cs_false_ctrl, _] = graph.node_outputs_exact::<2>(cs_false).unwrap();

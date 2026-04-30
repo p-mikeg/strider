@@ -15,7 +15,7 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// Returns the set of all nodes reachable from `entry` following only
 /// `Control`-kind edges — the CFG skeleton.
 ///
-/// Data edges (value, memory, ControlPhi dispatch) are not followed, so only
+/// Data edges (value, memory, PhiToken) are not followed, so only
 /// control-flow nodes (`Entry`, `ControlState`, `If`, `Return`, `Call`, …)
 /// appear in the result.
 ///

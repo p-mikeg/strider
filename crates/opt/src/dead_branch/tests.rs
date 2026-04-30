@@ -242,7 +242,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 /// A VarPhi at a 2-input join — when the dead branch is removed, the
 /// phi must lose exactly one input slot (the dead position).
 #[test]
-fn control_phi_loses_dead_slot() -> Result<()> {
+fn var_phi_loses_dead_slot() -> Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
     let entry = b.create_region()?;

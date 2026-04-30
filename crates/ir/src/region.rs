@@ -273,7 +273,7 @@ impl FunctionBuilder {
     ///
     /// CORRECTNESS: this is the FIRST output (`output_index 0`) of the
     /// `ControlState` node — the `Control` slot.  The second output
-    /// (`output_index 1`) is the `ControlPhi` dispatch token consumed
+    /// (`output_index 1`) is the `PhiToken` consumed
     /// by per-var phis, not the body's control.
     ///
     /// # Errors

@@ -38,7 +38,7 @@ fn remove_phis(
         // VarPhi and MemPhi have identical input layouts after the builder
         // links phi_token as inputs[0] for both:
         //
-        //   inputs[0]   = ControlPhi dispatch token from the owning ControlState
+        //   inputs[0]   = PhiToken from the owning ControlState
         //   inputs[1..] = one value/memory per predecessor, same order as
         //                 ControlState.inputs[0..]
         //

@@ -536,7 +536,7 @@ fn match_consumer_node(ctx: &MatchCtx, node: NodeId, pat: &crate::pat::Pat, b: &
     if !ctx.matcher.options.ignore_control_states {
         return false;
     }
-    // ControlState's outputs are [Control, ControlPhi]; the Control
+    // ControlState's outputs are [Control, PhiToken]; the Control
     // output is the one consumed by the next region's body.
     if !matches!(ctx.graph.graph.node_kind(node), NodeKind::ControlState) {
         return false;

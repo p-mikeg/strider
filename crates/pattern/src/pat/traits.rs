@@ -35,7 +35,7 @@ pub struct MatchCtx<'g, 'm> {
 
 impl MatchCtx<'_, '_> {
     /// Value-kind gate: returns `Some(ty)` if `target` is a value output,
-    /// `None` for Control / Memory / ControlPhi slots.  Used by `VarPat`,
+    /// `None` for Control / Memory / PhiToken slots.  Used by `VarPat`,
     /// `CapturePat`, and `GuardPat` because `Capture` bindings refer to data
     /// edges only — on a multi-output node this steers `try_match_node`'s
     /// iteration to the value slot.

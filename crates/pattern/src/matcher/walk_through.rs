@@ -67,7 +67,7 @@ pub(crate) fn try_walk_through_cast(
 /// predecessor region).  Returns true on first success.
 ///
 /// `ControlState`'s signature is `inputs: variadic Control; outputs:
-/// [Control, ControlPhi]`, so every input is a control-typed producer
+/// [Control, PhiToken]`, so every input is a control-typed producer
 /// from a predecessor region.  This helper tries them in order and
 /// rolls back bindings between attempts via `b.mark()` / `b.restore()`.
 ///

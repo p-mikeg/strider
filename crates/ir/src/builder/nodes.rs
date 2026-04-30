@@ -678,7 +678,7 @@ impl FunctionBuilder {
 
     /// Emits a `VarPhi` node for varnode `var`.
     ///
-    /// `phi_token` must be the `ControlPhi` output of the owning `ControlState`.
+    /// `phi_token` must be the `PhiToken` output of the owning `ControlState`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
     /// when first created; filled in later via `add_region_predecessor`).
     pub(super) fn build_control_phi(
@@ -688,9 +688,9 @@ impl FunctionBuilder {
         incoming_values: &[NodeOutputId],
     ) -> Result<NodeOutputId> {
         let phi_token_kind = self.graph().output_kind(phi_token);
-        if !phi_token_kind.is_control_phi() {
+        if !phi_token_kind.is_phi_token() {
             return Err(anyhow!(
-                "output {phi_token:?} is not a control-phi edge"
+                "output {phi_token:?} is not a phi-token edge"
             ));
         }
         for &v in incoming_values {

@@ -54,7 +54,7 @@ pub enum NodeKind {
 
     // ── Region / join nodes ────────────────────────────────────────────────────
     /// Region header.  Consumes incoming control edges (one per predecessor)
-    /// and produces a fresh `Control` output plus a `ControlPhi` dispatch token.
+    /// and produces a fresh `Control` output plus a `PhiToken`.
     ControlState,
     /// Memory phi: selects the live memory token at a join point.
     MemPhi,

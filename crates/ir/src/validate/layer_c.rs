@@ -92,7 +92,7 @@ pub(super) fn check_layer_c_control_state(
 }
 
 /// Layer C: every phi node (`VarPhi`, `MemPhi`, `StackStorePhi`) must take
-/// its dispatch token (input[0]) from a `ControlState`'s `ControlPhi` output.
+/// its dispatch token (input[0]) from a `ControlState`'s `PhiToken` output.
 ///
 /// For `VarPhi` and `MemPhi` (variadic phis), the number of value inputs
 /// must match the owning `ControlState`'s predecessor count.  `StackStorePhi`
@@ -119,7 +119,7 @@ pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>)
         }
         let token = inputs[0];
         let token_kind = graph.output_kind(token);
-        if token_kind != NodeOutputKind::ControlPhi {
+        if token_kind != NodeOutputKind::PhiToken {
             let (producer, _) = graph.output_definition(token);
             errs.push(ValidationError::PhiTokenNotFromControlState {
                 phi: node,

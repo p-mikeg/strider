@@ -12,10 +12,10 @@ pub enum NodeOutputKind {
     /// Control-flow token.  Every region consumes one control edge per
     /// predecessor and every branch node produces one per successor.
     Control,
-    /// Phi-dispatch token produced by `ControlState` nodes and consumed by
-    /// `ControlPhi` nodes.  Carries no data — it is a synchronisation edge
-    /// that links each phi to exactly one `ControlState`.
-    ControlPhi,
+    /// Synchronisation edge produced by `ControlState` and consumed by
+    /// every `VarPhi`/`MemPhi`/`StackStorePhi` in the same join.
+    /// Carries no data — it says "fire your phi for this region."
+    PhiToken,
     /// Memory token tracking the current state of memory through the graph.
     Memory,
 }
@@ -44,7 +44,7 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns an error when `self` is `Control`, `Memory`, or `ControlPhi`.
+    /// Returns an error when `self` is `Control`, `Memory`, or `PhiToken`.
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
         self.as_value()
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
@@ -72,11 +72,11 @@ impl NodeOutputKind {
         self == Self::Control
     }
 
-    /// Returns `true` if this is a control-phi dispatch edge.
+    /// Returns `true` if this is a phi-token dispatch edge.
     #[inline]
     #[must_use]
-    pub(crate) fn is_control_phi(self) -> bool {
-        self == Self::ControlPhi
+    pub(crate) fn is_phi_token(self) -> bool {
+        self == Self::PhiToken
     }
 
     /// Returns `true` if this is a memory edge.

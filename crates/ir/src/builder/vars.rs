@@ -99,11 +99,11 @@ impl FunctionBuilder {
         let control_node = self.create_node(
             NodeKind::ControlState,
             [],
-            [NodeOutputKind::Control, NodeOutputKind::ControlPhi],
+            [NodeOutputKind::Control, NodeOutputKind::PhiToken],
         );
         let [control, phi_token] = self.graph().node_outputs_exact(control_node)?;
 
-        // Wire the ControlPhi dispatch token as MemPhi.inputs[0], mirroring how
+        // Wire the PhiToken as MemPhi.inputs[0], mirroring how
         // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
         // its ControlState so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same

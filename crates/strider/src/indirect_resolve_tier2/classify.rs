@@ -298,7 +298,7 @@ mod tests {
         let mut graph = builder.build().expect("build");
 
         // Synthesise a fake phi-token node.  VarPhi nodes
-        // produce ControlPhi outputs, but the dedup cache keys
+        // produce PhiToken outputs, but the dedup cache keys
         // them by (NodeKind, inputs, outputs), so we can hand-
         // construct one with no inputs.  We need the phi-token
         // output kind for the ValuePhi's first input slot to
@@ -312,7 +312,7 @@ mod tests {
                 size: 8,
             }),
             [],
-            [NodeOutputKind::ControlPhi],
+            [NodeOutputKind::PhiToken],
         );
         let [token_out] = graph
             .graph
@@ -382,7 +382,7 @@ mod tests {
                 size: 8,
             }),
             [],
-            [NodeOutputKind::ControlPhi],
+            [NodeOutputKind::PhiToken],
         );
         let [token_out] = graph
             .graph
