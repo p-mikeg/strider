@@ -23,3 +23,8 @@ workspace = true
 expect-test.workspace = true
 paste = "1"
 ir = { workspace = true, features = ["test-utils"] }
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "scaling"
+harness = false
