@@ -49,8 +49,8 @@ pub struct GraphWalkSuccs<'a>(&'a Graph);
 impl<'a> GraphWalkSuccs<'a> {
     /// Wraps `graph` in a `GraphWalkSuccs` adaptor.
     #[inline]
-    #[must_use] 
-    pub fn new(graph: &'a Graph) -> Self {
+    #[must_use]
+    pub(crate) fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
 }

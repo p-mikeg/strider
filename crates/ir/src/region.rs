@@ -48,9 +48,8 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Returns `Ok(())` if `output` has `Control` kind; otherwise
-    /// `Err(ExpectedControl)`.
-    fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
+    /// Returns `Ok(())` if `output` has `Control` kind; otherwise an error.
+    pub(crate) fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_control() {
             return Err(anyhow!(
@@ -60,9 +59,8 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise
-    /// `Err(ExpectedMemory)`.
-    fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
+    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise an error.
+    pub(crate) fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_memory() {
             return Err(anyhow!(
@@ -219,14 +217,8 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-
-        for var_id in self.regions[region].variables.keys() {
-            let region_variable_output_id = self.regions[region].initial_variables[var_id];
-            let region_variable_id = self.graph().get_node_from_output(region_variable_output_id);
-            let current_variable = self.regions[cur_region].variables[var_id];
-            self.graph_mut()
-                .add_node_input(region_variable_id, current_variable)?;
-        }
+        let source = self.regions[cur_region].variables.clone();
+        self.link_region_variables(region, &source)?;
         Ok(())
     }
 

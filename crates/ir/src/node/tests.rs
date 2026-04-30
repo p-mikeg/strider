@@ -286,31 +286,6 @@ fn as_integer_or_err_float_case() {
     );
 }
 
-// ── is_phi ───────────────────────────────────────────────────────────
-
-#[test]
-fn is_phi_true_cases() {
-    let phi_vn = rsleigh::Vn {
-        size: 8,
-        addr: rsleigh::VnAddr {
-            off: 0,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-    };
-    assert!(NodeKind::ControlPhi(phi_vn).is_phi());
-    assert!(NodeKind::MemPhi.is_phi());
-    assert!(NodeKind::ValuePhi.is_phi());
-    let space = rsleigh::VnSpace::RAM;
-    assert!(NodeKind::StackStorePhi { space }.is_phi());
-}
-
-#[test]
-fn is_phi_false_cases() {
-    assert!(!NodeKind::Entry.is_phi());
-    assert!(!NodeKind::InitialMemory.is_phi());
-    assert!(!NodeKind::IntConst(0).is_phi());
-}
-
 #[test]
 fn type_info_table_matches_variants() {
     // Table indices must match discriminant order. Enumerate every variant

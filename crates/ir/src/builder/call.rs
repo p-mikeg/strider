@@ -29,19 +29,19 @@ impl FunctionBuilder {
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
 
-        let clobbered: SmallVec<[_; 4]> = self.call_cloberred_variables.iter().copied().collect();
+        let clobbered: SmallVec<[_; 4]> = self.call_clobbered_variables.iter().copied().collect();
 
         // Single pass over clobbered variables: read, validate kind, collect
         // kinds. Preserves the offending NodeOutputId in the error (was
         // previously emitted as NodeOutputId::default() — unactionable).
-        let mut cloberred_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
-        for var in &self.call_cloberred_variables {
+        let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
+        for var in &self.call_clobbered_variables {
             let out = self.read_variable(var)?;
             let k = self.graph().output_kind(out);
             if !k.is_value() {
                 return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
             }
-            cloberred_kinds.push(k);
+            clobbered_kinds.push(k);
         }
 
         let addr_kind = self.graph().output_kind(call_address);
@@ -63,7 +63,7 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
-            .chain(cloberred_kinds);
+            .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
         let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
 

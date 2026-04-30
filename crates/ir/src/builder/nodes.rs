@@ -462,22 +462,8 @@ impl FunctionBuilder {
 
         let res = self.terminate_cur_region()?;
 
-        let ctrl_kind = self.graph().output_kind(res.control);
-        if !ctrl_kind.is_control() {
-            return Err(anyhow!(
-                "output {:?} is not a control edge (got {:?})",
-                res.control,
-                ctrl_kind
-            ));
-        }
-        let mem_kind = self.graph().output_kind(res.memory);
-        if !mem_kind.is_memory() {
-            return Err(anyhow!(
-                "output {:?} is not a memory edge (got {:?})",
-                res.memory,
-                mem_kind
-            ));
-        }
+        self.require_control_kind(res.control)?;
+        self.require_memory_kind(res.memory)?;
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
@@ -498,22 +484,8 @@ impl FunctionBuilder {
     /// mistyped (graph-construction bug).
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        let ctrl_kind = self.graph().output_kind(res.control);
-        if !ctrl_kind.is_control() {
-            return Err(anyhow!(
-                "output {:?} is not a control edge (got {:?})",
-                res.control,
-                ctrl_kind
-            ));
-        }
-        let mem_kind = self.graph().output_kind(res.memory);
-        if !mem_kind.is_memory() {
-            return Err(anyhow!(
-                "output {:?} is not a memory edge (got {:?})",
-                res.memory,
-                mem_kind
-            ));
-        }
+        self.require_control_kind(res.control)?;
+        self.require_memory_kind(res.memory)?;
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
 
@@ -538,14 +510,7 @@ impl FunctionBuilder {
         if !cond_kind.is_bool() {
             return Err(anyhow!("output {cond:?} is not a bool value"));
         }
-        let ctrl_kind = self.graph().output_kind(res.control);
-        if !ctrl_kind.is_control() {
-            return Err(anyhow!(
-                "output {:?} is not a control edge (got {:?})",
-                res.control,
-                ctrl_kind
-            ));
-        }
+        self.require_control_kind(res.control)?;
 
         let brcond = self.create_node(
             NodeKind::If,

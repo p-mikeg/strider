@@ -252,18 +252,4 @@ impl NodeKind {
         )
     }
 
-    /// Returns `true` for any phi node kind: [`NodeKind::ControlPhi`],
-    /// [`NodeKind::MemPhi`], [`NodeKind::StackStorePhi`], or
-    /// [`NodeKind::ValuePhi`].
-    #[inline]
-    #[must_use]
-    pub fn is_phi(&self) -> bool {
-        matches!(
-            self,
-            Self::ControlPhi(_)
-                | Self::MemPhi
-                | Self::StackStorePhi { .. }
-                | Self::ValuePhi
-        )
-    }
 }

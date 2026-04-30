@@ -66,18 +66,16 @@ pub struct BuiltFunctionGraph {
 }
 
 impl BuiltFunctionGraph {
-    /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph`
-    /// with empty variables / call_clobbered / ret_val_regs.
+    /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
+    /// empty `variables` / `call_clobbered` / `ret_val_regs`.
     ///
-    /// CORRECTNESS — used by F2's `opt::with_built` bridge so opt-pass
-    /// impls that internally still operate on `&mut BuiltFunctionGraph`
-    /// (because their helper functions and the `pattern` crate's
-    /// rewrite machinery are typed against it) can be invoked from a
-    /// callsite that only holds `(&mut Graph, NodeId)`.  The dummy
-    /// fields are safe because opt impls never touch them — only
-    /// `graph` and `entry` are read.  Not appropriate for downstream
-    /// consumers that genuinely need the calling-convention metadata
-    /// (use [`crate::FunctionBuilder::build`] for those).
+    /// Used by `opt::with_built` to bridge `(&mut Graph, NodeId)` callers
+    /// to `&mut BuiltFunctionGraph`-typed helpers (the `pattern` crate's
+    /// rewrite machinery is typed against `BuiltFunctionGraph`). The dummy
+    /// fields are safe because opt impls only read `graph` and `entry`;
+    /// they never touch the calling-convention metadata. Not appropriate
+    /// for downstream consumers that need that metadata - use
+    /// [`crate::FunctionBuilder::build`] for those.
     #[must_use]
     pub fn from_graph_and_entry(graph: crate::graph::Graph, entry: NodeId) -> Self {
         Self {

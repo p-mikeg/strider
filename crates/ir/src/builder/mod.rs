@@ -74,9 +74,9 @@ fn upgrade_to_tracked_for(
         return Some(cover);
     }
 
-    // Sub-register fallback (BUG-28 cause #1).  Largest tracked variable
-    // CONTAINED IN vn's byte range — the function only reads that
-    // sub-register, so the bytes outside its range are unused.
+    // Sub-register fallback: largest tracked variable CONTAINED IN vn's
+    // byte range - the function only reads that sub-register, so the
+    // bytes outside its range are unused.
     variable_to_id
         .keys()
         .filter(|t| {
@@ -103,7 +103,7 @@ pub struct FunctionBuilder {
     /// Variables clobbered by any call instruction (everything not
     /// callee-saved, and excluding the stack pointer which is rebound
     /// separately with the `ret_stack_pop` adjust).
-    pub(crate) call_cloberred_variables: Vec<rsleigh::Vn>,
+    pub(crate) call_clobbered_variables: Vec<rsleigh::Vn>,
     /// Variables used to pass arguments according to the calling convention.
     pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
     /// Varnodes used to return values according to the calling convention,
@@ -113,7 +113,7 @@ pub struct FunctionBuilder {
     /// varnodes in order.
     pub(crate) ret_val_vars: Vec<rsleigh::Vn>,
     /// Stack pointer varnode — when present, it is excluded from the
-    /// `call_cloberred_variables` set and rebound at every `Call` to
+    /// `call_clobbered_variables` set and rebound at every `Call` to
     /// `Add(pre_call_sp, IntConst(ret_stack_pop))`.  `None` in synthetic
     /// tests that don't model stack-aware calling conventions.
     pub(crate) stack_ptr_vn: Option<rsleigh::Vn>,
@@ -142,15 +142,13 @@ impl FunctionBuilder {
     /// Returns a mutable reference to the underlying [`Graph`] without
     /// consuming the builder.
     ///
-    /// This is the primary entry point for in-place graph mutation
-    /// (e.g. running an `opt::Optimizer` pass on a builder that we
-    /// still want to use afterwards — see F2).  The returned reference
-    /// borrows the same `Graph` as [`Self::body`] / [`Self::body_mut`],
-    /// so any mutations are immediately visible through every accessor.
-    ///
-    /// CORRECTNESS — pairs with [`Self::entry`]: opt passes need
-    /// `(graph, entry)` together (entry anchors the reachable-node walk
-    /// the validator's Layer A is scoped to).  Always call both.
+    /// This is the primary entry point for in-place graph mutation (e.g.
+    /// running an `opt::Optimizer` pass on a builder that we still want to
+    /// use afterwards). The returned reference borrows the same `Graph` as
+    /// [`Self::body`] / [`Self::body_mut`], so any mutations are immediately
+    /// visible through every accessor. Pairs with [`Self::entry`]: opt
+    /// passes need `(graph, entry)` together because `entry` anchors the
+    /// reachable-node walk the validator's Layer A is scoped to.
     pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.function.graph
     }
@@ -250,7 +248,9 @@ impl FunctionBuilder {
         // MIPS lifter writes a 64-bit IntMul result to a unique varnode
         // and Copies a 4-byte slice of it to a register; without the filter
         // the 4-byte and 8-byte unique varnodes are treated as independent
-        // SSA variables (BUG-1: MIPS MULT not lowered).
+        // SSA variables (MIPS MULT writes a 64-bit unique then a Copy
+        // reads a narrow slice; the overlap filter keeps the wider
+        // varnode).
         //
         // CONST and code-space varnodes don't behave like fixed-offset
         // registers — they're addressed by literal value or runtime address,
@@ -271,12 +271,12 @@ impl FunctionBuilder {
             })
             .copied()
             .collect();
-        // `call_cloberred_variables` is emitted as the Call node's value
-        // outputs in order (slot `i + 2` ↔ `call_cloberred_variables[i]`).
+        // `call_clobbered_variables` is emitted as the Call node's value
+        // outputs in order (slot `i + 2` ↔ `call_clobbered_variables[i]`).
         // Front-load it with the calling convention's return registers so
         // `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
         // then append the remaining caller-clobbered registers.
-        let call_cloberred_variables: Vec<_> = {
+        let call_clobbered_variables: Vec<_> = {
             let is_clobbered = |v: &rsleigh::Vn| {
                 !callee_saved_vars.contains(v) && Some(*v) != stack_ptr_vn
             };
@@ -307,7 +307,7 @@ impl FunctionBuilder {
         //    view.  The 4-byte ret-reg upgrades to the 8-byte tracked
         //    container so the Return node still reads the float chain.
         //
-        // 2. **Contained-in sub-register** (narrower): BUG-28 cause #1.
+        // 2. **Contained-in sub-register** (narrower):
         //    On x86_64 SysV `arg_passing_regs[0] = RDI` (8-byte), but
         //    `int forward_1(int a)` only reads `EDI` (4-byte sub-reg).
         //    With no covering tracked variable, the 4-byte sub-register
@@ -332,7 +332,7 @@ impl FunctionBuilder {
             variable_to_id,
             arg_passing_vars,
             ret_val_vars,
-            call_cloberred_variables,
+            call_clobbered_variables,
             stack_ptr_vn,
             ret_stack_pop,
         };
@@ -405,7 +405,7 @@ impl FunctionBuilder {
             graph: self.function.graph,
             entry: self.function.entry,
             variables: self.variables,
-            call_clobbered: self.call_cloberred_variables.into_boxed_slice(),
+            call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
             ret_val_regs: self.ret_val_vars.into_boxed_slice(),
         };
         crate::validate::validate(&built.graph, built.entry)?;

@@ -665,7 +665,7 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
 
 // ── extend_if_needed with non-integer input ───────────────────────────────
 
-/// Regression for BUG-3/10: `extend_if_needed` with a Bool input must
+/// Regression for `extend_if_needed` with a Bool input must
 /// insert a `CastToInt` coercion so the resulting value is typed as an
 /// integer.  Before the fix the `Extend` node's signature (`AnyInt` input)
 /// was violated and the validator rejected the graph with
@@ -872,7 +872,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-1 regression: UNIQUE-space overlapping varnode filtering ─────────
+// ── UNIQUE-space overlapping varnode filtering ─────────
 //
 // Sleigh occasionally writes a wider UNIQUE varnode and reads a narrow slice
 // of it (e.g. on MIPS, MULT writes a 64-bit unique then a Copy reads a 4-byte
@@ -894,7 +894,7 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 
 /// When two UNIQUE-space varnodes overlap (a narrow one fully contained in
 /// a wider one), only the wider one must be tracked as an SSA variable.
-/// This is the BUG-1 root-cause check: without this filter, MIPS MULT's
+/// This is the regression check: without this filter, MIPS MULT's
 /// 64-bit result and the 32-bit Copy slice are kept as two independent
 /// variables and the multiplication is dropped.
 #[test]
@@ -942,7 +942,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-3 regression: Bool-to-flag-register write must coerce to int ─────
+// ── Bool-to-flag-register write must coerce to int ─────
 //
 // ARM/AArch64 status flags (N, Z, V, C) are 1-byte register varnodes.  The
 // Sleigh lifter for `cmp` writes Bool-producing ops (`IntCmpOp::Sless`,
@@ -956,7 +956,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
 // when called on a Bool with an integer target type, it must produce a
 // CastToInt-wrapped value of the integer type.  The analyzer's `write_reg_vn`
 // invokes this helper at every variable write; this test pins the helper's
-// contract so future refactors don't silently regress the BUG-3 cycle.
+// contract so future refactors don't silently regress the bool-into-int cycle.
 
 fn flag_reg_byte() -> rsleigh::Vn {
     // Generic 1-byte REGISTER varnode shaped like ARM N/Z/V/C flags.
@@ -987,12 +987,12 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     assert_eq!(
         b.graph().node_kind(coerced_node),
         &NodeKind::CastToInt,
-        "Bool → int must go through a CastToInt node (BUG-3 root mitigation)"
+        "Bool → int must go through a CastToInt node (root mitigation)"
     );
     Ok(())
 }
 
-// ── BUG-8 regression: ret-val regs that the overlap filter dropped must
+// ── ret-val regs that the overlap filter dropped must
 // upgrade to their tracked container ────────────────────────────────────
 //
 // MIPS-O32 lists `f0` (4-byte) as the float return register, but a
@@ -1097,7 +1097,7 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
 /// End-to-end: write a Bool to a 1-byte register variable through the
 /// coerce-then-write sequence the analyzer's `write_reg_vn` uses.  Reading
 /// the variable back must return an integer-typed output, never the raw
-/// Bool — that was the BUG-3 root state that fed Bool into AnyInt-expecting
+/// Bool — that was the root state that fed Bool into AnyInt-expecting
 /// phi consumers post-optimization.
 #[test]
 fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
@@ -1129,7 +1129,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-28 cause #1 regression: upgrade_to_tracked sub-register fallback ─
+// ── upgrade_to_tracked sub-register fallback ─
 //
 // On x86_64 SysV, `arg_passing_regs[0] = RDI` (8-byte).  For
 // `int forward_1(int a) { sink1(a); return a; }`, the function only ever
@@ -1180,7 +1180,7 @@ fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked()
     assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
 }
 
-/// BUG-28 cause #1: when no covering tracked variable exists but a
+/// when no covering tracked variable exists but a
 /// sub-register is tracked, return the largest contained-in tracked
 /// variable.  This is the case for `int forward_1(int a)` on x86_64
 /// SysV where the function only reads `EDI` and the convention asks
@@ -1250,7 +1250,7 @@ fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
     assert_eq!(upgrade_to_tracked_for(&map, target), Some(cover_4));
 }
 
-/// BUG-28 cause #1: when multiple sub-register tracked variables exist
+/// when multiple sub-register tracked variables exist
 /// (e.g. RCX covers both CL at off 0 size 1 and ECX at off 0 size 4),
 /// the LARGEST sub-register wins because it preserves the most
 /// information about the value the function actually computed.
@@ -1283,9 +1283,9 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
     );
 }
 
-// ── F2: graph_mut / entry / non-consuming use of the builder ─────────────────
+// ── graph_mut / entry / non-consuming use of the builder ─────────────────
 //
-// These tests pin the F2 contract: the builder exposes `graph_mut()` and
+// These tests pin the contract: the builder exposes `graph_mut()` and
 // `entry()` so callers can mutate the underlying `Graph` in place (e.g.
 // run optimizer passes) without consuming the builder via `build()`.
 
