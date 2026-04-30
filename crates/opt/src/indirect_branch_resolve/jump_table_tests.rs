@@ -678,6 +678,91 @@ fn build_pred_if_graph(
     (g, anchor.expect("placeholder return"), idx_in_dispatch)
 }
 
+/// Stress test for the iterative `walk_control_for_if_bound`: a deep
+/// chain of `If` nodes between Entry and the dispatch.  The recursive
+/// version this replaces would burn stack frames per level; the
+/// iterative worklist must complete on any depth.
+///
+/// The chain shape:
+///   r0 (entry):   if (idx < TIGHT_BOUND) -> r1 else exit
+///   r1:           if (idx < LOOSE_BOUND) -> r2 else exit
+///   r2:           if (idx < LOOSE_BOUND) -> r3 else exit
+///   ...
+///   r{DEPTH-1}:   if (idx < LOOSE_BOUND) -> dispatch else exit
+///   dispatch:     indirect_branch idx
+///   exit:         return
+///
+/// `TIGHT_BOUND` is set on the outermost If; the rest use a strictly
+/// looser bound.  The walk should crawl back through every region
+/// and return `Some(LOOSE_BOUND)` (the first bound it discovers, on
+/// the innermost If, since the walk goes innermost → outermost).
+/// If the walk crashed, this test would never return.
+#[test]
+fn bound_via_predecessor_if_handles_deep_if_chain() {
+    use ir::{FunctionBuilder, IntCmpOp};
+    // 50 is comfortably below `same_value`'s 64-step phi-walk budget
+    // (each region introduces a single-input VarPhi between idx in
+    // the If's condition and the dispatch's idx).  Past 64 the
+    // budget runs out and the test would document the budget limit
+    // rather than the iterative walk's depth-safety.
+    const DEPTH: usize = 50;
+    const TIGHT_BOUND: u64 = 4;
+    const LOOSE_BOUND: u64 = 16;
+
+    let idx_var = rsleigh::Vn {
+        addr: rsleigh::VnAddr {
+            space: rsleigh::VnSpace::REGISTER,
+            off: 0x10,
+        },
+        size: 4,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
+    let mut regions = Vec::with_capacity(DEPTH + 2);
+    for _ in 0..(DEPTH + 2) {
+        regions.push(b.create_region().unwrap());
+    }
+    let entry = regions[0];
+    let dispatch = regions[DEPTH];
+    let exit = regions[DEPTH + 1];
+    b.set_entry_region(entry).unwrap();
+
+    for i in 0..DEPTH {
+        b.set_region(regions[i]);
+        let idx = b.read_variable(&idx_var).unwrap();
+        let bound = if i == 0 { TIGHT_BOUND } else { LOOSE_BOUND };
+        let bound_c = b.build_int_const(bound, NodeOutputType::U32).unwrap();
+        let cond = b
+            .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, NodeOutputType::U32)
+            .unwrap();
+        b.build_if(cond, regions[i + 1], exit).unwrap();
+    }
+
+    b.set_region(dispatch);
+    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
+    b.build_indirect_branch(idx_in_dispatch).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+
+    let g = b.build().unwrap();
+    let mut anchor = None;
+    for nid in g.preorder() {
+        if !matches!(g.graph.node_kind(nid), NodeKind::IndirectBranch) {
+            continue;
+        }
+        let inputs: Vec<_> = g.graph.node_inputs(nid).into_iter().collect();
+        if inputs.len() == 3 {
+            anchor = Some(inputs[2]);
+        }
+    }
+    let anchor = anchor.expect("placeholder anchor");
+    // The walk hits the innermost If first (closest to dispatch),
+    // whose bound is `LOOSE_BOUND` — and `bound_from_if_condition`
+    // returns immediately, so it never crawls all the way back.
+    let bound = bound_via_predecessor_if(&g, anchor, idx_in_dispatch);
+    assert_eq!(bound, Some(LOOSE_BOUND));
+}
+
 #[test]
 fn bound_via_predecessor_if_walks_one_hop() {
     // `If(idx < 4)` directly dominates the placeholder Return's

@@ -308,9 +308,7 @@ pub fn bound_via_predecessor_if(
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]`.
     let control_in = *graph.node_inputs(placeholder).get(0)?;
 
-    let mut visited: HashSet<NodeId> = HashSet::new();
-    let mut trail: Vec<NodeId> = Vec::new();
-    walk_control_for_if_bound(fg, control_in, idx_output, &mut visited, &mut trail)
+    walk_control_for_if_bound_iter(fg, control_in, idx_output)
 }
 
 /// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
@@ -330,94 +328,181 @@ fn find_anchor_consumer_placeholder(
     None
 }
 
-/// The recursive heart of the predecessor-If walk.  `control_out` is
-/// the Control output we're currently looking at — i.e. the
-/// `Control` input of whoever's downstream.  Returns the proved
-/// bound (or None) for the path on the way to here.
-fn walk_control_for_if_bound(
+/// Iterative worklist version of the predecessor-If walk — same
+/// behaviour as the original recursive `walk_control_for_if_bound`
+/// but stack-safe at any CFG depth.  `control_out` is the
+/// Control output we're currently looking at — i.e. the `Control`
+/// input of whoever's downstream.  Returns the proved bound
+/// (or `None`) for the path on the way to here.
+///
+/// **Frame model:**
+/// * `Frame::Visit { control_out }` — cycle-check, classify producer,
+///   either emit a result or schedule child visits.
+/// * `Frame::JoinNext { … }` — at a `ControlState`, after each
+///   predecessor's sub-walk completes, this frame pops its result,
+///   rolls back the visited additions made by that pred, and either
+///   schedules the next pred or finalises the join with the running
+///   maximum.
+///
+/// The cycle-detection set + trail rollback exactly mirror the
+/// recursive version: a back-edge inside one predecessor's sub-walk
+/// is undone before the next predecessor starts, so the same node
+/// can legitimately appear on multiple incoming paths to a join.
+fn walk_control_for_if_bound_iter(
     fg: &BuiltFunctionGraph,
-    control_out: NodeOutputId,
+    initial_control_out: NodeOutputId,
     idx_output: NodeOutputId,
-    visited: &mut HashSet<NodeId>,
-    trail: &mut Vec<NodeId>,
 ) -> Option<u64> {
-    let graph = &fg.graph;
-    let producer = graph.get_node_from_output(control_out);
-    if !visited.insert(producer) {
-        // Cycle (loop back-edge).  Loops can rewrite `idx` per
-        // iteration; without loop-level reasoning the bound from
-        // the loop entry doesn't hold inside the body.  Fail closed.
-        return None;
-    }
-    trail.push(producer);
+    use ir::walk::NodeIdSet;
 
-    match graph.node_kind(producer) {
-        // If's outputs: [true_control, false_control].
-        // We're on the path to the dispatch through this If — figure
-        // out which branch led to us, then check whether that branch
-        // bounds idx.
-        NodeKind::If => {
-            // Which output of the If is `control_out`?  The output
-            // index distinguishes true (0) from false (1) per the
-            // node_signature for `If`: `outputs: [CTRL, CTRL]`.
-            let (_, output_idx) = graph.output_definition(control_out);
-            let if_inputs = graph.node_inputs_exact::<2>(producer).ok()?;
-            // If input slot 0 = ctrl predecessor, slot 1 = condition.
-            let cond_out = if_inputs[1];
-            let on_true = output_idx == 0;
-            // Try this If's condition; if it doesn't bound idx, walk
-            // up through the If's own control predecessor.  Either
-            // failure mode is sound: an If we can't crack open
-            // becomes a transparent control-flow node we walk
-            // through.
-            if let Some(b) = bound_from_if_condition(fg, cond_out, idx_output, on_true) {
-                return Some(b);
+    /// JoinNext frame: the multi-predecessor `ControlState` is the only
+    /// case that needs a continuation.  Linear chains (If's transparent
+    /// walk, generic transparent walk, single-pred `ControlState`) are
+    /// handled by re-entering the inner loop with an updated
+    /// `control_out`, so they cost zero heap allocation.
+    struct JoinNext {
+        cs_node: NodeId,
+        next_idx: u32,
+        pre_pred_trail_len: u32,
+        combined: u64,
+    }
+
+    let graph = &fg.graph;
+    let mut visited: NodeIdSet = NodeIdSet::new();
+    let mut trail: Vec<NodeId> = Vec::new();
+    // CS continuations form a stack; preallocate to avoid the first
+    // few growth-realloc round trips on graphs with several joins.
+    let mut work: Vec<JoinNext> = Vec::with_capacity(8);
+
+    let mut control_out = initial_control_out;
+    // Set inside the inner loop before any read in the outer loop;
+    // the initial value is unused and only present so the variable
+    // can be `mut` and outlive the inner loop.
+    let mut last_result: Option<u64>;
+
+    'outer: loop {
+        // Linear (single-path) walk: only allocates on a multi-pred CS.
+        loop {
+            let producer = graph.get_node_from_output(control_out);
+            if visited.contains(producer) {
+                // Cycle (loop back-edge): fail closed.
+                last_result = None;
+                break;
             }
-            walk_control_for_if_bound(fg, if_inputs[0], idx_output, visited, trail)
-        }
-        // ControlState merges multiple predecessors — every
-        // predecessor's path must independently prove the bound, and
-        // we take the *max* (the join's effective bound is the
-        // weakest of any incoming path).  If any predecessor returns
-        // None, the join's bound is None (mixed-bound join → fail
-        // closed).
-        NodeKind::ControlState => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer).into_iter().collect();
-            if inputs.is_empty() {
-                return None;
-            }
-            let mut combined: u64 = 0;
-            for &pred in &inputs {
-                // Save trail length so we can drop the predecessor's
-                // visited additions on return — without this rollback,
-                // a back-edge in one predecessor's sub-walk would mark
-                // the whole join unreachable for every later predecessor.
-                let mark = trail.len();
-                let bound = walk_control_for_if_bound(fg, pred, idx_output, visited, trail);
-                for n in trail.drain(mark..) {
-                    visited.remove(&n);
+            visited.insert(producer);
+            trail.push(producer);
+
+            match graph.node_kind(producer) {
+                NodeKind::If => {
+                    let (_, output_idx) = graph.output_definition(control_out);
+                    let Ok(if_inputs) = graph.node_inputs_exact::<2>(producer) else {
+                        last_result = None;
+                        break;
+                    };
+                    let cond_out = if_inputs[1];
+                    let on_true = output_idx == 0;
+                    if let Some(b) =
+                        bound_from_if_condition(fg, cond_out, idx_output, on_true)
+                    {
+                        last_result = Some(b);
+                        break;
+                    }
+                    // No bound from this If — keep walking up.
+                    control_out = if_inputs[0];
+                    continue;
                 }
-                combined = combined.max(bound?);
+                NodeKind::ControlState => {
+                    let preds_iter = graph.node_inputs(producer);
+                    let pred_count = preds_iter.len();
+                    if pred_count == 0 {
+                        last_result = None;
+                        break;
+                    }
+                    if pred_count == 1 {
+                        // Single-pred join is just a transparent walk;
+                        // no rollback needed.
+                        let only = graph.node_inputs(producer).into_iter().next().unwrap();
+                        control_out = only;
+                        continue;
+                    }
+                    // Multi-pred: push a continuation for the second
+                    // and later preds.  The first pred is processed
+                    // by re-entering the inner loop directly.
+                    let pre_pred_trail_len = trail.len() as u32;
+                    let first_pred = graph.node_inputs(producer)
+                        .into_iter()
+                        .next()
+                        .unwrap();
+                    work.push(JoinNext {
+                        cs_node: producer,
+                        next_idx: 1,
+                        pre_pred_trail_len,
+                        combined: 0,
+                    });
+                    control_out = first_pred;
+                    continue;
+                }
+                NodeKind::Entry => {
+                    last_result = None;
+                    break;
+                }
+                _ => {
+                    // Transparent walk: follow slot-0 if Control.
+                    let mut iter = graph.node_inputs(producer).into_iter();
+                    let Some(first) = iter.next() else {
+                        last_result = None;
+                        break;
+                    };
+                    if !graph.output_kind(first).is_control() {
+                        last_result = None;
+                        break;
+                    }
+                    control_out = first;
+                    continue;
+                }
             }
-            Some(combined)
         }
-        // Entry: no more predecessors; we've walked the whole
-        // function without finding a bound.
-        NodeKind::Entry => None,
-        // Other control-producing kinds (the `Call`'s control output
-        // for a function that returns into our region, etc.) are
-        // walked through transparently — they don't bound `idx`.
-        // We follow the node's slot-0 input as the control
-        // predecessor when the node has one; otherwise return None.
-        _ => {
-            let first = graph.node_inputs(producer).into_iter().next()?;
-            // Only walk through if the input is a Control output —
-            // otherwise we'd derail into data flow.
-            if !graph.output_kind(first).is_control() {
-                return None;
+
+        // Inner loop ended with a result.  Feed it to the topmost
+        // pending join continuation, if any.
+        loop {
+            let Some(top) = work.last_mut() else {
+                return last_result;
+            };
+            // Roll back the previous pred's contributions.
+            for n in trail.drain(top.pre_pred_trail_len as usize..) {
+                visited.remove(n);
             }
-            walk_control_for_if_bound(fg, first, idx_output, visited, trail)
+            match last_result {
+                None => {
+                    // This join fails closed; pop it and propagate.
+                    work.pop();
+                    last_result = None;
+                    continue;
+                }
+                Some(b) => {
+                    let new_combined = top.combined.max(b);
+                    let preds = graph.node_inputs(top.cs_node);
+                    let pred_count = preds.len();
+                    if (top.next_idx as usize) >= pred_count {
+                        // All preds processed; pop this join.
+                        work.pop();
+                        last_result = Some(new_combined);
+                        continue;
+                    }
+                    // Schedule next pred — update the existing frame
+                    // in place (saves a push/pop pair) and re-enter
+                    // the linear walk.
+                    let next_pred = graph.node_inputs(top.cs_node)
+                        .into_iter()
+                        .nth(top.next_idx as usize)
+                        .unwrap();
+                    top.next_idx += 1;
+                    top.combined = new_combined;
+                    control_out = next_pred;
+                    continue 'outer;
+                }
+            }
         }
     }
 }
