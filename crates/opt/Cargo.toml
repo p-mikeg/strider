@@ -11,7 +11,7 @@ rsleigh.workspace = true
 target.workspace = true
 anyhow.workspace = true
 ethnum.workspace = true
-rustc-hash = { workspace = true }
+rustc-hash = "2"
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
