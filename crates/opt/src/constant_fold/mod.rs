@@ -37,13 +37,13 @@ fn try_lower_cast_to_float(
     let new_out = if in_ty == out_ty {
         input
     } else if in_ty.is_float() {
-        fg.make_float_to_float_node(input, out_ty)?
-    } else if let Some(bits) = fg.int_const_val(input) {
-        fg.make_float_const(bits, out_ty)?
+        fg.graph.make_float_to_float_node(input, out_ty)?
+    } else if let Some(bits) = fg.graph.int_const_val(input) {
+        fg.graph.make_float_const(bits, out_ty)?
     } else {
-        fg.make_int_bits_to_float_node(input, out_ty)?
+        fg.graph.make_int_bits_to_float_node(input, out_ty)?
     };
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+    Ok(OptimizationResult::from_changed(fg.graph.replace_all_uses(out, new_out)?))
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────

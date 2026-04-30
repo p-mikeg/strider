@@ -329,7 +329,7 @@ impl Pattern for NodePat {
             BuildTy::InheritRoot => ctx.root_ty,
             BuildTy::Fixed(t) => t,
         };
-        let out = ctx.graph.make_value_node(kind, input_outs, ty)?;
+        let out = ctx.graph.graph.make_value_node(kind, input_outs, ty)?;
         Ok(BuildOutcome::Out(out))
     }
 }

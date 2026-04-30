@@ -61,7 +61,7 @@ fn try_detect_stack_store(
         }
     };
 
-    fg.replace_all_uses(old_mem_out, new_mem_out)?;
+    fg.graph.replace_all_uses(old_mem_out, new_mem_out)?;
     fg.graph.detach_node_inputs(node_id);
     Ok(OptimizationResult::Changed)
 }

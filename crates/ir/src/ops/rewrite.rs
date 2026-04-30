@@ -1,10 +1,6 @@
-//! Graph-mutation helpers — defined on [`crate::graph::Graph`] so opt
-//! passes that take `&mut Graph` (F2 trait refactor) can use them
-//! directly.  [`BuiltFunctionGraph`] retains a thin wrapper for
-//! back-compat with existing call sites.
+//! Graph-mutation helpers defined on [`crate::graph::Graph`].
 
 use crate::Result;
-use crate::function::BuiltFunctionGraph;
 use crate::graph::Graph;
 use crate::node::NodeOutputId;
 
@@ -16,9 +12,9 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns `NullCursorUse` if the use-list is corrupted
-    /// such that `replace_current_with` is invoked on a null cursor (would
-    /// indicate a graph-construction bug, not user error).
+    /// Returns an error when the use-list is corrupted such that
+    /// `replace_current_with` is invoked on a null cursor (this would indicate
+    /// a graph-construction bug, not user error).
     pub fn replace_all_uses(
         &mut self,
         old: NodeOutputId,
@@ -33,30 +29,4 @@ impl Graph {
         }
         Ok(true)
     }
-}
-
-impl BuiltFunctionGraph {
-    /// Back-compat wrapper around [`Graph::replace_all_uses`].
-    ///
-    /// Kept so existing callers that hold a `BuiltFunctionGraph` continue to
-    /// compile after F2's `Optimizer` trait refactor moved the canonical
-    /// definition onto `Graph`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Graph::replace_all_uses`].
-    pub fn replace_all_uses(
-        &mut self,
-        old: NodeOutputId,
-        new_val: NodeOutputId,
-    ) -> Result<bool> {
-        self.graph.replace_all_uses(old, new_val)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // Exhaustively covered by `opt/` integration tests (every pass that
-    // rewrites the graph exercises this path). A smoke test here would
-    // require a full builder setup that's redundant with those.
 }

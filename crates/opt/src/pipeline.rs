@@ -31,7 +31,7 @@ impl OptimizationResult {
 
     /// Replaces every use of `old` with `new` and folds the resulting
     /// `Changed`/`NoChange` into `self`.  Equivalent to
-    /// `self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?)`
+    /// `self | OptimizationResult::from_changed(fg.graph.replace_all_uses(old, new)?)`
     /// — extracted because that exact line is the most common rewrite-and-
     /// escalate idiom in the constant_fold and known_bits passes.
     ///
@@ -45,7 +45,7 @@ impl OptimizationResult {
         old: ir::node::NodeOutputId,
         new: ir::node::NodeOutputId,
     ) -> crate::Result<Self> {
-        Ok(self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?))
+        Ok(self | OptimizationResult::from_changed(fg.graph.replace_all_uses(old, new)?))
     }
 }
 

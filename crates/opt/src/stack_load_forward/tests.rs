@@ -619,7 +619,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U8));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.graph.int_const_val(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -667,7 +667,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U16));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.graph.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -913,7 +913,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     );
     let value = result.expect("helper should find StackStore at offset -24");
     // The found value must be the stored constant 0xCAFE.
-    assert_eq!(fg.int_const_val(value), Some(0xCAFE));
+    assert_eq!(fg.graph.int_const_val(value), Some(0xCAFE));
     Ok(())
 }
 
@@ -971,7 +971,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
+    assert_eq!(fg.graph.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing) and
     // find -24's value.
@@ -984,7 +984,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
+    assert_eq!(fg.graph.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
 
@@ -1088,7 +1088,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
     );
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
-    assert_eq!(fg.int_const_val(v), Some(0xBBBB));
+    assert_eq!(fg.graph.int_const_val(v), Some(0xBBBB));
     Ok(())
 }
 
@@ -1208,7 +1208,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
             &mut walk_memo,
         )
         .unwrap_or_else(|| panic!("must find store at offset {off}"));
-        let c = fg.int_const_val(v).expect("stored value is IntConst");
+        let c = fg.graph.int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);
     }
     assert_eq!(targets, vec![0x401190u64, 0x401180u64]);

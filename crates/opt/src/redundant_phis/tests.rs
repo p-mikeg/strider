@@ -208,8 +208,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // reachable nodes. The Add itself is not consumed by anything reachable,
     // so `preorder()` will not include it; `detach_unreachable_nodes` is the
     // only thing in RedundantPhis that can touch it.
-    let one = fg.make_int_const(1, NodeOutputType::U64)?;
-    let two = fg.make_int_const(2, NodeOutputType::U64)?;
+    let one = fg.graph.make_int_const(1, NodeOutputType::U64)?;
+    let two = fg.graph.make_int_const(2, NodeOutputType::U64)?;
     let _orphan = fg.graph.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [one, two],

@@ -444,7 +444,7 @@ fn fold_truncate_const() -> Result<()> {
     })?;
     let val = return_value(&fg)?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.int_const_val(val);
+    let semantic = fg.graph.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to U8 should be 0");
     // No Truncate nodes should exist.
     assert!(
@@ -872,11 +872,12 @@ fn fold_lzcount_zero_u64() -> Result<()> {
 /// wide constant has declared type `wide_ty` (U128 or U256) and `kind` is
 /// either `NodeKind::Lzcount` or `NodeKind::Popcount`.
 ///
-/// `FunctionBuilder::build_int_const` panics on U128/U256 by design, and
+/// `FunctionBuilder::build_int_const` rejects U128/U256 by design, and
 /// `build_lzcount`/`build_popcount` would coerce through `convert_to_int_if_needed`
 /// (truncating the input to U64). So we build the placeholder skeleton with
 /// a U64 const + return, then graft the wide const + unary node directly via
-/// the `BuiltFunctionGraph` / `Graph` mutators and rewire the Return.
+/// the lower-level `Graph` mutators (which bypass make_int_const's U256 reject)
+/// and rewire the Return.
 fn build_unary_with_wide_const_input(
     kind: NodeKind,
     wide_ty: NodeOutputType,
@@ -885,14 +886,19 @@ fn build_unary_with_wide_const_input(
     use ir::node::NodeOutputKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap()))?;
     let placeholder = return_value(&fg)?;
-    let wide_const = fg.make_int_const(0xFF, wide_ty)?;
+    let wide_node = fg.graph.create_node(
+        NodeKind::IntConst(0xFF),
+        [],
+        [NodeOutputKind::OutputType(wide_ty)],
+    );
+    let wide_const = fg.graph.node_outputs_exact::<1>(wide_node)?[0];
     let unary_node = fg.graph.create_node(
         kind,
         [wide_const],
         [NodeOutputKind::OutputType(out_ty)],
     );
     let unary_out = fg.graph.node_outputs_exact::<1>(unary_node)?[0];
-    fg.replace_all_uses(placeholder, unary_out)?;
+    fg.graph.replace_all_uses(placeholder, unary_out)?;
     Ok(fg)
 }
 

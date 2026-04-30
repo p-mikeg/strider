@@ -81,7 +81,7 @@ pub fn rewrite_rule(
         match outcome {
             BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
-                let changed = fg.replace_all_uses(root_out, new_out)?;
+                let changed = fg.graph.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }
         }

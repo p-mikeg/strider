@@ -63,7 +63,7 @@ impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
                 continue;
             }
             let addr_input = inputs[1];
-            let Some(addr) = function.int_const_val(addr_input) else {
+            let Some(addr) = function.graph.int_const_val(addr_input) else {
                 continue;
             };
 
@@ -81,7 +81,7 @@ impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
             let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
                 continue;
             };
-            let new_out = function.make_int_const(masked, ty)?;
+            let new_out = function.graph.make_int_const(masked, ty)?;
             result = result.after_replace(function, data_out, new_out)?;
         }
         Ok(result)
