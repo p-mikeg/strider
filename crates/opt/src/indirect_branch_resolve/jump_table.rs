@@ -41,7 +41,6 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use std::collections::HashSet;
 
 use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
@@ -606,9 +605,18 @@ fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
     // Bidirectionally chase trivial phis: see if either side reduces
     // to the other.  Cap depth to avoid pathological chains.
     fn root(graph: &Graph, mut out: NodeOutputId) -> NodeOutputId {
+        use ir::walk::DenseEntitySet;
+
         let mut budget = 64usize;
-        let mut visited: HashSet<NodeOutputId> = HashSet::new();
-        while budget > 0 && visited.insert(out) {
+        // DenseEntitySet<NodeOutputId> — bit-vector membership check
+        // and insert with no hashing.  Stays consistent with the
+        // workspace's other entity-keyed visited sets.
+        let mut visited: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        while budget > 0 {
+            if visited.contains(out) {
+                break;
+            }
+            visited.insert(out);
             let node = graph.get_node_from_output(out);
             match graph.node_kind(node) {
                 NodeKind::VarPhi(_) | NodeKind::ValuePhi => {
