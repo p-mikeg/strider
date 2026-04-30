@@ -63,11 +63,7 @@ fn make_unresolved_indirect_branch_cfg(
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
+    let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
         .expect("Strider::new");
     let graph = strider
@@ -109,11 +105,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
+    let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
         .expect("Strider::new");
     let outcome = strider

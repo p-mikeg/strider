@@ -66,11 +66,7 @@ pub fn run_pipeline_x86_64(
         .build()
         .expect("cfg build");
 
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
+    let regs = arch.probe_regs().expect("probe regs");
     let strider =
         Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).expect("Strider::new");
     let lr_vn = strider.calling_convention().link_register_vn;

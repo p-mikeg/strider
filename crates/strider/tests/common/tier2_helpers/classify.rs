@@ -717,11 +717,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .expect("create aarch64 sleigh");
 
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
+    let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, CallingConvention::aarch64_aapcs64())
         .expect("Strider::new");
     let lr_vn = strider

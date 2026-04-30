@@ -208,4 +208,17 @@ impl SleighArch {
             endianness: Endianness::Big,
         }
     }
+
+    /// Probes Sleigh against an empty memory reader to extract this arch's
+    /// register table.  Convenience for tests and other callers that need a
+    /// `SleighRegs` without decoding any code.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from `rsleigh::Sleigh::new` or `Sleigh::regs`.
+    pub fn probe_regs(self) -> anyhow::Result<rsleigh::SleighRegs> {
+        let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
+        let sleigh = rsleigh::Sleigh::new(self.sla_spec, self.pspec, probe)?;
+        Ok(sleigh.regs()?)
+    }
 }

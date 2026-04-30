@@ -414,11 +414,7 @@ mod tests {
         // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
         // `unresolved_branches.len() == 0`.
         let arch = crate::SleighArch::x86_64();
-        let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-        let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
-            .expect("probe sleigh")
-            .regs()
-            .expect("probe regs");
+        let regs = arch.probe_regs().expect("probe regs");
         let strider = crate::Strider::new(
             arch,
             regs,

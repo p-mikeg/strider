@@ -81,11 +81,7 @@ fn analyze_with_known_targets(
         .build()
         .expect("cfg build");
 
-    let probe = BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = Sleigh::new(arch.sla_spec, arch.pspec, probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
+    let regs = arch.probe_regs().expect("probe regs");
     let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
         .expect("Strider::new");
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;

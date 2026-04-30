@@ -686,11 +686,7 @@ mod tests {
 
     fn make_strider_x86_64() -> Strider {
         let arch = crate::SleighArch::x86_64();
-        let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-        let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe)
-            .expect("probe sleigh")
-            .regs()
-            .expect("probe regs");
+        let regs = arch.probe_regs().expect("probe regs");
         Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv_abi())
             .expect("strider")
     }

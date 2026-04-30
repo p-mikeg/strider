@@ -130,11 +130,7 @@ pub fn strider_x86_64() -> strider::Strider {
 /// extract the register list.
 pub fn strider_for(arch: Arch) -> strider::Strider {
     let sleigh_arch = arch.sleigh();
-    let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
-        .expect("probe sleigh new")
-        .regs()
-        .expect("probe sleigh regs");
+    let regs = sleigh_arch.probe_regs().expect("probe sleigh regs");
     strider::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new")
 }
 
