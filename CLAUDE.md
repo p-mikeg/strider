@@ -54,15 +54,15 @@ the IR; `pattern` queries it.  Errors propagate via `anyhow::Result` workspace-w
 - **`cfg`** — Builds a Control Flow Graph (`Cfg<R>`) from a binary using rsleigh. Uses `petgraph::StableDiGraph` internally. Regions (basic blocks) contain p-code instructions (`rsleigh::Insn`). Edge kinds: `Fallthrough`, `Branch`, `IfCaseTrue`, `IfCaseFalse`.
 - **`ir`** — Sea-of-nodes style IR graph. Core types:
   - `Graph` — stores `NodeId`, `NodeOutputId`, `NodeInputId` via `cranelift-entity` PrimaryMaps. Nodes are deduplicated/cached by (kind, inputs, output_kinds). Per-node side-tables (e.g. `stack_phi_offsets: HashMap<NodeId, Vec<i64>>`) hold ancillary data.
-  - `FunctionBuilder` — builds the IR graph with SSA-like variable tracking. Variables map `rsleigh::Vn` (varnode) → `VarId`. Each region gets a `ControlState` node + `ControlPhi` nodes for variables. Calls `validate::validate` at the end of `build()`.
-  - `NodeOutputKind` — `Control`, `Memory`, `ControlPhi`, or `OutputType(NodeOutputType)`.
+  - `FunctionBuilder` — builds the IR graph with SSA-like variable tracking. Variables map `rsleigh::Vn` (varnode) → `VarId`. Each region gets a `ControlState` node + `VarPhi` nodes for variables. Calls `validate::validate` at the end of `build()`.
+  - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or `OutputType(NodeOutputType)`.
   - `NodeOutputType` — integers `Bool`, `U8`, `U16`, `U32`, `U64`, `U128`, `U256`; floats `F32`, `F64`.
   - `walk::walk_graph(graph, entry)` — traversal that follows both backward-data and forward-control edges. Used by the validator and several passes.
   - `node_signature::{ExpectedOutputKind, expected_signature}` — single source of truth for expected input/output slot kinds per `NodeKind`. `ExpectedOutputKind` coarsens int/float widths via `AnyInt` / `AnyFloat` / `AnyValue`.
   - `validate::validate(&graph, entry) -> Result<(), ValidationErrors>` — whole-graph validator with three layers:
     - **Layer A**: per-node local typing against `expected_signature` (scoped to nodes reachable via `walk_graph`, since optimization passes leave detached zombie nodes in the arena).
     - **Layer B**: bidirectional use-list consistency.
-    - **Layer C**: graph-level invariants (Entry/InitialMemory uniqueness, ControlState predecessor kinds, phi token ownership & per-predecessor arity for `ControlPhi`/`MemPhi` only — `StackStorePhi` has fixed arity 3).
+    - **Layer C**: graph-level invariants (Entry/InitialMemory uniqueness, ControlState predecessor kinds, phi token ownership & per-predecessor arity for `VarPhi`/`MemPhi` only — `StackStorePhi` has fixed arity 3).
     - Aggregates all errors into a `ValidationErrors` bundle rather than failing fast.
 - **`target`** — Pure target-description data (no IR, no rsleigh state machine). Owns:
   - `SleighArch` — pairs a `.sla` spec + `.pspec` + `Endianness`. Presets: `x86_64`, `x86`, `aarch64` / `aarch64be`, `arm` / `arm_be` / `arm_thumb`, `mipsbe32` / `mipsle32` / `mipsbe64` / `mipsle64`.
@@ -79,8 +79,8 @@ the IR; `pattern` queries it.  Errors propagate via `anyhow::Result` workspace-w
 - **`opt`** — IR optimization passes. Passes added via `OptimizerPipeline::add` run in a shared fixed-point loop; `add_post_pass` runs once after convergence. `OptimizerPipeline::run` calls `ir::validate::validate` at the very end so any malformed graph is reported as an `opt::Error::IrError(ValidationFailed(...))`. Three pre-built top-level pipelines: `default_pipeline()` (all passes), `stable_default_pipeline()` (rewrites that survive phi-input growth — `ConstantFold` + `KnownBits`), `destructive_default_pipeline()` (node-removal passes safe only at fixed point — `RedundantPhis` + `DeadBranchElimination` + `CallOtherElide`). See `crates/strider/src/strider/pipeline.rs` for how `Strider` layers convention-aware passes on top. Passes:
   - `ConstantFold` — constant evaluation for all arithmetic, comparisons, booleans, truncation, extension; algebraic identities (`x+0→x`, `x^x→0`, nested AND-mask merging `(a&C1)&C2 → a&(C1&C2)`).
   - `KnownBits` — bit-level propagation of statically known zeros/ones to fold partially-known expressions.
-  - `RedundantPhis` — eliminates `ControlPhi` and `MemPhi` nodes and `ControlState` nodes with a single reachable predecessor; detaches inputs of CFG-unreachable nodes (leaving them as zero-input zombies — the validator skips Layer A on these via reachability scoping).
-  - `DeadBranchElimination` — removes `If` nodes whose condition is a `BoolConst`; strips the dead control edge from successor `ControlState` and `ControlPhi` nodes. Works together with `RedundantPhis`.
+  - `RedundantPhis` — eliminates `VarPhi` and `MemPhi` nodes and `ControlState` nodes with a single reachable predecessor; detaches inputs of CFG-unreachable nodes (leaving them as zero-input zombies — the validator skips Layer A on these via reachability scoping).
+  - `DeadBranchElimination` — removes `If` nodes whose condition is a `BoolConst`; strips the dead control edge from successor `ControlState` and `VarPhi` nodes. Works together with `RedundantPhis`.
   - `CallOtherElide` — drops opaque `CallOther` nodes whose user-op is a known IR-level no-op (e.g. ARM `setISAMode`); the names live in `opt::NO_OP_USER_OPS`.
   - `LoadReadOnly` — resolves `Load` nodes whose address is a compile-time constant into constants by reading from a caller-supplied `ReadOnlyMemory` (e.g. `.rodata`/`.text` section). Configured with a ROM image, so `default_pipeline()` doesn't include it; the example and `Strider::build_optimizer_pipeline` callers layer it on.
   - `StackStoreDetect` — converts `Store` nodes whose address resolves to `InitialVar(stack_ptr) + K` into dedicated `NodeKind::StackStore { space, offset }` or `NodeKind::StackStorePhi { space }` (with per-predecessor offsets stored in `Graph::stack_phi_offsets`). Configured with the calling convention's stack-pointer varnode.
@@ -109,7 +109,7 @@ the IR; `pattern` queries it.  Errors propagate via `anyhow::Result` workspace-w
 The IR is a sea-of-nodes graph where each `Node` has typed inputs (`NodeOutputId` references) and outputs. The `expected_signature` table in `crates/ir/src/node_signature.rs` is the single source of truth for every node's input/output shape. Node kinds, grouped:
 
 - **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`
-- **Region / join:** `ControlState` (variadic Control inputs; outputs `Control` + `ControlPhi` dispatch token), `ControlPhi(Vn)` (SSA φ for varnode `Vn` at a join point), `MemPhi` (φ for the memory token)
+- **Region / join:** `ControlState` (variadic Control inputs; outputs `Control` + `PhiToken`), `VarPhi(Vn)` (SSA φ for varnode `Vn` at a join point), `MemPhi` (φ for the memory token)
 - **Conditional branch:** `If` (outputs true/false `Control` edges), `IfCase(bool)`
 - **Calls / returns:** `Call` (clobbers caller-saved registers and memory; variadic args), `CallOther { user_op_id }`, `Return` (variadic return values)
 - **Memory:** `Load(VnSpace)`, `Store(VnSpace)`; after `StackStoreDetect`: `StackStore { space, offset }`, `StackStorePhi { space }` (per-predecessor offsets in `Graph::stack_phi_offsets`)
