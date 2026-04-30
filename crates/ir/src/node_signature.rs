@@ -656,7 +656,12 @@ mod tests {
     }
 
     /// Calling `expected_signature` on every NodeKind variant must succeed
-    /// and return a self-consistent Signature. Catches missing match arms.
+    /// and return a self-consistent Signature.
+    ///
+    /// The list below is hand-maintained; if you add a new `NodeKind`
+    /// variant, append a constructor here so this test continues to cover
+    /// every kind. The `expected_signature` `match` is exhaustive at compile
+    /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
         use crate::node::FunctionArgSource;

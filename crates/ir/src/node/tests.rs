@@ -76,8 +76,12 @@ fn bit_width_is_eight_times_byte_size() {
         NodeOutputType::U16,
         NodeOutputType::U32,
         NodeOutputType::U64,
+        NodeOutputType::U80,
         NodeOutputType::U128,
         NodeOutputType::U256,
+        NodeOutputType::F32,
+        NodeOutputType::F64,
+        NodeOutputType::F80,
     ] {
         assert_eq!(
             ty.bit_width(),
@@ -107,7 +111,7 @@ fn is_bool_only_for_bool_output_type() {
 }
 
 /// `is_integer` must be `true` for all integer `OutputType` variants and
-/// `false` for `Bool`, `Control`, `ControlPhi`, and `Memory`.
+/// `false` for `Bool`, `Control`, `ControlPhi`, `Memory`, and floats.
 #[test]
 fn is_integer_for_all_integer_output_types() {
     for ty in [
@@ -115,6 +119,7 @@ fn is_integer_for_all_integer_output_types() {
         NodeOutputType::U16,
         NodeOutputType::U32,
         NodeOutputType::U64,
+        NodeOutputType::U80,
         NodeOutputType::U128,
         NodeOutputType::U256,
     ] {
@@ -123,7 +128,17 @@ fn is_integer_for_all_integer_output_types() {
             "{ty:?} should be integer"
         );
     }
-    assert!(!NodeOutputKind::OutputType(NodeOutputType::Bool).is_integer());
+    for ty in [
+        NodeOutputType::Bool,
+        NodeOutputType::F32,
+        NodeOutputType::F64,
+        NodeOutputType::F80,
+    ] {
+        assert!(
+            !NodeOutputKind::OutputType(ty).is_integer(),
+            "{ty:?} must not be integer"
+        );
+    }
     assert!(!NodeOutputKind::Control.is_integer());
     assert!(!NodeOutputKind::Memory.is_integer());
 }
@@ -296,10 +311,12 @@ fn type_info_table_matches_variants() {
         (NodeOutputType::U16,  "u16",  2, true,  false, false),
         (NodeOutputType::U32,  "u32",  4, true,  false, false),
         (NodeOutputType::U64,  "u64",  8, true,  false, false),
+        (NodeOutputType::U80,  "u80",  10, true, false, false),
         (NodeOutputType::U128, "u128", 16, true, false, false),
         (NodeOutputType::U256, "u256", 32, true, false, false),
         (NodeOutputType::F32,  "f32",  4, false, false, true),
         (NodeOutputType::F64,  "f64",  8, false, false, true),
+        (NodeOutputType::F80,  "f80",  10, false, false, true),
     ];
     for (ty, name, size, is_int, is_bool, is_float) in cases {
         assert_eq!(ty.as_str(), *name);
