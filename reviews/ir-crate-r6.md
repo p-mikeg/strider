@@ -1238,3 +1238,62 @@ A handful of smaller things are noted: the ~40 `BUG-N` / `F2` codename reference
 ## Stopped here marker
 
 Review complete.  All 46 `.rs` files (src + tests + examples) read front to back.  Findings 1-53 cover every concern surfaced.
+
+## Outcomes
+
+| Finding | Outcome | Notes |
+| --- | --- | --- |
+| F-001 | Applied | `build_int_const` returns `Result`; ~30 call sites updated. |
+| F-002 | Applied | `Graph::make_int_const` rejects non-integer / U256. |
+| F-003 | Applied | Added `int_const_val_u128`; kept narrowing `int_const_val`. |
+| F-004 | Applied | Replaced fake-id fallback with explicit empty-outputs branch. |
+| F-005 | Applied | Documented Layer A's variadic head_len=0 behaviour. |
+| F-006 | Applied | Removed inconsistent `prefer .get()` comment. |
+| F-007 | Applied | Dropped `#[track_caller]`; kept methods. |
+| F-008 | Applied | Stripped 97 `[\`ErrorKind::*\`]` doc links across the crate. |
+| F-009 | Applied | Rewrote `RegionIrCache` references to point at the post-restructure region index. |
+| F-010 | Applied | `CastToInt` doc fixed. |
+| F-011 | Applied | `lib.rs` lists U80 / F80. |
+| F-012 | Applied | `AnyInt` / `AnyFloat` doc lists U80 / F80. |
+| F-013 | Applied | Documented `bit_mask_u128` U256 caveat; left `get_unsigned_int` semantics intact (changing them broke opt's popcount/lzcount-on-U256-skip-cleanly tests). |
+| F-014 | Applied | SignExtend comment accurately describes `i64 as u128`. |
+| F-015 | Applied | `extend_if_needed` truncates when curr > target. |
+| F-016 | Applied (doc) | Documented the all-nodes scan; reachable-scoping breaks `MissingInitialMemoryNode` for builder graphs that haven't wired memory yet. |
+| F-017 | Skipped | Three slot constants kept; finding's confidence was medium and the role-tagging difference is load-bearing. |
+| F-018 | Applied | `link_region` delegates to `link_region_variables`. |
+| F-019 | Applied | `BuiltFunctionGraph::replace_all_uses` wrapper deleted; callers go through `fg.graph`. |
+| F-020 | Applied | The other 8 `BuiltFunctionGraph` wrappers deleted. |
+| F-021 | Applied | `nodes.rs` uses `require_control_kind` / `require_memory_kind`. |
+| F-022 | Applied | (Same change as F-021.) |
+| F-023 | Applied | `pub use ExpectedOutputKind` removed. |
+| F-024 | Applied | `Node`/`NodeInput`/`NodeOutput` re-exports become `pub(crate)`. |
+| F-025 | Applied | `NodeKind::is_phi` and tests removed. |
+| F-026 | Applied | `is_control_phi` becomes `pub(crate)`. |
+| F-027 | Applied | `as_float_or_err` and tests removed. |
+| F-028 | Applied | `Graph::node_count` removed. |
+| F-029 | Applied | `GraphWalkSuccs::new` becomes `pub(crate)`. |
+| F-030 | Applied | Unused `DoubleEndedIterator` / `ExactSizeIterator` impls removed. |
+| F-031 | Applied | Duplicate test module in `ops/consts.rs` removed. |
+| F-032 | Applied | `Node::new` / `NodeInput::new` / `NodeOutput::new` become `pub(crate)`. |
+| F-033 | Skipped | `region_id` field is read by 3 callers (build_branch / build_if / build_return); not unused. |
+| F-034 | Skipped | Cache-key restructure needs benchmarking; out of scope for this batch. |
+| F-035 | Skipped | Same as F-034. |
+| F-036 | Skipped | Switching to `DenseEntitySet` is a perf change without measured pressure. |
+| F-037 | Applied | F2 codename trail removed alongside F-019/F-020. |
+| F-038 | Applied | `require_cur_region` error names the missing setter. |
+| F-039 | Skipped | `new_invalid` is the natural shape for the in-progress builder; reshaping it adds invariants without a payoff. |
+| F-040 | Applied | F2 codename stripped from `from_graph_and_entry`. |
+| F-041 | Applied | `cloberred` -> `clobbered` everywhere in builder/. |
+| F-042 | Skipped | `SlotRole::Sp` carries semantic distinction even when the rendered colour matches `Addr`. |
+| F-043 | Skipped | Doc-only relocation; broad scope. |
+| F-044 | Skipped | `Value` / `ValueType` aliases used at 50+ call sites; renaming is workspace-wide churn. |
+| F-045 | Skipped | `ret_val_regs` is a separately-typed view; deriving from `call_clobbered` is a refactor without a concrete consumer benefit. |
+| F-046 | Skipped | `head_len()` keeps the `head` field encapsulated. |
+| F-047 | Applied (doc) | Comment on the test list noting that adds require manual append. |
+| F-048 | Applied | U80 / F80 added to bit-width and is-integer iterations. |
+| F-049 | Applied | U80 / F80 added to type_info_table_matches_variants cases. |
+| F-050 | Applied | Stripped `BUG-1/3/8/10/28` and `F2` codenames from prose. |
+| F-051 | Skipped | `{op:?}` style is widespread; an `as_str()` fix would touch every op enum and every dot label arm. |
+| F-052 | Skipped | Naming nit; doc already explains the mix. |
+| F-053 | Skipped | U256 IntConsts can't reach pretty_label today (build_int_const + make_int_const both reject U256). |
+
