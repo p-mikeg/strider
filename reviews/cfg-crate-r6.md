@@ -1170,3 +1170,61 @@ A handful of smaller things — duplicate constructions of `PcodeInsnAddr { … 
 ## Stopped here marker
 
 Review complete.  Every `.rs` file under `crates/cfg/` was read front to back.
+
+## Outcomes (review/cfg-crate-r6)
+
+Commits in apply order:
+
+- `0e3a3be` — Bucket 1: anyhow / restructure drift
+- `324bf4b` — Bucket 2: correctness (Multiple OOB defer, decode-branch-target docs, find_unique_return propagation, helper extraction)
+- `afa8a84` — Bucket 3: dead code (`_insn_addr` parameter, RegionGraph visibility, OptionsBuilder Default, vn_to_name dispatch)
+- `ec8a34f` — Bucket 4: duplication (resolver pipeline helper, Arc/Box ReadOnlyMemory blanket impls, sort-key cross-ref)
+- `0debd4c` — Bucket 5: simplification + readability + codename strip
+
+| Finding | Outcome | Commit | Notes |
+| --- | --- | --- | --- |
+| F-001 | Applied | 324bf4b | OOB Multiple defers via UnresolvedIndirectBranch; regression test added |
+| F-002 | Applied | 324bf4b | Documented why size is ignored on the absolute-branch arm |
+| F-003 | Applied | 0e3a3be | 14 ErrorKind:: docstrings rewritten in plain prose |
+| F-004 | Applied | 0e3a3be | predecessor_count + its docstring deleted |
+| F-005 | Applied | 0e3a3be | Cfg::sleigh docstring rewritten without RegionIrCache / W11 |
+| F-006 | Applied | 0e3a3be | Stray `Self::set_endianness` reference removed |
+| F-007 | Applied | 0e3a3be | region_fallthrough docstring rephrased generic-first |
+| F-008 | Applied | 324bf4b | Multiple-arm comment clarified as tier-2-only feedback shape |
+| F-009 | Obviated | 324bf4b | bail! call site removed by F-001's redesign |
+| F-010 | Applied | 324bf4b | find_unique_return now propagates real bugs as errors |
+| F-011 | Applied | 324bf4b | Resolver paths use is_branch_tail_call_nocheck (insn_index always 0) |
+| F-012 | Applied | 0e3a3be | Folded into F-004's deletion |
+| F-013 | Applied | afa8a84 | Dead `_insn_addr` parameter removed from resolver, test forwarder, callers |
+| F-014 | Applied | afa8a84 | RegionGraph demoted to pub(crate) |
+| F-015 | Skipped | — | Rejected: function carries useful documentation; one-caller is fine |
+| F-016 | Applied | afa8a84 | derive(Default) on OptionsBuilder, new() inlined |
+| F-017 | Applied | 324bf4b | PcodeInsnAddr::at_machine_start helper added in types.rs |
+| F-018 | Applied | afa8a84 | Collapsed into one vn_to_name(Option<&SleighRegs>, ...) |
+| F-019 | Applied (doc) | ec8a34f | Comment now points at strider's twin sort key explicitly |
+| F-020 | Applied (option b) | ec8a34f | Inlined helper kept; rationale rewritten as a clear "why a copy" pointer.  Also added blanket Arc/Box ReadOnlyMemory impls in reader for any future relaxation |
+| F-021 | Applied | afa8a84 | Cfg::vn_to_name shim deleted; test_api forwards directly |
+| F-022 | Applied | ec8a34f | make_resolver_pipeline helper used at both sites |
+| F-023 | Skipped | — | Marked optional in review; the three test helpers are short and the duplication is mild |
+| F-024 | Skipped | — | Cosmetic / low confidence per review |
+| F-025 | Applied | 0debd4c | Explicit 8-byte arm + bail on unsupported size |
+| F-026 | Applied | 0debd4c | Renamed comment to "half-open"; comparison flipped to addr >= end_exclusive |
+| F-027 | Applied | 0debd4c | Error names the entry address |
+| F-028 | Applied | 0debd4c | Typo fixed; message names the missing address |
+| F-029 | Skipped | — | Marked optional / low confidence; doc already says "Replaces any previous" |
+| F-030 | Skipped | — | Risk medium; orchestrator already supports the field's None case.  Reworded the docstring instead |
+| F-031 | Applied | 0debd4c | Step-comment block trimmed |
+| F-032 | Skipped | — | Optional / low confidence; impl is small and harmless |
+| F-033 | Skipped | — | Cosmetic; addressing requires repeating split-region context across 4 variants |
+| F-034 | Applied | 0debd4c | BranchIndirect arm extracted to process_branch_indirect helper |
+| F-035 | Skipped | — | Low confidence + cross-crate plumbing; comment rewritten to remove the TODO |
+| F-036 | Skipped | — | Review confirms the implementation is correct (no fix proposed) |
+| F-037 | Skipped | — | Review confirms early-out is fine (no fix proposed) |
+| F-038 | Skipped | — | Optional / low confidence per review |
+| F-039 | Skipped | — | Review marks "None.  Flagged for clarity." |
+| F-040 | Applied | afa8a84 | Folded into F-021's dispatch collapse |
+| F-041 | Applied | 0debd4c | Codename refs stripped from tests |
+
+Tally: 28 applied, 1 obviated, 12 skipped.
+
+Final cargo test summary: all 39 test binaries pass, 0 failures.
