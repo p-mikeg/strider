@@ -48,9 +48,8 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Returns `Ok(())` if `output` has `Control` kind; otherwise
-    /// `Err(ExpectedControl)`.
-    fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
+    /// Returns `Ok(())` if `output` has `Control` kind; otherwise an error.
+    pub(crate) fn require_control_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_control() {
             return Err(anyhow!(
@@ -60,9 +59,8 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise
-    /// `Err(ExpectedMemory)`.
-    fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
+    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise an error.
+    pub(crate) fn require_memory_kind(&self, output: NodeOutputId) -> Result<()> {
         let kind = self.graph().output_kind(output);
         if !kind.is_memory() {
             return Err(anyhow!(
@@ -75,9 +73,9 @@ impl FunctionBuilder {
     /// Returns the id of the current region, or an error if no region is set
     /// or if the region has already been terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
-        let region_id = self
-            .cur_region
-            .ok_or_else(|| anyhow!("no current region is set"))?;
+        let region_id = self.cur_region.ok_or_else(|| {
+            anyhow!("no current region is set; call set_region or set_entry_region first")
+        })?;
         if self.regions[region_id].terminated {
             let id = region_id.as_u32();
             return Err(anyhow!("attempted to insert into terminated region {id}"));
@@ -174,7 +172,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::NoCurrentRegion`] when no region is active.
+    /// Returns `NoCurrentRegion` when no region is active.
     pub fn write_variable_from_id(&mut self, var_id: VarId, value: NodeOutputId) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value;
@@ -219,14 +217,8 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.link_control_regions(region, control)?;
         self.link_memory_regions(region, memory)?;
-
-        for var_id in self.regions[region].variables.keys() {
-            let region_variable_output_id = self.regions[region].initial_variables[var_id];
-            let region_variable_id = self.graph().get_node_from_output(region_variable_output_id);
-            let current_variable = self.regions[cur_region].variables[var_id];
-            self.graph_mut()
-                .add_node_input(region_variable_id, current_variable)?;
-        }
+        let source = self.regions[cur_region].variables.clone();
+        self.link_region_variables(region, &source)?;
         Ok(())
     }
 
@@ -235,7 +227,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Propagates the variants from [`Self::link_region`] —
-    /// [`crate::ErrorKind::ExpectedControl`] / [`crate::ErrorKind::ExpectedMemory`]
+    /// `ExpectedControl` / `ExpectedMemory`
     /// when `parent_region`'s snapshotted edges are mistyped, plus any
     /// `add_node_input` errors when wiring per-variable phi inputs.
     pub fn link_regions(&mut self, parent_region: RegionId, child_region: RegionId) -> Result<()> {
@@ -247,9 +239,8 @@ impl FunctionBuilder {
     }
 
     /// Returns the entry-boundary `ControlState` `NodeId` of `region`.
-    /// Used by the strider [`crate::ir_cache::RegionIrCache`] (in the
-    /// `strider` crate) to pin per-region phi-extension targets across
-    /// orchestrator iterations.
+    /// Used by the `strider` crate's per-iteration region index to
+    /// look up phi-extension targets across orchestrator iterations.
     #[must_use]
     pub fn region_control_node(&self, region: RegionId) -> NodeId {
         self.regions[region].control_node
@@ -287,7 +278,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedControl`] if `region`'s
+    /// Returns `ExpectedControl` if `region`'s
     /// `ControlState` does not have a Control output at index 0
     /// (graph-construction bug).
     pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
@@ -298,11 +289,16 @@ impl FunctionBuilder {
                 return Ok(out);
             }
         }
-        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
-        let kind = self.graph().output_kind(first);
-        Err(anyhow!(
-            "output {first:?} is not a control edge (got {kind:?})"
-        ))
+        if let Some(&first) = outputs.first() {
+            let kind = self.graph().output_kind(first);
+            Err(anyhow!(
+                "output {first:?} is not a control edge (got {kind:?})"
+            ))
+        } else {
+            Err(anyhow!(
+                "region {region:?} ControlState {cs_id:?} has no outputs"
+            ))
+        }
     }
 
     /// Returns the entry-boundary memory output (the `Memory`
@@ -310,21 +306,26 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedMemory`] if `region`'s `MemPhi`
+    /// Returns `ExpectedMemory` if `region`'s `MemPhi`
     /// does not have a Memory output (graph-construction bug).
     pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
         let mp_id = self.regions[region].memory_node;
         let outputs: Vec<NodeOutputId> = self.graph().node_outputs(mp_id).into_iter().collect();
-        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
         for &out in &outputs {
             if self.graph().output_kind(out).is_memory() {
                 return Ok(out);
             }
         }
-        let kind = self.graph().output_kind(first);
-        Err(anyhow!(
-            "output {first:?} is not a memory edge (got {kind:?})"
-        ))
+        if let Some(&first) = outputs.first() {
+            let kind = self.graph().output_kind(first);
+            Err(anyhow!(
+                "output {first:?} is not a memory edge (got {kind:?})"
+            ))
+        } else {
+            Err(anyhow!(
+                "region {region:?} MemPhi {mp_id:?} has no outputs"
+            ))
+        }
     }
 
     /// Returns an iterator over `(VarId, ControlPhi NodeOutputId)`

@@ -273,7 +273,7 @@ fn resolve_const_loads(
             continue;
         }
         let addr_input = inputs[1];
-        let Some(addr) = fg.int_const_val(addr_input) else {
+        let Some(addr) = fg.graph.int_const_val(addr_input) else {
             continue;
         };
         let [data_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
@@ -287,8 +287,8 @@ fn resolve_const_loads(
         let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
             continue;
         };
-        let new_out = fg.make_int_const(masked, ty)?;
-        fg.replace_all_uses(data_out, new_out)?;
+        let new_out = fg.graph.make_int_const(masked, ty)?;
+        fg.graph.replace_all_uses(data_out, new_out)?;
     }
     Ok(())
 }

@@ -87,14 +87,10 @@ impl Graph {
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from `entry`.  Callers that already hold a `BuiltFunctionGraph`
+    /// starting from `entry`.  Callers that hold a `BuiltFunctionGraph`
     /// can use the wrapping [`crate::function::BuiltFunctionGraph::preorder`]
-    /// shortcut instead.
-    ///
-    /// CORRECTNESS — F2: opt passes that take `(graph, entry)` use this
-    /// to walk reachable nodes without needing a `BuiltFunctionGraph`
-    /// wrapper.  The walk order matches the historical
-    /// `BuiltFunctionGraph::preorder` exactly (same `walk_graph` impl).
+    /// shortcut instead; opt passes that take `(graph, entry)` directly use
+    /// this method to walk reachable nodes without needing a wrapper.
     #[must_use]
     pub fn preorder(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(self, entry)
@@ -107,13 +103,4 @@ impl Graph {
         self.nodes.keys()
     }
 
-    /// Returns the total number of nodes ever allocated in the graph.
-    ///
-    /// Stable across `Clone` — detached zombies count toward the total
-    /// because the entity arena never reclaims slots.
-    #[inline]
-    #[must_use]
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
 }

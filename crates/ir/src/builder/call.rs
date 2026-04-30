@@ -11,11 +11,11 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
-    /// when there is no active region to advance, [`ErrorKind::ExpectedValue`]
+    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// when there is no active region to advance, `ExpectedValue`
     /// when `call_address` or any read clobbered/arg-passing variable is not
-    /// a value edge, [`ErrorKind::VariableNotFound`] when an arg-passing or
-    /// clobbered varnode is not tracked, and [`ErrorKind::UnsupportedOutputSize`]
+    /// a value edge, `VariableNotFound` when an arg-passing or
+    /// clobbered varnode is not tracked, and `UnsupportedOutputSize`
     /// when the stack-pointer varnode's byte size has no matching
     /// [`NodeOutputType`] (only applicable on stack-push ISAs).
     pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
@@ -29,19 +29,19 @@ impl FunctionBuilder {
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
 
-        let clobbered: SmallVec<[_; 4]> = self.call_cloberred_variables.iter().copied().collect();
+        let clobbered: SmallVec<[_; 4]> = self.call_clobbered_variables.iter().copied().collect();
 
         // Single pass over clobbered variables: read, validate kind, collect
         // kinds. Preserves the offending NodeOutputId in the error (was
         // previously emitted as NodeOutputId::default() — unactionable).
-        let mut cloberred_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
-        for var in &self.call_cloberred_variables {
+        let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
+        for var in &self.call_clobbered_variables {
             let out = self.read_variable(var)?;
             let k = self.graph().output_kind(out);
             if !k.is_value() {
                 return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
             }
-            cloberred_kinds.push(k);
+            clobbered_kinds.push(k);
         }
 
         let addr_kind = self.graph().output_kind(call_address);
@@ -63,7 +63,7 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
-            .chain(cloberred_kinds);
+            .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
         let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
 
@@ -79,7 +79,7 @@ impl FunctionBuilder {
         // link-register ISAs `ret_stack_pop == 0` and we skip this entirely.
         if let Some((sp, pre)) = sp_pre_call {
             let sp_ty: NodeOutputType = sp.size.try_into()?;
-            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty);
+            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty)?;
             let adjusted =
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
             self.write_variable(&sp, adjusted)?;
@@ -103,8 +103,8 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::NoCurrentRegion`] / [`ErrorKind::RegionTerminated`]
-    /// when there is no active region, or [`ErrorKind::ExpectedValue`] when
+    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// when there is no active region, or `ExpectedValue` when
     /// any element of `args` is not a value edge.
     pub fn build_call_other(
         &mut self,

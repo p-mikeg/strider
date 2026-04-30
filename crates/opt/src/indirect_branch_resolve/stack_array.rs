@@ -487,11 +487,11 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
-            let off_const = b.build_int_const(off as u64, NodeOutputType::U64);
+            let off_const = b.build_int_const(off as u64, NodeOutputType::U64).unwrap();
             let addr = b
                 .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
                 .unwrap();
-            let target = b.build_int_const(target_addr, NodeOutputType::U64);
+            let target = b.build_int_const(target_addr, NodeOutputType::U64).unwrap();
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
@@ -501,7 +501,7 @@ mod tests {
             [ir::node::NodeOutputKind::OutputType(NodeOutputType::U32)],
         );
         let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let one = b.build_int_const(1u64, NodeOutputType::U32);
+        let one = b.build_int_const(1u64, NodeOutputType::U32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::U32)
             .unwrap();
@@ -511,11 +511,11 @@ mod tests {
             [ir::node::NodeOutputKind::OutputType(NodeOutputType::U64)],
         );
         let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride_const = b.build_int_const(stride, NodeOutputType::U64);
+        let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::U64)
             .unwrap();
-        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64);
+        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::U64).unwrap();
         let sp_plus_base = b
             .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
             .unwrap();
@@ -560,11 +560,11 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
-        let off = b.build_int_const(24u64, NodeOutputType::U64);
+        let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr = b
             .build_int_binary_operation(sp_val, off, IntBinaryOp::Sub, NodeOutputType::U64)
             .unwrap();
-        let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64);
+        let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64).unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
@@ -599,18 +599,18 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
-        let off24 = b.build_int_const(24u64, NodeOutputType::U64);
+        let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr_24 = b
             .build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)
             .unwrap();
-        let v = b.build_int_const(0x1234u64, NodeOutputType::U64);
+        let v = b.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let stride = b.build_int_const(8u64, NodeOutputType::U64);
+        let stride = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
         let idx_scaled = b
             .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, NodeOutputType::U64)
             .unwrap();
-        let base = b.build_int_const((-24i64) as u64, NodeOutputType::U64);
+        let base = b.build_int_const((-24i64) as u64, NodeOutputType::U64).unwrap();
         let sp_plus_base = b
             .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, NodeOutputType::U64)
             .unwrap();

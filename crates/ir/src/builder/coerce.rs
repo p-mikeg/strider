@@ -13,7 +13,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is a control,
+    /// Returns `ExpectedValue` when `output_id` is a control,
     /// memory, or control-phi edge.
     pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
         let kind = self.graph().output_kind(output_id);
@@ -28,7 +28,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_bool(&self, output_id: NodeOutputId) -> Result<Option<bool>> {
         let output_type = self.get_output_type(output_id)?;
@@ -44,7 +44,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn convert_to_bool_if_needed(&mut self, output_id: NodeOutputId) -> Result<NodeOutputId> {
         let output_kind = self.graph().output_kind(output_id);
@@ -72,7 +72,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_unsigned_int(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
         let output_type = self.get_output_type(output_id)?;
@@ -96,7 +96,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_signed_int(&self, output_id: NodeOutputId) -> Result<Option<i64>> {
         let output_type = self.get_output_type(output_id)?;
@@ -114,7 +114,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_int(&self, output_id: NodeOutputId) -> Result<Option<(u64, i64)>> {
         let unsigned_val = self.get_as_unsigned_int(output_id)?;
@@ -130,7 +130,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn get_as_float_bits(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
         let output_type = self.get_output_type(output_id)?;
@@ -147,7 +147,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn truncate_if_needed(
         &mut self,
@@ -157,7 +157,7 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(output_id)? {
-            return Ok(self.build_int_const(val, output_type));
+            return self.build_int_const(val, output_type);
         }
 
         if curr_output_type.byte_size() <= output_type.byte_size() {
@@ -171,8 +171,8 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
-    /// edge, or [`ErrorKind::ExpectedInteger`] when `output_type` is not an
+    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// edge, or `ExpectedInteger` when `output_type` is not an
     /// integer type and the input is not already a constant we can fold.
     pub fn extend_if_needed(
         &mut self,
@@ -183,11 +183,13 @@ impl FunctionBuilder {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
-            return Ok(match op {
-                // signed_val is i64; reinterpret bits as u128 (sign-extended to i128 then cast)
+            // signed_val is i64; `i64 as u128` sign-extends to fill the
+            // high 64 bits, and build_int_const masks to output_type's
+            // width.
+            return match op {
                 ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
                 ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
-            });
+            };
         }
 
         if !output_type.is_integer() {
@@ -203,8 +205,14 @@ impl FunctionBuilder {
             return self.convert_to_int_if_needed(output_id, output_type);
         }
 
-        if curr_output_type.byte_size() >= output_type.byte_size() {
+        if curr_output_type.byte_size() == output_type.byte_size() {
             return Ok(output_id);
+        }
+        if curr_output_type.byte_size() > output_type.byte_size() {
+            // Caller asked to extend a value that is already wider than the
+            // target.  Truncate so the returned id always carries
+            // `output_type`.
+            return self.truncate_if_needed(output_id, output_type);
         }
         Ok(self.build_single_output_pure(NodeKind::Extend(op), [output_id], output_type))
     }
@@ -213,7 +221,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `output_id` is not a value
+    /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
     pub fn convert_to_int_if_needed(
         &mut self,
@@ -234,7 +242,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge.
+    /// Returns `ExpectedValue` when `input` is not a value edge.
     pub fn cast_to_float_if_needed(
         &mut self,
         input: NodeOutputId,
@@ -256,7 +264,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::ExpectedValue`] when `input` is not a value edge.
+    /// Returns `ExpectedValue` when `input` is not a value edge.
     pub fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
         let ty = self.get_output_type(input)?;
         if ty.is_float() {

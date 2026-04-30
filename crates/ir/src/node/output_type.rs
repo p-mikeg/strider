@@ -141,11 +141,12 @@ impl NodeOutputType {
     }
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.
-    /// `Bool` returns `1`; integer widths return their natural bit widths.
-    /// `U256` returns `u128::MAX` as a best-effort sentinel — this method is
-    /// not meaningful for U256 and the IntConst path panics for U256 today;
-    /// callers that genuinely need U256 must be revisited when U256 support
-    /// is added.  Float types return `0` (defensive — no caller should ask).
+    /// `Bool` returns `1`; integer widths up to 128 bits return their
+    /// natural bit widths.  `U256` returns `u128::MAX` because the mask
+    /// can't represent 256 bits in a `u128`; callers that need to mask a
+    /// 256-bit value must use [`Self::get_unsigned_int`], which rejects
+    /// `U256` outright.  Float types return `0` (defensive - no caller
+    /// should ask).
     #[must_use]
     pub fn bit_mask_u128(self) -> u128 {
         if self.is_bool() {
@@ -164,9 +165,9 @@ impl NodeOutputType {
     /// Masks `val` to this type's bit width and returns the result, or `None`
     /// if this type is not an integer (`Bool`, `F32`, `F64`, `F80`).
     ///
-    /// For widths ≥ 128 returns `val` unchanged.  This matches the hardware
-    /// behaviour of narrower registers — bits beyond the type's width are
-    /// cleared.
+    /// For widths >= 128 returns `val` unchanged (the carrier is `u128`, so
+    /// `U128` returns its full mask and `U256` returns `val` as-is - callers
+    /// that need to distinguish the two must check the type explicitly).
     #[must_use]
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {

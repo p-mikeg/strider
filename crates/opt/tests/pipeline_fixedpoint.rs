@@ -23,8 +23,8 @@ use common::{make_fn, make_fn_with_var, reg_vn};
 fn default_pipeline_idempotent() -> opt::Result<()> {
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-        let c1 = b.build_int_const(1u64, NodeOutputType::U64);
-        let c2 = b.build_int_const(2u64, NodeOutputType::U64);
+        let c1 = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
+        let c2 = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
         let a = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, NodeOutputType::U64)?;
         b.build_int_binary_operation(a, c2, IntBinaryOp::Add, NodeOutputType::U64)
     })?;
@@ -45,7 +45,7 @@ fn long_reassoc_chain_converges() -> opt::Result<()> {
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let mut acc = x;
         for _ in 0..50 {
-            let one = b.build_int_const(1u64, NodeOutputType::U64);
+            let one = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
             acc = b.build_int_binary_operation(acc, one, IntBinaryOp::Add, NodeOutputType::U64)?;
         }
         Ok(acc)
@@ -70,7 +70,7 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     }
 
     let mut fg = make_fn(|b| {
-        Ok(b.build_int_const(0u64, NodeOutputType::U64))
+        Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap())
     })?;
 
     let mut pipeline = OptimizerPipeline::new();

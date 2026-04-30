@@ -25,7 +25,7 @@ pub struct NodeOutput {
 impl NodeOutput {
     /// Creates a new `NodeOutput` with no uses yet.
     #[must_use]
-    pub fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self {
+    pub(crate) fn new(kind: NodeOutputKind, source_id: NodeId, output_index: u32) -> Self {
         NodeOutput {
             kind,
             source_id,
@@ -56,7 +56,7 @@ pub struct NodeInput {
 impl NodeInput {
     /// Creates a new `NodeInput` not yet linked into any use list.
     #[must_use]
-    pub fn new(output_id: NodeOutputId, node_id: NodeId, input_index: u32) -> Self {
+    pub(crate) fn new(output_id: NodeOutputId, node_id: NodeId, input_index: u32) -> Self {
         NodeInput {
             output_id,
             prev: None.into(),
@@ -81,7 +81,7 @@ pub struct Node {
 impl Node {
     /// Creates a new node with the given kind and empty input/output lists.
     #[must_use]
-    pub fn new(kind: NodeKind) -> Self {
+    pub(crate) fn new(kind: NodeKind) -> Self {
         Self {
             kind,
             inputs: NodeInputIdList::new(),

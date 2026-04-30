@@ -467,7 +467,7 @@ fn graph_ret_via_controlstate_after_call() -> ir::BuiltFunctionGraph {
 
     let target = t
         .fb_mut()
-        .build_int_const(0xCAFEu64, ir::node::NodeOutputType::U64);
+        .build_int_const(0xCAFEu64, ir::node::NodeOutputType::U64).unwrap();
     t.fb_mut().build_call(target).expect("call");
 
     let tail = t.fb_mut().create_region().expect("tail");

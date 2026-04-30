@@ -29,8 +29,8 @@
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
-//! let base = fb.build_int_const(0x1000u64, NodeOutputType::U64);
-//! let offset = fb.build_int_const(8u64, NodeOutputType::U64);
+//! let base = fb.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
+//! let offset = fb.build_int_const(8u64, NodeOutputType::U64).unwrap();
 //! let addr = fb
 //!     .build_int_binary_operation(base, offset, IntBinaryOp::Add, NodeOutputType::U64)
 //!     .unwrap();

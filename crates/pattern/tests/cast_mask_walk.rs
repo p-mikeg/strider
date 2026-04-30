@@ -62,7 +62,7 @@ where
 
     let x = fb.read_variable(&vn).unwrap();
     let wrapped = wrap(&mut fb, x);
-    let c = fb.build_int_const(7u64, ty);
+    let c = fb.build_int_const(7u64, ty).unwrap();
     let total = fb
         .build_int_binary_operation(wrapped, c, ir::IntBinaryOp::Add, ty)
         .unwrap();

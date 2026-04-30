@@ -34,7 +34,7 @@ fn negative_int_const_matches_at_u64_width() {
 fn negative_int_const_matches_at_u128_width() {
     let mut t = Tb::empty();
     let neg50_at_u128: u128 = (-50i128) as u128;
-    let neg50 = t.fb_mut().build_int_const(neg50_at_u128, NodeOutputType::U128);
+    let neg50 = t.fb_mut().build_int_const(neg50_at_u128, NodeOutputType::U128).unwrap();
     let g = t.ret_val(neg50);
     let hits = Matcher::new(&g).find_all(&int_const(-50));
     assert!(!hits.is_empty(), "expected int_const(-50) to match at U128 width");

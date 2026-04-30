@@ -364,7 +364,7 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        let anchor = b.build_int_const(target, NodeOutputType::U64);
+        let anchor = b.build_int_const(target, NodeOutputType::U64).unwrap();
         b.build_return(Some(anchor), &[]).unwrap();
         let built = b.build().unwrap();
         let entry = built.entry;
@@ -392,8 +392,8 @@ mod tests {
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
-        let lhs = b.build_int_const(1u64, NodeOutputType::U64);
-        let rhs = b.build_int_const(2u64, NodeOutputType::U64);
+        let lhs = b.build_int_const(1u64, NodeOutputType::U64).unwrap();
+        let rhs = b.build_int_const(2u64, NodeOutputType::U64).unwrap();
         let anchor = b
             .build_int_binary_operation(lhs, rhs, ir::IntBinaryOp::Add, NodeOutputType::U64)
             .unwrap();

@@ -399,8 +399,8 @@ impl OptimizerOnBuilt for KnownBits {
                 for (consumer, _) in function.graph.output_uses(out) {
                     consumers.push(consumer);
                 }
-                let new_out = function.make_int_const(kb.ones, ty)?;
-                if function.replace_all_uses(out, new_out)? {
+                let new_out = function.graph.make_int_const(kb.ones, ty)?;
+                if function.graph.replace_all_uses(out, new_out)? {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
                         work.push(consumer);

@@ -44,49 +44,24 @@ impl NodeOutputKind {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is
-    /// `Control`, `Memory`, or `ControlPhi`.
-    #[track_caller]
+    /// Returns an error when `self` is `Control`, `Memory`, or `ControlPhi`.
     pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
         self.as_value()
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
 
-    /// Returns the value type, asserting it is integer. Errors as
-    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
-    /// [`crate::ErrorKind::ExpectedIntegerType`] for bool/float value kinds.
+    /// Returns the value type, asserting it is integer.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is not a
-    /// value edge, or [`crate::ErrorKind::ExpectedIntegerType`] when the value
+    /// Returns an error when `self` is not a value edge, or when the value
     /// is `Bool`, `F32`, or `F64`.
-    #[track_caller]
     pub fn as_integer_or_err(self) -> crate::Result<NodeOutputType> {
         let ty = self.as_value_or_err()?;
         if ty.is_integer() {
             Ok(ty)
         } else {
             Err(anyhow!("type {ty:?} is not an integer type"))
-        }
-    }
-
-    /// Returns the value type, asserting it is float. Errors as
-    /// [`crate::ErrorKind::ExpectedValueOutput`] for non-value kinds and as
-    /// [`crate::ErrorKind::ExpectedFloatType`] for bool/int value kinds.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::ErrorKind::ExpectedValueOutput`] when `self` is not a
-    /// value edge, or [`crate::ErrorKind::ExpectedFloatType`] when the value
-    /// is `Bool` or any integer type.
-    #[track_caller]
-    pub fn as_float_or_err(self) -> crate::Result<NodeOutputType> {
-        let ty = self.as_value_or_err()?;
-        if ty.is_float() {
-            Ok(ty)
-        } else {
-            Err(anyhow!("type {ty:?} is not a float type"))
         }
     }
 
@@ -100,7 +75,7 @@ impl NodeOutputKind {
     /// Returns `true` if this is a control-phi dispatch edge.
     #[inline]
     #[must_use]
-    pub fn is_control_phi(self) -> bool {
+    pub(crate) fn is_control_phi(self) -> bool {
         self == Self::ControlPhi
     }
 

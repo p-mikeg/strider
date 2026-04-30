@@ -1,10 +1,6 @@
-//! Ergonomic node-construction helpers — defined on
-//! [`crate::graph::Graph`] so opt passes that take `&mut Graph` (F2
-//! trait refactor) can use them directly. [`BuiltFunctionGraph`]
-//! retains thin wrappers for back-compat.
+//! Ergonomic node-construction helpers defined on [`crate::graph::Graph`].
 
 use crate::Result;
-use crate::function::BuiltFunctionGraph;
 use crate::graph::Graph;
 use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
@@ -14,7 +10,7 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ErrorKind::WrongOutputCount`] if the freshly-created
+    /// Returns `WrongOutputCount` if the freshly-created
     /// node does not have exactly one output (this would indicate a graph or
     /// signature-table bug, not user error).
     pub fn make_value_node(
@@ -55,65 +51,3 @@ impl Graph {
     }
 }
 
-impl BuiltFunctionGraph {
-    /// Back-compat wrapper around [`Graph::make_value_node`].
-    ///
-    /// ```rust
-    /// use ir::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-    /// use ir::FunctionBuilder;
-    ///
-    /// let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
-    /// let region = fb.create_region().unwrap();
-    /// fb.set_entry_region(region).unwrap();
-    /// fb.set_region(region);
-    /// fb.build_return(None, &[]).unwrap();
-    /// let mut built = fb.build().unwrap();
-    /// let g = &mut built.graph;
-    ///
-    /// let kind = NodeKind::IntConst(42);
-    /// let inputs: [NodeOutputId; 0] = [];
-    /// let ty = NodeOutputType::U64;
-    /// let n = g.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
-    /// let [out] = g.node_outputs_exact::<1>(n)?;
-    /// # let _ = out;
-    /// # Ok::<(), anyhow::Error>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Graph::make_value_node`].
-    pub fn make_value_node(
-        &mut self,
-        kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        self.graph.make_value_node(kind, inputs, ty)
-    }
-
-    /// Back-compat wrapper around [`Graph::make_int_bits_to_float_node`].
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Graph::make_int_bits_to_float_node`].
-    pub fn make_int_bits_to_float_node(
-        &mut self,
-        input: NodeOutputId,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        self.graph.make_int_bits_to_float_node(input, ty)
-    }
-
-    /// Back-compat wrapper around [`Graph::make_float_to_float_node`].
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Graph::make_float_to_float_node`].
-    pub fn make_float_to_float_node(
-        &mut self,
-        input: NodeOutputId,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        self.graph.make_float_to_float_node(input, ty)
-    }
-}

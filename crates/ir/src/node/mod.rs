@@ -12,7 +12,7 @@ mod output_type;
 #[cfg(test)]
 mod tests;
 
-pub use data::{Node, NodeInput, NodeOutput};
+pub(crate) use data::{Node, NodeInput, NodeOutput};
 pub use ids::{NodeId, NodeInputId, NodeOutputId};
 pub use kind::{FunctionArgSource, NodeKind};
 pub use output_kind::NodeOutputKind;

@@ -194,7 +194,7 @@ fn detect_register_args(
             [NodeOutputKind::OutputType(out_type)],
         );
         let [new_out] = fg.graph.node_outputs_exact::<1>(new_node)?;
-        fg.replace_all_uses(old_out, new_out)?;
+        fg.graph.replace_all_uses(old_out, new_out)?;
         result |= OptimizationResult::Changed;
     }
     Ok(result)
@@ -329,7 +329,7 @@ fn detect_stack_args(
         for (load, load_ty) in load_types {
             let [old_out] = fg.graph.node_outputs_exact::<1>(load)?;
             if load_ty == max_type {
-                fg.replace_all_uses(old_out, new_out)?;
+                fg.graph.replace_all_uses(old_out, new_out)?;
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
                 let trunc = fg.graph.create_node(
@@ -338,7 +338,7 @@ fn detect_stack_args(
                     [NodeOutputKind::OutputType(load_ty)],
                 );
                 let [trunc_out] = fg.graph.node_outputs_exact::<1>(trunc)?;
-                fg.replace_all_uses(old_out, trunc_out)?;
+                fg.graph.replace_all_uses(old_out, trunc_out)?;
             }
             fg.graph.detach_node_inputs(load);
         }

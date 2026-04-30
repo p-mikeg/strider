@@ -41,7 +41,7 @@ fn try_eliminate_dead_branch(
     let ctrl_in = inputs[0];
     let cond_out = inputs[1];
 
-    let Some(cond_val) = fg.bool_const_val(cond_out) else {
+    let Some(cond_val) = fg.graph.bool_const_val(cond_out) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -63,7 +63,7 @@ fn try_eliminate_dead_branch(
     let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
 
     // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
-    fg.replace_all_uses(live_ctrl, ctrl_in)?;
+    fg.graph.replace_all_uses(live_ctrl, ctrl_in)?;
 
     // ── Step 3: remove dead ctrl inputs from successor ControlState(s) ───────
     for (cs_node, dead_idx) in dead_uses {

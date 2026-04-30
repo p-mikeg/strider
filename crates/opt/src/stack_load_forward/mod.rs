@@ -115,7 +115,7 @@ fn try_forward_load(
     };
     let forwarded = realize(fg, shape, load_ty, endianness)?;
 
-    let changed = fg.replace_all_uses(load_out, forwarded)?;
+    let changed = fg.graph.replace_all_uses(load_out, forwarded)?;
     if changed {
         fg.graph.detach_node_inputs(load);
     }
@@ -270,7 +270,7 @@ fn realize(
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    let shift_const = fg.make_int_const(shift_bits, data_ty)?;
+                    let shift_const = fg.graph.make_int_const(shift_bits, data_ty)?;
                     let shr = fg.graph.create_node(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],

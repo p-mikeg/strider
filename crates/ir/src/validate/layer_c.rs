@@ -8,6 +8,14 @@ use super::ValidationError;
 /// Layer C (shape check): enforce that the graph has exactly one
 /// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
 ///
+/// This intentionally scans every node in the arena (including detached
+/// zombies left by unsound rewrites) so that an extra Entry/InitialMemory
+/// is reported even when the second one isn't reachable from `entry`.
+/// `MissingInitialMemoryNode` likewise fires if no InitialMemory exists at
+/// all - the InitialMemory node is allocated by `FunctionBuilder::build_entry`
+/// without a wire to Entry so a reachability-scoped check would miss it
+/// for graphs that haven't yet linked memory to a consumer.
+///
 /// Emits [`ValidationError::MissingEntryNode`] /
 /// [`ValidationError::MissingInitialMemoryNode`] when a kind is absent, and
 /// [`ValidationError::MultipleEntryNodes`] /

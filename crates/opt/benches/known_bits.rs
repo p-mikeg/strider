@@ -12,14 +12,14 @@ fn build_or_and_chain(n: usize) -> ir::BuiltFunctionGraph {
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
-    let mut acc = b.build_int_const(0u64, NodeOutputType::U64);
+    let mut acc = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
     for i in 0..n as u64 {
-        let bit = b.build_int_const(1u64 << (i % 64), NodeOutputType::U64);
+        let bit = b.build_int_const(1u64 << (i % 64), NodeOutputType::U64).unwrap();
         acc = b
             .build_int_binary_operation(acc, bit, IntBinaryOp::Or, NodeOutputType::U64)
             .unwrap();
     }
-    let mask = b.build_int_const(0xFFFFu64, NodeOutputType::U64);
+    let mask = b.build_int_const(0xFFFFu64, NodeOutputType::U64).unwrap();
     let masked = b
         .build_int_binary_operation(acc, mask, IntBinaryOp::And, NodeOutputType::U64)
         .unwrap();

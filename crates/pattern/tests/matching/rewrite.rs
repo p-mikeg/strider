@@ -314,7 +314,7 @@ fn rewrite_rule_on_call_root_returns_err() {
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);
-    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::U64);
+    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
     fb.build_call(tgt).unwrap();
     fb.build_return(None, &[]).unwrap();
     let mut g = fb.build().unwrap();

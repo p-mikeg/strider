@@ -62,15 +62,15 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let default_code_space = self.sleigh.default_code_space();
         let space = vn.addr.space;
         match space {
-            rsleigh::VnSpace::CONST => Ok(self
+            rsleigh::VnSpace::CONST => self
                 .builder
-                .build_int_const(vn.addr.off, vn.size.try_into()?)),
+                .build_int_const(vn.addr.off, vn.size.try_into()?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             space if space == default_code_space => {
                 let space_info = self.sleigh.space_info(space);
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
+                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
                 Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
@@ -102,7 +102,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 let space_info = self.sleigh.space_info(space);
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?);
+                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
                 Ok(self.builder.build_store(addr, val, space)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
@@ -205,7 +205,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         } else {
             let shift_const = self
                 .builder
-                .build_int_const(shift_value, container_reg.size.try_into()?);
+                .build_int_const(shift_value, container_reg.size.try_into()?)?;
             self.builder.build_int_binary_operation(
                 curr_reg_val,
                 shift_const,
@@ -263,7 +263,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let shifted_value = if shift_bits == 0 {
             val_extended
         } else {
-            let shift_const = self.builder.build_int_const(shift_bits, container_ty);
+            let shift_const = self.builder.build_int_const(shift_bits, container_ty)?;
             self.builder.build_int_binary_operation(
                 val_extended,
                 shift_const,
@@ -276,7 +276,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // so shifting it by the same `shift_bits` lands it at reg's actual
         // bit slot inside the container.
         let reg_mask = vn_mask(reg)? << shift_bits;
-        let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty);
+        let reg_mask_val = self.builder.build_int_const(reg_mask, container_ty)?;
         let reg_val = self.builder.build_int_binary_operation(
             reg_mask_val,
             shifted_value,
@@ -288,7 +288,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // to reg — i.e. the container's full mask minus the positioned reg
         // mask.
         let container_mask = vn_mask(&container_reg)? & !reg_mask;
-        let container_mask_val = self.builder.build_int_const(container_mask, container_ty);
+        let container_mask_val = self.builder.build_int_const(container_mask, container_ty)?;
         let container_val = self.builder.build_int_binary_operation(
             container_mask_val,
             container_reg_val,

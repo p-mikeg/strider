@@ -30,9 +30,9 @@ pub enum ExpectedOutputKind {
     ControlPhi,
     /// A `Bool` value.
     Bool,
-    /// Any integer-typed value (U8, U16, U32, U64, U128, U256).
+    /// Any integer-typed value (U8, U16, U32, U64, U80, U128, U256).
     AnyInt,
-    /// Any float-typed value (F32, F64).
+    /// Any float-typed value (F32, F64, F80).
     AnyFloat,
     /// Any value-typed output: `Bool`, `AnyInt`, or `AnyFloat`.  Used by the
     /// type-polymorphic cast ops (`CastToInt`, `CastToBool`, `CastToFloat`).
@@ -656,7 +656,12 @@ mod tests {
     }
 
     /// Calling `expected_signature` on every NodeKind variant must succeed
-    /// and return a self-consistent Signature. Catches missing match arms.
+    /// and return a self-consistent Signature.
+    ///
+    /// The list below is hand-maintained; if you add a new `NodeKind`
+    /// variant, append a constructor here so this test continues to cover
+    /// every kind. The `expected_signature` `match` is exhaustive at compile
+    /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
         use crate::node::FunctionArgSource;

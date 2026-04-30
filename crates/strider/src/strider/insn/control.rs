@@ -84,7 +84,7 @@ pub(crate) fn build_switch_if_ladder(
             // Synthesise a dispatcher region for the next comparison.
             builder.create_region()?
         };
-        let target_const = builder.build_int_const(k_i, idx_ty);
+        let target_const = builder.build_int_const(k_i, idx_ty)?;
         let cond = builder.build_int_cmp_operation(
             idx,
             target_const,
@@ -232,7 +232,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let space_info = self.cfg.sleigh.space_info(target_vn.addr.space);
         let call_address = self
             .builder
-            .build_int_const(target_vn.addr.off, space_info.addr_size().try_into()?);
+            .build_int_const(target_vn.addr.off, space_info.addr_size().try_into()?)?;
         self.builder.build_call(call_address)?;
         Ok(())
     }

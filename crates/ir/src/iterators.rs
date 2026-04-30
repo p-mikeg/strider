@@ -54,14 +54,6 @@ impl Iterator for OutputIter<'_> {
     }
 }
 
-impl DoubleEndedIterator for OutputIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.0.next_back().copied()
-    }
-}
-
-impl ExactSizeIterator for OutputIter<'_> {}
-
 // -------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -100,7 +92,6 @@ impl Index<usize> for Inputs<'_> {
     type Output = NodeOutputId;
 
     fn index(&self, index: usize) -> &Self::Output {
-        // Prefer `.get(index)` with proper error handling in production code.
         &self.graph.inputs[self.use_list[index]].output_id
     }
 }
@@ -122,14 +113,6 @@ impl Iterator for InputIter<'_> {
         self.iter.size_hint()
     }
 }
-
-impl DoubleEndedIterator for InputIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        Some(self.graph.inputs[*self.iter.next_back()?].output_id)
-    }
-}
-
-impl ExactSizeIterator for InputIter<'_> {}
 
 #[derive(Clone)]
 pub struct OutputUsageIter<'a> {

@@ -118,7 +118,8 @@ pub enum NodeKind {
     IntBinaryOp(crate::ops::IntBinaryOp),
     /// Integer comparison operation; produces a `Bool` output.
     IntCmpOp(crate::ops::IntCmpOp),
-    /// Reinterpret an integer value as `Bool` (`0` → `false`, non-zero → `true`).
+    /// Cast any value (int / bool / float) to an integer of the declared
+    /// output type.
     CastToInt,
     /// Narrow an integer value by dropping high bits.
     Truncate,
@@ -251,18 +252,4 @@ impl NodeKind {
         )
     }
 
-    /// Returns `true` for any phi node kind: [`NodeKind::ControlPhi`],
-    /// [`NodeKind::MemPhi`], [`NodeKind::StackStorePhi`], or
-    /// [`NodeKind::ValuePhi`].
-    #[inline]
-    #[must_use]
-    pub fn is_phi(&self) -> bool {
-        matches!(
-            self,
-            Self::ControlPhi(_)
-                | Self::MemPhi
-                | Self::StackStorePhi { .. }
-                | Self::ValuePhi
-        )
-    }
 }
