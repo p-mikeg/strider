@@ -376,62 +376,26 @@ macro_rules! per_arch_test {
     };
 }
 
-// `__one_arch_test!` has one arm per named arch plus one "not found" base.
-// The trick: the `ignore` block is an opaque `{ ... }` group.  We pass it
-// to a per-arch scanner (`__scan_ignore_X86!` etc.) which digs into the
-// braces and either emits `#[ignore = $r] #[test] fn $fn() { ... }` or a
-// plain `#[test] fn $fn() { ... }`.
+// `__one_arch_test!` is a thin dispatcher.  The `ignore` block is an
+// opaque `{ ... }` group; we forward it to a per-arch scanner
+// (`__scan_ignore_x86!` etc.) which digs into the braces and either emits
+// `#[ignore = $r] #[test] fn $fn() { ... }` or a plain `#[test] fn $fn() { ... }`.
 //
-// This avoids expanding `$(arch: reason),*` as variable-length token trees
-// in recursive macro calls (which is where the `:` collision occurs).
+// `paste!` builds the inner-macro name by lower-casing the arch token
+// (e.g. `Aarch64Be` → `__scan_ignore_aarch64be`).  This collapses what
+// used to be 15 hand-written dispatcher arms into a single arm.
+//
+// The `$fn:ident` token sequence after the function name is a literal
+// type-tag that the per-arch scanners require in their patterns; see
+// each `__scan_ignore_<arch>!` definition below.
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __one_arch_test {
-    (X86, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_x86!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (X64, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_x64!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Aarch64, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_aarch64!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Arm, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_arm!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (ArmBe, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_arm_be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Mips32le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_mips32le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Mips32be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_mips32be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Aarch64Be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_aarch64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (ArmThumb, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_arm_thumb!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Mips64le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_mips64le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Mips64be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_mips64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Ppc32be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_ppc32be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Ppc32le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_ppc32le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Ppc64be, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_ppc64be!($fn:ident, $case, $fn_name, $assert, $ignore_block);
-    };
-    (Ppc64le, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
-        $crate::__scan_ignore_ppc64le!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+    ($arch:ident, $fn:ident, $case:literal, $fn_name:literal, $assert:ident $ignore_block:tt) => {
+        paste::paste! {
+            $crate::[<__scan_ignore_ $arch:lower>]!($fn:ident, $case, $fn_name, $assert, $ignore_block);
+        }
     };
 }
 
@@ -621,7 +585,7 @@ macro_rules! __scan_ignore_aarch64be {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __scan_ignore_arm_thumb {
+macro_rules! __scan_ignore_armthumb {
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
      { ArmThumb: $reason:literal $(, $($_rest:tt)*)? }) => {
         #[test] #[ignore = $reason]
@@ -632,7 +596,7 @@ macro_rules! __scan_ignore_arm_thumb {
     };
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
      { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_arm_thumb!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+        $crate::__scan_ignore_armthumb!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
     };
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
         #[test]
@@ -645,7 +609,7 @@ macro_rules! __scan_ignore_arm_thumb {
 
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __scan_ignore_arm_be {
+macro_rules! __scan_ignore_armbe {
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
      { ArmBe: $reason:literal $(, $($_rest:tt)*)? }) => {
         #[test] #[ignore = $reason]
@@ -656,7 +620,7 @@ macro_rules! __scan_ignore_arm_be {
     };
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
      { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
-        $crate::__scan_ignore_arm_be!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+        $crate::__scan_ignore_armbe!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
     };
     ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
         #[test]
