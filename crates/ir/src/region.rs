@@ -297,11 +297,16 @@ impl FunctionBuilder {
                 return Ok(out);
             }
         }
-        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
-        let kind = self.graph().output_kind(first);
-        Err(anyhow!(
-            "output {first:?} is not a control edge (got {kind:?})"
-        ))
+        if let Some(&first) = outputs.first() {
+            let kind = self.graph().output_kind(first);
+            Err(anyhow!(
+                "output {first:?} is not a control edge (got {kind:?})"
+            ))
+        } else {
+            Err(anyhow!(
+                "region {region:?} ControlState {cs_id:?} has no outputs"
+            ))
+        }
     }
 
     /// Returns the entry-boundary memory output (the `Memory`
@@ -314,16 +319,21 @@ impl FunctionBuilder {
     pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
         let mp_id = self.regions[region].memory_node;
         let outputs: Vec<NodeOutputId> = self.graph().node_outputs(mp_id).into_iter().collect();
-        let first = *outputs.first().unwrap_or(&NodeOutputId::from_u32(0));
         for &out in &outputs {
             if self.graph().output_kind(out).is_memory() {
                 return Ok(out);
             }
         }
-        let kind = self.graph().output_kind(first);
-        Err(anyhow!(
-            "output {first:?} is not a memory edge (got {kind:?})"
-        ))
+        if let Some(&first) = outputs.first() {
+            let kind = self.graph().output_kind(first);
+            Err(anyhow!(
+                "output {first:?} is not a memory edge (got {kind:?})"
+            ))
+        } else {
+            Err(anyhow!(
+                "region {region:?} MemPhi {mp_id:?} has no outputs"
+            ))
+        }
     }
 
     /// Returns an iterator over `(VarId, ControlPhi NodeOutputId)`

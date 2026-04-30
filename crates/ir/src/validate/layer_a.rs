@@ -21,7 +21,10 @@ pub(super) fn check_layer_a(graph: &Graph, node: NodeId, errs: &mut Vec<Validati
         .collect();
 
     // Arity: fixed lists demand exact length; variadic lists demand at
-    // least the head length.
+    // least the head length.  Variadic CTRL lists with `head_len = 0`
+    // (e.g. `ControlState`) trivially pass this check at zero
+    // predecessors; the per-kind "must be reachable with >= 1
+    // predecessor" rule for those cases is enforced in Layer C.
     let input_head_len = sig.inputs.head_len();
     let output_head_len = sig.outputs.head_len();
 

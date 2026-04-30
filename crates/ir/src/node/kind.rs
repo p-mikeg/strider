@@ -118,7 +118,8 @@ pub enum NodeKind {
     IntBinaryOp(crate::ops::IntBinaryOp),
     /// Integer comparison operation; produces a `Bool` output.
     IntCmpOp(crate::ops::IntCmpOp),
-    /// Reinterpret an integer value as `Bool` (`0` → `false`, non-zero → `true`).
+    /// Cast any value (int / bool / float) to an integer of the declared
+    /// output type.
     CastToInt,
     /// Narrow an integer value by dropping high bits.
     Truncate,

@@ -33,8 +33,8 @@
 //! - [`BuiltFunctionGraph`] — a finished, immutable function graph ready for
 //!   optimization and querying
 //! - [`RegionId`] — identifies a basic block within the function
-//! - [`node::NodeOutputType`] — `Bool`, integers `U8`/`U16`/`U32`/`U64`/`U128`/`U256`,
-//!   floats `F32`/`F64`
+//! - [`node::NodeOutputType`] — `Bool`, integers `U8`/`U16`/`U32`/`U64`/`U80`/`U128`/`U256`,
+//!   floats `F32`/`F64`/`F80`
 //! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`BoolBinaryOp`],
 //!   [`BoolUnaryOp`], [`ExtendOp`] — operation enumerations used in node kinds
 
@@ -54,7 +54,6 @@ pub mod walk;
 
 pub use crate::error::Result;
 pub use builder::{FunctionBuilder, VarId};
-pub use node_signature::ExpectedOutputKind;
 pub use ops::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,

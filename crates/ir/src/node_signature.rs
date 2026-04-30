@@ -30,9 +30,9 @@ pub enum ExpectedOutputKind {
     ControlPhi,
     /// A `Bool` value.
     Bool,
-    /// Any integer-typed value (U8, U16, U32, U64, U128, U256).
+    /// Any integer-typed value (U8, U16, U32, U64, U80, U128, U256).
     AnyInt,
-    /// Any float-typed value (F32, F64).
+    /// Any float-typed value (F32, F64, F80).
     AnyFloat,
     /// Any value-typed output: `Bool`, `AnyInt`, or `AnyFloat`.  Used by the
     /// type-polymorphic cast ops (`CastToInt`, `CastToBool`, `CastToFloat`).
