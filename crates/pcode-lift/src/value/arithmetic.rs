@@ -13,7 +13,7 @@
 
 use ir::{BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::error::Result;
+use crate::Result;
 use crate::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {

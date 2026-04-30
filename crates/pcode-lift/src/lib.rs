@@ -24,11 +24,12 @@
 //! * `cfg`, which uses it (planned) to build a stand-alone single-block
 //!   mini-IR for resolving the targets of indirect branches.
 
-pub mod error;
 pub mod value;
 pub mod vn_io;
 
-pub use error::Result;
+/// Crate-level `Result` alias.  Every fallible function in `pcode_lift`
+/// returns this type.
+pub type Result<T> = anyhow::Result<T>;
 
 /// Lifts a single value-producing pcode instruction into IR nodes.
 ///

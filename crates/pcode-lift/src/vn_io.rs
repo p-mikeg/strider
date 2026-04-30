@@ -13,7 +13,7 @@ use ir::{ExtendOp, IntBinaryOp};
 
 use anyhow::{anyhow, bail};
 
-use crate::error::Result;
+use crate::Result;
 use crate::ValueLifter;
 
 /// Returns a bitmask that covers all bits for a varnode's width in bytes.

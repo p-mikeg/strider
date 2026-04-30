@@ -5,7 +5,7 @@ use super::types::{Region, RegionEdgeKind};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
-use crate::error::Result;
+use crate::Result;
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// half-open function range `[start_addr, start_addr + fn_max_size)`.

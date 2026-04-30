@@ -40,8 +40,9 @@
 
 use std::{fmt::Debug, io::Write, path::Path};
 
-pub mod error;
-pub use error::Result;
+/// Crate-level `Result` alias.  Every fallible function in `dot` returns
+/// this type.
+pub type Result<T> = anyhow::Result<T>;
 
 const HTML_SVG_TEMPLATE: &str = include_str!("../assets/graph_template_svg.html");
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");

@@ -20,7 +20,7 @@ use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionEdgeKind, 
 use crate::cfg::Cfg;
 use anyhow::{anyhow, bail};
 
-use crate::error::Result;
+use crate::Result;
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
 ///
@@ -237,7 +237,7 @@ pub mod test_api {
 
     use super::Builder;
     use crate::cfg::types::{RegionEdgeKind, RegionGraph};
-    use crate::error::Result;
+    use crate::Result;
     use petgraph::graph::NodeIndex;
     use std::collections::BTreeMap;
 

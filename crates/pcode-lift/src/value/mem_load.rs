@@ -4,7 +4,7 @@
 //! value lifter doesn't model.
 
 use crate::ValueLifter;
-use crate::error::Result;
+use crate::Result;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {

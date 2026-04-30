@@ -16,8 +16,10 @@
 
 pub mod arch;
 pub mod calling_convention;
-pub mod error;
 
 pub use arch::{Endianness, SleighArch};
 pub use calling_convention::{BuiltCallingConvention, CallingConvention};
-pub use error::Result;
+
+/// Crate-level `Result` alias.  Every fallible function in `target` returns
+/// this type.
+pub type Result<T> = anyhow::Result<T>;

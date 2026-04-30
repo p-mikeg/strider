@@ -6,7 +6,7 @@ use super::types::RegionEdgeKind;
 use super::Cfg;
 use anyhow::anyhow;
 
-use crate::error::Result;
+use crate::Result;
 
 impl<R: rsleigh::MemReader> Cfg<R> {
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.
@@ -21,7 +21,7 @@ pub mod test_api {
     //! Test-only forwarder for varnode-name rendering.
 
     use super::Cfg;
-    use crate::error::Result;
+    use crate::Result;
 
     /// # Errors
     /// Propagates errors from the underlying renderer (invalid reg vn,

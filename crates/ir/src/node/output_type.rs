@@ -222,6 +222,29 @@ impl TryFrom<u32> for NodeOutputType {
     }
 }
 
+impl NodeOutputType {
+    /// Maps a varnode byte size to the corresponding **float** output type:
+    /// `4 → F32`, `8 → F64`, `10 → F80` (x87 extended precision).
+    ///
+    /// Mirrors `TryFrom<u32>` for the integer side; kept as a dedicated
+    /// helper because the float subset is open to fewer sizes and the
+    /// caller's error message references "float varnode size".
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for any byte size other than 4, 8, or 10.
+    pub fn float_for_byte_size(n: u32) -> crate::error::Result<Self> {
+        match n {
+            4 => Ok(Self::F32),
+            8 => Ok(Self::F64),
+            10 => Ok(Self::F80),
+            other => Err(anyhow::anyhow!(
+                "unsupported float varnode size {other} bytes (expected 4, 8, or 10)"
+            )),
+        }
+    }
+}
+
 impl std::fmt::Display for NodeOutputType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())

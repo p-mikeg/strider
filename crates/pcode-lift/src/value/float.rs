@@ -10,22 +10,14 @@
 use ir::node::NodeOutputType;
 use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
-use anyhow::anyhow;
-
-use crate::error::Result;
+use crate::Result;
 use crate::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].
-    /// Supports 4 (F32), 8 (F64), and 10 (F80, x87 extended precision).
-    /// Returns an error for any other size.
+    /// Delegates to [`NodeOutputType::float_for_byte_size`].
     pub(super) fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<NodeOutputType> {
-        match vn.size {
-            4 => Ok(NodeOutputType::F32),
-            8 => Ok(NodeOutputType::F64),
-            10 => Ok(NodeOutputType::F80),
-            n => Err(anyhow!("unsupported float varnode size {n} bytes (expected 4 or 8)")),
-        }
+        NodeOutputType::float_for_byte_size(vn.size)
     }
 
     /// Bitcasts a float result back to an integer of the same width and writes

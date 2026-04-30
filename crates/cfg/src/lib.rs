@@ -14,13 +14,15 @@
 //! - [`IfRegionState`] — tracks the resolved/unresolved state of an if-case
 
 mod cfg;
-pub mod error;
 pub use cfg::{
     Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region,
     RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator, ResolvedTargets,
     is_addr_tail_call,
 };
-pub use error::Result;
+
+/// Crate-level `Result` alias.  Every fallible function in `cfg` returns
+/// this type.
+pub type Result<T> = anyhow::Result<T>;
 
 #[doc(hidden)]
 pub mod test_api;

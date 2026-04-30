@@ -6,7 +6,7 @@ use crate::cfg::types::{
 };
 use anyhow::{anyhow, bail};
 
-use crate::error::Result;
+use crate::Result;
 
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
@@ -515,7 +515,7 @@ pub mod test_api {
     use super::RegionBuilder;
     use crate::cfg::types::{PcodeInsnAddr, RegionEdgeKind, RegionInstruction, RegionTerminator};
     use crate::cfg::Builder;
-    use crate::error::Result;
+    use crate::Result;
     use petgraph::graph::NodeIndex;
 
     pub use super::ProcessInsnRes;

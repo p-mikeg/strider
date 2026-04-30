@@ -46,7 +46,7 @@
 use opt::ReadOnlyMemory;
 
 use crate::cfg::types::RegionInstruction;
-use crate::error::Result;
+use crate::Result;
 
 /// Re-export of the canonical [`opt::ResolvedTargets`].  Kept under the
 /// `cfg::ResolvedTargets` path so the strider orchestrator can build
@@ -322,7 +322,7 @@ pub mod test_api {
 
     use super::resolve_indirect_target;
     use crate::cfg::types::RegionInstruction;
-    use crate::error::Result;
+    use crate::Result;
     use opt::ReadOnlyMemory;
 
     pub use super::ResolvedTargets;

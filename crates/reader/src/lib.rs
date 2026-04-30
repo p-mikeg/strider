@@ -15,8 +15,9 @@
 
 use std::collections::BTreeMap;
 
-pub mod error;
-pub use error::Result;
+/// Crate-level `Result` alias.  Every fallible function in `reader`
+/// returns this type.
+pub type Result<T> = anyhow::Result<T>;
 
 pub mod elf;
 pub use elf::{ElfFileMemReader, load_elf};
