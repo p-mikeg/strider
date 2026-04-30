@@ -178,7 +178,7 @@ mod tests {
     use ir::node::NodeOutputType;
 
     fn build_placeholder_graph() -> (ir::BuiltFunctionGraph, NodeId) {
-        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+        let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn apply_tail_call_rejects_wrong_arity_return() {
         // A Return with 2 inputs (no value) is not a placeholder; reject.
-        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+        let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");

@@ -38,7 +38,7 @@ fn default_pipeline_folds_int_chain() -> opt::Result<()> {
 #[test]
 fn default_pipeline_eliminates_dead_branch() -> opt::Result<()> {
     use ir::FunctionBuilder;
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
     let f = b.create_region()?;

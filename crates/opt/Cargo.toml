@@ -15,6 +15,7 @@ rustc-hash = { workspace = true }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
+ir = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
 name = "constant_fold"

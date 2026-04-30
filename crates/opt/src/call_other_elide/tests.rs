@@ -25,7 +25,7 @@ fn count_reachable_call_other_named(
 /// chains must thread through what used to be the CallOther's slot.
 #[test]
 fn elides_callother_with_known_nop_name() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -59,7 +59,7 @@ fn elides_callother_with_known_nop_name() -> crate::Result<()> {
 /// The pass returns `NoChange` and the node is still reachable.
 #[test]
 fn preserves_callother_with_unknown_name() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -92,7 +92,7 @@ fn preserves_callother_with_unknown_name() -> crate::Result<()> {
 /// must all be elided in one sweep of the pass.
 #[test]
 fn elides_multiple_in_chain() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -125,7 +125,7 @@ fn elides_multiple_in_chain() -> crate::Result<()> {
 /// `has_live_value_output` early-return).
 #[test]
 fn preserves_callother_when_value_output_has_consumer() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -177,7 +177,7 @@ fn coexists_with_redundant_phis_in_pipeline() -> crate::Result<()> {
     // After the pipeline runs, the entry region's ctrl chain is just
     // `Entry → branch(body)`, body's single-pred ControlState is gone,
     // and validate succeeds.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;

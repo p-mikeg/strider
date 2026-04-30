@@ -80,7 +80,7 @@ fn step_seq() -> impl Strategy<Value = Vec<Step>> {
 /// builder call errored). The returned graph has already been
 /// `validate`-d via `build()`.
 fn replay(steps: &[Step]) -> Option<BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).ok()?;
+    let mut b = FunctionBuilder::empty().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;
     b.set_region(region);

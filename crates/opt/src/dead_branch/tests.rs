@@ -1,19 +1,10 @@
 use super::*;
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::reg_vn;
 
 use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
-
-fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
-    rsleigh::Vn {
-        size,
-        addr: rsleigh::VnAddr {
-            off,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-    }
-}
 
 // Helper: count ControlState nodes with N ctrl inputs.
 fn count_cs_with_n_inputs(fg: &ir::BuiltFunctionGraph, n: usize) -> usize {
@@ -27,7 +18,7 @@ fn count_cs_with_n_inputs(fg: &ir::BuiltFunctionGraph, n: usize) -> usize {
 
 /// Build a function with `if(cond)`, two branches each ending in `return`.
 fn make_if_fn(cond_val: bool) -> Result<ir::BuiltFunctionGraph> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;
     let false_region = b.create_region()?;
@@ -102,7 +93,7 @@ fn dead_branch_true() -> Result<()> {
 fn dead_branch_non_const_no_change() -> Result<()> {
     // Build if(x) where x is a non-const boolean.
     let mut fg = {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::empty()?;
         let entry = b.create_region()?;
         let true_r = b.create_region()?;
         let false_r = b.create_region()?;
@@ -134,7 +125,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 /// pipeline (ConstantFold + DBE + RedundantPhis) must eliminate both Ifs.
 #[test]
 fn nested_if_true_eliminated() -> Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let outer_t = b.create_region()?;
     let outer_f = b.create_region()?;

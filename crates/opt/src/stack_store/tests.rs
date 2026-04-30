@@ -5,19 +5,8 @@ use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};
-
-fn sp_vn() -> rsleigh::Vn {
-    // Use a fake stack-pointer varnode in the REGISTER space.  Width is
-    // 4 bytes (u32), matching x86 ESP.
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
-        size: 4,
-    }
-}
 
 /// Counts how many nodes in `fg` match the predicate.
 fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {

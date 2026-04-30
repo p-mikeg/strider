@@ -13,42 +13,11 @@
 )]
 
 use ir::node::{NodeKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, FunctionBuilder, Value};
+use ir::{BuiltFunctionGraph, Value};
 use anyhow::anyhow;
 use opt::Result;
 
-/// Builds a single-region function whose return value is what `f` produces.
-pub fn make_fn<F>(f: F) -> Result<BuiltFunctionGraph>
-where
-    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
-{
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let val = f(&mut b)?;
-    b.build_return(Some(val), &[])?;
-    b.build()
-}
-
-/// Builds a single-region function with a tracked variable `vn`. The closure
-/// receives the read-back value (a `ControlPhi` over `InitialVar(vn)`).
-pub fn make_fn_with_var<F>(
-    vn: rsleigh::Vn,
-    f: F,
-) -> Result<(BuiltFunctionGraph, Value)>
-where
-    F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
-{
-    let mut b = FunctionBuilder::new_raw(vec![vn], &[vn], &[], &[], None, 0)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-    let x = b.read_variable(&vn)?;
-    let val = f(&mut b, x)?;
-    b.build_return(Some(val), &[])?;
-    Ok((b.build()?, x))
-}
+pub use ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var, reg_vn, sp_vn_x86 as sp_vn};
 
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).
@@ -83,22 +52,6 @@ pub fn count_reachable<F: Fn(&NodeKind) -> bool>(
         .filter(|n| reachable.contains(n))
         .filter(|&n| pred(fg.graph.node_kind(n)))
         .count()
-}
-
-/// Fabricates a register varnode of the given size at offset `off`.
-pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
-    rsleigh::Vn {
-        size,
-        addr: rsleigh::VnAddr {
-            off,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-    }
-}
-
-/// Stack-pointer varnode at REGISTER:0x20, size 4 (matches x86 ESP).
-pub fn sp_vn() -> rsleigh::Vn {
-    reg_vn(0x20, 4)
 }
 
 /// Runs `pass.optimize` until it reports `NoChange` or `MAX_ITERS` is hit.

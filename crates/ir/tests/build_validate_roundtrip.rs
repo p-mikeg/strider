@@ -39,7 +39,7 @@ fn every_int_binary_op_validates() {
 #[test]
 fn every_int_unary_op_validates() {
     for op in [IntUnaryOp::Neg, IntUnaryOp::Not] {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let mut b = FunctionBuilder::empty().unwrap();
         let r = b.create_region().unwrap();
         b.set_entry_region(r).unwrap();
         b.set_region(r);
@@ -71,7 +71,7 @@ fn every_int_cmp_op_validates() {
 
 #[test]
 fn bool_ops_validate() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
@@ -95,7 +95,7 @@ fn bool_ops_validate() {
 
 #[test]
 fn extend_and_truncate_validate() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
@@ -117,7 +117,7 @@ fn extend_and_truncate_validate() {
 
 #[test]
 fn float_ops_validate() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
@@ -161,7 +161,7 @@ fn float_ops_validate() {
 
 #[test]
 fn float_int_conversions_validate() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
@@ -183,7 +183,7 @@ fn float_int_conversions_validate() {
 #[test]
 fn region_join_with_phi_validates() {
     // entry → if-true → join, if-false → join.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let entry_region = b.create_region().unwrap();
     b.set_entry_region(entry_region).unwrap();
     b.set_region(entry_region);
@@ -209,7 +209,7 @@ fn region_join_with_phi_validates() {
 
 #[test]
 fn loads_and_stores_validate() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);
@@ -229,7 +229,7 @@ fn loads_and_stores_validate() {
 /// would forward stale loads.
 #[test]
 fn store_then_load_threads_memory_through_store() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let r = b.create_region().unwrap();
     b.set_entry_region(r).unwrap();
     b.set_region(r);

@@ -317,7 +317,7 @@ mod tests {
 
     /// Build a tiny single-region function returning `IntConst(K)`.
     fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);

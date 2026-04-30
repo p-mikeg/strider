@@ -25,7 +25,7 @@ use super::GraphRewriter;
 /// — a single `IntConst(7)` returned via `build_return`.  No Add /
 /// Sub / Load nodes — used by the no-match test.
 fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -41,7 +41,7 @@ fn one_const_fn(k: u64) -> ir::BuiltFunctionGraph {
 /// — exactly one `Add(IntConst(7), IntConst(0))`.  The `add(x, 0) → x`
 /// rule fires once on this fixture.
 fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -66,7 +66,7 @@ fn add_x_plus_zero(x: u64) -> ir::BuiltFunctionGraph {
 /// every reachable node once per call, so 2 firings on a single
 /// call.
 fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
-    let mut bd = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut bd = FunctionBuilder::empty().unwrap();
     let region = bd.create_region().unwrap();
     bd.set_entry_region(region).unwrap();
     bd.set_region(region);

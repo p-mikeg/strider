@@ -25,7 +25,7 @@
 //! use pattern::{Capture, Matcher, add, load, var};
 //!
 //! // *(0x1000 + 8); return the loaded value.
-//! let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+//! let mut fb = FunctionBuilder::empty().unwrap();
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);
@@ -118,7 +118,7 @@
 //! use ir::FunctionBuilder;
 //! use pattern::Matcher;
 //!
-//! let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+//! let mut fb = FunctionBuilder::empty().unwrap();
 //! let region = fb.create_region().unwrap();
 //! fb.set_entry_region(region).unwrap();
 //! fb.set_region(region);

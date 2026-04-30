@@ -26,7 +26,7 @@ use common::{make_fn, make_fn_with_var, reg_vn, return_kind, sp_vn};
 /// `RedundantPhis` collapses the resulting single-input phi nodes.
 #[test]
 fn const_fold_then_dbe_then_redundant_phis() -> opt::Result<()> {
-    let mut b = ir::FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = ir::FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let dead = b.create_region()?;
     let live = b.create_region()?;
@@ -231,7 +231,7 @@ fn deep_reassoc_chain_via_default_pipeline() -> opt::Result<()> {
 /// The pipeline must reach a state with zero `If` nodes.
 #[test]
 fn nested_const_branches_fully_eliminated() -> opt::Result<()> {
-    let mut b = ir::FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = ir::FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let outer_t = b.create_region()?;
     let outer_f = b.create_region()?;

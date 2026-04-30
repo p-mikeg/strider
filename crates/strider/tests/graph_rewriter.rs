@@ -113,7 +113,7 @@ fn count_eq_cmps(g: &BuiltFunctionGraph) -> usize {
 /// Uses [`FunctionBuilder::new_raw`] directly so the test doesn't depend
 /// on any Sleigh fixtures.
 fn add_k_plus_zero(k: u64) -> BuiltFunctionGraph {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -238,7 +238,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     // via a second IntConst.  After rewrite + re-optimize, run a
     // second rewrite — the rewriter must support being called again
     // on the same graph after re_optimize ran.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

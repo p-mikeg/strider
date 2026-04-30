@@ -37,7 +37,7 @@ mod tests {
     /// Entry → Call → Return, single region (no `ControlState` between
     /// Entry and Call nor between Call and Return).
     fn graph_call_return() -> ir::Result<ir::BuiltFunctionGraph> {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::empty()?;
         let r = b.create_region()?;
         b.set_entry_region(r)?;
         b.set_region(r);

@@ -20,5 +20,10 @@ ethnum.workspace = true
 [dev-dependencies]
 proptest = "1"
 
+[features]
+# Exposes shared mock-IR test helpers (`make_empty_fn`, `reg_vn`, `sp_vn_x86`,
+# `sp_vn_x86_64`, ...).  Test-only — not callable from production code.
+test-utils = []
+
 [lints]
 workspace = true

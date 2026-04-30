@@ -104,7 +104,7 @@ impl<'g> Matcher<'g> {
     /// ```rust
     /// # use ir::FunctionBuilder;
     /// # use pattern::{CastMask, Matcher};
-    /// # let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    /// # let mut fb = FunctionBuilder::empty().unwrap();
     /// # let r = fb.create_region().unwrap();
     /// # fb.set_entry_region(r).unwrap();
     /// # fb.set_region(r);

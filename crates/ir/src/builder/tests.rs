@@ -8,7 +8,7 @@ use crate::ops::{BoolBinaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp,
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
-    FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+    FunctionBuilder::empty()
 }
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -485,7 +485,7 @@ fn build_float_binary_op_with_int_inputs_auto_casts() -> Result<()> {
 
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -793,16 +793,7 @@ fn float_bits_to_int_f80_emits_node_not_const() -> Result<()> {
 
 // ── post-call SP adjust ─────────────────────────────────────────────────
 
-/// Fake 8-byte stack pointer varnode in the REGISTER space.
-fn sp_vn_u64() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
-        size: 8,
-    }
-}
+use crate::test_utils::sp_vn_x86_64 as sp_vn_u64;
 
 /// After `build_call` returns, SP must be rebound to
 /// `Add(pre_call_SP, IntConst(ret_stack_pop))` — the caller-visible effect

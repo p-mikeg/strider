@@ -15,7 +15,7 @@ use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 /// Build a tiny entry-only graph with a single Return whose value input
 /// is `IntConst(value)` with output type `ty`.
 pub fn return_const(value: u64, ty: NodeOutputType) -> BuiltFunctionGraph {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -31,7 +31,7 @@ pub fn return_binop(
     op: IntBinaryOp,
     ty: NodeOutputType,
 ) -> BuiltFunctionGraph {
-    let mut bld = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut bld = FunctionBuilder::empty().unwrap();
     let region = bld.create_region().unwrap();
     bld.set_entry_region(region).unwrap();
     bld.set_region(region);
@@ -52,7 +52,7 @@ pub fn return_int_cmp(
     op: ir::IntCmpOp,
     operand_ty: NodeOutputType,
 ) -> BuiltFunctionGraph {
-    let mut bld = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut bld = FunctionBuilder::empty().unwrap();
     let region = bld.create_region().unwrap();
     bld.set_entry_region(region).unwrap();
     bld.set_region(region);

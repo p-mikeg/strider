@@ -224,6 +224,18 @@ impl FunctionBuilder {
         )
     }
 
+    /// Builds an "empty" function: no tracked variables, no calling-convention
+    /// plumbing, no stack pointer, no ret-stack-pop.  Convenience for tests
+    /// and small synthetic IRs.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::new_raw`] (currently never produces an error for the
+    /// empty input set, but `Result` is preserved for forward-compatibility).
+    pub fn empty() -> Result<Self> {
+        Self::new_raw(vec![], &[], &[], &[], None, 0)
+    }
+
     /// Low-level constructor that takes the convention-derived data as
     /// unpacked slices.  Used by synthetic tests that don't resolve a real
     /// calling convention against a Sleigh register table — production code

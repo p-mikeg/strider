@@ -2,28 +2,12 @@ use super::*;
 use crate::error::Result;
 use crate::pipeline::Optimizer;
 use ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
+use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 fn rdi_like_vn() -> rsleigh::Vn {
     // Fake 8-byte register to stand in for x86_64 RDI in tests.
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x38,
-        },
-        size: 8,
-    }
-}
-
-fn sp_vn() -> rsleigh::Vn {
-    // Fake stack pointer; distinct offset so it doesn't alias an arg reg.
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
-        size: 8,
-    }
+    reg_vn(0x38, 8)
 }
 
 fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {

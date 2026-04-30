@@ -4,18 +4,9 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ir::node::NodeOutputType;
+use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};
 use opt::{Optimizer, StackStoreDetect};
-
-fn sp_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            off: 0x20,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-        size: 4,
-    }
-}
 
 /// Builds a straight-line `cdecl`-style function: N consecutive `push reg`
 /// sequences (each is `sub esp, 4; store esp`) followed by `return`.

@@ -310,7 +310,7 @@ fn rhs_closure_error_propagates_through_anyhow() {
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
     use ir::{FunctionBuilder, node::NodeOutputType};
-    let mut fb = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut fb = FunctionBuilder::empty().unwrap();
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);

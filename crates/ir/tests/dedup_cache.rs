@@ -12,7 +12,7 @@ use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 
 fn empty_built() -> ir::BuiltFunctionGraph {
-    FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+    FunctionBuilder::empty()
         .unwrap()
         .build()
         .unwrap()

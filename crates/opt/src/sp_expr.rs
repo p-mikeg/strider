@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn int_const_signed_u32_negative() -> crate::Result<()> {
         // 0xFFFF_FFFC at U32 must read as -4 signed.
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::empty()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -484,7 +484,7 @@ mod tests {
     fn decompose_sp_non_sp_returns_none() -> crate::Result<()> {
         // An IntConst is not SP-rooted.
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::empty()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -543,7 +543,7 @@ mod tests {
         // None conservatively for both cases would be wrong for the cycle case.
         // The simpler invariant — never cache None — is what we assert here.
         let sp = sp();
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+        let mut b = FunctionBuilder::empty()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

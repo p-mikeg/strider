@@ -2,17 +2,8 @@ use super::*;
 use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline};
 use ir::node::{NodeKind, NodeOutputType};
+use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};
-
-fn sp_vn() -> rsleigh::Vn {
-    rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
-        size: 4,
-    }
-}
 
 // ── Original test ─────────────────────────────────────────────────────────────
 
@@ -88,7 +79,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
 /// live input and must collapse.
 #[test]
 fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
@@ -122,7 +113,7 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
 /// entry's ctrl output directly.
 #[test]
 fn control_state_single_pred_collapses() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
@@ -143,7 +134,7 @@ fn control_state_single_pred_collapses() -> crate::Result<()> {
 /// must leave a graph that passes IR validation.
 #[test]
 fn unreachable_store_inputs_detached() -> crate::Result<()> {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     let dead = b.create_region()?;
     let live = b.create_region()?;
@@ -185,7 +176,7 @@ fn unreachable_store_inputs_detached() -> crate::Result<()> {
 #[test]
 fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     use ir::node::NodeOutputKind;
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);

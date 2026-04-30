@@ -662,7 +662,7 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     use ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline};
 
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+    let mut b = FunctionBuilder::empty()
         .expect("new_raw");
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");

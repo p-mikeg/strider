@@ -24,7 +24,7 @@ use ir::FunctionBuilder;
 /// fresh node ids.
 #[test]
 fn analysis_loop_without_build_round_trips() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -62,7 +62,7 @@ fn analysis_loop_without_build_round_trips() {
 /// the "build still works after extended use" contract.
 #[test]
 fn final_build_after_extended_use_yields_valid_built() {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

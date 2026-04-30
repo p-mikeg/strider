@@ -42,7 +42,7 @@ fn walk_visits_no_node_more_than_once() {
 #[test]
 fn diamond_join_via_phi_visits_all_arms() {
     // Construct: entry → if-true → join, if-false → join.
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let entry_region = b.create_region().unwrap();
     b.set_entry_region(entry_region).unwrap();
     b.set_region(entry_region);

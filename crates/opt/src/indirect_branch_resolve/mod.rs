@@ -360,7 +360,7 @@ mod tests {
     /// NodeOutputId is the anchor.  Returns the graph + anchor +
     /// entry id.
     fn placeholder_graph_with_int_const(target: u64) -> (ir::Graph, NodeId, NodeOutputId) {
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -388,7 +388,7 @@ mod tests {
         // which the classifier maps to None (not IntConst, not
         // InitialVar, not ValuePhi, not a Load shape with stack-array
         // ingredients).  Pass returns NoChange.
-        let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+        let mut b = FunctionBuilder::empty().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);

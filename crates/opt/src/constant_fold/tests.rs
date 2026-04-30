@@ -8,6 +8,7 @@ use ir::{
 };
 
 use crate::test_support::{make_fn, make_fn_with_var};
+use ir::test_utils::reg_vn;
 
 /// Returns the output id that the Return node receives as its value
 /// argument (input[2]: input[0] is the control edge, input[1] is memory).
@@ -127,17 +128,6 @@ fn fold_and_and_masks() -> Result<()> {
 }
 
 // ── add/sub reassociation with constants ──────────────────────────────────
-
-/// Fabricates a register varnode for use as a non-constant operand.
-fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
-    rsleigh::Vn {
-        size,
-        addr: rsleigh::VnAddr {
-            off,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-    }
-}
 
 /// Asserts the return-value node is `expected_base + expected_const`
 /// (type-masked; operand order irrelevant).

@@ -8,7 +8,7 @@ use ir::{FunctionBuilder, IntBinaryOp};
 use opt::{KnownBits, Optimizer};
 
 fn build_or_and_chain(n: usize) -> ir::BuiltFunctionGraph {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

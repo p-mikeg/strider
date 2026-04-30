@@ -75,20 +75,7 @@ mod tests {
     use cfg::test_api::ResolvedTargets;
     use ir::FunctionBuilder;
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-
-    /// VN constructor for a fixed-offset register: the unit tests
-    /// invent register VNs out of thin air; the actual register
-    /// space mapping is irrelevant here because the classifier only
-    /// compares VNs structurally.
-    fn fake_reg_vn(offset: u64, size: u32) -> rsleigh::Vn {
-        rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: offset,
-            },
-            size,
-        }
-    }
+    use ir::test_utils::reg_vn as fake_reg_vn;
 
     /// Build a minimal `BuiltFunctionGraph` with one tracked
     /// variable and an empty body region terminated by a Return
@@ -99,7 +86,7 @@ mod tests {
         anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
     ) -> (BuiltFunctionGraph, NodeOutputId) {
         // No tracked variables, no calling convention plumbing.
-        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+        let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
@@ -289,7 +276,7 @@ mod tests {
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
     ) -> (BuiltFunctionGraph, NodeOutputId) {
-        let mut builder = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0)
+        let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");

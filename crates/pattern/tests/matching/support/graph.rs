@@ -15,23 +15,7 @@ use ir::{BoolBinaryOp, BoolUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 // ── Varnode helpers ───────────────────────────────────────────────────────────
 
-/// Builds a register varnode at byte offset `off` of size `size` bytes.
-pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
-    rsleigh::Vn {
-        size,
-        addr: rsleigh::VnAddr {
-            off,
-            space: rsleigh::VnSpace::REGISTER,
-        },
-    }
-}
-
-/// Conventional stack-pointer varnode used across tests — register offset
-/// `0x20`, 8 bytes wide.  Distinct from any argument/return register to keep
-/// multi-var test shapes non-aliasing.
-pub fn sp_vn() -> rsleigh::Vn {
-    reg_vn(0x20, 8)
-}
+pub use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 

@@ -19,7 +19,7 @@ use opt::{IndirectBranchResolve, OptimizerPipeline};
 fn placeholder_graph_with_int_const(
     target: u64,
 ) -> (ir::Graph, ir::node::NodeId, ir::node::NodeOutputId) {
-    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0).unwrap();
+    let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
