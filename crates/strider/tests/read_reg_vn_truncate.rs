@@ -19,10 +19,11 @@
 //! containers.  The analyzer must emit a U32 value for such sub-register reads
 //! so that `IntBitsToFloat(F32)` receives the correct input width.
 //!
-//! After the BUG-9 write_reg_vn fix (positioned reg_mask + container-domain
-//! container_mask), x64 and aarch64 now pass.  x86 still fails for a
-//! separate reason: GCC uses the 80-bit x87 stack (10-byte registers),
-//! which has no matching `NodeOutputType` in the IR.
+//! The write_reg_vn path uses positioned reg_mask + container-domain
+//! container_mask so x64 and aarch64 round-trip cleanly.  x86 has its
+//! own challenge: GCC uses the 80-bit x87 stack (10-byte registers),
+//! modelled by F80 / U80 NodeOutputType variants and ST0 in the x86
+//! cdecl float-return regs.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -42,8 +43,8 @@ use ir::node::NodeKind;
 /// proves that `read_reg_vn` returned the correct width.
 ///
 /// For hardware-FPU targets the `FloatBinaryOp` assertion is the right check,
-/// but those arches are currently ignored due to BUG-8 (ConstantFold collapses
-/// the register-merge chain); they are not part of this regression guard.
+/// but those arches are currently ignored because ConstantFold collapses
+/// the register-merge chain; they are not part of this regression guard.
 fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
     // The function returns a float; there must be a Return node.
     assert!(count_returns(g) >= 1, "f32_arith must have a Return");
@@ -91,9 +92,9 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
 // Without the read_reg_vn fix these tests fail with an IR validation error:
 //   "OutputType(U64), expected AnyInt(U32)" from IntBitsToFloat's signature.
 //
-// After the BUG-9 write_reg_vn mask-positioning fix, x64 and aarch64 also
-// pass.  After F80/U80 NodeOutputType variants + ST0 in x86 cdecl's
-// float-return regs, x86 also passes via the same chain.
+// x64 and aarch64 also pass thanks to write_reg_vn's mask positioning.
+// x86 passes via F80/U80 NodeOutputType variants + ST0 in x86 cdecl's
+// float-return regs.
 
 // PPC FPRs (f0–f31) are natively 8 bytes — there's no 4-byte sub-register
 // view like ARM's s0/d0 split.  This test specifically asserts that
@@ -105,5 +106,5 @@ per_arch_test!("floats", "f32_arith", f32_arith_graph_is_valid, ignore = {
     Ppc32le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
     Ppc64be: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
     Ppc64le: "PPC FPRs are natively 8-byte; the U32-input assertion doesn't apply",
-    ArmBe:   "BUG-29: ARM8_BE Sleigh's VFP register file uses descending offsets and d0 doesn't overlap s0; analyzer's container aliasing drops the entire VFP read/write chain — IR has 0 FloatBinaryOp / 0 Call nodes for f32_arith",
+    ArmBe:   "ARM8_BE Sleigh's VFP register file uses descending offsets and d0 doesn't overlap s0; analyzer's container aliasing drops the entire VFP read/write chain — IR has 0 FloatBinaryOp / 0 Call nodes for f32_arith",
 });

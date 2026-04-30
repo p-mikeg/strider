@@ -21,7 +21,7 @@ fn analyze_arithmetic_add_mips32be_returns_nontrivial_graph() {
             "graph too small: {}", g.preorder().count());
 }
 
-// ── count_return_paths helper (BUG-22 fix) ───────────────────────────────────
+// ── count_return_paths helper ────────────────────────────────────────────────
 //
 // `count_return_paths` is the compiler-independent way to count source-level
 // return paths: it counts the predecessors of each Return's ControlState so

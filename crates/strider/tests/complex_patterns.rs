@@ -190,10 +190,9 @@ fn nested_struct_field_assertions(g: &ir::BuiltFunctionGraph) {
 // 4. bit_test_zero — IntCmp(Equal, And(_, single-bit-const), 0)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// BUG-5 closed under the indirect-branch fixed-point design (R1-R5
-// of `2026-04-27-indirect-branch-fixedpoint.md`): arm `pop {pc}`
-// resolves via tier 2's `LinkRegister` arm once `StackLoadForward`
-// simplifies the loaded target back to `InitialVar(lr)`.
+// arm `pop {pc}` resolves via the indirect-branch resolver's
+// `LinkRegister` arm once `StackLoadForward` simplifies the loaded
+// target back to `InitialVar(lr)`.
 per_arch_test!("complex", "bit_test_zero", bit_test_zero_assertions);
 
 fn bit_test_zero_assertions(g: &ir::BuiltFunctionGraph) {

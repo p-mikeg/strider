@@ -20,20 +20,16 @@
 //! no stack-array-of-labels arm.
 //!
 //! Consequence: every arch's lifted CFG carries an
-//! `UnresolvedIndirectBranch` terminator at the goto site.  This is
-//! tracked under **BUG-30** in the analyzer-known-issues tracker —
-//! "computed-goto via local stack-array of label addresses".  The
-//! per-arch tests below are gated on BUG-30 so they remain in the
-//! suite as a regression target: when round-2 wires cross-region
-//! stack-load forwarding, the ignores can be lifted and the assertion
-//! ("no `UnresolvedIndirectBranch` terminator survives") will start
-//! holding without any test rewrite.
+//! `UnresolvedIndirectBranch` terminator at the goto site for the arches
+//! whose lifter shape doesn't yet match the F3 stack-array arm.  Those
+//! arches keep `#[ignore]` reasons describing the specific gap; when the
+//! gap closes, the ignore can be lifted and the assertion ("no
+//! `UnresolvedIndirectBranch` terminator survives") will start holding
+//! without any test rewrite.
 //!
 //! See:
 //!   - docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md
 //!     (§"Future work" / cross-region stack analysis).
-//!   - docs/superpowers/plans/2026-04-25-analyzer-known-issues.md
-//!     (BUG-30 entry).
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -96,7 +92,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 
-    // F3: the BUG-30 stack-array shape resolves only at TIER 2 (post-IR
+    // F3: the stack-array shape resolves only at TIER 2 (post-IR
     // optimisation, on the optimised graph).  The CFG already contains
     // `UnresolvedIndirectBranch` terminators; we lift to IR, run the
     // optimiser pipeline (with rom for `LoadReadOnly`), then call the
@@ -184,7 +180,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 "indirect_branch_resolved on {} has unresolved indirect \
                  branch at {anchor_addr:?} after optimisation — neither \
                  tier-1 nor tier-2 (incl. F3 stack-array arm) classified \
-                 the dispatch (see BUG-30)",
+                 the dispatch",
                 arch.name(),
             );
         }
@@ -192,15 +188,14 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
 }
 
 // One #[test] per architecture.  F3 (stack-array tier-2 classifier
-// arm) closes BUG-30 for x86 / x64 / aarch64 / arm / arm-be /
-// arm-thumb / mips32le / mips32be — those tests pass without
-// `#[ignore]`.  Seven archs remain ignored (aarch64be / mips64 /
-// ppc32 / ppc64 — both endiannesses each), each with a focused
-// `BUG-30: <specific gap>` reason naming the lifter quirk that
-// keeps the F3 stack-array shape match from firing.  Closing the
-// remaining seven is incremental — the assertion body is identical
-// across arches and does not need a rewrite when each arch's
-// specific shape gap is closed.
+// arm) covers x86 / x64 / aarch64 / arm / arm-be / arm-thumb /
+// mips32le / mips32be — those tests pass without `#[ignore]`.  Seven
+// archs remain ignored (aarch64be / mips64 / ppc32 / ppc64 — both
+// endiannesses each), each with a focused reason naming the lifter
+// quirk that keeps the F3 stack-array shape match from firing.
+// Closing the remaining seven is incremental — the assertion body is
+// identical across arches and does not need a rewrite when each
+// arch's specific shape gap is closed.
 
 #[test]
 fn indirect_branch_resolved_x86() {
@@ -215,7 +210,7 @@ fn indirect_branch_resolved_aarch64() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64);
 }
 #[test]
-#[ignore = "BUG-30: aarch64-be lifter emits Or-as-Add for SP+offset and Truncate-wrapped stored values; F3 stack-array arm matches Add only"]
+#[ignore = "aarch64-be lifter emits Or-as-Add for SP+offset and Truncate-wrapped stored values; F3 stack-array arm matches Add only"]
 fn indirect_branch_resolved_aarch64be() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64Be);
 }
@@ -240,32 +235,32 @@ fn indirect_branch_resolved_mips32be() {
     assert_no_unresolved_indirect_branch(Arch::Mips32be);
 }
 #[test]
-#[ignore = "BUG-30: mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
+#[ignore = "mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
 fn indirect_branch_resolved_mips64le() {
     assert_no_unresolved_indirect_branch(Arch::Mips64le);
 }
 #[test]
-#[ignore = "BUG-30: mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
+#[ignore = "mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
 fn indirect_branch_resolved_mips64be() {
     assert_no_unresolved_indirect_branch(Arch::Mips64be);
 }
 #[test]
-#[ignore = "BUG-30: ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
 fn indirect_branch_resolved_ppc32be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32be);
 }
 #[test]
-#[ignore = "BUG-30: ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
 fn indirect_branch_resolved_ppc32le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32le);
 }
 #[test]
-#[ignore = "BUG-30: ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
 fn indirect_branch_resolved_ppc64be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64be);
 }
 #[test]
-#[ignore = "BUG-30: ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
 fn indirect_branch_resolved_ppc64le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64le);
 }

@@ -493,17 +493,17 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     Ok(())
 }
 
-// ── BUG-19 helper: Truncate(Extend(x)) round-trip ────────────────────────
+// ── Truncate(Extend(x)) round-trip ───────────────────────────────────────
 //
 // Register-merge chains in `write_reg_vn` produce
 //   Extend_zext(Truncate(Or(...)))
 // and similar `Truncate(Extend(x))` round-trips when the inner expression's
-// width equals the outer truncate's output width.  The new round-trip
-// rules in `apply_bitcast_extend_rules` collapse these to the inner
-// expression.  These do NOT fully fix BUG-19's pattern-matcher walk
-// (which still fails on x86 IMUL chains because the surrounding shape
-// has Extend/Truncate at the *outer* level — opposite direction), but
-// they ARE valid algebraic identities that simplify the IR generally.
+// width equals the outer truncate's output width.  The round-trip rules in
+// `apply_bitcast_extend_rules` collapse these to the inner expression.
+// These do NOT cover the opposite direction (Extend/Truncate at the *outer*
+// level, which still defeats the matcher's data-flow walk on x86 IMUL
+// chains), but they ARE valid algebraic identities that simplify the IR
+// generally.
 
 use ir::ExtendOp;
 
@@ -1575,18 +1575,16 @@ fn eval_int_cmp_borrow_unmasked_u8() {
     );
 }
 
-// ── BUG-21 ARM residue: IntUnaryOp::Neg/Not constant-fold semantics ──
+// ── IntUnaryOp::Neg/Not constant-fold semantics ──────────────────────
 //
 // The IR's enum variants follow Sleigh's counter-intuitive opcode
 // naming, which the analyzer dispatch table propagates:
 //   * `IntUnaryOp::Neg` is BITWISE NOT (Sleigh `IntNeg`).
 //   * `IntUnaryOp::Not` is TWO'S COMPLEMENT (Sleigh `Int2Comp`).
 //
-// Pre-fix the constant-fold rules had the two operations swapped:
-// `Neg => v.wrapping_neg()` and `Not => !v`.  The MVN-based ARM
-// `if_returns_const` lowering produced `IntUnaryOp::Neg(IntConst(49))`
-// (= ~49 = -50), but the fold computed `wrapping_neg(49) = -49`,
-// off by one — the `has_constant(g, -50)` pattern check failed.
+// The two semantics must NOT be swapped: the MVN-based ARM
+// `if_returns_const` lowering produces `IntUnaryOp::Neg(IntConst(49))`
+// which must fold to `~49 = -50`, not to `wrapping_neg(49) = -49`.
 
 use ir::IntUnaryOp;
 

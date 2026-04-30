@@ -14,9 +14,9 @@
 //!   * The classifier under test is graph-shape-driven, not
 //!     CFG-driven; every byte path eventually goes through
 //!     `analyze_cfg_with_unresolved` which builds the same IR shapes.
-//!   * Real-binary integration tests for jump tables land in R5
-//!     (the BUG-5 fixture); R4 just proves the classifier shape +
-//!     bound + read mechanics work in isolation.
+//!   * Real-binary integration tests for jump tables land in R5;
+//!     R4 just proves the classifier shape + bound + read mechanics
+//!     work in isolation.
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values
 //! at fixed offsets; it stands in for the ELF's `.rodata` view that

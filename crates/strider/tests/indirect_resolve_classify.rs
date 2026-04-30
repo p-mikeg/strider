@@ -110,7 +110,7 @@ fn phi_of_three_int_consts_to_multiple() {
 /// for the target → `LinkRegister`.
 ///
 /// **Soundness rationale (pinned):** this is the test that proves
-/// the design closes the 4 BUG-5 ARM regressions.  The function-
+/// the design closes the ARM `pop {pc}` regressions.  The function-
 /// entry pseudo-push of lr to a stack slot, followed by a load from
 /// the same slot at the function exit, is the natural shape gcc
 /// emits for `pop {pc}` / `ldr pc, [sp]` epilogues.  After

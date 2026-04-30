@@ -177,7 +177,7 @@ impl CallingConvention {
             // AArch64 SIMD return regs (16-byte vector; contain s0/d0/q0
             // sub-registers).  Now that vn_mask + build_int_const support
             // U128, the ABI-correct q0/q1 (16-byte) is preferred over d0/d1
-            // (which was a workaround for the U128 panic — BUG-13).
+            // (which was an earlier workaround for missing U128 support).
             ret_val_regs_float: &["q0", "q1"],
             stack_arg_offsets: &[0, 8, 16, 24],
             ret_stack_pop: 0,

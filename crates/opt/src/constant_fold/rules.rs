@@ -127,8 +127,8 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // that the truncate cuts away).  Without this rule, register-merge
     // chains in write_reg_vn (which always extend then truncate to land
     // in container width) leave the round-trip in the IR and the pattern
-    // matcher's data-flow walk crosses through Extend/Truncate to find
-    // Mul/Add — BUG-19.
+    // matcher's data-flow walk can't cross through Extend/Truncate to find
+    // an inner Mul/Add.
     //
     // The width-equality check uses `when_match` on the Bindings: the
     // captured `x`'s output type must equal the rule root's `ty`.
@@ -160,14 +160,14 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
     // for ops where the lower W bits don't depend on the upper bits
     // (Add/Sub/Mul/And/Or/Xor).  MIPS32 lifts `mul a, b` (32×32→64 IntMul
     // on a 64-bit unique varnode) followed by a 32-bit Truncate to get
-    // back into integer-register width — the matcher's data-flow walk
-    // for `add(mul(_,_), _)` then crosses through the Truncate to find
-    // Mul, which BUG-19 calls out.
+    // back into integer-register width — without this rule the matcher's
+    // data-flow walk for `add(mul(_,_), _)` cannot cross through the
+    // Truncate to find the inner Mul.
     //
     // We need separate rules for each (lhs_extend_kind, rhs_extend_kind)
     // permutation because the pattern crate's RHS doesn't currently
     // support reconstructing a non-const node from a captured op variant.
-    // For BUG-19 it's enough to cover the (SignExt, SignExt) case for Mul.
+    // The (SignExt, SignExt) case for Mul covers the MIPS32 shape above.
     use pattern::mul as mul_pat;
     let narrow_mul_through_sext = {
         let a = Capture::new();

@@ -7,48 +7,39 @@ use common::*;
 use ir::{FloatBinaryOp, FloatCmpOp};
 use ir::node::NodeKind;
 
-// All float tests now pass on every arch after:
-//   1. BUG-9 write_reg_vn mask positioning fix (aarch64 D0/Q0).
-//   2. Ret-val regs upgrade-to-container in FunctionBuilder::new_raw —
-//      MIPS-O32 lists "f0" (4-byte) but a double-returning function uses
-//      the 8-byte combined f0/f1 view; the upgrade fall-back wires the
-//      Return to the 8-byte tracked container.
-//   3. F80 / U80 NodeOutputType variants — model x87's 80-bit ST0 stack
-//      registers natively, plus listing ST0 in x86 cdecl's float-return
-//      regs so the upgrade-to-container path connects the float chain.
-// `arm_be` skips every float test (BUG-29): ARM8_BE Sleigh's VFP register
-// file uses descending offsets and `d0` does not overlap `s0`, so the
+// `arm_be` skips every float test: ARM8_BE Sleigh's VFP register file
+// uses descending offsets and `d0` does not overlap `s0`, so the
 // analyzer's container-register aliasing drops the entire VFP read/write
 // chain.  The body of every VFP-using function reduces to Entry / Return
 // / FunctionArg / InitialVar in the IR, with no Float* nodes.
 per_arch_test!("floats", "f32_arith",    has_four_float_binops, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
 });
 per_arch_test!("floats", "f64_arith",    has_four_float_binops, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — 0 FloatBinaryOps in IR",
 });
 per_arch_test!("floats", "f32_to_f64",   has_float_to_float, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToFloat",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToFloat",
 });
 per_arch_test!("floats", "f64_to_f32",   has_float_to_float, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToFloat",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToFloat",
 });
 per_arch_test!("floats", "int_to_float", has_int_to_float, ignore = {
-    Ppc32be: "BUG-23: PPC32 ISA has no single int→float scalar op; gcc emits the magic-number trick (xoris+lfd+fsub+frsp) — IR has FloatBinaryOp(Sub) + FloatToFloat, no IntToFloat",
-    Ppc32le: "BUG-23: same magic-number lowering as ppc32be (clang at -O0)",
-    ArmBe:   "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no IntToFloat",
+    Ppc32be: "PPC32 ISA has no single int→float scalar op; gcc emits the magic-number trick (xoris+lfd+fsub+frsp) — IR has FloatBinaryOp(Sub) + FloatToFloat, no IntToFloat",
+    Ppc32le: "same magic-number lowering as ppc32be (clang at -O0)",
+    ArmBe:   "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no IntToFloat",
 });
 per_arch_test!("floats", "float_to_int", has_float_to_int, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToInt",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatToInt",
 });
 per_arch_test!("floats", "f32_compare",  has_two_float_cmps, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatCmpOp",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatCmpOp",
 });
 per_arch_test!("floats", "f64_compare",  has_two_float_cmps, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatCmpOp",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatCmpOp",
 });
 per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
-    ArmBe: "BUG-29: arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatUnaryOp::Neg",
+    ArmBe: "arm_be VFP regs descending-offset; analyzer aliasing drops the chain — no FloatUnaryOp::Neg",
 });
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {

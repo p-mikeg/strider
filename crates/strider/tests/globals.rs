@@ -13,8 +13,8 @@ use common::*;
 per_arch_test!("globals", "read_const_byte",        const_byte_folds_to_0x61);
 per_arch_test!("globals", "read_const_int",         const_int_folds_to_value);
 per_arch_test!("globals", "branch_on_const_string", string_branch_folds_one_arm);
-// runtime_const_idx: BUG-3 (extend_if_needed handles Bool input) is fixed;
-// the MIPS bounds-check Bool now flows into integer ops via CastToInt.
+// runtime_const_idx: the MIPS bounds-check Bool flows into integer ops
+// via CastToInt (extend_if_needed handles Bool input).
 per_arch_test!("globals", "runtime_const_idx",      runtime_idx_keeps_load);
 
 fn const_byte_folds_to_0x61(g: &ir::BuiltFunctionGraph) {

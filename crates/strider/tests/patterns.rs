@@ -11,29 +11,28 @@ mod common;
 use common::*;
 use pattern::{Matcher, Pat, add, mul, call, any};
 
-// mul_then_add: BUG-19 (pattern `add(mul(_,_), _)` walks exact graph
-// topology) is fixed across all archs by:
-//   * On the analyzer side: Truncate-narrowing rules in ConstantFold
-//     (mips32 hot path), drop-high-half-in-Or-Trunc, drop-low-mask-
-//     under-Trunc, Truncate(Extend(x)) round-trip.
-//   * On the matcher side: `Matcher::ignore_casts()` lets the matcher
-//     transparently walk through Extend / Truncate / CastTo* nodes that
-//     the optimizer couldn't fully eliminate (x64 `Add(Extend(Mul), arg)`
+// mul_then_add covers `add(mul(_,_), _)` across all archs via:
+//   * Analyzer side: Truncate-narrowing rules in ConstantFold (mips32
+//     hot path), drop-high-half-in-Or-Trunc, drop-low-mask-under-Trunc,
+//     Truncate(Extend(x)) round-trip.
+//   * Matcher side: `Matcher::ignore_casts()` lets the matcher walk
+//     transparently through Extend / Truncate / CastTo* nodes that the
+//     optimizer couldn't fully eliminate (x64 `Add(Extend(Mul), arg)`
 //     register-merge chain — pushing Extend through Mul is not a valid
 //     identity in general, but skipping it during pattern matching is
 //     fine when the user opts in).
 per_arch_test!("patterns", "mul_then_add",                mac_pattern_finds_match);
-// chained_xor_mask: BUG-20 (ConstantFold collapses the literal constants)
-// is mitigated by relaxing the pattern to match structural shape only.
+// chained_xor_mask: ConstantFold collapses the literal constants, so
+// the pattern matches only the structural shape.
 per_arch_test!("patterns", "chained_xor_mask",            xor_chain_pattern_finds_match);
-// if_returns_const: BUG-21 (width-aware int_const matching) fixed across
-// all archs.  ARM's MVN-based -50 lifting (`mvnle r0, #49` → `~49`) was
-// previously off-by-one because constant_fold and known_bits had the
-// IR's `IntUnaryOp::Neg` (bitwise NOT) and `IntUnaryOp::Not` (two's
-// complement) swapped in their evaluators.
+// if_returns_const exercises width-aware int_const matching.  ARM's
+// MVN-based -50 lifting (`mvnle r0, #49` → `~49`) requires constant_fold
+// and known_bits to keep `IntUnaryOp::Neg` (bitwise NOT) distinct from
+// `IntUnaryOp::Not` (two's complement) in their evaluators.
 per_arch_test!("patterns", "if_returns_const",            if_const_pattern_finds_two_consts);
 per_arch_test!("patterns", "loop_with_invariant_load",    invariant_load_pattern_finds_load);
-// recursive_with_accumulator: BUG-6 (tail-call elision) fixed by Makefile flag.
+// recursive_with_accumulator relies on -fno-optimize-sibling-calls in
+// fixtures/Makefile to keep the tail call from being elided.
 per_arch_test!("patterns", "recursive_with_accumulator",  recursive_pattern_finds_self_call);
 
 fn mac_pattern_finds_match(g: &ir::BuiltFunctionGraph) {

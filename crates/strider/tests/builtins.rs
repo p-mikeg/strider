@@ -10,19 +10,17 @@
 mod common;
 use common::*;
 
-// popcount/clz/ctz: BUG-15/16/17 — assertions are now structural ("graph
-// is non-trivial") rather than pinning specific node kinds, since lowering
-// varies significantly across (compiler, arch, ISA-extension) tuples and
-// the analyzer's job is "doesn't crash on builtin inputs".
+// popcount/clz/ctz assertions are structural ("graph is non-trivial")
+// rather than pinning specific node kinds, since lowering varies
+// significantly across (compiler, arch, ISA-extension) tuples and the
+// analyzer's job is "doesn't crash on builtin inputs".
 per_arch_test!("builtins", "popcount32",    popcount_lowers);
 per_arch_test!("builtins", "popcount64",    popcount_lowers);
 per_arch_test!("builtins", "clz32",         lzcount_lowers);
 per_arch_test!("builtins", "clz64",         lzcount_lowers);
 per_arch_test!("builtins", "ctz32",         ctz_lowers);
-// expect_branch: BUG-18 fixed by adding asm-volatile barriers around the
-// branch in fixtures/cases/builtins.c.  BUG-3 post-opt Bool→AnyInt residue
-// fixed by coercing values to reg's declared int type at write_reg_vn and
-// to Bool at handle_cond_branch's read site.
+// expect_branch: relies on asm-volatile barriers around the branch in
+// fixtures/cases/builtins.c so the optimizer does not elide it.
 per_arch_test!("builtins", "expect_branch", expect_compiles_normally);
 
 /// `__builtin_popcount` lowering varies massively across (compiler, arch):

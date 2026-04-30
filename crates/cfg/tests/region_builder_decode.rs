@@ -235,11 +235,11 @@ fn next_pcode_addr_within_machine_insn_advances_pcode_index() {
     assert_eq!(next, addr(0x1000, 2));
 }
 
-/// Regression for BUG-2: a CONST-space relative branch whose computed pcode
-/// index equals `lift_res.insns.len()` (one-past-end) is the Sleigh
-/// "fall-through to next machine instruction" idiom used by MIPS DIV / SLT.
-/// It must decode to the first pcode op of the *next* machine instruction,
-/// not produce an `InvalidBranchTargetVaErr`.
+/// A CONST-space relative branch whose computed pcode index equals
+/// `lift_res.insns.len()` (one-past-end) is the Sleigh "fall-through to
+/// next machine instruction" idiom used by MIPS DIV / SLT.  It must decode
+/// to the first pcode op of the *next* machine instruction, not produce an
+/// `InvalidBranchTargetVaErr`.
 ///
 /// Previously the check was `target >= pcode_count`, which rejected this case.
 /// The fix narrowed it to `target > pcode_count` and handles `==` specially.

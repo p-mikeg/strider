@@ -8,35 +8,22 @@ mod common;
 use common::*;
 
 per_arch_test!("control", "abs_val",        abs_has_one_if);
-// max_val: BUG-2 (MIPS comparison CFG) is fixed; this is the regression test.
 per_arch_test!("control", "max_val",        max_has_one_if);
-// clamp / factorial / early_return: BUG-3 (Bool->AnyInt via extend_if_needed)
-// is fixed; these are the regression coverage.
 per_arch_test!("control", "clamp",          clamp_has_two_ifs);
-// select_three: BUG-4 (ARM conditional select non-Bool) is fixed by the
-// BUG-3 coerce-on-write at write_reg_vn — same Bool-flag-via-1-byte-reg
-// chain.
 per_arch_test!("control", "select_three",   select_three_has_two_ifs);
 per_arch_test!("control", "sum_to_n",       sum_to_n_has_loop);
 per_arch_test!("control", "factorial",      factorial_has_loop);
 per_arch_test!("control", "count_bits",     count_bits_has_loop_and_shr);
-// nested_loops: closed under the indirect-branch fixed-point
-// design (R1-R5 of `2026-04-27-indirect-branch-fixedpoint.md`).
-// arm's `pop {pc}` resolves via tier 2's `LinkRegister` arm once
-// `StackLoadForward` simplifies the loaded target back to
-// `InitialVar(lr)`.
+// nested_loops: arm's `pop {pc}` resolves via the indirect-branch
+// resolver's `LinkRegister` arm once `StackLoadForward` simplifies the
+// loaded target back to `InitialVar(lr)`.
 per_arch_test!("control", "nested_loops", nested_loops_has_two_loops);
-// early_return: BUG-3 post-opt residue fixed by:
-//   1. write_reg_vn coercing val to reg's declared int type at the simple
-//      `container == reg` write path (so 1-byte flag registers don't smuggle
-//      Bool through as the variable's bound value), AND
-//   2. handle_cond_branch coercing the read condition back to Bool before
-//      handing it to build_if (which only accepts Bool).
-// BUG-22 fixed: count *control paths into Return* (sum of ControlState fan-in
-// at each Return) instead of bare Return-node count.  PPC + aarch64be share
-// the function epilogue at `-O0` (one `blr`/`ret` for all source-level returns)
-// so they have a single Return fed by a 2-input ControlState — `count_return_paths`
-// reports 2 there, matching the 2 separate Return nodes on x86/MIPS/ARM.
+// early_return uses count_return_paths (sum of ControlState fan-in at
+// each Return) instead of bare Return-node count.  PPC + aarch64be
+// share the function epilogue at `-O0` (one `blr`/`ret` for all
+// source-level returns) so they have a single Return fed by a 2-input
+// ControlState — `count_return_paths` reports 2 there, matching the 2
+// separate Return nodes on x86/MIPS/ARM.
 per_arch_test!("control", "early_return",   early_return_has_loop_and_two_returns);
 
 fn abs_has_one_if(g: &ir::BuiltFunctionGraph) {

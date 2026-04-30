@@ -7,11 +7,6 @@
 //!   * Mixed pointer + integer parameters.
 //!   * Call-of-call return-value chaining.
 //!
-//! Originally introduced in the BUG-28-OPEN era — see the BUG-28 entry
-//! in `docs/superpowers/plans/2026-04-25-analyzer-known-issues.md` for
-//! the historical limitation and its two-cause fix.  The suite now
-//! serves as the regression guard for that fix.
-//!
 //! For each fixture, the test verifies:
 //!   (a) `FunctionArg` indices are present in the IR for at least
 //!       a documented floor — proves `detect_register_args`'s
@@ -21,8 +16,8 @@
 //!       `call().arg(i, function_arg(i))` matches — proves the call
 //!       site's arg slot threads through to a `FunctionArg` node via
 //!       the `StackLoadForward` + sub-register-fallback chain, including
-//!       the BUG-28 cause-#2 fix that lets the walker pass through
-//!       non-stack-aliasing `Store` nodes.
+//!       the walker's ability to pass through non-stack-aliasing
+//!       `Store` nodes.
 //!
 //! The assertion floors are deliberately under the strict "all 0..N"
 //! form: not every fixture's per-arch lowering routes every parameter
@@ -107,15 +102,13 @@ fn assert_function_args_present(
 /// Asserts that for at least one `i` in `0..n`, the pattern
 ///   `call().arg(i, function_arg(i))`
 /// matches.  Pins the StackLoadForward + sub-register-fallback chain
-/// that connects Call.arg(i) ↔ FunctionArg(i) at the call site —
-/// the regression guard for BUG-28's two-cause fix.
+/// that connects Call.arg(i) ↔ FunctionArg(i) at the call site.
 ///
 /// Requiring "at least one match" rather than "all 0..N must match"
 /// gives headroom for arch-specific lowerings where one or two arg
 /// slots route through a non-`StackStore` chain the walker can't
-/// follow even after BUG-28 cause #2; the universal cross-arch
-/// invariant the test enforces is "at least one slot threads through
-/// cleanly."
+/// follow; the universal cross-arch invariant the test enforces is
+/// "at least one slot threads through cleanly."
 fn assert_some_call_arg_threads_through(
     g: &ir::BuiltFunctionGraph,
     n: u32,
@@ -164,7 +157,7 @@ per_arch_test!(
 );
 
 fn forward_2_assertions(g: &ir::BuiltFunctionGraph) {
-    // Strict: BUG-28 fix should now have all 2 args present on every arch.
+    // Strict: all 2 args must be present on every arch.
     assert_function_args_present(g, 2, 2, "forward_2");
     assert_some_call_arg_threads_through(g, 2, "forward_2");
 }
@@ -180,7 +173,7 @@ per_arch_test!(
 );
 
 fn forward_4_assertions(g: &ir::BuiltFunctionGraph) {
-    // Strict: BUG-28 fix should now have all 4 args present on every arch.
+    // Strict: all 4 args must be present on every arch.
     assert_function_args_present(g, 4, 4, "forward_4");
     assert_some_call_arg_threads_through(g, 4, "forward_4");
 }
@@ -197,10 +190,9 @@ per_arch_test!(
 );
 
 fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
-    // Strict: BUG-28 cause #2's third-instance fix (the
-    // `function_args::mem_chain_is_dirty` `Store(_)` arm) lets all 8
-    // stack-passed args be detected on x86 cdecl, mirroring the prior
-    // resilience added to `CallStackArgCollect` and
+    // Strict: the `function_args::mem_chain_is_dirty` `Store(_)` arm
+    // lets all 8 stack-passed args be detected on x86 cdecl, mirroring
+    // the resilience in `CallStackArgCollect` and
     // `stack_load_forward::probe`.  Every arch detects all 8.
     assert_function_args_present(g, 8, 8, "forward_8");
     assert_some_call_arg_threads_through(g, 8, "forward_8");
@@ -215,7 +207,7 @@ fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
 // requires contiguous `StackStore`s anchoring at `stack_arg_offsets[0]`).
 // We assert only that the analyser recovered ≥4 FunctionArg indices
 // out of 16, plus that some call-site arg slot threads through to its
-// FunctionArg.  See BUG-28.
+// FunctionArg.
 // ─────────────────────────────────────────────────────────────────────────────
 
 per_arch_test!(
