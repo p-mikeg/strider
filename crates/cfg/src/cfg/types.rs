@@ -54,6 +54,18 @@ pub struct PcodeInsnAddr {
     pub insn_index: u64,
 }
 
+impl PcodeInsnAddr {
+    /// Returns the pcode address pointing at the *first* pcode op of
+    /// the machine instruction at `addr` (`insn_index == 0`).
+    #[must_use]
+    pub fn at_machine_start(addr: u64) -> Self {
+        PcodeInsnAddr {
+            machine_addr: MachineInsnAddr { addr },
+            insn_index: 0,
+        }
+    }
+}
+
 /// A single pcode instruction together with its address inside the CFG.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegionInstruction {

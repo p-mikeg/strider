@@ -162,13 +162,17 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     insn_index: target,
                 })
             }
-            // Absolute branch: the offset IS the target machine address
-            space if space == default_code_space => Ok(PcodeInsnAddr {
-                machine_addr: MachineInsnAddr {
-                    addr: branch_target_var.addr.off,
-                },
-                insn_index: 0,
-            }),
+            // Absolute branch: the offset IS the target machine
+            // address.  Sleigh emits the target as the full 64-bit
+            // `off` regardless of the varnode's declared `size` — the
+            // CONST arm above sign-extends because it carries a
+            // signed pcode-index *offset*, but absolute targets are
+            // unsigned virtual addresses with no size-dependent
+            // sign-extension.  `size` is therefore intentionally
+            // ignored here.
+            space if space == default_code_space => {
+                Ok(PcodeInsnAddr::at_machine_start(branch_target_var.addr.off))
+            }
             _ => Err(anyhow!(
                 "invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"
             )),
@@ -385,11 +389,12 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         self.finish_current_region(RegionTerminator::Return)?;
                     }
                     super::indirect_resolve::ResolvedTargets::Single(target) => {
-                        let target_addr = PcodeInsnAddr {
-                            machine_addr: MachineInsnAddr { addr: target },
-                            insn_index: 0,
-                        };
-                        if self.is_branch_tail_call(target_addr)? {
+                        let target_addr = PcodeInsnAddr::at_machine_start(target);
+                        // `at_machine_start` pins `insn_index == 0`,
+                        // so the `_nocheck` variant is the right one
+                        // here — there's no insn-index validation to
+                        // perform.
+                        if self.is_branch_tail_call_nocheck(target_addr) {
                             self.finish_current_region(
                                 RegionTerminator::TailCall { target },
                             )?;
@@ -406,35 +411,37 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         }
                     }
                     super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
-                        // Tier-2 (or R4 jump-table classifier) has
-                        // resolved this BranchIndirect to N
-                        // statically-known targets.  Each target gets
+                        // `Multiple` is fed back by the strider
+                        // orchestrator's tier-2 resolver via
+                        // `known_targets`; tier 1's mini-graph
+                        // resolver only ever returns `Single` /
+                        // `LinkRegister` / `None`.  Each target gets
                         // its own intra-fn `Branch` edge; the region
                         // terminator is `Switch { target_vn, targets,
-                        // target_value }`.  Strider's `handle_switch`
-                        // (F7) reads `target_vn` at region exit and
-                        // emits an If-ladder of `IntCmpOp::Equal +
-                        // If` against each `targets[i]`.  W9's
+                        // target_value }` and strider's
+                        // `handle_switch` reads `target_vn` at region
+                        // exit to emit an If-ladder of `IntCmpOp::Equal
+                        // + If` against each `targets[i]`.
                         // `target_value` is `None` here; the
-                        // orchestrator's known-targets feedback path
-                        // may populate it later for rounds that
-                        // preserve the previous iteration's IR
-                        // across rebuilds.
+                        // orchestrator's feedback path may populate
+                        // it later for rounds that preserve the
+                        // previous iteration's IR across rebuilds.
                         //
                         // If any target lies outside the function
-                        // range, surface as unresolved — `Multiple`
-                        // doesn't have a per-target tail-call escape.
-                        // (Future: refine to mixed Branch/TailCall.)
-                        for target in &targets {
-                            let target_addr = PcodeInsnAddr {
-                                machine_addr: MachineInsnAddr { addr: *target },
-                                insn_index: 0,
-                            };
-                            if self.is_branch_tail_call(target_addr)? {
-                                bail!(
-                                    "branch-indirect at {addr:?} could not be statically resolved"
-                                );
-                            }
+                        // range, defer the whole site to the strider
+                        // outer loop via `UnresolvedIndirectBranch`:
+                        // `Switch` has no per-target tail-call
+                        // escape, so encoding mixed in-range /
+                        // tail-call targets in a single Switch would
+                        // misroute the OOB cases.
+                        let any_out_of_range = targets.iter().any(|t| {
+                            self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
+                        });
+                        if any_out_of_range {
+                            self.finish_current_region(
+                                RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
+                            )?;
+                            return Ok(ProcessInsnRes::FinishedProcessing);
                         }
                         let region = self.finish_current_region(
                             RegionTerminator::Switch {
@@ -444,10 +451,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                             },
                         )?;
                         for target in targets {
-                            let target_addr = PcodeInsnAddr {
-                                machine_addr: MachineInsnAddr { addr: target },
-                                insn_index: 0,
-                            };
+                            let target_addr = PcodeInsnAddr::at_machine_start(target);
                             self.builder.work_queue.push((
                                 Some((region, RegionEdgeKind::Branch)),
                                 target_addr,

@@ -115,3 +115,101 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
     }
     assert!(had_unresolved);
 }
+
+/// Regression: when the orchestrator feeds back a `Multiple` resolution
+/// where one of the targets lies outside the function range, the cfg
+/// builder must defer the whole site to `UnresolvedIndirectBranch`
+/// rather than hard-failing — `Switch` has no per-target tail-call
+/// escape, so encoding mixed in-range / tail-call targets in a single
+/// Switch terminator would misroute the OOB cases.  Pre-fix the
+/// builder bailed with "could not be statically resolved" even though
+/// tier 2 had already resolved the targets.
+#[test]
+fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    let reader = BufMemReader::new(bytes, base);
+    let arch = target::SleighArch::x86_64();
+    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    // Cap the function range so 0x9000 lies outside.
+    let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+
+    // Locate the BranchIndirect address by first building without
+    // overrides.
+    let cfg_v1 = {
+        let reader2 = BufMemReader::new(vec![0xff, 0xe0u8], base);
+        let sleigh2 = Sleigh::new(arch.sla_spec, arch.pspec, reader2).expect("sleigh");
+        Builder::with_endianness(sleigh2, base, OptionsBuilder::new().build(), arch.endianness)
+            .build()
+            .expect("v1 build")
+    };
+    let unresolved_addr = locate_unresolved_addr(&cfg_v1);
+
+    // Feed a Multiple with one in-range (0x1004) and one out-of-range
+    // (0x9000) target.  The cfg builder must surface
+    // UnresolvedIndirectBranch, NOT a Switch with the OOB target.
+    let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    known.insert(
+        unresolved_addr,
+        ResolvedTargets::Multiple(vec![0x1004, 0x9000]),
+    );
+
+    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+        .with_known_targets(known)
+        .build()
+        .expect("build must succeed; mixed Multiple defers via UnresolvedIndirectBranch");
+
+    let mut had_unresolved = false;
+    let mut had_switch = false;
+    for region in cfg.regions() {
+        match &region.terminator {
+            RegionTerminator::UnresolvedIndirectBranch { .. } => had_unresolved = true,
+            RegionTerminator::Switch { .. } => had_switch = true,
+            _ => {}
+        }
+    }
+    assert!(
+        had_unresolved && !had_switch,
+        "Multiple with an OOB target must defer via UnresolvedIndirectBranch, not emit a Switch"
+    );
+}
+
+/// Companion: a `Multiple` whose targets are *all* in-range produces a
+/// Switch terminator without bailing.  Pin that the OOB-detection
+/// logic is gated on actual range, not always-defer.
+#[test]
+fn known_multiple_in_range_targets_produces_switch() {
+    let base = 0x1000u64;
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
+    bytes.extend(std::iter::repeat_n(0x90u8, 32)); // pad with NOPs
+    bytes.push(0xc3); // ret at the end so each target decodes
+    let reader = BufMemReader::new(bytes, base);
+    let arch = target::SleighArch::x86_64();
+    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+
+    let cfg_v1 = build_unresolved_jmp_rax_cfg();
+    let unresolved_addr = locate_unresolved_addr(&cfg_v1);
+
+    // Both targets land at NOPs that fall through to ret — both
+    // in-range relative to the 0x100 limit.
+    let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+    known.insert(
+        unresolved_addr,
+        ResolvedTargets::Multiple(vec![0x1004, 0x1008]),
+    );
+
+    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+        .with_known_targets(known)
+        .build()
+        .expect("build with in-range Multiple must succeed");
+
+    let mut had_switch = false;
+    for region in cfg.regions() {
+        if matches!(region.terminator, RegionTerminator::Switch { .. }) {
+            had_switch = true;
+        }
+    }
+    assert!(had_switch, "in-range Multiple must produce a Switch terminator");
+}

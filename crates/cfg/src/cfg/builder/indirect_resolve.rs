@@ -221,36 +221,23 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         pipeline.run_on_built(&mut fg)?;
     }
 
-    // ── Step 6: classify.  Look at the `Return` node's value-input
-    //    (slot index 2 — slots 0/1 are control/memory) — that's the
-    //    *current* producer of target_value after the fixed-point pass.
-    //    Looking at the Return input rather than `target_value` directly
-    //    is robust against `replace_all_uses` rewires that orphan the
-    //    original NodeOutputId.
+    // Classify by inspecting the `Return` node's value-input (slot
+    // index 2 — slots 0/1 are control/memory).  Looking at the
+    // Return input rather than `target_value` directly is robust
+    // against `replace_all_uses` rewires that orphan the original
+    // NodeOutputId.
     //
-    // R1.2 soft-contract note: every "cannot classify" branch below
-    // returns `Ok(None)` rather than erroring.  The strider-level
-    // outer loop runs tier-2 against the optimised IR; if even that
-    // fails, the unresolved branch surfaces as
-    // `ErrorKind::UnresolvedIndirectBranch` at fixed point.
-    // R1.2: a missing or duplicate Return is treated as
-    // "unclassifiable" rather than an error — see soft-contract note
-    // above.  Returning Ok(None) lets the strider-level outer loop
-    // try tier-2 against the optimised IR instead.
-    let Some(return_node) = find_unique_return(&fg) else {
-        return Ok(None);
-    };
+    // The Return is a fixed graph-construction invariant of step 4
+    // (`build_return(Some(value), &[])`); a missing or duplicate
+    // Return is therefore an internal bug, not a "can't classify"
+    // outcome, and propagates as an error.
+    let return_node = find_unique_return(&fg)?;
     let inputs = fg.graph.node_inputs(return_node);
-    // Layout: [control, memory, value, ...ret_regs].  `build_return`
-    // above passed `Some(value)` and `&[]`, so the value slot is at
-    // index 2 and there are exactly 3 inputs.  A missing value input
-    // signals a graph-construction bug in this module rather than a
-    // runtime classification failure, but under the soft contract we
-    // still surface it as "unresolved" — a later iteration won't
-    // recover, so the strider-level loop will eventually error.
-    let Some(&value_input) = inputs.get(2) else {
-        return Ok(None);
-    };
+    // Layout: [control, memory, value].  `build_return` above passed
+    // `Some(value)` and `&[]`, so slot 2 is always present.
+    let &value_input = inputs.get(2).ok_or_else(|| {
+        anyhow::anyhow!("indirect_resolve mini-graph Return has no value input slot")
+    })?;
     let producer = fg.graph.get_node_from_output(value_input);
     let kind = *fg.graph.node_kind(producer);
 
@@ -270,8 +257,8 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
         ir::node::NodeKind::InitialVar(vn) if Some(vn) == cc_link_register_vn => {
             Ok(Some(ResolvedTargets::LinkRegister))
         }
-        // R1.2: unclassifiable producer is no longer an error — defer
-        // to the strider-level outer loop's tier-2 resolver.
+        // Unclassifiable producer is not an error: defer to the
+        // strider-level outer loop's tier-2 resolver.
         _ => Ok(None),
     }
 }
@@ -326,32 +313,26 @@ fn resolve_const_loads(
 /// The mini-graph builder emits exactly one `Return` (in
 /// [`resolve_indirect_target`] step 4).  Optimization passes never
 /// add or remove `Return` nodes, so this is well-defined post-fold.
+/// Zero or more than one Return signals a graph-construction bug in
+/// this module and propagates as an error.
 ///
-/// Walks all node ids rather than `preorder()` because an unresolvable
-/// target may be wired to a node that the optimizer detached from the
-/// reachable set; the `Return` itself remains live, so this lookup is
-/// resilient to that.
-///
-/// R1.2: returns `Ok(None)` when the lookup fails (zero or multiple
-/// Returns) instead of erroring — failure here means the resolver
-/// can't classify the target, which is exactly what the soft
-/// contract treats as "deferred to the outer loop".  No panic, no
-/// `UnresolvedIndirectBranch` error from inside tier 1.
-fn find_unique_return(fg: &ir::BuiltFunctionGraph) -> Option<ir::node::NodeId> {
+/// Iterates the full reachable graph; with one Return the early-exit
+/// is immediate after the second hit (which itself indicates a bug).
+fn find_unique_return(fg: &ir::BuiltFunctionGraph) -> Result<ir::node::NodeId> {
     let mut found: Option<ir::node::NodeId> = None;
     for node_id in fg.preorder() {
         if matches!(fg.graph.node_kind(node_id), ir::node::NodeKind::Return) {
             if found.is_some() {
-                // The mini-graph builder only emits one Return; finding
-                // two means a graph-construction bug in this module or
-                // in the optimizer.  Treat as unresolved (Ok(None) at
-                // the call site) rather than erroring.
-                return None;
+                return Err(anyhow::anyhow!(
+                    "indirect_resolve mini-graph contains more than one Return node"
+                ));
             }
             found = Some(node_id);
         }
     }
-    found
+    found.ok_or_else(|| {
+        anyhow::anyhow!("indirect_resolve mini-graph contains no Return node")
+    })
 }
 
 #[doc(hidden)]
