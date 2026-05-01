@@ -137,6 +137,38 @@ impl PyGraph {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }
+
+    /// Find every site where `pat` matches.  `ignore_casts` and
+    /// `ignore_control_states` mirror the Rust matcher options.
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_control_states=false))]
+    fn find_all(
+        slf: Py<Self>,
+        py: Python<'_>,
+        pat: &crate::pattern::PyPat,
+        ignore_casts: bool,
+        ignore_control_states: bool,
+    ) -> PyResult<Vec<crate::matcher::PyMatch>> {
+        let g_borrow = slf.borrow(py);
+        let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
+        let mut matcher = pattern::Matcher::new(&graph_guard);
+        if ignore_casts {
+            matcher = matcher.ignore_casts();
+        }
+        if ignore_control_states {
+            matcher = matcher.ignore_control_states();
+        }
+        let raw = matcher.find_all(pat.as_inner());
+        drop(graph_guard);
+        drop(g_borrow);
+        let mut out = Vec::with_capacity(raw.len());
+        for m in raw {
+            out.push(crate::matcher::PyMatch {
+                inner: m,
+                graph: slf.clone_ref(py),
+            });
+        }
+        Ok(out)
+    }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

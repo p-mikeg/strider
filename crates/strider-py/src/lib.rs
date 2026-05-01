@@ -10,6 +10,7 @@ mod cfg;
 mod dot;
 mod errors;
 mod graph;
+mod matcher;
 mod opt;
 mod pattern;
 mod reader;
@@ -31,5 +32,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     opt::register(py, m)?;
     run::register(py, m)?;
     pattern::register(py, m)?;
+    matcher::register(py, m)?;
     Ok(())
 }
