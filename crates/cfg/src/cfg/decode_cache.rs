@@ -32,6 +32,8 @@ use rustc_hash::FxHashMap;
 
 /// Shared-ownership cache from machine address to Sleigh's lifted
 /// pcode.  Cheap to clone (single `Arc::clone`).
+// TODO(Task17): remove after incremental indirect-resolve lands —
+// see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
 #[derive(Clone, Default)]
 pub struct DecodeCache {
     inner: Arc<Mutex<FxHashMap<u64, Arc<LiftRes>>>>,

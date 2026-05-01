@@ -247,10 +247,7 @@ fn match_stack_array_shape(
     if !value_type.is_integer() {
         return None;
     }
-    let load_inputs: Vec<NodeOutputId> =
-        graph.node_inputs(load_node).into_iter().collect();
-    let mem_input = *load_inputs.first()?;
-    let addr_output = *load_inputs.get(1)?;
+    let [mem_input, addr_output] = graph.node_inputs_exact::<2>(load_node).ok()?;
 
     // Flatten the address into a sum of terms.  ARM lifters sometimes
     // emit `Add(Add(sp, idx*stride), const)` (a nested Add tree)

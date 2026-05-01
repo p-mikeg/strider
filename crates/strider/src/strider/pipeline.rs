@@ -30,6 +30,8 @@ pub struct RegionLiftHandles {
     /// Wrapped in `Arc` so the orchestrator's per-iteration
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
+    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     pub exit_vn_to_value:
         std::sync::Arc<std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>>,
 }

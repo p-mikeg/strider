@@ -633,12 +633,10 @@ fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
             let node = graph.get_node_from_output(out);
             match graph.node_kind(node) {
                 NodeKind::VarPhi(_) | NodeKind::ValuePhi => {
-                    let inputs: Vec<NodeOutputId> =
-                        graph.node_inputs(node).into_iter().collect();
                     // Slot 0 is the phi-token; slots 1.. are values.
                     // A trivial phi has exactly one value input.
-                    if inputs.len() == 2 {
-                        out = inputs[1];
+                    if let Ok([_token, val]) = graph.node_inputs_exact::<2>(node) {
+                        out = val;
                         budget -= 1;
                         continue;
                     }

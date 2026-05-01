@@ -53,7 +53,7 @@ the IR; `pattern` queries it.  Errors propagate via `anyhow::Result` workspace-w
 - **`reader`** — Loads ELF binaries and provides a memory reader (`ElfFileMemReader`) for rsleigh.
 - **`cfg`** — Builds a Control Flow Graph (`Cfg<R>`) from a binary using rsleigh. Uses `petgraph::StableDiGraph` internally. Regions (basic blocks) contain p-code instructions (`rsleigh::Insn`). Edge kinds: `Fallthrough`, `Branch`, `IfCaseTrue`, `IfCaseFalse`.
 - **`ir`** — Sea-of-nodes style IR graph. Core types:
-  - `Graph` — stores `NodeId`, `NodeOutputId`, `NodeInputId` via `cranelift-entity` PrimaryMaps. Nodes are deduplicated/cached by (kind, inputs, output_kinds). Per-node side-tables (e.g. `stack_phi_offsets: HashMap<NodeId, Vec<i64>>`) hold ancillary data.
+  - `Graph` — stores `NodeId`, `NodeOutputId`, `NodeInputId` via `cranelift-entity` PrimaryMaps. Nodes are deduplicated/cached by (kind, inputs, output_kinds). Per-node side-tables (e.g. `stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>>`) hold ancillary data.
   - `FunctionBuilder` — builds the IR graph with SSA-like variable tracking. Variables map `rsleigh::Vn` (varnode) → `VarId`. Each region gets a `ControlState` node + `VarPhi` nodes for variables. Calls `validate::validate` at the end of `build()`.
   - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or `OutputType(NodeOutputType)`.
   - `NodeOutputType` — integers `Bool`, `U8`, `U16`, `U32`, `U64`, `U128`, `U256`; floats `F32`, `F64`.

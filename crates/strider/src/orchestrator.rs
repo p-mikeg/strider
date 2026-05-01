@@ -215,6 +215,8 @@ where
     /// every iteration; threaded into each fresh `cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
+    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     /// Cached set of varnodes seen so far across all CFG iterations.
     /// `find_all_unique_vns` would otherwise re-scan every region's
     /// every instruction's every varnode on every Rebuild iteration;
