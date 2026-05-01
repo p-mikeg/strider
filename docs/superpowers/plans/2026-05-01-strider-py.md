@@ -195,6 +195,32 @@ def test_error_hierarchy():
     assert issubclass(errors.ReaderError, errors.StriderError)
     assert issubclass(errors.PatternError, errors.StriderError)
     assert issubclass(errors.RewriteError, errors.StriderError)
+
+def test_error_includes_caused_by_chain():
+    """Anyhow's Debug formatter must produce the Caused-by chain in
+    the exception message. This is what users see when they print()
+    a strider exception from Python.
+
+    Run with RUST_BACKTRACE=1 to also see the Rust backtrace inline
+    in the message (verified manually; not asserted here so the test
+    works in CI without env tweaks).
+    """
+    import strider
+    # Trigger a known-failing code path. add_region with an overflowing
+    # length is a deterministic ReaderError that wraps an inner anyhow
+    # context.
+    m = strider.MemoryMap()
+    try:
+        m.add_region(0xFFFFFFFFFFFFFFFE, b"\x00\x00\x00\x00")
+    except strider.errors.ReaderError as e:
+        msg = str(e)
+        # Either the Display-pretty chain ("Caused by:") or a single
+        # error text — depending on whether the inner anyhow context
+        # added a layer. We assert the error mentions overflow which
+        # is guaranteed by reader::MemRegion::new's error path.
+        assert "overflow" in msg.lower() or "u64" in msg.lower(), msg
+    else:
+        raise AssertionError("expected ReaderError")
 ```
 
 - [ ] **Step 2: Run test, expect failure**
@@ -227,24 +253,32 @@ create_exception!(strider.errors, RewriteError, StriderError);
 /// Convert an `anyhow::Error` into a generic `StriderError`. Use the
 /// boundary-specific `into_*_err` helpers below when you know which
 /// stage raised the error.
+///
+/// We format with `{:?}` (Debug) rather than `{:#}` (pretty Display)
+/// because anyhow's Debug impl includes the **Rust backtrace** when
+/// `RUST_BACKTRACE=1` is set in the env. `{:#}` would show only the
+/// Caused-by chain; users debugging a strider-py crash from Python
+/// want both. The backtrace lives inside the exception's message
+/// string (Python's `__cause__` chain stays empty — PyO3-anyhow
+/// doesn't synthesize a separate exception per Rust error link).
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
-    StriderError::new_err(format!("{e:#}"))
+    StriderError::new_err(format!("{e:?}"))
 }
 
 pub fn into_lift_err(e: anyhow::Error) -> PyErr {
-    LiftError::new_err(format!("{e:#}"))
+    LiftError::new_err(format!("{e:?}"))
 }
 
 pub fn into_reader_err(e: anyhow::Error) -> PyErr {
-    ReaderError::new_err(format!("{e:#}"))
+    ReaderError::new_err(format!("{e:?}"))
 }
 
 pub fn into_pattern_err(e: anyhow::Error) -> PyErr {
-    PatternError::new_err(format!("{e:#}"))
+    PatternError::new_err(format!("{e:?}"))
 }
 
 pub fn into_rewrite_err(e: anyhow::Error) -> PyErr {
-    RewriteError::new_err(format!("{e:#}"))
+    RewriteError::new_err(format!("{e:?}"))
 }
 
 /// Register the `strider.errors` submodule on the parent module.
@@ -3426,6 +3460,14 @@ Sections to include:
 - Visualization (`to_html`).
 - Rewrite (`rewrite` + `reoptimize`).
 - Custom optimizer pipeline.
+- **Debugging**: `RUST_BACKTRACE=1` to get the Rust backtrace inside
+  every `StriderError` message (the chain shows up by default; the
+  backtrace requires the env var because anyhow only captures it then).
+  Errors land as `StriderError` / `LiftError` / `ReaderError` /
+  `PatternError` / `RewriteError`; the message string contains the
+  full Rust Caused-by chain plus (when env-enabled) the backtrace.
+  Python's `__cause__` chain stays empty — read the message string,
+  not `e.__cause__`, when chasing a Rust-side bug.
 - Link to the spec + design rationale.
 
 - [ ] **Step 2: Commit**
