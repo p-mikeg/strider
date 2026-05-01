@@ -419,8 +419,14 @@ fn walk_control_for_if_bound_iter(
                     }
                     if pred_count == 1 {
                         // Single-pred join is just a transparent walk;
-                        // no rollback needed.
-                        let only = graph.node_inputs(producer).into_iter().next().unwrap();
+                        // no rollback needed.  `pred_count == 1`
+                        // guarantees the iterator has a first element,
+                        // but we re-check rather than `unwrap` to keep
+                        // the no-panic discipline.
+                        let Some(only) = graph.node_inputs(producer).into_iter().next() else {
+                            last_result = None;
+                            break;
+                        };
                         control_out = only;
                         continue;
                     }
@@ -428,10 +434,10 @@ fn walk_control_for_if_bound_iter(
                     // and later preds.  The first pred is processed
                     // by re-entering the inner loop directly.
                     let pre_pred_trail_len = trail.len() as u32;
-                    let first_pred = graph.node_inputs(producer)
-                        .into_iter()
-                        .next()
-                        .unwrap();
+                    let Some(first_pred) = graph.node_inputs(producer).into_iter().next() else {
+                        last_result = None;
+                        break;
+                    };
                     work.push(JoinNext {
                         cs_node: producer,
                         next_idx: 1,
@@ -491,11 +497,18 @@ fn walk_control_for_if_bound_iter(
                     }
                     // Schedule next pred — update the existing frame
                     // in place (saves a push/pop pair) and re-enter
-                    // the linear walk.
-                    let next_pred = graph.node_inputs(top.cs_node)
+                    // the linear walk.  `next_idx < pred_count` was
+                    // just checked, so `.nth` is in range; we still
+                    // bail conservatively rather than `unwrap`.
+                    let Some(next_pred) = graph
+                        .node_inputs(top.cs_node)
                         .into_iter()
                         .nth(top.next_idx as usize)
-                        .unwrap();
+                    else {
+                        work.pop();
+                        last_result = None;
+                        continue;
+                    };
                     top.next_idx += 1;
                     top.combined = new_combined;
                     control_out = next_pred;

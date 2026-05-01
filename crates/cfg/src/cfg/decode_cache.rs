@@ -48,23 +48,20 @@ impl DecodeCache {
 
     /// Returns the cached `LiftRes` for `addr` if one has been
     /// recorded, else `None`.
+    ///
+    /// Mutex poisoning recovers via `into_inner` — a previous panic
+    /// while holding the lock leaves the map intact, and a stale
+    /// entry can't miscompile (the next decode will either hit the
+    /// cache and return the same `LiftRes` or miss and recompute).
     #[must_use]
     pub fn get(&self, addr: u64) -> Option<Arc<LiftRes>> {
-        // Mutex is uncontended in the orchestrator's single-threaded
-        // use; the lock is purely for `Send + Sync` ergonomics so the
-        // cache can be cheaply moved between threads in tests.
-        self.inner
-            .lock()
-            .expect("DecodeCache mutex poisoned")
-            .get(&addr)
-            .cloned()
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.get(&addr).cloned()
     }
 
     /// Records `lift_res` for `addr`.  Replaces any prior entry.
     pub fn insert(&self, addr: u64, lift_res: Arc<LiftRes>) {
-        self.inner
-            .lock()
-            .expect("DecodeCache mutex poisoned")
-            .insert(addr, lift_res);
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(addr, lift_res);
     }
 }

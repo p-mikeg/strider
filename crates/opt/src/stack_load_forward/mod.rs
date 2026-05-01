@@ -289,7 +289,16 @@ fn probe(
             top.done_count += 1;
             if top.done_count >= top.total_preds {
                 // All preds collected; assemble the Phi shape.
-                let frame = work.pop().expect("just-checked top frame");
+                // The `last_mut` above proved the stack non-empty;
+                // `pop` is therefore guaranteed to return Some.  We
+                // still handle None conservatively to honour the
+                // no-panic discipline (a later refactor that
+                // mutates `work` between these two calls would
+                // otherwise silently miscompile rather than panic).
+                let Some(frame) = work.pop() else {
+                    last_result = None;
+                    return last_result;
+                };
                 last_result = Some(ResolveShape::Phi {
                     phi_token: frame.phi_token,
                     preds: frame.collected,

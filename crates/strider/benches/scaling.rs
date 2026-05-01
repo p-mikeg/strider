@@ -50,7 +50,11 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
     let cc = match c.arch_name {
         "x86" => strider::CallingConvention::x86_cdecl(),
         "x64" => strider::CallingConvention::x86_64_systemv_abi(),
-        _ => unreachable!(),
+        // The earlier `match c.arch_name` guards this — we only
+        // reach this point on supported arches.  Use `panic!`
+        // (the bench's `clippy::panic` is allow-listed) rather
+        // than `unreachable!` (not on the allow list).
+        _ => panic!("unsupported arch {}", c.arch_name),
     };
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
     let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
