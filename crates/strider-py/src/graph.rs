@@ -101,6 +101,21 @@ impl PyGraph {
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
         Ok(graph.all_node_ids().count())
     }
+
+    /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
+    /// the pipeline (subsequent calls to the same pipeline see an
+    /// empty pass list); rebuild it from `OptimizerPipeline.default()`
+    /// or the equivalent classmethods if you need to apply it again.
+    fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
+        let real_pipeline = pipeline.drain_into_pipeline()?;
+        let mut graph = self
+            .inner
+            .write()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        real_pipeline
+            .run_on_built(&mut graph)
+            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
+    }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

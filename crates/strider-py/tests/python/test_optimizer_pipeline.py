@@ -1,0 +1,57 @@
+import strider
+
+from .conftest import symbol_addr
+
+
+def test_empty_pipeline():
+    pipe = strider.OptimizerPipeline.empty()
+    assert pipe.pass_count() == 0
+    assert pipe.post_pass_count() == 0
+
+
+def test_default_pipeline_nonempty():
+    pipe = strider.OptimizerPipeline.default()
+    assert pipe.pass_count() > 0
+
+
+def test_stable_default_pipeline():
+    pipe = strider.OptimizerPipeline.stable_default()
+    assert pipe.pass_count() > 0
+
+
+def test_destructive_default_pipeline():
+    pipe = strider.OptimizerPipeline.destructive_default()
+    assert pipe.pass_count() > 0
+
+
+def test_add_pure_pass():
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.ConstantFold())
+    pipe.add(strider.opt.KnownBits())
+    pipe.add(strider.opt.RedundantPhis())
+    pipe.add(strider.opt.DeadBranchElim())
+    pipe.add(strider.opt.CallOtherElide())
+    assert pipe.pass_count() == 5
+
+
+def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    g = s.analyze_cfg(cfg).graph
+    pre = g.node_count()
+
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.ConstantFold())
+    pipe.add(strider.opt.KnownBits())
+    g.optimize(pipe)
+    # Optimization may or may not reduce node count; at minimum it must
+    # leave a valid graph (no exception).
+    assert g.node_count() >= 1
+    # Also: pre/post should be sensible integers.
+    assert pre >= 1
