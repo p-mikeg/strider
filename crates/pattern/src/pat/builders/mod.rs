@@ -1,12 +1,13 @@
 //! Builder structs for [`crate::pat::Pat`], grouped by family.
 //!
-//! Every builder produces a [`crate::pat::node_pat::NodePat`] via
+//! Most builders produce a [`crate::pat::node_pat::NodePat`] via
 //! `NodePat::matcher(...)` plus the `.with_*` fluent setters.  Data builders
 //! (`IntBinaryOpPat`, `BoolBinaryOpPat`, `FloatBinaryOpPat`, the memory
 //! family, `PhiPat`, `FunctionArgPat`) use `InputsSpec::Fixed` or
 //! `InputsSpec::Indexed`; control builders (`CallPat`, `CallOtherPat`,
-//! `RetPat`, `IfPat`) use `InputsSpec::Indexed` plus, for `If`, the
-//! `ConsumersSpec::Indexed` direct-step forward walk for branch successors.
+//! `RetPat`) use `InputsSpec::Indexed`.  `IfPat` is the exception — it
+//! uses a custom `Pattern` impl so it can try both direct and
+//! compiler-inverted layouts (cond negated, branches swapped).
 //!
 //! # Capture rule
 //!

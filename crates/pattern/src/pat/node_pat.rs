@@ -511,8 +511,7 @@ fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pat::Pat, b: &mut B
 }
 
 /// Match `pat` against a forward-step consumer node (used by
-/// `ConsumersSpec::Indexed` for `IfPat::true_branch` /
-/// `false_branch`).  Honors
+/// `IfPattern` for `IfPat::true_branch` / `false_branch`).  Honors
 /// [`crate::matcher::MatcherOptions::ignore_control_states`]: if the
 /// direct match fails and the consumer is a `ControlState`, retry
 /// against the single consumer of the ControlState's control output.

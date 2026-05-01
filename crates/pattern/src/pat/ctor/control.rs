@@ -119,6 +119,12 @@ pub fn ret() -> RetPat {
 }
 /// Starts building an `If` pattern.  Chain `.cond()`, `.true_branch()`,
 /// `.false_branch()` to add constraints.
+///
+/// **Symmetric matching.**  When `.cond(C)` is set, the matcher also tries
+/// the compiler-inverted layout: input `Not(C)` with branches swapped.
+/// This makes a pattern written from the source-level POV match both
+/// `if (c) A else B` and the equivalent `if (!c) B else A` that compilers
+/// commonly emit.  Without `.cond()`, only the direct layout is tried.
 #[must_use]
 pub fn if_node() -> IfPat {
     IfPat::new()
