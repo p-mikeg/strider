@@ -43,7 +43,7 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, bail, Result};
 
-use cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use ir::node::{NodeId, NodeOutputId};
 use opt::ReadOnlyMemory;
 
@@ -206,6 +206,11 @@ where
     /// iterations).
     lr_vn: Option<rsleigh::Vn>,
     sp_vn: Option<rsleigh::Vn>,
+    /// Decode cache shared across CFG rebuilds.  The Sleigh handle
+    /// persists for the whole `run`, so this cache stays valid for
+    /// every iteration; threaded into each fresh `cfg::Builder` so
+    /// machine-instruction decodes are paid once per address per run.
+    decode_cache: DecodeCache,
 }
 
 impl<'a, B> LoopState<'a, B>
@@ -227,6 +232,7 @@ where
             },
             lr_vn,
             sp_vn,
+            decode_cache: DecodeCache::new(),
             opts: RunOpts {
                 strider: config.strider,
                 start_addr: config.start_addr,
@@ -245,7 +251,7 @@ where
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at build_iter_0"))?;
         let (graph, unresolved, region_index, sleigh) =
-            build_lift_stable(sleigh, &self.opts, &self.known_targets)?;
+            build_lift_stable(sleigh, &self.opts, &self.known_targets, &self.decode_cache)?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
@@ -332,7 +338,7 @@ where
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at rebuild"))?;
         let (graph, unresolved, region_index, sleigh) =
-            build_lift_stable(sleigh, &self.opts, &self.known_targets)?;
+            build_lift_stable(sleigh, &self.opts, &self.known_targets, &self.decode_cache)?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
@@ -581,6 +587,7 @@ fn build_lift_stable<B>(
     sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
     opts: &RunOpts<'_>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
+    decode_cache: &DecodeCache,
 ) -> Result<(
     ir::BuiltFunctionGraph,
     Vec<(PcodeInsnAddr, ir::Value)>,
@@ -609,6 +616,7 @@ where
     let cfg: Cfg<rsleigh::mem_readers::BufMemReader<B>> =
         Builder::with_endianness(sleigh, opts.start_addr, cfg_opts, arch_endianness)
             .with_known_targets(known_targets.clone())
+            .with_decode_cache(decode_cache.clone())
             .build()?;
 
     let outcome = opts.strider.analyze_cfg(&cfg)?;

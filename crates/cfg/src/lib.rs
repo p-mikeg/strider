@@ -15,8 +15,8 @@
 
 mod cfg;
 pub use cfg::{
-    Builder, Cfg, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region,
-    RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator, ResolvedTargets,
+    Builder, Cfg, DecodeCache, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr,
+    Region, RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator, ResolvedTargets,
     is_addr_tail_call,
 };
 

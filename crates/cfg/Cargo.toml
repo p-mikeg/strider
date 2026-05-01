@@ -12,6 +12,7 @@ ir.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true
 target.workspace = true
+rustc-hash = "2"
 
 [lints]
 workspace = true

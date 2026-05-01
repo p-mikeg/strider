@@ -1,4 +1,5 @@
 mod builder;
+mod decode_cache;
 mod dot;
 mod options;
 mod query;
@@ -6,6 +7,7 @@ mod types;
 
 pub use builder::Builder;
 pub use builder::ResolvedTargets;
+pub use decode_cache::DecodeCache;
 #[doc(hidden)]
 pub use builder::test_api;
 pub use options::OptionsBuilder;

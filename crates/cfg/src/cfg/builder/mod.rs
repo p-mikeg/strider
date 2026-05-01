@@ -68,6 +68,11 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<(NodeIndex, RegionEdgeKind)>, PcodeInsnAddr)>,
+    /// Optional cache of `(machine_addr) → Arc<LiftRes>`.  When
+    /// present, [`super::region_builder::RegionBuilder::lift_one_cached`]
+    /// consults it before invoking Sleigh's decoder.  The cache must be
+    /// scoped to a single Sleigh context (see [`crate::DecodeCache`]).
+    pub(super) decode_cache: Option<crate::cfg::DecodeCache>,
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
@@ -100,7 +105,19 @@ impl<R: rsleigh::MemReader> Builder<R> {
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
+            decode_cache: None,
         }
+    }
+
+    /// Attaches a Sleigh-decode cache to this builder.  When set,
+    /// every machine-instruction lift consults the cache before
+    /// invoking `Sleigh::lift_one`, and inserts on miss.  See
+    /// [`crate::DecodeCache`] for the cache's invariants (in
+    /// particular: it must be scoped to one Sleigh context).
+    #[must_use]
+    pub fn with_decode_cache(mut self, cache: crate::cfg::DecodeCache) -> Self {
+        self.decode_cache = Some(cache);
+        self
     }
 
     /// Inserts `region` into the graph and records its start address in the

@@ -93,6 +93,7 @@ dependencies = [
  "petgraph",
  "reader",
  "rsleigh",
+ "rustc-hash",
  "target",
 ]
 
@@ -482,6 +483,7 @@ dependencies = [
  "anyhow",
  "cranelift-bitset",
  "cranelift-entity",
+ "criterion",
  "dot",
  "entity-utils",
  "ethnum",
@@ -656,6 +658,7 @@ dependencies = [
  "ir",
  "opt",
  "rsleigh",
+ "rustc-hash",
  "thiserror",
 ]
 
@@ -1079,6 +1082,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cfg",
+ "criterion",
  "dot",
  "expect-test",
  "ir",

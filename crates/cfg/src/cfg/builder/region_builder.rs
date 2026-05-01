@@ -86,6 +86,29 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         }
     }
 
+    /// Lift a single machine instruction at `addr`, consulting the
+    /// optional [`crate::DecodeCache`] when present.  Returns an
+    /// `Arc<LiftRes>` so successive callers at the same address
+    /// (across CFG rebuilds within one `strider::run`) share the
+    /// underlying decoded pcode without re-invoking Sleigh.
+    fn lift_one_cached(&mut self, addr: u64) -> Result<std::sync::Arc<rsleigh::LiftRes>> {
+        if let Some(cache) = &self.builder.decode_cache
+            && let Some(arc) = cache.get(addr)
+        {
+            return Ok(arc);
+        }
+        let res = self
+            .builder
+            .sleigh
+            .lift_one(addr)
+            .map_err(|e| anyhow!("generic sleigh error {e:?}"))?;
+        let arc = std::sync::Arc::new(res);
+        if let Some(cache) = &self.builder.decode_cache {
+            cache.insert(addr, std::sync::Arc::clone(&arc));
+        }
+        Ok(arc)
+    }
+
     /// Decodes a pcode branch-target varnode into a [`PcodeInsnAddr`].
     ///
     /// Pcode encodes branch targets in two ways:
@@ -479,11 +502,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
-            let lift_res = self
-                .builder
-                .sleigh
-                .lift_one(cur_addr.machine_addr.addr)
-                .map_err(|e| anyhow!("generic sleigh error {e:?}"))?;
+            let lift_res = self.lift_one_cached(cur_addr.machine_addr.addr)?;
             // `enumerate` before `skip` so `i` is the absolute pcode index.
             // On the very first machine instruction this may start at a non-zero
             // index (the work queue delivered a mid-instruction entry point);
