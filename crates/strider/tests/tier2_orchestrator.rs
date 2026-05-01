@@ -25,7 +25,7 @@ fn make_config<'a>(
     strider: &'a Strider,
     bytes: Vec<u8>,
     base: u64,
-) -> RunConfig<'a, Vec<u8>> {
+) -> RunConfig<'a, BufMemReader<Vec<u8>>> {
     RunConfig {
         strider,
         start_addr: base,
