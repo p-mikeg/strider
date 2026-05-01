@@ -150,6 +150,16 @@ impl PyOptimizerPipeline {
         Self::new_with(state)
     }
 
+    /// Append a `LoadReadOnly(rom)` pass to the fixed-point pass list.
+    pub(crate) fn add_load_readonly(&self, rom: crate::reader::PyMemoryMap) -> PyResult<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        state.passes.push(Box::new(opt::LoadReadOnly(rom)));
+        Ok(())
+    }
+
     /// Materialise a real `opt::OptimizerPipeline` from the current
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you

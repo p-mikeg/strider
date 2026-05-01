@@ -46,6 +46,25 @@ impl PySleigh {
     pub(crate) fn put_inner(&mut self, sleigh: rsleigh::Sleigh<PyMemoryMapReader>) {
         self.inner = Some(sleigh);
     }
+
+    /// Internal constructor (mirrors `#[new]`).  Lets the run-style
+    /// helpers in `run.rs` build a PySleigh without going through
+    /// PyO3's argument-conversion path.
+    pub(crate) fn new_internal(arch: PySleighArch, mem: PyMemoryMap) -> PyResult<Self> {
+        let table = mem.lookup_table().map_err(into_lift_err)?;
+        let reader = PyMemoryMapReader { table };
+        let inner = rsleigh::Sleigh::new(arch.inner.sla_spec, arch.inner.pspec, reader)
+            .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+        let regs = inner
+            .regs()
+            .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
+        Ok(Self {
+            inner: Some(inner),
+            arch_name: arch.preset_name,
+            arch: arch.inner,
+            regs,
+        })
+    }
 }
 
 #[pymethods]

@@ -106,6 +106,24 @@ impl PyStrider {
     fn calling_convention_arch(&self) -> &target::SleighArch {
         &self.arch
     }
+
+    /// Internal constructor used by `strider.run`.
+    pub(crate) fn new_internal(
+        py: Python<'_>,
+        arch: PySleighArch,
+        sleigh: &Py<PySleigh>,
+        cc: PyCallingConvention,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let arch_copy = arch.inner;
+        let inner = strider::Strider::new(arch.inner, regs, cc.inner).map_err(into_lift_err)?;
+        Ok(Self {
+            inner,
+            arch: arch_copy,
+        })
+    }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
