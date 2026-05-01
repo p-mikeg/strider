@@ -259,13 +259,15 @@ pub(crate) enum OutputsSpec {
     Indexed(Vec<(usize, crate::pat::Pat)>),
 }
 
-/// Constraints on the consumer of an output slot by position.  For each
-/// entry, the helper finds the single consumer of `outputs[i]` (via
-/// [`walk::next_control_node`]) and matches the sub-pattern as a node.  If
-/// the output has zero or multiple consumers, the match fails.
+/// Constraints on the consumer of an output slot by position.
+///
+/// Today only `None` is in use — `IfPat` (the only consumer-walk client)
+/// owns its own forward-step traversal in
+/// [`crate::pat::builders::branch`].  The variant is retained to preserve
+/// the `NodePat` shape and keep future consumer-style patterns (e.g. a
+/// generic "match the user of output N") trivially addable.
 pub(crate) enum ConsumersSpec {
     None,
-    Indexed(Vec<(usize, crate::pat::Pat)>),
 }
 
 impl Pattern for NodePat {
@@ -375,11 +377,6 @@ impl NodePat {
         self
     }
 
-    pub(crate) fn with_consumers(mut self, c: ConsumersSpec) -> Self {
-        self.consumers = c;
-        self
-    }
-
     pub(crate) fn with_post_match(mut self, pm: NodeKindCheck) -> Self {
         self.post_match = Some(pm);
         self
@@ -473,12 +470,9 @@ fn try_once(
         }
     }
 
-    // (b,c) outputs + consumers — both index into the same slice, fetch once.
-    let needs_outputs = matches!(pat.outputs, OutputsSpec::Indexed(_))
-        || matches!(pat.consumers, ConsumersSpec::Indexed(_));
-    let outputs = needs_outputs.then(|| ctx.graph.graph.node_outputs(node));
-
-    if let (OutputsSpec::Indexed(items), Some(outputs)) = (&pat.outputs, &outputs) {
+    // (b) outputs — sparse positional constraints, lazily fetched.
+    if let OutputsSpec::Indexed(items) = &pat.outputs {
+        let outputs = ctx.graph.graph.node_outputs(node);
         for (i, p) in items {
             let Some(&out) = outputs.get(*i) else {
                 return false;
@@ -489,18 +483,12 @@ fn try_once(
         }
     }
 
-    if let (ConsumersSpec::Indexed(items), Some(outputs)) = (&pat.consumers, &outputs) {
-        for (i, p) in items {
-            let Some(&out) = outputs.get(*i) else {
-                return false;
-            };
-            let Some(consumer) = walk::next_control_node(ctx.matcher, out) else {
-                return false;
-            };
-            if !match_consumer_node(ctx, consumer, p, b) {
-                return false;
-            }
-        }
+    // (c) consumers — currently no `NodePat` user installs an indexed
+    // consumer constraint; `IfPat` does its own forward walk.  Match
+    // `pat.consumers` exhaustively so adding a future variant is a
+    // compile-time prompt to handle it here.
+    match &pat.consumers {
+        ConsumersSpec::None => {}
     }
 
     // (d) post_match (op-var binding for *Any patterns)
@@ -528,7 +516,12 @@ fn match_one(ctx: &MatchCtx, out: NodeOutputId, pat: &crate::pat::Pat, b: &mut B
 /// [`crate::matcher::MatcherOptions::ignore_control_states`]: if the
 /// direct match fails and the consumer is a `ControlState`, retry
 /// against the single consumer of the ControlState's control output.
-fn match_consumer_node(ctx: &MatchCtx, node: NodeId, pat: &crate::pat::Pat, b: &mut Bindings) -> bool {
+pub(crate) fn match_consumer_node(
+    ctx: &MatchCtx,
+    node: NodeId,
+    pat: &crate::pat::Pat,
+    b: &mut Bindings,
+) -> bool {
     let mark = b.mark();
     if ctx.matcher.match_node_id(node, pat, b) {
         return true;

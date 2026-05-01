@@ -3,7 +3,9 @@
 //! readability.
 
 use ir::node::NodeOutputType;
-use ir::{BoolBinaryOp, BuiltFunctionGraph, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::{
+    BoolBinaryOp, BoolUnaryOp, BuiltFunctionGraph, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
 
 use super::graph::{Tb, reg_vn, sp_vn};
 
@@ -124,6 +126,45 @@ pub fn if_cmp_then_return(c: u64) -> BuiltFunctionGraph {
     let c_node = t.u64(c);
     let one = t.u64(1);
     let cond = t.int_cmp(c_node, one, ir::IntCmpOp::Equal);
+    t.build_if(cond, true_r, false_r);
+    t.finish()
+}
+
+/// Compiler-inverted equivalent of [`if_cmp_then_return`].  Same source-level
+/// program — `if (c == 1) { return 10 } else { return 20 }` — but the IR has
+/// the cond wrapped in `Not(...)` and the branches swapped, so the literal
+/// IR shape is `if (!(c == 1)) { return 20 } else { return 10 }`.
+///
+/// This is what a compiler emits when it inverts a branch (e.g. for
+/// fall-through codegen).  Useful for testing the symmetric `IfPat` match.
+pub fn if_cmp_then_return_inverted(c: u64) -> BuiltFunctionGraph {
+    let mut t = Tb::bare(vec![], &[], &[], &[], None, 0);
+    let entry = t.region();
+    let true_r = t.region();
+    let false_r = t.region();
+    t.set_entry(entry);
+
+    // The IR's "true" branch holds the body that was originally the FALSE
+    // body in `if_cmp_then_return` — i.e. returns 20.
+    t.enter(true_r);
+    let twenty = t.u64(20);
+    t.fb_mut()
+        .build_return(Some(twenty), &[])
+        .expect("build_return");
+
+    // The IR's "false" branch holds the body that was originally the TRUE
+    // body — returns 10.
+    t.enter(false_r);
+    let ten = t.u64(10);
+    t.fb_mut()
+        .build_return(Some(ten), &[])
+        .expect("build_return");
+
+    t.enter(entry);
+    let c_node = t.u64(c);
+    let one = t.u64(1);
+    let inner = t.int_cmp(c_node, one, ir::IntCmpOp::Equal);
+    let cond = t.bool_un(inner, BoolUnaryOp::Neg);
     t.build_if(cond, true_r, false_r);
     t.finish()
 }
