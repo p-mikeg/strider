@@ -132,10 +132,32 @@ impl PyMemoryMap {
     /// section with file-backed data from an ELF file at `path` and add
     /// them as regions.  Mirrors `reader::ElfFileMemReader::from_path`'s
     /// region selection.
-    fn add_region_from_elf(&self, path: &str) -> PyResult<()> {
+    ///
+    /// `apply_relocations` defaults to `False`.  Set it to `True` for
+    /// ET_DYN binaries (FreeBSD kernels, PIE userland) whose `.text`
+    /// or function-pointer tables ship with unresolved relocations
+    /// (`call rel32` placeholders, `R_*_RELATIVE` entries):
+    /// `reader::elf::apply_elf_relocations` runs over the loaded
+    /// regions in-place after the section copy and patches every
+    /// relocation it understands.  See the function's doc-comment
+    /// for the supported kinds.
+    #[pyo3(signature = (path, apply_relocations=false))]
+    fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = reader::load_elf(path).map_err(into_reader_err)?;
-        let regions = reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
-            .map_err(into_reader_err)?;
+        // When apply_relocations=True we widen the section coverage
+        // to include `.data.rel.ro`, `.got`, …  Without the widening
+        // a `R_*_RELATIVE` relocation against a writable-but-
+        // relocated table has nowhere to land (the applier reports
+        // skipped_no_region) and the analysis sees zeros where the
+        // function pointers should be.
+        let regions = if apply_relocations {
+            let (regions, _stats) =
+                reader::elf::elf_load_with_relocations(&obj).map_err(into_reader_err)?;
+            regions
+        } else {
+            reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+                .map_err(into_reader_err)?
+        };
         let mut inner = self
             .inner
             .write()

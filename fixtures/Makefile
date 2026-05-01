@@ -50,9 +50,24 @@ all: $(TARGETS)
 $(OUTDIR)/$(ARCH):
 	mkdir -p $@
 
+# Shared-library fixtures: cases that need ET_DYN linkage so they
+# carry actual relocations (R_*_RELATIVE on function-pointer tables,
+# PLT entries for unresolved externals).  Cases listed here are
+# built with `-shared -fPIC` and skip arch CFLAGS that conflict with
+# `-shared` (`-no-pie`, `-fno-pic`).  Used by reader::elf::
+# apply_elf_relocations tests; see cases/elf_relocs.c.
+SHARED_CASES := elf_relocs
+
+# CFLAGS_BASE: drop `-no-pie` / `-fno-pic` from the arch's CFLAGS for
+# the SHARED_CASES rule, since `-shared` requires PIC.  Other arch
+# flags (-m32, -O2, -g, …) are still needed.
+CFLAGS_BASE := $(filter-out -no-pie -fno-pic,$(CFLAGS))
+
 $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
 		echo "WARNING: compiler for '$(ARCH)' not found; skipping $@"; \
+	elif echo "$(SHARED_CASES)" | tr ' ' '\n' | grep -qx "$(basename $(notdir $@))"; then \
+		$(CC) $(CFLAGS_BASE) $(COMMON_CFLAGS) -shared -fPIC -nostdlib $< -o $@ && echo "  Built $@ (shared)"; \
 	else \
 		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $< -o $@ && echo "  Built $@"; \
 	fi

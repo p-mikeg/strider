@@ -28,7 +28,10 @@
 //!   parsed `object::File` (intentionally leaks the backing bytes).
 
 use anyhow::Context as _;
-use object::{Object, ObjectSection, ObjectSegment};
+use object::{
+    Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable,
+    RelocationFlags, RelocationKind, RelocationTarget,
+};
 
 use crate::{MemRegion, MemRegionsLookupTable, Result};
 
@@ -207,6 +210,38 @@ pub fn elf_get_code_and_readonly_sections_as_mem_regions(
     elf_sections_to_mem_regions(obj, section_is_code_or_readonly)
 }
 
+/// Returns every allocatable file-backed section as a [`MemRegion`].
+/// Strictly broader than [`elf_get_code_and_readonly_sections_as_mem_regions`]:
+/// includes writable sections like `.data.rel.ro`, `.data`, `.got`, …
+/// — anywhere the linker emitted runtime-relocated data the analyser
+/// might want to read.
+///
+/// Used by callers that intend to apply ELF relocations
+/// post-load: function-pointer tables in `.data.rel.ro` and
+/// indirect-call targets in `.got` need to be loaded so the
+/// applier has somewhere to patch.  Without this widening, an
+/// `R_*_RELATIVE` relocation against `.data.rel.ro` falls through
+/// `apply_elf_relocations`'s "no region" skip path and the table
+/// reads zero at analysis time.
+///
+/// `SHT_NOBITS` (`.bss`, `.tbss`) sections produce empty `data()`
+/// and are skipped — there's nothing to patch and the analyser has
+/// no need for zero-filled regions.
+///
+/// # Errors
+///
+/// Propagates any error from [`elf_sections_to_mem_regions`].
+pub fn elf_get_allocatable_file_backed_sections_as_mem_regions(
+    obj: &object::File<'_>,
+) -> Result<Vec<MemRegion>> {
+    elf_sections_to_mem_regions(obj, |sec| {
+        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+            return false;
+        };
+        sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
+    })
+}
+
 // ── ElfFileMemReader ──────────────────────────────────────────────────────────
 
 /// An rsleigh [`rsleigh::MemReader`] backed by an ELF file's sections.
@@ -305,6 +340,280 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
             u64::from_be_bytes(buf)
         })
     }
+}
+
+// ── ELF relocation application ───────────────────────────────────────────────
+//
+// FreeBSD kernels and other ET_DYN binaries ship with unresolved
+// relocations: a `call rel32` to a function in the same image is
+// stored as `e8 00 00 00 00` until the loader patches the 4-byte
+// immediate with `target - (rip)`.  Without this patch the analyser
+// follows the call as control flow into the next instruction (rel32
+// = 0 → call site + 5 bytes) and prunes any code that only fed the
+// real call target.  The loader does this work at runtime; for
+// static analysis we replicate it here, in-place on the loaded
+// `MemRegion`s.
+//
+// Architecture-independence is delegated to the `object` crate's
+// `RelocationKind` enum (`Absolute` = `S + A`, `Relative` = `S + A
+// - P`, `PltRelative` = `L + A - P` — modelled as `Relative` here
+// because we don't materialise PLT stubs).  Anything else we
+// recognise but skip on; unknown architectures are skipped silently
+// rather than producing partial / mis-applied patches.
+
+/// Result counts from [`apply_elf_relocations`].  Returned as a
+/// breakdown rather than a single integer so callers can surface
+/// "this binary had 1234 relocations, we applied 1000 of them" to
+/// the user when something looks off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RelocationStats {
+    /// Total relocations seen across every iterated table.
+    pub seen: usize,
+    /// Relocations the applier patched into the loaded regions.
+    pub applied: usize,
+    /// Relocations skipped because the target symbol could not be
+    /// resolved (typically: undefined externs, weak symbols
+    /// referencing absent libraries).  Patching with an arbitrary
+    /// value would produce wrong control flow.
+    pub skipped_unresolved_target: usize,
+    /// Relocations skipped because their kind / size / encoding
+    /// isn't one the applier knows how to write — e.g. ARM Thumb-
+    /// branch encodings or platform-specific TLS variants.
+    pub skipped_unsupported_kind: usize,
+    /// Relocations whose site address didn't fall inside any of the
+    /// `regions` passed in (e.g. .data / .bss relocations when the
+    /// caller only loaded code-and-readonly sections).
+    pub skipped_no_region: usize,
+}
+
+/// Patches relocations in `regions` in-place using the ELF's
+/// dynamic relocation table.
+///
+/// Walks `obj.dynamic_relocations()` (Relocations from `.rela.dyn`,
+/// `.rela.plt`, …).  For each entry, computes the target address
+/// from the relocation's symbol or section, then writes the encoded
+/// value (per [`RelocationKind`]) into the region containing the
+/// relocation site.
+///
+/// Used for ET_DYN binaries (FreeBSD kernels, PIE userland) whose
+/// `.text` ships with unresolved `call rel32` placeholders.  ET_REL
+/// binaries (relocatable object files) keep their relocations on
+/// per-section tables and are not currently iterated here — the
+/// dynamic-relocations API is sufficient for the kernel + PIE
+/// shapes that motivated this function.
+///
+/// # Errors
+///
+/// Returns an error only on a malformed ELF (a relocation whose
+/// target symbol or section index doesn't resolve).  A bad symbol
+/// resolution that arises legitimately (e.g. `STN_UNDEF` for an
+/// external lib) is *not* an error — the relocation is simply
+/// counted under `skipped_unresolved_target` and the caller can
+/// log/inspect the result.
+pub fn apply_elf_relocations(
+    regions: &mut [MemRegion],
+    obj: &object::File<'_>,
+) -> Result<RelocationStats> {
+    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
+    let mut stats = RelocationStats::default();
+
+    let Some(dyn_relocs) = obj.dynamic_relocations() else {
+        return Ok(stats);
+    };
+
+    for (site_addr, reloc) in dyn_relocs {
+        stats.seen += 1;
+
+        // Image-relative relocations (`R_X86_64_RELATIVE` /
+        // `R_AARCH64_RELATIVE` / `R_386_RELATIVE` / `R_ARM_RELATIVE`)
+        // store `image_base + addend` at the site, with no symbol or
+        // section reference — `RelocationTarget::Absolute` and a
+        // `RelocationKind::Unknown` come out the other side of object
+        // crate's mapping table.  We model the analyser's image base
+        // as the binary's link-time-chosen base (typically 0 for an
+        // ET_DYN), so the patched value is `addend` directly.  Width
+        // is fixed by the relocation type (64-bit on 64-bit ABIs,
+        // 32-bit on 32-bit).  Without this branch every PIE binary's
+        // `dispatch_table[]` slot reads zero post-load.
+        if let Some((value, size_bytes)) = image_relative_reloc(&reloc, obj.architecture()) {
+            if let Some(region) = regions
+                .iter_mut()
+                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
+            {
+                let off = (site_addr - region.start_addr()) as usize;
+                write_at(region.data_mut(), off, value, size_bytes, endian_le);
+                stats.applied += 1;
+            } else {
+                stats.skipped_no_region += 1;
+            }
+            continue;
+        }
+
+        // Resolve the target.  Per `Object::dynamic_relocations`'s
+        // doc-comment, symbol indices here reference the dynamic
+        // symbol table — `obj.symbol_by_index` looks at `.symtab`
+        // and returns the wrong entry for a given index, so we
+        // must dispatch through `dynamic_symbol_table()` first and
+        // fall back to the static `.symtab` only if the dynamic
+        // table is absent (ET_REL files).
+        let target_addr = match reloc.target() {
+            RelocationTarget::Symbol(idx) => {
+                let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
+                    dynsym
+                        .symbol_by_index(idx)
+                        .map(|s| (s.address(), s.is_undefined()))
+                        .ok()
+                } else {
+                    obj.symbol_by_index(idx)
+                        .map(|s| (s.address(), s.is_undefined()))
+                        .ok()
+                };
+                let Some((addr, undef)) = resolved else {
+                    stats.skipped_unresolved_target += 1;
+                    continue;
+                };
+                if addr == 0 && undef {
+                    stats.skipped_unresolved_target += 1;
+                    continue;
+                }
+                addr
+            }
+            RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
+                Ok(sec) => sec.address(),
+                Err(_) => {
+                    stats.skipped_unresolved_target += 1;
+                    continue;
+                }
+            },
+            RelocationTarget::Absolute => {
+                stats.skipped_unsupported_kind += 1;
+                continue;
+            }
+            _ => {
+                stats.skipped_unsupported_kind += 1;
+                continue;
+            }
+        };
+
+        let addend = reloc.addend();
+        // S, A, P naming follows the System V ABI generic relocation
+        // formula (see object::common::RelocationKind doc-comment):
+        //   S = target_addr, A = addend, P = site_addr.
+        let value = match reloc.kind() {
+            RelocationKind::Absolute => target_addr.wrapping_add(addend as u64),
+            // L (PLT entry) is treated as the symbol's own address —
+            // we don't materialise a PLT.  Functionally identical to
+            // `Relative` for analysis purposes.
+            RelocationKind::Relative | RelocationKind::PltRelative => target_addr
+                .wrapping_add(addend as u64)
+                .wrapping_sub(site_addr),
+            _ => {
+                stats.skipped_unsupported_kind += 1;
+                continue;
+            }
+        };
+
+        // The `size` field is in bits; `size == 0` means "use the
+        // kind's default", but the only kinds we patch (Absolute /
+        // Relative / PltRelative) all set `size` explicitly on every
+        // arch we care about, so a 0 size signals an arch-specific
+        // encoding (e.g. ARM Thumb branch) we don't model.
+        let size_bits = reloc.size();
+        if size_bits == 0 || size_bits % 8 != 0 || size_bits > 64 {
+            stats.skipped_unsupported_kind += 1;
+            continue;
+        }
+        let size_bytes = (size_bits / 8) as usize;
+
+        // Find the region that contains the [site_addr, site_addr +
+        // size_bytes) range.  Linear scan is fine here — relocation
+        // counts are small relative to the per-relocation work.
+        let Some(region) = regions
+            .iter_mut()
+            .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
+        else {
+            stats.skipped_no_region += 1;
+            continue;
+        };
+
+        let off = (site_addr - region.start_addr()) as usize;
+        write_at(region.data_mut(), off, value, size_bytes, endian_le);
+        stats.applied += 1;
+    }
+
+    Ok(stats)
+}
+
+/// Detects the `R_*_RELATIVE` family — image-base + addend
+/// relocations that have no symbol/section target.  Returns
+/// `Some((value_to_write, size_bytes))` when matched.  Image base is
+/// modelled as 0 (the binary's link-time virtual address layout),
+/// so the value is just the addend.
+///
+/// The `r_type` constants for `R_X86_64_RELATIVE` and
+/// `R_386_RELATIVE` collide (both = 8), as do several others across
+/// arches, so we dispatch on the file's `Architecture` first and
+/// only check `r_type` against the appropriate arch's constant.
+fn image_relative_reloc(
+    reloc: &object::Relocation,
+    arch: object::Architecture,
+) -> Option<(u64, usize)> {
+    // R_*_RELATIVE comes through with an `Absolute` target (no
+    // symbol) and an `Unknown` kind (object 0.38 doesn't enumerate
+    // them), so we have to look at the raw type code.
+    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+        return None;
+    };
+    use object::Architecture as A;
+    let size_bytes = match arch {
+        A::X86_64 if r_type == object::elf::R_X86_64_RELATIVE => 8,
+        A::I386 if r_type == object::elf::R_386_RELATIVE => 4,
+        A::Aarch64 if r_type == object::elf::R_AARCH64_RELATIVE => 8,
+        A::Arm if r_type == object::elf::R_ARM_RELATIVE => 4,
+        _ => return None,
+    };
+    // For image-relative, the addend is the resolved value (image
+    // base = 0).  Addends are i64 in object's API but represent
+    // unsigned virtual addresses for these types — bitcast.
+    Some((reloc.addend() as u64, size_bytes))
+}
+
+/// Writes `value`'s low `size_bytes` bytes into `bytes` starting at
+/// `off`, using the target's endianness.  Caller must guarantee
+/// `off + size_bytes <= bytes.len()`.
+fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_le: bool) {
+    // Truncate `value` to the field width; signed/unsigned doesn't
+    // matter for fixed-width 2's-complement bit patterns.
+    let v_bytes = value.to_le_bytes();
+    if endian_le {
+        bytes[off..off + size_bytes].copy_from_slice(&v_bytes[..size_bytes]);
+    } else {
+        // Big-endian: write the low N bytes most-significant-first.
+        for i in 0..size_bytes {
+            bytes[off + i] = v_bytes[size_bytes - 1 - i];
+        }
+    }
+}
+
+/// Convenience: load every allocatable file-backed section (via
+/// [`elf_get_allocatable_file_backed_sections_as_mem_regions`])
+/// and apply dynamic relocations to the resulting regions in-place.
+///
+/// Use this when you want analysis-grade fidelity for an ET_DYN
+/// binary: code, rodata, and writable-but-relocated data
+/// (`.data.rel.ro`, `.got`) all land in the returned regions with
+/// every applicable relocation patched in.
+///
+/// # Errors
+///
+/// Propagates any error from the inner helpers; relocation
+/// resolution itself only errors on a malformed ELF.
+pub fn elf_load_with_relocations(
+    obj: &object::File<'_>,
+) -> Result<(Vec<MemRegion>, RelocationStats)> {
+    let mut regions = elf_get_allocatable_file_backed_sections_as_mem_regions(obj)?;
+    let stats = apply_elf_relocations(&mut regions, obj)?;
+    Ok((regions, stats))
 }
 
 // ── load_elf ──────────────────────────────────────────────────────────────────

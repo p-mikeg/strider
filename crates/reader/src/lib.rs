@@ -100,6 +100,16 @@ impl MemRegion {
         &self.data
     }
 
+    /// Mutable view of the region's bytes.  The Vec's length is not
+    /// resizable through this view (the slice doesn't expose
+    /// truncate/extend), so the constructor's "no overflow" invariant
+    /// on `start_addr + data.len()` survives.  Used by relocation
+    /// appliers to patch in-place without rebuilding the region.
+    #[must_use]
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
     /// One past the last virtual address covered by this region.
     ///
     /// `end_addr == start_addr + data.len()`. Cannot overflow: the

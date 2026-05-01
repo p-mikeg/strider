@@ -110,12 +110,17 @@ impl PyPat {
 }
 
 /// Polymorphic input for builder field methods: accepts a `Pat`, a
-/// `Capture`, or a string (which interns to a Capture).
+/// `Capture`, a string (which interns to a Capture), or any of the
+/// typed builders that finalise to a `Pat` (e.g. `CallPat`,
+/// `IntBinaryPat`).  Adding a typed builder variant here lets users
+/// pass the un-finalised builder directly into field setters and
+/// query methods without a manual `.into_pat()` call.
 #[derive(FromPyObject)]
 pub enum PatLike<'py> {
     Pat(Bound<'py, PyPat>),
     Capture(Bound<'py, PyCapture>),
     Str(Bound<'py, PyString>),
+    CallPat(Bound<'py, PyCallPat>),
 }
 
 impl PatLike<'_> {
@@ -133,6 +138,7 @@ impl PatLike<'_> {
                     Ok(pattern::var(c))
                 }
             }
+            PatLike::CallPat(b) => Ok(b.borrow().finalise()),
         }
     }
 }
@@ -656,14 +662,111 @@ pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyPat> {
 
 // ── Calls ────────────────────────────────────────────────────────────────
 
+/// Typed builder for `Call` node patterns.  Wraps `pattern::CallPat`
+/// so callers can chain `.at(addr)`, `.target(p)`, `.arg(idx, p)`,
+/// `.ret_output(idx, p)`, plus the universal capture / predicate /
+/// finaliser methods (`.capture(c)` / `.cap(name)` / `.when(f)` /
+/// `.into_pat()`).
+///
+/// Returned by [`call`] (the free function).  Because [`PyCallPat`]
+/// is a variant of [`PatLike`], an un-finalised builder can be
+/// passed directly to any field setter or query that takes a
+/// pattern (e.g. `g.find_all(call().arg(0, int_const(8)))`); the
+/// `into_pat()` call is implicit at use-site.
+#[pyclass(name = "CallPat", module = "strider.pattern")]
+pub struct PyCallPat {
+    target: std::cell::RefCell<Option<pattern::Pat>>,
+    args: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+    ret_outputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyCallPat {
+    fn new() -> Self {
+        Self {
+            target: std::cell::RefCell::new(None),
+            args: std::cell::RefCell::new(Vec::new()),
+            ret_outputs: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+    /// Materialise the current builder state into a finalised `Pat`.
+    /// Cheap: clones the inner Vecs once.
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::call();
+        if let Some(t) = self.target.borrow().clone() {
+            b = b.target(t);
+        }
+        for (idx, p) in self.args.borrow().iter().cloned() {
+            b = b.arg(idx, p);
+        }
+        for (idx, p) in self.ret_outputs.borrow().iter().cloned() {
+            b = b.ret_output(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyCallPat {
+    /// Constrain the call target to the literal address `addr`.
+    /// Equivalent to `target(int_const(addr))`.
+    fn at(slf: Py<Self>, py: Python<'_>, addr: u64) -> Py<Self> {
+        slf.borrow(py).target.replace(Some(pattern::int_const(addr)));
+        slf
+    }
+    /// Constrain the call target with an arbitrary pattern (e.g.
+    /// `function_arg(0)` or a captured value reference).
+    fn target(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).target.replace(Some(pat));
+        Ok(slf)
+    }
+    /// Constrain the argument at position `idx` (0-based, after the
+    /// implicit `[ctrl, mem]` inputs).  The `Call` node's input layout
+    /// is `[ctrl, mem, target, arg0, arg1, …]`; this method maps `idx`
+    /// onto the arg slot.
+    fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).args.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    /// Capture the Call's return-value output at ABI position `idx`
+    /// — e.g. `.ret_output(0, var(c))` binds `c` to the
+    /// `NodeOutputId` of the calling convention's first return
+    /// register.  See `pattern::CallPat::ret_output` for details.
+    fn ret_output(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).ret_outputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat {
+        PyPat::from_pat(wrap_when(self.finalise(), f))
+    }
+    /// Materialise this builder as a `Pat`.  Use this when a function
+    /// that doesn't accept `PatLike` (e.g. `Graph.rewrite_all`'s pair
+    /// list) needs a finalised pattern.  `Graph.find_all` accepts the
+    /// builder directly via `PatLike` — `into_pat()` isn't required there.
+    fn into_pat(&self) -> PyPat {
+        PyPat::from_pat(self.finalise())
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (at=None))]
-pub fn call(at: Option<u64>) -> PyPat {
-    let mut b = pattern::call();
+pub fn call(at: Option<u64>) -> PyCallPat {
+    let b = PyCallPat::new();
     if let Some(addr) = at {
-        b = b.at(addr);
+        b.target.replace(Some(pattern::int_const(addr)));
     }
-    PyPat::from_pat(b.into())
+    b
 }
 
 #[pyfunction]
@@ -978,6 +1081,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyIntBinaryPat>()?;
     m.add_class::<PyBoolBinaryPat>()?;
     m.add_class::<PyFloatBinaryPat>()?;
+    m.add_class::<PyCallPat>()?;
 
     macro_rules! add_fn {
         ($name:ident) => {

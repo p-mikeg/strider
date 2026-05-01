@@ -140,14 +140,19 @@ impl PyGraph {
 
     /// Find every site where `pat` matches.  `ignore_casts` and
     /// `ignore_control_states` mirror the Rust matcher options.
+    /// `pat` accepts any `PatLike` (a `Pat`, a typed builder like
+    /// `CallPat`, a `Capture`, or a string capture-name) — typed
+    /// builders (e.g. `call().arg(0, int_const(8))`) are finalised
+    /// implicitly so the call site stays uncluttered by `.into_pat()`.
     #[pyo3(signature = (pat, ignore_casts=false, ignore_control_states=false))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
-        pat: &crate::pattern::PyPat,
+        pat: crate::pattern::PatLike<'_>,
         ignore_casts: bool,
         ignore_control_states: bool,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
+        let pat = pat.into_pat()?;
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let mut matcher = pattern::Matcher::new(&graph_guard);
@@ -157,7 +162,7 @@ impl PyGraph {
         if ignore_control_states {
             matcher = matcher.ignore_control_states();
         }
-        let raw = matcher.find_all(pat.as_inner());
+        let raw = matcher.find_all(&pat);
         drop(graph_guard);
         drop(g_borrow);
         let mut out = Vec::with_capacity(raw.len());
@@ -171,14 +176,17 @@ impl PyGraph {
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.
-    /// Returns the number of times the rule fired.
+    /// Returns the number of times the rule fired.  Both `find` and
+    /// `replace` accept `PatLike` (so e.g.
+    /// `g.rewrite(find=call().arg(0, …), replace=…)` works without
+    /// an explicit `.into_pat()` conversion).
     fn rewrite(
         &self,
-        find: &crate::pattern::PyPat,
-        replace: &crate::pattern::PyPat,
+        find: crate::pattern::PatLike<'_>,
+        replace: crate::pattern::PatLike<'_>,
     ) -> PyResult<usize> {
-        let lhs = (*find.as_inner()).clone();
-        let rhs = (*replace.as_inner()).clone();
+        let lhs = find.into_pat()?;
+        let rhs = replace.into_pat()?;
         let rule = pattern::rewrite_rule(lhs, rhs);
         let mut graph = self
             .inner

@@ -72,8 +72,12 @@ def test_cap_method_on_pat():
 
 
 def test_call_constructor():
-    assert isinstance(call(), Pat)
-    assert isinstance(call(at=0x1000), Pat)
+    # `call()` returns a `CallPat` typed builder so chaining
+    # `.at(addr)`, `.target(p)`, `.arg(idx, p)`, `.ret_output(idx, p)`
+    # is legal.  The builder is a `PatLike` (accepted directly by
+    # `Graph.find_all`); use `.into_pat()` to get a finalised `Pat`.
+    assert isinstance(call().into_pat(), Pat)
+    assert isinstance(call(at=0x1000).into_pat(), Pat)
 
 
 def test_ret_constructor():
