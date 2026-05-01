@@ -15,6 +15,10 @@
 //! Without a `cond` constraint, no swap is attempted — there is no
 //! condition to negate.
 //!
+//! There is currently no `.ordered()` opt-out: once `.cond(p)` is set,
+//! the swap is unconditional.  A future opt-out could be added if a
+//! caller needs strict (direct-only) matching.
+//!
 //! Use [`crate::pat::IntoPat::capture`] to bind the matched If node id.
 
 use std::sync::Arc;
@@ -45,14 +49,18 @@ impl IfPat {
         self
     }
     /// Match `p` against the single consumer of the If's true-branch
-    /// output.  When `cond` is also set, also matches the consumer of
-    /// the false-branch output if cond is found wrapped in `Not(...)`.
+    /// output.  When `cond` is also set, the matcher also tries the
+    /// inverted layout: `p` is tried against the consumer of the
+    /// **false**-branch output when the If's cond input is `Not(<cond>)`.
+    /// In that case `p` matches one or the other of the two consumers,
+    /// not both.
     pub fn true_branch(mut self, p: impl Into<Pat>) -> Self {
         self.true_branch = Some(p.into());
         self
     }
     /// Match `p` against the single consumer of the If's false-branch
-    /// output.  Symmetric to `true_branch`.
+    /// output.  Symmetric to `true_branch`: under the inverted layout,
+    /// `p` is tried against the consumer of the **true**-branch output.
     pub fn false_branch(mut self, p: impl Into<Pat>) -> Self {
         self.false_branch = Some(p.into());
         self

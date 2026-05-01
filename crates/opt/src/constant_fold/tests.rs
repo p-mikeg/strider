@@ -774,8 +774,9 @@ fn no_fold_bool_xor_false() -> Result<()> {
         let f = b.build_boolean_const(false);
         b.build_boolean_operation(cmp, f, BoolBinaryOp::Xor)
     })?;
-    // No rule fires: cmp is non-const, `false` is not absorbing, neither
-    // const-fold side fires.  Return value is still the BXor node.
+    // No rule fires: cmp is non-const so the both-const fold won't fire,
+    // and the new `x ^ true → !x` rule won't fire because the const is
+    // `false`, not `true`.  Return value is still the BXor node.
     assert!(!ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
         return_kind(&fg)?,

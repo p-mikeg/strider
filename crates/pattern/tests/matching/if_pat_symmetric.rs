@@ -133,3 +133,20 @@ fn captured_if_node_id_works_in_both_layouts() {
         ir::node::NodeKind::If
     ));
 }
+
+// ── Shared Capture across cond and branch must agree ────────────────────────
+
+/// A `Capture` referenced both by `cond` and by `true_branch` must bind
+/// to the same node — `Bindings::bind_capture` rejects re-binds with a
+/// different node id.  The cond's bound node is an `IntCmpOp` and the
+/// branch's bound node is whatever the consumer is — they cannot agree,
+/// so no match is expected in either direct or inverted graphs.
+#[test]
+fn shared_capture_across_cond_and_branch_must_agree() {
+    let g_direct = shapes::if_cmp_then_return(4);
+    let g_inverted = shapes::if_cmp_then_return_inverted(4);
+    let c = Capture::new();
+    let pat: Pat = if_node().cond(var(c)).true_branch(var(c)).into();
+    a::none(&g_direct, pat.clone());
+    a::none(&g_inverted, pat);
+}
