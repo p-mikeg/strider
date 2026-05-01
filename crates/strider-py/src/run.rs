@@ -63,30 +63,29 @@ pub fn run(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<PyRunResult> {
-    if pipeline.is_some() {
-        return run_with_custom_pipeline(
+    match pipeline {
+        Some(p) => run_with_custom_pipeline(
             py,
             arch,
             cc,
             mem,
             entry,
             rom,
-            pipeline.expect("checked above"),
+            p,
             allow_code_before_start_addr,
             function_max_size,
-        );
+        ),
+        None => run_via_orchestrator(
+            py,
+            arch,
+            cc,
+            mem,
+            entry,
+            rom,
+            allow_code_before_start_addr,
+            function_max_size,
+        ),
     }
-
-    run_via_orchestrator(
-        py,
-        arch,
-        cc,
-        mem,
-        entry,
-        rom,
-        allow_code_before_start_addr,
-        function_max_size,
-    )
 }
 
 /// Orchestrator path — the canonical strider::run flow.  Drives the
