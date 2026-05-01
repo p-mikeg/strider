@@ -221,18 +221,147 @@ impl PyCallOtherElide {
     fn new() -> Self { Self }
 }
 
+// ── CC/arch-aware passes ──────────────────────────────────────────────────
+//
+// Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
+// time, builds a target::BuiltCallingConvention against the Sleigh's
+// register table, and stores the concrete pre-configured pass.
+
+/// `StackStoreDetect(sleigh, cc)`
+#[pyclass(name = "StackStoreDetect", module = "strider.opt")]
+pub struct PyStackStoreDetect {
+    pub(crate) inner: opt::StackStoreDetect,
+}
+#[pymethods]
+impl PyStackStoreDetect {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        sleigh: Py<crate::sleigh::PySleigh>,
+        cc: crate::cc::PyCallingConvention,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let built_cc = cc
+            .inner
+            .build(&regs)
+            .map_err(crate::errors::into_lift_err)?;
+        Ok(Self {
+            inner: opt::StackStoreDetect::from_convention(&built_cc),
+        })
+    }
+}
+
+/// `StackLoadForward(sleigh, cc, arch)`
+#[pyclass(name = "StackLoadForward", module = "strider.opt")]
+pub struct PyStackLoadForward {
+    pub(crate) inner: opt::StackLoadForward,
+}
+#[pymethods]
+impl PyStackLoadForward {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        sleigh: Py<crate::sleigh::PySleigh>,
+        cc: crate::cc::PyCallingConvention,
+        arch: crate::arch::PySleighArch,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let built_cc = cc
+            .inner
+            .build(&regs)
+            .map_err(crate::errors::into_lift_err)?;
+        Ok(Self {
+            inner: opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
+        })
+    }
+}
+
+/// `FunctionArgDetect(sleigh, cc)`
+#[pyclass(name = "FunctionArgDetect", module = "strider.opt")]
+pub struct PyFunctionArgDetect {
+    pub(crate) inner: opt::FunctionArgDetect,
+}
+#[pymethods]
+impl PyFunctionArgDetect {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        sleigh: Py<crate::sleigh::PySleigh>,
+        cc: crate::cc::PyCallingConvention,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let built_cc = cc
+            .inner
+            .build(&regs)
+            .map_err(crate::errors::into_lift_err)?;
+        Ok(Self {
+            inner: opt::FunctionArgDetect::from_convention(&built_cc),
+        })
+    }
+}
+
+/// `CallStackArgCollect(sleigh, cc)`
+#[pyclass(name = "CallStackArgCollect", module = "strider.opt")]
+pub struct PyCallStackArgCollect {
+    pub(crate) inner: opt::CallStackArgCollect,
+}
+#[pymethods]
+impl PyCallStackArgCollect {
+    #[new]
+    fn new(
+        py: Python<'_>,
+        sleigh: Py<crate::sleigh::PySleigh>,
+        cc: crate::cc::PyCallingConvention,
+    ) -> PyResult<Self> {
+        let sleigh_borrow = sleigh.borrow(py);
+        let regs = sleigh_borrow.regs.clone();
+        drop(sleigh_borrow);
+        let built_cc = cc
+            .inner
+            .build(&regs)
+            .map_err(crate::errors::into_lift_err)?;
+        Ok(Self {
+            inner: opt::CallStackArgCollect::from_convention(&built_cc),
+        })
+    }
+}
+
+/// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` (any
+/// `reader::ReadOnlyMemory` impl works on the Rust side).
+#[pyclass(name = "LoadReadOnly", module = "strider.opt")]
+pub struct PyLoadReadOnly {
+    pub(crate) rom: crate::reader::PyMemoryMap,
+}
+#[pymethods]
+impl PyLoadReadOnly {
+    #[new]
+    fn new(rom: crate::reader::PyMemoryMap) -> Self {
+        Self { rom }
+    }
+}
+
 // ── Polymorphic enum used by add/add_post ──────────────────────────────────
 
 /// Aggregates every pass-wrapper class so `add` / `add_post` can
 /// accept any of them via PyO3's automatic enum dispatch.
 #[derive(FromPyObject)]
-#[allow(dead_code)] // The Bound payload is used only to drive variant selection.
 pub enum PyOptPass<'py> {
     ConstantFold(Bound<'py, PyConstantFold>),
     KnownBits(Bound<'py, PyKnownBits>),
     RedundantPhis(Bound<'py, PyRedundantPhis>),
     DeadBranchElim(Bound<'py, PyDeadBranchElim>),
     CallOtherElide(Bound<'py, PyCallOtherElide>),
+    StackStoreDetect(Bound<'py, PyStackStoreDetect>),
+    StackLoadForward(Bound<'py, PyStackLoadForward>),
+    FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
+    CallStackArgCollect(Bound<'py, PyCallStackArgCollect>),
+    LoadReadOnly(Bound<'py, PyLoadReadOnly>),
 }
 
 impl PyOptPass<'_> {
@@ -243,6 +372,11 @@ impl PyOptPass<'_> {
             PyOptPass::RedundantPhis(_) => Box::new(opt::RedundantPhis),
             PyOptPass::DeadBranchElim(_) => Box::new(opt::DeadBranchElimination),
             PyOptPass::CallOtherElide(_) => Box::new(opt::CallOtherElide),
+            PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::LoadReadOnly(b) => Box::new(opt::LoadReadOnly(b.borrow().rom.clone())),
         }
     }
 }
@@ -255,6 +389,11 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRedundantPhis>()?;
     m.add_class::<PyDeadBranchElim>()?;
     m.add_class::<PyCallOtherElide>()?;
+    m.add_class::<PyStackStoreDetect>()?;
+    m.add_class::<PyStackLoadForward>()?;
+    m.add_class::<PyFunctionArgDetect>()?;
+    m.add_class::<PyCallStackArgCollect>()?;
+    m.add_class::<PyLoadReadOnly>()?;
     parent.add_submodule(&m)?;
     let sys = py.import_bound("sys")?;
     sys.getattr("modules")?.set_item("strider.opt", &m)?;

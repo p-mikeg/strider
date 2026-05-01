@@ -34,6 +34,30 @@ def test_add_pure_pass():
     assert pipe.pass_count() == 5
 
 
+def test_cc_aware_passes_construct(x86_memory_elf):
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+
+    # Construct each CC/arch-aware pass to confirm their constructors
+    # accept the (sleigh, cc[, arch]) triples.
+    a = strider.opt.StackStoreDetect(sleigh, cc)
+    b = strider.opt.StackLoadForward(sleigh, cc, arch)
+    c = strider.opt.FunctionArgDetect(sleigh, cc)
+    d = strider.opt.CallStackArgCollect(sleigh, cc)
+    e = strider.opt.LoadReadOnly(mem)
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(a)
+    pipe.add(b)
+    pipe.add(e)
+    pipe.add_post(c)
+    pipe.add_post(d)
+    assert pipe.pass_count() == 3
+    assert pipe.post_pass_count() == 2
+
+
 def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()

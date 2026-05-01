@@ -72,6 +72,7 @@ fn try_detect_stack_store(
 /// Runs inside the main fixed-point loop so that address arithmetic folded by
 /// `ConstantFold` and SP-phi collapses produced by `RedundantPhis` feed more
 /// detections on each iteration.
+#[derive(Clone)]
 pub struct StackStoreDetect {
     /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
     pub stack_ptr_vn: rsleigh::Vn,
