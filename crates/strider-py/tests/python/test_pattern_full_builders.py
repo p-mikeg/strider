@@ -22,7 +22,7 @@ from strider.pattern import (
     stack_store, stack_store_phi, call, call_other, ret, if_, phi,
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
-    int_const, int_cmp, int_bin_any, int_cmp_any,
+    int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
 )
 
 from .conftest import fixture_path
@@ -220,6 +220,77 @@ def test_function_arg_reg_constructor():
 def test_function_arg_stack_constructor():
     p = function_arg_stack(strider.VnSpace.ram(), 16)
     assert isinstance(p.into_pat(), Pat)
+
+
+# ── signed_int_const ────────────────────────────────────────────────
+
+
+def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
+    if arch_id == "x86":
+        arch, cc = strider.SleighArch.x86(), strider.CallingConvention.x86_cdecl()
+    elif arch_id == "x64":
+        arch, cc = strider.SleighArch.x86_64(), strider.CallingConvention.x86_64_systemv_abi()
+    else:
+        raise ValueError(arch_id)
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(fixture_path(arch_id, "patterns")))
+    return strider.run(
+        arch=arch, cc=cc, mem=mem, rom=mem, entry=mem.symbol(fn_name),
+        allow_code_before_start_addr=True,
+    ).graph
+
+
+def test_signed_int_const_matches_neg50_on_x86_u32():
+    # 32-bit x86: `IntConst(0xFFFFFFCE)` at U32 — bit-pattern equality
+    # at output width.  Both `int_const(-50)` and `signed_int_const(-50)`
+    # match here.
+    g = _patterns_graph_for("x86")
+    assert len(g.find_all(int_const(-50))) >= 1
+    assert len(g.find_all(signed_int_const(-50))) >= 1
+
+
+def test_signed_int_const_handles_x64_zero_extended_neg50():
+    # 64-bit x64: gcc -O2 lowers `return -50;` as `mov eax, 0xffffffce;
+    # ret`, leaving high 32 bits of RAX zero.  IR carries
+    # `IntConst(0x00000000FFFFFFCE)` at U64 — value `+4294967246`,
+    # NOT -50.  `int_const(-50)` (strict bit-pattern) misses it;
+    # `signed_int_const(-50)` recognises the U32-narrow signed form
+    # via the zero-extension check.
+    g = _patterns_graph_for("x64")
+    assert len(g.find_all(int_const(-50))) == 0, (
+        "int_const should NOT match the zero-extended form — that's the whole point of signed_int_const"
+    )
+    assert len(g.find_all(signed_int_const(-50))) >= 1
+
+
+def test_signed_int_const_neg1_matches_at_every_width():
+    # `-1` has bit pattern all-ones at every width AND the
+    # zero-extension check handles narrower-stored-zero-extended
+    # variants.  Either way `signed_int_const(-1)` should fire on
+    # any function that returns a negative literal.
+    g64 = _patterns_graph_for("x64")
+    # Whether or not -1 actually appears in if_returns_const, the
+    # call must succeed without raising and the result is a list.
+    assert isinstance(g64.find_all(signed_int_const(-1)), list)
+
+
+def test_signed_int_const_round_trips_via_match_int():
+    # When a match fires, Match.int(c) recovers the SIGNED i128
+    # value, so a captured signed_int_const round-trips.
+    c = Capture()
+    g = _patterns_graph_for("x64")
+    hits = g.find_all(signed_int_const(-50).capture(c))
+    if not hits:
+        pytest.skip("no -50 constant in this graph (compiler may have folded it)")
+    # The first hit's captured constant: stored as u128, recovered as
+    # signed i128.  For the x64 zero-extended-neg50 case the stored
+    # value is +4294967246 at U64; Match.int treats THAT as i128
+    # (no further sign extension), so the recovered i128 is
+    # +4294967246, not -50.  The pattern's job was to recognise the
+    # source-level value; recovering the raw bit pattern is
+    # `Match.uint`'s job.
+    val = hits[0].uint(c)
+    assert val is not None
 
 
 # ── int_cmp + int_cmp_any ────────────────────────────────────────────

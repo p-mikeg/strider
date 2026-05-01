@@ -454,9 +454,41 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
     PyPat::from_pat(pattern::var(c.inner))
 }
 
+/// Match an `IntConst` whose stored value, masked to the node's
+/// output width, equals `value` (interpreted as a signed i128 and
+/// reinterpreted as u128 for bit-pattern equality).
+///
+/// Negative `value` works for the *common* case where the lifter
+/// stores the sign-extended form at the output width — e.g. a
+/// 32-bit `IntConst(-50)` stored as `0xFFFFFFCE`.  But on x86-64
+/// (and similar) gcc -O2 emits 32-bit ops with zero-extended
+/// 64-bit results, so the same source `-50` lands as
+/// `IntConst(0x00000000FFFFFFCE)` at U64 — which `int_const(-50)`
+/// reads as the unsigned value `+4294967246` and **does not match**.
+///
+/// Use `signed_int_const(value)` when you want to recognise the
+/// source-level signed value across both sign- and zero-extended
+/// forms.
 #[pyfunction]
 pub fn int_const(value: i128) -> PyPat {
     PyPat::from_pat(pattern::int_const(value))
+}
+
+/// Match an `IntConst` whose stored value, interpreted as a signed
+/// integer at *some* natural width ≤ the output width, equals
+/// `value`.  Strictly more permissive than [`int_const`]: also
+/// matches the zero-extended form of a narrower signed value, which
+/// is what compilers emit when a 32-bit signed result feeds a
+/// 64-bit register.
+///
+/// **Use case** — `add(x, signed_int_const(-1))` for `x--`,
+/// `mul(x, signed_int_const(-50))` for source-level negative
+/// constants.  Where bit-pattern equality at the exact output
+/// width matters (low-level rewrites that depend on storage
+/// shape), prefer the strict [`int_const`].
+#[pyfunction]
+pub fn signed_int_const(value: i128) -> PyPat {
+    PyPat::from_pat(pattern::signed_int_const(value))
 }
 
 #[pyfunction]
@@ -1739,6 +1771,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(any_);
     add_fn!(var);
     add_fn!(int_const);
+    add_fn!(signed_int_const);
     add_fn!(bool_const);
     add_fn!(float_const);
     add_fn!(any_int_const);

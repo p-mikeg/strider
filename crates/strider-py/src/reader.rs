@@ -283,6 +283,60 @@ impl PyMemoryMap {
         )))
     }
 
+    /// Return the ELF-recorded size in bytes of the symbol named
+    /// `name` (`st_size` for an ELF symbol).  Returns `None` when
+    /// the symbol exists but its size is recorded as 0 (typical for
+    /// data symbols in stripped binaries, or for stub functions).
+    /// Raises `ReaderError` when the symbol isn't defined in any
+    /// loaded ELF.
+    ///
+    /// Pair with `symbol(name)` to derive a `function_max_size`
+    /// argument for `strider.run` / `strider.build_cfg`:
+    ///
+    /// ```python
+    /// addr = mem.symbol("sys_thr_self")
+    /// size = mem.symbol_size("sys_thr_self")
+    /// strider.run(..., entry=addr, function_max_size=size)
+    /// ```
+    fn symbol_size(&self, name: &str) -> PyResult<Option<u64>> {
+        let elfs = self
+            .elfs
+            .read()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        for obj in elfs.iter() {
+            if let Some(sym) = obj.symbol_by_name(name) {
+                let size = sym.size();
+                return Ok(if size == 0 { None } else { Some(size) });
+            }
+        }
+        Err(into_reader_err(anyhow::anyhow!(
+            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
+             ({} loaded)", elfs.len()
+        )))
+    }
+
+    /// Convenience shortcut for the common
+    /// `(symbol(name), symbol_size(name))` pair — returns
+    /// `(addr, size)` so callers don't need two lookups.  `size` is
+    /// `None` when the ELF doesn't record one (zero `st_size`).
+    /// Raises `ReaderError` when the symbol is undefined.
+    fn function_max_size(&self, name: &str) -> PyResult<(u64, Option<u64>)> {
+        let elfs = self
+            .elfs
+            .read()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        for obj in elfs.iter() {
+            if let Some(sym) = obj.symbol_by_name(name) {
+                let size = sym.size();
+                return Ok((sym.address(), if size == 0 { None } else { Some(size) }));
+            }
+        }
+        Err(into_reader_err(anyhow::anyhow!(
+            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
+             ({} loaded)", elfs.len()
+        )))
+    }
+
     /// All function/data symbols across every loaded ELF as a
     /// `dict[str, int]`.  Symbols with empty names or zero addresses
     /// (typical for synthetic linker entries) are skipped.  When two

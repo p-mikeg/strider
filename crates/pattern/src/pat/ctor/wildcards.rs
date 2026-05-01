@@ -77,6 +77,105 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
     .into_pat()
 }
 
+/// Matches an `IntConst` whose stored value, interpreted as a signed
+/// integer at *some* natural width ≤ the node's output width, equals
+/// `v`.  Strictly more permissive than [`int_const`]: also matches
+/// the *zero-extended* form of a narrower signed value, which is
+/// what compilers emit when a 32-bit signed result feeds a 64-bit
+/// register on (e.g.) x86-64.
+///
+/// Concretely, for each width `w` ∈ {8, 16, 32, 64, 128} with
+/// `w ≤ output_width`, the matcher tests whether the stored value:
+///   * has its low `w` bits equal to `v` mod `2^w`, AND
+///   * is consistent with either a sign-extension or a zero-extension
+///     from width `w` to the output width.
+///
+/// **Why this matters.**  At -O2 on x86-64, `return -50;` lowers to
+/// `mov eax, 0xffffffce; ret` — the high 32 bits of `RAX` are zero
+/// (zero-extended from a 32-bit move), so the IR carries
+/// `IntConst(0x00000000FFFFFFCE)` at U64.  The conventional
+/// [`int_const(-50)`] does an exact-bit-pattern match at the output
+/// width and reads that value as `+4294967246`; `signed_int_const(-50)`
+/// recognises the U32-narrow signed form and matches.  Symmetrically
+/// it also matches the U32-only IntConst and the U64
+/// sign-extended `0xFFFFFFFFFFFFFFCE` form, so a single pattern
+/// covers every natural width a compiler might emit.
+///
+/// `int_const(v)` remains the right call when bit-pattern equality
+/// at the exact output width is what you want (e.g. low-level
+/// rewrites that depend on the storage shape).  Use
+/// `signed_int_const(v)` for source-semantic matches like
+/// `add(x, signed_int_const(-1))` for `x--`.
+#[must_use]
+pub fn signed_int_const(v: impl Into<i128>) -> Pat {
+    let v_signed: i128 = v.into();
+    let v_unsigned: u128 = v_signed as u128;
+    NodePat::matcher(
+        KindSpec::variant(&NodeKind::IntConst(0u128)),
+        InputsSpec::None,
+    )
+    .with_post_match(Arc::new(move |ctx, node, _b| {
+        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+            return false;
+        };
+        let Some(ty) = ctx
+            .graph
+            .graph
+            .node_outputs(node)
+            .into_iter()
+            .find_map(|out| ctx.graph.graph.output_kind(out).as_value())
+        else {
+            return false;
+        };
+        let output_width = ty.bit_width();
+        if output_width == 0 {
+            return false;
+        }
+        let output_mask = ty.bit_mask_u128();
+        // Iterate widths up to and including the output width.  For each
+        // width `w`, treat the stored value as a w-bit signed value (low
+        // `w` bits) and check whether that signed value equals `v` AND
+        // the high bits above `w` are consistent with either zero- or
+        // sign-extension to the output width.
+        for &w in &[8usize, 16, 32, 64, 128] {
+            if w > output_width {
+                break;
+            }
+            let w_mask: u128 = if w >= 128 { u128::MAX } else { (1u128 << w) - 1 };
+            let low = stored & w_mask;
+            let v_low = v_unsigned & w_mask;
+            if low != v_low {
+                continue;
+            }
+            // Above `w` bits, within the output type, the stored value
+            // must be either all-zero (zero-extended) or all-one (sign-
+            // extended, for negative-at-w values).
+            let above_w_mask = output_mask & !w_mask;
+            let above = stored & above_w_mask;
+            if above == 0 {
+                return true; // zero-extended form of v at width w
+            }
+            // Sign-extended only makes sense when the w-th bit is set
+            // (i.e. v is negative at width w).
+            let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
+            if sign_bit_w != 0 && (low & sign_bit_w) != 0 && above == above_w_mask {
+                return true; // sign-extended form
+            }
+        }
+        false
+    }))
+    // RHS use-site: same encoding as `int_const` — write `v_unsigned`
+    // masked to the root type.
+    .with_build_fn(
+        Arc::new(move |ctx| {
+            let mask = ctx.root_ty.bit_mask_u128();
+            Ok(NodeKind::IntConst(v_unsigned & mask))
+        }),
+        BuildTy::InheritRoot,
+    )
+    .into_pat()
+}
+
 /// Matches a `BoolConst` node with value exactly `v`.
 #[must_use]
 pub fn bool_const(v: bool) -> Pat {
