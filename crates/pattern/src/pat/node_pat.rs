@@ -44,9 +44,10 @@ pub(crate) type NodeKindCheck =
 /// Kind-level constraint carried by every [`NodePat`].
 ///
 /// Dispatch has two phases:
-/// * [`accepts_discriminant`](Self::accepts_discriminant) — O(1), closure-free.
-///   Used by [`crate::matcher::Matcher::find_all`] to prefilter candidate
-///   roots to the compatible discriminant class.
+/// * [`discriminant`](Self::discriminant) — O(1), closure-free.
+///   Used by [`crate::matcher::Matcher::find_all`] to look up the
+///   matcher's lazy kind-index bucket for the spec's root kind,
+///   skipping every node with a different `NodeKind` discriminant.
 /// * [`matches`](Self::matches) — full check (discriminant + payload).
 ///   Used by [`NodePat::try_match_common`] to gate the whole match.
 ///
@@ -92,17 +93,17 @@ impl KindSpec {
         }
     }
 
-    /// Cheap prefilter: true iff the candidate's discriminant could match.
-    /// `Any` accepts everything; the other variants accept only their stored
-    /// discriminant.
+    /// Returns the unique `NodeKind` discriminant this spec accepts,
+    /// or `None` for the wildcard [`Self::Any`].  Used by
+    /// [`crate::matcher::Matcher::find_all`] to look up the kind
+    /// index's bucket for concrete-rooted patterns rather than scanning
+    /// every node.
     #[inline]
-    pub(crate) fn accepts_discriminant(&self, kind: &NodeKind) -> bool {
+    pub(crate) fn discriminant(&self) -> Option<std::mem::Discriminant<NodeKind>> {
         match self {
-            Self::Any => true,
-            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => {
-                *d == std::mem::discriminant(kind)
-            }
-            Self::Exact(k) => std::mem::discriminant(k) == std::mem::discriminant(kind),
+            Self::Any => None,
+            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => Some(*d),
+            Self::Exact(k) => Some(std::mem::discriminant(k)),
         }
     }
 

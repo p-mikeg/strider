@@ -86,6 +86,26 @@ pub struct Matcher<'g> {
     /// point so a Matcher reused across multiple `find_all` calls
     /// never serves a stale entry from a previous invocation.
     pure_memo: std::cell::RefCell<rustc_hash::FxHashMap<(usize, NodeOutputId), bool>>,
+    /// Lazily-cached preorder traversal of `fn_graph`.  Built on
+    /// first call to [`Self::preorder_cached`]; stays valid for the
+    /// `Matcher`'s lifetime because the matcher holds an immutable
+    /// borrow of `fn_graph` (any mutation would require a fresh
+    /// `&mut Graph`, which forces this `Matcher` out of scope).
+    ///
+    /// Used by [`Self::find_all`], [`Self::find_all_multi`], and the
+    /// kind-index bootstrap to avoid M independent
+    /// `BuiltFunctionGraph::preorder()` walks per session.
+    preorder: std::cell::OnceCell<Vec<NodeId>>,
+    /// Lazily-cached `Discriminant<NodeKind> → Vec<NodeId>` index of
+    /// the graph.  Populated on first call to [`Self::kind_index`];
+    /// consulted by [`Self::find_all`] and [`Self::find_all_multi`]
+    /// to skip every node whose `NodeKind` discriminant is
+    /// incompatible with the pattern's root kind.
+    ///
+    /// Same staleness story as `preorder` — borrow-checker enforces
+    /// no mutation during the `Matcher`'s lifetime.
+    kind_index:
+        std::cell::OnceCell<rustc_hash::FxHashMap<std::mem::Discriminant<ir::node::NodeKind>, Vec<NodeId>>>,
 }
 
 impl<'g> Matcher<'g> {
@@ -98,7 +118,36 @@ impl<'g> Matcher<'g> {
             options: MatcherOptions::default(),
             function_arg_index: std::cell::OnceCell::new(),
             pure_memo: std::cell::RefCell::new(rustc_hash::FxHashMap::default()),
+            preorder: std::cell::OnceCell::new(),
+            kind_index: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Returns the cached preorder traversal of the graph, computing
+    /// it on first call.
+    fn preorder_cached(&self) -> &[NodeId] {
+        self.preorder
+            .get_or_init(|| self.fn_graph.preorder().collect())
+            .as_slice()
+    }
+
+    /// Returns the cached node-kind index, computing it on first
+    /// call.  Only NodeKinds that actually occur in the graph appear
+    /// as keys.
+    fn kind_index(
+        &self,
+    ) -> &rustc_hash::FxHashMap<std::mem::Discriminant<ir::node::NodeKind>, Vec<NodeId>> {
+        self.kind_index.get_or_init(|| {
+            let mut index: rustc_hash::FxHashMap<
+                std::mem::Discriminant<ir::node::NodeKind>,
+                Vec<NodeId>,
+            > = rustc_hash::FxHashMap::default();
+            for &node in self.preorder_cached() {
+                let d = std::mem::discriminant(self.fn_graph.graph.node_kind(node));
+                index.entry(d).or_default().push(node);
+            }
+            index
+        })
     }
 
     /// Enables transparent walk-through of every value-passthrough cast
@@ -170,18 +219,18 @@ impl<'g> Matcher<'g> {
     }
 
     /// Finds all nodes in the graph where `pat` matches and returns a [`Match`]
-    /// for each.  Does a preorder walk of the graph and tries every node as a
-    /// potential root.
+    /// for each.
     ///
-    /// Candidate nodes are pre-filtered by the pattern's
-    /// [`Pattern::kind_spec`](crate::pat::traits::Pattern::kind_spec)
-    /// (discriminant-only check via
-    /// [`KindSpec::accepts_discriminant`](crate::pat::node_pat::KindSpec::accepts_discriminant)):
-    /// for a pattern with a concrete root kind (e.g. `add(...)`) this skips
-    /// every node whose `NodeKind` discriminant is different, turning a
-    /// graph-wide scan into an effectively kind-indexed scan.  Patterns that
-    /// match any kind (wildcards, `KindSpec::Any`) fall through to the
-    /// unfiltered loop.
+    /// Candidate selection is driven by the pattern's
+    /// [`Pattern::kind_spec`](crate::pat::traits::Pattern::kind_spec):
+    /// * Concrete root kind (e.g. `add(...)`, `load()`, `call()`) — the
+    ///   matcher consults its lazy `kind_index` and iterates only the
+    ///   bucket of nodes whose discriminant matches.
+    /// * Wildcard root (`KindSpec::Any`) — falls back to the lazy
+    ///   `preorder_cached` traversal.
+    ///
+    /// Both indices are computed once per `Matcher` and reused across
+    /// every `find_all` / `find_all_multi` call on that matcher.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
         // Pure-pattern memo lifetime: per-public-call.  Clear at entry
         // so a Matcher reused across many find_all/match_at calls
@@ -190,26 +239,132 @@ impl<'g> Matcher<'g> {
         let kind = pat.as_dyn().kind_spec();
         let mut bindings = Bindings::default();
         let mut hits: Vec<Match> = Vec::new();
-        for node in self
-            .fn_graph
-            .preorder()
-            .filter(|&node| kind.accepts_discriminant(self.fn_graph.graph.node_kind(node)))
-        {
-            let mark = bindings.mark();
-            if self.match_node_id(node, pat, &mut bindings) {
-                hits.push(Match {
-                    root: node,
-                    bindings: bindings.clone(),
-                });
+
+        // Two scan strategies:
+        //   - concrete root kind: iterate only the kind-index bucket
+        //     for that discriminant (covers `add(...)`, `load()`,
+        //     `call()`, `if_node()`, … — most production patterns).
+        //   - wildcard root (`KindSpec::Any`): iterate the cached
+        //     preorder (still preorder, just shared across
+        //     `find_all` calls on this matcher).
+        match kind.discriminant() {
+            Some(d) => {
+                let buckets = self.kind_index();
+                if let Some(nodes) = buckets.get(&d) {
+                    for &node in nodes {
+                        let mark = bindings.mark();
+                        if self.match_node_id(node, pat, &mut bindings) {
+                            hits.push(Match {
+                                root: node,
+                                bindings: bindings.clone(),
+                            });
+                        }
+                        bindings.restore(mark);
+                    }
+                }
             }
-            // Roll back to the pre-attempt state regardless of outcome —
-            // successful matches kept their bindings via clone, failed
-            // matches discard the speculative entries.  Net: one
-            // allocation per find_all + one per successful match,
-            // versus one per candidate previously.
-            bindings.restore(mark);
+            None => {
+                for &node in self.preorder_cached() {
+                    let mark = bindings.mark();
+                    if self.match_node_id(node, pat, &mut bindings) {
+                        hits.push(Match {
+                            root: node,
+                            bindings: bindings.clone(),
+                        });
+                    }
+                    bindings.restore(mark);
+                }
+            }
         }
         hits
+    }
+
+    /// Run several patterns over the graph in a single pass.  Returns
+    /// one `Vec<Match>` per input pattern, in input order.
+    ///
+    /// Equivalent to calling [`Self::find_all`] for each pattern
+    /// sequentially, but cheaper:
+    ///
+    /// 1. The cached preorder + kind-index built on this matcher are
+    ///    consulted directly — no per-pattern graph walk.
+    /// 2. Patterns are bucketed by their root `NodeKind` discriminant
+    ///    once; each non-wildcard pattern visits only its bucket of
+    ///    candidate nodes.  Wildcard patterns (`KindSpec::Any`) visit
+    ///    the cached preorder once and try every node.
+    ///
+    /// Match ordering within each output `Vec<Match>` matches what
+    /// the corresponding `find_all(p)` would produce — preorder of
+    /// root nodes — so callers comparing match sets across the two
+    /// APIs see identical results.
+    pub fn find_all_multi(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
+        // Pure-pattern memo lifetime: per-public-call.
+        self.pure_memo.borrow_mut().clear();
+
+        let mut results: Vec<Vec<Match>> = (0..pats.len()).map(|_| Vec::new()).collect();
+        if pats.is_empty() {
+            return results;
+        }
+
+        // Bucket the input patterns by their root discriminant (or
+        // collect into a "wildcard" bucket if `KindSpec::Any`).
+        let mut by_discriminant: rustc_hash::FxHashMap<
+            std::mem::Discriminant<ir::node::NodeKind>,
+            Vec<usize>,
+        > = rustc_hash::FxHashMap::default();
+        let mut wildcards: Vec<usize> = Vec::new();
+        for (i, pat) in pats.iter().enumerate() {
+            match pat.as_dyn().kind_spec().discriminant() {
+                Some(d) => by_discriminant.entry(d).or_default().push(i),
+                None => wildcards.push(i),
+            }
+        }
+
+        let mut bindings = Bindings::default();
+
+        // Per-discriminant pass: each bucket of patterns iterates only
+        // its kind's nodes.  Patterns within a bucket are tried in
+        // input order at each node.
+        let kind_buckets = self.kind_index();
+        for (d, pat_indices) in &by_discriminant {
+            let Some(nodes) = kind_buckets.get(d) else {
+                continue;
+            };
+            for &node in nodes {
+                for &i in pat_indices {
+                    let mark = bindings.mark();
+                    if self.match_node_id(node, pats[i], &mut bindings) {
+                        results[i].push(Match {
+                            root: node,
+                            bindings: bindings.clone(),
+                        });
+                    }
+                    bindings.restore(mark);
+                }
+            }
+        }
+
+        // Wildcard pass: visit every node in cached preorder, try
+        // every wildcard pattern.  Skipped when `wildcards` is empty.
+        if !wildcards.is_empty() {
+            for &node in self.preorder_cached() {
+                for &i in &wildcards {
+                    let mark = bindings.mark();
+                    if self.match_node_id(node, pats[i], &mut bindings) {
+                        results[i].push(Match {
+                            root: node,
+                            bindings: bindings.clone(),
+                        });
+                    }
+                    bindings.restore(mark);
+                }
+            }
+        }
+
+        // No post-sort: `kind_index` was populated by iterating
+        // `preorder_cached()` once, so each bucket's `Vec<NodeId>`
+        // is already in preorder.  Iterating one bucket per
+        // pattern preserves per-pattern preorder of `find_all`.
+        results
     }
 
     /// Try to match `pat` against the subgraph rooted at `node`.  Returns the
