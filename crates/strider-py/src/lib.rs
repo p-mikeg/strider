@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 
 mod arch;
+mod cc;
 mod errors;
 
 #[pymodule]
@@ -12,5 +13,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     errors::register(py, m)?;
     arch::register(py, m)?;
+    cc::register(py, m)?;
     Ok(())
 }
