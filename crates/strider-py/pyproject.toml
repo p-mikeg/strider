@@ -16,4 +16,9 @@ classifiers = [
 [tool.maturin]
 manifest-path = "Cargo.toml"
 features = ["pyo3/extension-module"]
-module-name = "strider"
+python-source = "."
+module-name = "strider.strider"
+include = [
+    { path = "strider/*.pyi", format = "wheel" },
+    { path = "strider/py.typed", format = "wheel" },
+]
