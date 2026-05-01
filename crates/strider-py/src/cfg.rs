@@ -12,19 +12,19 @@ use pyo3::prelude::*;
 
 use crate::dot::{dot_style_for, dump_dot, dump_html, html_str};
 use crate::errors::into_lift_err;
-use crate::reader::PyMemoryMapReader;
+use crate::reader::AnyMemReader;
 use crate::sleigh::PySleigh;
 
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
-    pub(crate) inner: cfg::Cfg<PyMemoryMapReader>,
+    pub(crate) inner: cfg::Cfg<AnyMemReader>,
 }
 
 impl PyCfg {
     /// Borrow the inner `cfg::Cfg` for downstream consumers
     /// (`Strider::analyze_cfg`, `dot::GraphDot::new`).
     #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> &cfg::Cfg<PyMemoryMapReader> {
+    pub(crate) fn inner(&self) -> &cfg::Cfg<AnyMemReader> {
         &self.inner
     }
 }

@@ -76,10 +76,29 @@ class MemoryMap:
     def region_count(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
 
+class MemReader:
+    """Subclass and override `read(addr, size) -> Optional[bytes]` to
+    feed the analysis pipeline from a Python data source.  Each `read`
+    crosses the Rust↔Python boundary; prefer `MemoryMap` for
+    in-process bulk data.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def read(self, addr: int, size: int) -> Optional[bytes]: ...
+
+class ReadOnlyMemory:
+    """Subclass and override `read(space_id, addr, size) -> Optional[int]`
+    to back a `LoadReadOnly` opt pass with Python data.  Returned
+    integer is the little-endian-decoded value.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def read(self, space_id: int, addr: int, size: int) -> Optional[int]: ...
+
 # ── Sleigh / CFG / Strider ──────────────────────────────────────────────
 
 class Sleigh:
-    def __init__(self, arch: SleighArch, mem: MemoryMap) -> None: ...
+    def __init__(self, arch: SleighArch, mem: Any) -> None: ...
     def arch_name(self) -> str: ...
 
 class Cfg:
@@ -156,9 +175,9 @@ def run(
     *,
     arch: SleighArch,
     cc: CallingConvention,
-    mem: MemoryMap,
+    mem: Any,  # MemoryMap | MemReader subclass
     entry: int,
-    rom: Optional[MemoryMap] = ...,
+    rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
     pipeline: Optional[OptimizerPipeline] = ...,
     allow_code_before_start_addr: bool = ...,
     function_max_size: Optional[int] = ...,

@@ -151,7 +151,12 @@ impl PyOptimizerPipeline {
     }
 
     /// Append a `LoadReadOnly(rom)` pass to the fixed-point pass list.
-    pub(crate) fn add_load_readonly(&self, rom: crate::reader::PyMemoryMap) -> PyResult<()> {
+    /// `rom` is taken as `Arc<dyn ReadOnlyMemory>` so we accept both
+    /// `PyMemoryMap` and any Python `ReadOnlyMemory` subclass.
+    pub(crate) fn add_load_readonly_arc(
+        &self,
+        rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
+    ) -> PyResult<()> {
         let mut state = self
             .state
             .lock()
@@ -393,17 +398,19 @@ impl PyCallStackArgCollect {
     }
 }
 
-/// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` (any
-/// `reader::ReadOnlyMemory` impl works on the Rust side).
+/// `LoadReadOnly(rom)` — `rom` is a `MemoryMap` or any
+/// `ReadOnlyMemory` subclass (callback path).  Internally stored as
+/// `Arc<dyn ReadOnlyMemory>` so both the fast path and the callback
+/// path share one wrapper class.
 #[pyclass(name = "LoadReadOnly", module = "strider.opt")]
 pub struct PyLoadReadOnly {
-    pub(crate) rom: crate::reader::PyMemoryMap,
+    pub(crate) rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
 }
 #[pymethods]
 impl PyLoadReadOnly {
     #[new]
-    fn new(rom: crate::reader::PyMemoryMap) -> Self {
-        Self { rom }
+    fn new(rom: crate::reader::RomInput) -> Self {
+        Self { rom: rom.into_arc() }
     }
 }
 
@@ -437,7 +444,9 @@ impl PyOptPass<'_> {
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::LoadReadOnly(b) => Box::new(opt::LoadReadOnly(b.borrow().rom.clone())),
+            PyOptPass::LoadReadOnly(b) => {
+                Box::new(opt::LoadReadOnly(std::sync::Arc::clone(&b.borrow().rom)))
+            }
         }
     }
 }

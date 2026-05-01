@@ -1,30 +1,38 @@
 //! `strider.run` convenience entry point.
 //!
-//! Wraps the canonical building-blocks path: build a Sleigh, build a
-//! CFG, build a Strider, analyze, optimize.  Returns a `RunResult`
-//! with `cfg`, `graph`, and the original `sleigh` (handed back to the
-//! user even though its inner Sleigh has been consumed by build_cfg
-//! — Sleigh.regs remains accessible).
+//! Delegates to the canonical Rust orchestrator
+//! (`strider::run(RunConfig)`) which drives the indirect-branch
+//! fixed-point loop, runs the stable optimiser between iterations,
+//! and finally runs the destructive subset once.  Works for both
+//! `MemoryMap` and Python-callback `MemReader` subclasses since the
+//! orchestrator is generic over `R: rsleigh::MemReader`.
 //!
-//! v1 does NOT drive the indirect-branch fixed-point loop —
-//! `strider::run` (the Rust orchestrator) requires the Sleigh to wrap
-//! its reader in a `BufMemReader<B>`, which the Python wrapper's
-//! `PyMemoryMapReader` does not satisfy.  Users who need indirect-
-//! branch resolution should use the Rust API directly for now.
+//! When the user supplies a `pipeline=...` argument we bypass the
+//! orchestrator and run their pipeline against a single-iteration
+//! `analyze_cfg` lift — they're saying "just analyse, I'll do my own
+//! optimisation".
 
 use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
-use crate::cfg::{build_cfg, PyCfg};
-use crate::errors::into_lift_err;
+use crate::cfg::PyCfg;
+use crate::errors::{into_lift_err, into_strider_err};
 use crate::graph::PyGraph;
-use crate::reader::PyMemoryMap;
+use crate::reader::{AnyMemReader, ReaderInput, ReaderInputClone, RomInput};
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyStrider;
 
 #[pyclass(name = "RunResult", module = "strider")]
 pub struct PyRunResult {
+    /// Snapshot CFG built from the same memory reader the orchestrator
+    /// uses internally.  Reflects the structure visible at the entry
+    /// point — note that the orchestrator's iterations may rebuild the
+    /// CFG several times to resolve indirect branches; this field
+    /// carries the FINAL post-resolution snapshot only when the
+    /// orchestrator did not have to rebuild.  For simple functions
+    /// (no indirect branches), `cfg` matches what the orchestrator
+    /// uses.
     #[pyo3(get)]
     cfg: Py<PyCfg>,
     #[pyo3(get)]
@@ -48,27 +56,142 @@ pub fn run(
     py: Python<'_>,
     arch: PySleighArch,
     cc: PyCallingConvention,
-    mem: PyMemoryMap,
+    mem: ReaderInput,
     entry: u64,
-    rom: Option<PyMemoryMap>,
+    rom: Option<RomInput>,
     pipeline: Option<&crate::opt::PyOptimizerPipeline>,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<PyRunResult> {
-    // 1. Construct Sleigh.
-    let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), mem)?)?;
+    if pipeline.is_some() {
+        return run_with_custom_pipeline(
+            py,
+            arch,
+            cc,
+            mem,
+            entry,
+            rom,
+            pipeline.expect("checked above"),
+            allow_code_before_start_addr,
+            function_max_size,
+        );
+    }
 
-    // 2. Build Strider (must happen BEFORE build_cfg consumes Sleigh).
+    run_via_orchestrator(
+        py,
+        arch,
+        cc,
+        mem,
+        entry,
+        rom,
+        allow_code_before_start_addr,
+        function_max_size,
+    )
+}
+
+/// Orchestrator path — the canonical strider::run flow.  Drives the
+/// indirect-branch fixed-point loop and returns the final IR graph.
+#[allow(clippy::too_many_arguments)]
+fn run_via_orchestrator(
+    py: Python<'_>,
+    arch: PySleighArch,
+    cc: PyCallingConvention,
+    mem: ReaderInput,
+    entry: u64,
+    rom: Option<RomInput>,
+    allow_code_before_start_addr: bool,
+    function_max_size: Option<u64>,
+) -> PyResult<PyRunResult> {
+    // Snapshot the reader so we can hand a fresh AnyMemReader to both
+    // the orchestrator (consumed) and the snapshot CFG (consumed).
+    let reader_clone: ReaderInputClone = mem.into_clone()?;
+    let reader_for_orch = reader_clone.materialise().map_err(into_lift_err)?;
+    let reader_for_cfg = reader_clone.materialise().map_err(into_lift_err)?;
+
+    // Build a Sleigh handle the user can keep (its inner is consumed
+    // by the snapshot CFG below; Sleigh.regs remains accessible).
+    let py_sleigh = PySleigh::new_internal(arch.clone(), reader_for_cfg)?;
+    let sleigh_arc = Py::new(py, py_sleigh)?;
+
+    // Build the snapshot CFG from the user-facing Sleigh.
+    let cfg_obj = Py::new(
+        py,
+        crate::cfg::build_cfg(
+            py,
+            sleigh_arc.clone_ref(py),
+            entry,
+            allow_code_before_start_addr,
+            function_max_size,
+        )?,
+    )?;
+
+    // Build a Strider for the orchestrator.
+    let strider_obj = Py::new(
+        py,
+        PyStrider::new_internal(py, arch.clone(), &sleigh_arc, cc.clone())?,
+    )?;
+
+    // Build the second Sleigh handle (orchestrator-owned, fresh
+    // reader).  This is consumed by RunConfig.
+    let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec, arch.inner.pspec, reader_for_orch)
+        .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+
+    let rom_arc = rom.map(|r| r.into_arc());
+
+    let strider_borrow = strider_obj.borrow(py);
+    let config = strider::RunConfig {
+        strider: &strider_borrow.inner,
+        start_addr: entry,
+        sleigh: orch_sleigh,
+        rom: rom_arc,
+        fn_max_size: function_max_size,
+        allow_code_before_start_addr,
+    };
+    let graph = strider::run(config).map_err(into_strider_err)?;
+    drop(strider_borrow);
+
+    let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
+
+    Ok(PyRunResult {
+        cfg: cfg_obj,
+        graph: py_graph,
+        sleigh: sleigh_arc,
+    })
+}
+
+/// Custom-pipeline path — preserves the v1 contract: lift once via
+/// `analyze_cfg`, then apply the user's pipeline.  Indirect branches
+/// are not resolved on this path.
+#[allow(clippy::too_many_arguments)]
+fn run_with_custom_pipeline(
+    py: Python<'_>,
+    arch: PySleighArch,
+    cc: PyCallingConvention,
+    mem: ReaderInput,
+    entry: u64,
+    rom: Option<RomInput>,
+    pipeline: &crate::opt::PyOptimizerPipeline,
+    allow_code_before_start_addr: bool,
+    function_max_size: Option<u64>,
+) -> PyResult<PyRunResult> {
+    let _ = rom; // custom pipeline owns its own pass list
+    let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;
+    let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
+
     let s = PyStrider::new_internal(py, arch.clone(), &sleigh, cc.clone())?;
     let strider_obj = Py::new(py, s)?;
 
-    // 3. Build CFG (consumes the Sleigh's inner).
     let cfg_obj = Py::new(
         py,
-        build_cfg(py, sleigh.clone_ref(py), entry, allow_code_before_start_addr, function_max_size)?,
+        crate::cfg::build_cfg(
+            py,
+            sleigh.clone_ref(py),
+            entry,
+            allow_code_before_start_addr,
+            function_max_size,
+        )?,
     )?;
 
-    // 4. Analyze CFG.
     let strider_borrow = strider_obj.borrow(py);
     let outcome = strider_borrow
         .inner
@@ -78,30 +201,13 @@ pub fn run(
     drop(strider_borrow);
     let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
 
-    // 5. Optimize, building a default pipeline if the user didn't supply one.
-    let actual_pipeline = match pipeline {
-        Some(p) => p.drain_into_pipeline()?,
-        None => {
-            let strider_borrow = strider_obj.borrow(py);
-            let cc_built = strider_borrow.inner.calling_convention().clone();
-            let arch_copy = strider_borrow.arch;
-            drop(strider_borrow);
-            let p = crate::opt::PyOptimizerPipeline::new_full_default(cc_built, arch_copy);
-            // If the user supplied a rom, layer LoadReadOnly on top.
-            if let Some(rom_map) = rom {
-                p.add_load_readonly(rom_map)?;
-            }
-            p.drain_into_pipeline()?
-        }
-    };
+    let actual_pipeline = pipeline.drain_into_pipeline()?;
     {
         let py_graph_borrow = py_graph.borrow(py);
-        let mut graph = py_graph_borrow
-            .write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        actual_pipeline.run_on_built(&mut graph).map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}"))
-        })?;
+        let mut graph = py_graph_borrow.write_inner().map_err(into_strider_err)?;
+        actual_pipeline
+            .run_on_built(&mut graph)
+            .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
     }
 
     Ok(PyRunResult {
