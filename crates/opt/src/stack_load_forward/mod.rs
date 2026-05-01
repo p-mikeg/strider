@@ -24,6 +24,7 @@ use crate::sp_expr::{
 /// `StackStoreDetect` become visible to the walker on subsequent iterations,
 /// and so that forwarded constants fed into expressions are in turn
 /// simplified by `ConstantFold` / `KnownBits`.
+#[derive(Clone)]
 pub struct StackLoadForward {
     /// Varnode for the stack pointer register (e.g. `ESP`, `RSP`, `sp`).
     pub stack_ptr_vn: rsleigh::Vn,

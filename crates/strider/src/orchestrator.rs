@@ -56,9 +56,9 @@ use crate::RegionLiftHandles;
 /// Configuration for [`run`].  Held outside the function so callers
 /// can construct one and reuse the strider / sleigh / options across
 /// iterations without re-paying per-iteration setup costs.
-pub struct RunConfig<'a, B>
+pub struct RunConfig<'a, R>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
+    R: rsleigh::MemReader,
 {
     /// The strider — stable across iterations.
     pub strider: &'a Strider,
@@ -67,7 +67,7 @@ where
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations
     /// avoids re-loading the SLA spec on every CFG rebuild.
-    pub sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
+    pub sleigh: rsleigh::Sleigh<R>,
     /// Read-only memory image for the optimiser's `LoadReadOnly`
     /// pass.  `None` to disable.  Borrowed via `as_deref()` for the
     /// classifier path; `Arc::clone`d once per CFG rebuild for the
@@ -144,9 +144,9 @@ impl RegionIndex {
 /// Returns an error when the iteration cap is hit, when unresolved
 /// branches remain at fixed point, or any error propagated from
 /// strider / cfg / opt.
-pub fn run<B>(config: RunConfig<'_, B>) -> Result<ir::BuiltFunctionGraph>
+pub fn run<R>(config: RunConfig<'_, R>) -> Result<ir::BuiltFunctionGraph>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
+    R: rsleigh::MemReader,
 {
     let mut state = LoopState::new(config)?;
     state.build_iter_0()?;
@@ -178,9 +178,9 @@ enum Decision {
 }
 
 /// The fixed-point loop's spanning state.
-struct LoopState<'a, B>
+struct LoopState<'a, R>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
+    R: rsleigh::MemReader,
 {
     opts: RunOpts<'a>,
     /// Accumulator of tier-2 resolutions across iterations.  Replaced
@@ -192,7 +192,7 @@ where
     /// `Builder::with_endianness` per iteration and harvested back from
     /// the resulting `Cfg::sleigh`.  `None` only momentarily inside
     /// `build_lift_stable`.
-    sleigh: Option<rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>>,
+    sleigh: Option<rsleigh::Sleigh<R>>,
     /// The current optimised IR graph.
     graph: Option<ir::BuiltFunctionGraph>,
     /// Pending placeholder anchors for the current iteration.
@@ -237,11 +237,11 @@ where
     vn_cache_region_count: usize,
 }
 
-impl<'a, B> LoopState<'a, B>
+impl<'a, R> LoopState<'a, R>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
+    R: rsleigh::MemReader,
 {
-    fn new(config: RunConfig<'a, B>) -> Result<Self> {
+    fn new(config: RunConfig<'a, R>) -> Result<Self> {
         let lr_vn = config.strider.calling_convention().link_register_vn;
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
         Ok(Self {
@@ -621,8 +621,8 @@ fn read_or_init_var(
 /// Returns `(graph, unresolved, region_index, sleigh)` so the caller
 /// can re-use the harvested Sleigh handle across iterations.
 #[allow(clippy::type_complexity)]
-fn build_lift_stable<B>(
-    sleigh: rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
+fn build_lift_stable<R>(
+    sleigh: rsleigh::Sleigh<R>,
     opts: &RunOpts<'_>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
@@ -632,10 +632,10 @@ fn build_lift_stable<B>(
     ir::BuiltFunctionGraph,
     Vec<(PcodeInsnAddr, ir::Value)>,
     RegionIndex,
-    rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<B>>,
+    rsleigh::Sleigh<R>,
 )>
 where
-    B: rsleigh::mem_readers::BufMemReaderBackingBuffer,
+    R: rsleigh::MemReader,
 {
     let mut opts_builder = OptionsBuilder::new();
     if let Some(rom) = opts.rom.clone() {
@@ -653,7 +653,7 @@ where
     let cfg_opts = opts_builder.build();
 
     let arch_endianness = opts.strider.arch().endianness;
-    let cfg: Cfg<rsleigh::mem_readers::BufMemReader<B>> =
+    let cfg: Cfg<R> =
         Builder::with_endianness(sleigh, opts.start_addr, cfg_opts, arch_endianness)
             .with_known_targets(known_targets.clone())
             .with_decode_cache(decode_cache.clone())

@@ -32,13 +32,14 @@ This is a Rust workspace binary analysis tool that lifts native binaries to an I
 ### Crate Dependency Flow
 
 ```
-   target  ←  ir  ←  pcode-lift  ←  cfg  ←  strider
-     ↑       ↑↑          ↑                    ↓
-     └───── opt ←────── pattern  ←────────────┘
-            ↑
+   target  ←  ir  ←  pcode-lift  ←  cfg  ←  strider  ←  strider-py
+     ↑       ↑↑          ↑                    ↓             ↑
+     └───── opt ←────── pattern  ←────────────┘            (PyO3)
+            ↑                                ↑
    reader (ELF + ReadOnlyMemory, used by opt::LoadReadOnly and the example)
-
-   dot      (visualization helper, used by cfg, ir, and the example)
+                                            ↑
+                              strider-py wraps every crate above
+   dot      (visualization helper, used by cfg, ir, the example, and strider-py)
    rsleigh  (external, at ../rsleigh — Sleigh/GHIDRA p-code lifter)
 ```
 
@@ -102,7 +103,7 @@ the IR; `pattern` queries it.  Errors propagate via `anyhow::Result` workspace-w
 - **`graphwalk`** — Generic graph traversal utilities.
 - **`entity-utils`** — Entity set and worklist data structures.
 - **`graphmock`** — Mock graph for tests.
-- **`strider-py`** *(planned)* — Python bindings (PyO3) that are the primary user-facing interface. Users write IR patterns with named captures in Python and get back matched values. The Rust `pattern` crate is the engine; this crate is the API.
+- **`strider-py`** — Python bindings (PyO3 + maturin + abi3-py39) exposing the full pipeline.  Surface: `strider.run(arch, cc, mem, entry, ...)` convenience entry that drives the indirect-branch fixed-point loop; building blocks (`SleighArch`, `CallingConvention`, `MemoryMap`, `MemReader`, `ReadOnlyMemory`, `Sleigh`, `build_cfg`, `Strider`, `Graph`, `OptimizerPipeline`); `strider.opt` per-pass classes; `strider.pattern` full mirror of the Rust pattern crate (int/bool/float/cast/memory/call/control builders + variant-agnostic `*_any` ctors + typed dispatchers `int_binary`/`bool_binary`/`float_binary` with `.ordered()` / `.capture(c)` / `.cap("name")` / `.when(f)` / `.into_pat()` chaining; str-keyed capture interning; `.when(f)` predicate guards on every Pat with a transient `PartialMatch` proxy); `Graph.find_all` + `Graph.rewrite` + `Graph.reoptimize`; `cfg.to_html` + `graph.to_html` for visualization.  `MemReader` and `ReadOnlyMemory` are subclassable Python ABCs for callback-style readers; the orchestrator is generic over `R: rsleigh::MemReader` so both fast (data-only `MemoryMap`) and callback paths work end-to-end.  Build via `maturin develop` from `crates/strider-py/` for development; `maturin build --release` produces a local abi3 wheel under `target/wheels/`.  Tests live under `crates/strider-py/tests/python/` (pytest, requires pyelftools).  Errors land as `strider.errors.{StriderError, LiftError, ReaderError, PatternError, RewriteError}`.  See `docs/superpowers/specs/2026-05-01-strider-py-design.md` for the full design and `crates/strider-py/README.md` for usage examples.
 
 ### IR Node Model
 

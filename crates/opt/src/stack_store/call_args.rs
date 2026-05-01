@@ -190,6 +190,7 @@ fn try_collect_stack_args(
 /// `-O2` are free to schedule between stack-arg pushes).  Such stores are
 /// detected via [`crate::sp_expr::decompose_sp`] returning `None` for their
 /// address; SP-rooted stores remain chain-terminating.
+#[derive(Clone)]
 pub struct CallStackArgCollect {
     /// Positional byte offsets of stack-passed arguments from call-time SP.
     /// Entry `i` is the offset of the `i`-th stack arg.

@@ -1,0 +1,26 @@
+[package]
+name = "strider-py"
+version = "0.1.0"
+edition = { workspace = true }
+
+[lib]
+name = "strider"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module", "anyhow"] }
+anyhow = { workspace = true }
+
+strider = { workspace = true }
+pattern = { workspace = true }
+opt = { workspace = true }
+ir = { workspace = true }
+cfg = { workspace = true }
+reader = { workspace = true }
+target = { workspace = true }
+dot = { workspace = true }
+rsleigh = { workspace = true }
+object = { workspace = true }
+
+[lints]
+workspace = true

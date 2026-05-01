@@ -46,6 +46,7 @@ use crate::sp_expr::{
 /// to run once, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
+#[derive(Clone)]
 pub struct FunctionArgDetect {
     /// Varnodes (in positional order) used by the calling convention to pass
     /// integer arguments in registers.  Entry `i` is arg `i`.
