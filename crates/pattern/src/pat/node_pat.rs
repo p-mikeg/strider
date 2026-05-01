@@ -278,54 +278,6 @@ impl Pattern for NodePat {
         self.kind.clone()
     }
 
-    fn is_pure(&self) -> bool {
-        // `post_match` callbacks receive `&mut Bindings` — any pattern
-        // carrying one is conservatively non-pure.
-        if self.post_match.is_some() {
-            return false;
-        }
-        // Recursively check sub-patterns: a NodePat is only pure when
-        // every input / output / consumer sub-pattern is also pure.
-        match &self.inputs {
-            InputsSpec::None => {}
-            InputsSpec::Fixed { pats, .. } => {
-                for p in pats {
-                    if !p.as_dyn().is_pure() {
-                        return false;
-                    }
-                }
-            }
-            InputsSpec::Indexed(items) => {
-                for (_, p) in items {
-                    if !p.as_dyn().is_pure() {
-                        return false;
-                    }
-                }
-            }
-        }
-        match &self.outputs {
-            OutputsSpec::None => {}
-            OutputsSpec::Indexed(items) => {
-                for (_, p) in items {
-                    if !p.as_dyn().is_pure() {
-                        return false;
-                    }
-                }
-            }
-        }
-        match &self.consumers {
-            ConsumersSpec::None => {}
-            ConsumersSpec::Indexed(items) => {
-                for (_, p) in items {
-                    if !p.as_dyn().is_pure() {
-                        return false;
-                    }
-                }
-            }
-        }
-        true
-    }
-
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
         let outputs = ctx.graph.graph.node_outputs(node);
         if outputs.is_empty() {

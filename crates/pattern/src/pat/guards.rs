@@ -38,19 +38,6 @@ impl Pattern for GuardPat {
         self.inner.as_dyn().kind_spec()
     }
 
-    fn is_pure(&self) -> bool {
-        match &self.func {
-            // Output-only guards see only `(&BuiltFunctionGraph,
-            // NodeOutputType, NodeOutputId)` — no Bindings access, so
-            // their result is a pure function of the inputs.  Pure
-            // status then forwards to the inner pattern.
-            GuardFn::Output(_) => self.inner.as_dyn().is_pure(),
-            // Bindings guards read `&Bindings`; their outcome depends
-            // on the running capture state.  Conservatively non-pure.
-            GuardFn::Bindings(_) => false,
-        }
-    }
-
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
         let mark = b.mark();
         if !ctx.matcher.match_output(target, &self.inner, b) {

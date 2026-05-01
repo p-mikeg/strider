@@ -74,18 +74,6 @@ pub struct Matcher<'g> {
     pub(super) fn_graph: &'g BuiltFunctionGraph,
     pub(crate) options: MatcherOptions,
     function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
-    /// Per-`find_all` / `match_at` memo for *pure* sub-pattern outcomes.
-    /// Key: `(pat_data_ptr, target_output_id)`; value: whether the
-    /// pure sub-pattern matched at that target.
-    ///
-    /// Soundness: only consulted when [`Pattern::is_pure`] returns
-    /// true, i.e. the sub-pattern neither reads nor writes
-    /// [`Bindings`] anywhere in its tree.  Pure outcomes are
-    /// deterministic per `(pattern_id, target)` so the cache is
-    /// always correct.  Cleared at the start of every public entry
-    /// point so a Matcher reused across multiple `find_all` calls
-    /// never serves a stale entry from a previous invocation.
-    pure_memo: std::cell::RefCell<rustc_hash::FxHashMap<(usize, NodeOutputId), bool>>,
     /// Lazily-cached preorder traversal of `fn_graph`.  Built on
     /// first call to [`Self::preorder_cached`]; stays valid for the
     /// `Matcher`'s lifetime because the matcher holds an immutable
@@ -117,7 +105,6 @@ impl<'g> Matcher<'g> {
             fn_graph,
             options: MatcherOptions::default(),
             function_arg_index: std::cell::OnceCell::new(),
-            pure_memo: std::cell::RefCell::new(rustc_hash::FxHashMap::default()),
             preorder: std::cell::OnceCell::new(),
             kind_index: std::cell::OnceCell::new(),
         }
@@ -232,10 +219,6 @@ impl<'g> Matcher<'g> {
     /// Both indices are computed once per `Matcher` and reused across
     /// every `find_all` / `find_all_multi` call on that matcher.
     pub fn find_all(&self, pat: &Pat) -> Vec<Match> {
-        // Pure-pattern memo lifetime: per-public-call.  Clear at entry
-        // so a Matcher reused across many find_all/match_at calls
-        // never serves a stale entry.
-        self.pure_memo.borrow_mut().clear();
         let kind = pat.as_dyn().kind_spec();
         let mut bindings = Bindings::default();
         let mut hits: Vec<Match> = Vec::new();
@@ -297,9 +280,6 @@ impl<'g> Matcher<'g> {
     /// root nodes — so callers comparing match sets across the two
     /// APIs see identical results.
     pub fn find_all_multi(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
-        // Pure-pattern memo lifetime: per-public-call.
-        self.pure_memo.borrow_mut().clear();
-
         let mut results: Vec<Vec<Match>> = (0..pats.len()).map(|_| Vec::new()).collect();
         if pats.is_empty() {
             return results;
@@ -375,7 +355,6 @@ impl<'g> Matcher<'g> {
     /// single root.  Used by [`crate::rewrite_rule`] and other callers
     /// that already know the candidate.
     pub fn match_at(&self, node: NodeId, pat: &Pat) -> Option<Match> {
-        self.pure_memo.borrow_mut().clear();
         let mut bindings = Bindings::default();
         if self.match_node_id(node, pat, &mut bindings) {
             Some(Match { root: node, bindings })
@@ -469,20 +448,6 @@ impl<'g> Matcher<'g> {
 
     /// Match a `NodeOutputId` against a pattern — single-line delegation to
     /// the unified [`Pattern`](crate::pat::traits::Pattern) trait.
-    ///
-    /// Task 21's pure-pattern memoisation is wired up at the
-    /// `pure_memo` field on this struct and the [`Pattern::is_pure`]
-    /// trait method, but is intentionally NOT consulted here on the
-    /// hot dispatch path: a benchmark sweep showed the recursive
-    /// `is_pure()` walk + HashMap lookup dominated the per-call
-    /// cost on small fixtures (`+4.5%` on `strider::run/x86/calls`)
-    /// while only paying off on patterns with several commutative
-    /// ops + capture-free sub-patterns — a combination that doesn't
-    /// arise in the orchestrator's own matching.  When `strider-py`
-    /// lands and exposes user-authored deeply-commutative patterns,
-    /// re-enable the memo guarded by a heuristic (e.g. only consult
-    /// for patterns whose `kind_spec` is `Variant`/`Exact` and
-    /// whose immediate input count ≥ 2).
     pub(super) fn match_output(
         &self,
         output: NodeOutputId,

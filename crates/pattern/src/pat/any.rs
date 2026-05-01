@@ -15,12 +15,6 @@ impl Pattern for AnyPat {
     fn try_match(&self, _: &MatchCtx, _: NodeOutputId, _: &mut Bindings) -> bool {
         true
     }
-
-    fn is_pure(&self) -> bool {
-        // Wildcard match has no captures and no bindings access — its
-        // outcome is `true` for every (graph, target).
-        true
-    }
 }
 
 /// Matches any output and binds it to `capture`.  Dedicated type so the very

@@ -67,32 +67,6 @@ pub trait Pattern: Send + Sync {
         crate::pat::node_pat::KindSpec::Any
     }
 
-    /// Returns true if this pattern's match outcome at any
-    /// `(graph, target)` is independent of the surrounding
-    /// [`Bindings`] state — i.e. it neither reads nor writes captures.
-    ///
-    /// Pure sub-patterns are memoizable across the matcher's
-    /// commutative-retry attempts: the `(pattern_id, target)` →
-    /// `bool` cache lookup is sound only when both the previous
-    /// attempt and this one operate on the same input.  Capture-
-    /// bearing patterns (`var(c)`, `.capture(c)`, `any_int_const(c)`)
-    /// and guards reading `Bindings`
-    /// ([`crate::pat::Pat::when_match`]) are intentionally non-pure:
-    /// their result depends on what's already bound.
-    ///
-    /// Conservative default: `false`.  Override on patterns that are
-    /// statically known pure.
-    ///
-    /// Currently consulted at no hot dispatch site (Task 21's memo
-    /// wiring was reverted on benchmark grounds; see
-    /// [`crate::matcher::Matcher::match_output`]); the method stays
-    /// in place so per-impl overrides are correct when a future
-    /// memo-on-the-side is enabled.
-    #[allow(dead_code)]
-    fn is_pure(&self) -> bool {
-        false
-    }
-
     /// Node-level match entry.  Default impl iterates the node's outputs
     /// and tries [`try_match`](Self::try_match) on each — the standard
     /// "node as root candidate" semantics used by
