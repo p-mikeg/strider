@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 mod arch;
 mod cc;
 mod errors;
+mod reader;
 
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -14,5 +15,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(py, m)?;
     arch::register(py, m)?;
     cc::register(py, m)?;
+    reader::register(py, m)?;
     Ok(())
 }
