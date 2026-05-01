@@ -565,9 +565,9 @@ pub(super) fn apply_const_eval_rules(
 /// Builds the rule vec for [`apply_bool_float_rules`].
 fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_and, bool_or,
-        bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any, float_unary_any,
-        rewrite_rule,
+        BoxedRule, Capture, Pat, any_bool_const, any_float_const, bool_and, bool_const, bool_not,
+        bool_or, bool_unary_any, bool_xor, boxed_rule, float_binary_any, float_cmp_any,
+        float_unary_any, rewrite_rule, var,
     };
     use pattern::{bool_const_with, float_const_with};
 
@@ -629,6 +629,26 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
                 }),
             ))
         },
+        // x ^ true → !x  (commutative — also covers true ^ x).  Compilers
+        // sometimes emit `xor c, true` instead of `not c`; canonicalize so
+        // downstream consumers (e.g. IfPat's symmetric matching, which keys
+        // off BoolUnaryOp::Neg) see a single shape.
+        {
+            let x = Capture::new();
+            boxed_rule(rewrite_rule(
+                bool_xor(var(x), bool_const(true)),
+                bool_not(var(x)),
+            ))
+        },
+        // !!x → x  (double-negation elimination).  Compilers can produce
+        // chained NOTs through pcode lifting of compare-and-invert idioms.
+        {
+            let x = Capture::new();
+            boxed_rule(rewrite_rule(
+                bool_not(bool_not(var(x))),
+                var(x),
+            ))
+        },
         // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
         //     float_const(eval_float_binary(op, l, r, ty)?)
         {
@@ -678,7 +698,9 @@ fn build_bool_float_rules() -> Vec<pattern::BoxedRule> {
 static BOOL_FLOAT_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_bool_float_rules);
 
 /// Applies constant evaluation and absorbing-element rules for bool binary ops,
-/// bool unary ops, and all float ops.
+/// bool unary ops, and all float ops.  Also canonicalises:
+/// - `x ^ true → !x` (commutative)
+/// - `!!x → x`
 pub(super) fn apply_bool_float_rules(
     fg: &mut BuiltFunctionGraph,
     node: NodeId,

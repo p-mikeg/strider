@@ -729,6 +729,98 @@ fn fold_bool_and_consts() -> Result<()> {
     Ok(())
 }
 
+// `xor b true` rewrites to `not b` so downstream IfPat-style symmetric
+// matching keys off a single canonical shape (`BoolUnaryOp::Neg`).
+// `b` must be non-const, otherwise the const-fold rule fires first and
+// the result is just a `BoolConst`.
+#[test]
+fn fold_bool_xor_true_to_not() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+        // Non-const Bool: `x == 5`.
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::U64)?;
+        let t = b.build_boolean_const(true);
+        b.build_boolean_operation(cmp, t, BoolBinaryOp::Xor)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    Ok(())
+}
+
+// `xor` is commutative, so `true ^ b` must rewrite the same as `b ^ true`.
+#[test]
+fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::U64)?;
+        let t = b.build_boolean_const(true);
+        // Operands flipped relative to the previous test.
+        b.build_boolean_operation(t, cmp, BoolBinaryOp::Xor)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(return_kind(&fg)?, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg));
+    Ok(())
+}
+
+// `xor b false` should not be touched by the new rule (only `true` triggers).
+#[test]
+fn no_fold_bool_xor_false() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::U64)?;
+        let f = b.build_boolean_const(false);
+        b.build_boolean_operation(cmp, f, BoolBinaryOp::Xor)
+    })?;
+    // No rule fires: cmp is non-const, `false` is not absorbing, neither
+    // const-fold side fires.  Return value is still the BXor node.
+    assert!(!ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::BoolBinaryOp(BoolBinaryOp::Xor)
+    );
+    Ok(())
+}
+
+// `!!x → x` for non-const x.
+#[test]
+fn fold_bool_double_not_to_x() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::U64)?;
+        let n1 = b.build_boolean_unary_operation(cmp, BoolUnaryOp::Neg)?;
+        b.build_boolean_unary_operation(n1, BoolUnaryOp::Neg)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    // After fold the function returns the cmp directly.
+    assert_eq!(return_kind(&fg)?, NodeKind::IntCmpOp(IntCmpOp::Equal));
+    Ok(())
+}
+
+// Composes with the xor-true rule via the fixed-point loop:
+// `xor (xor b true) true` → `not (not b)` → `b`.
+#[test]
+fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c5 = b.build_int_const(5u64, NodeOutputType::U64).unwrap();
+        let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, NodeOutputType::U64)?;
+        let t1 = b.build_boolean_const(true);
+        let xor1 = b.build_boolean_operation(cmp, t1, BoolBinaryOp::Xor)?;
+        let t2 = b.build_boolean_const(true);
+        b.build_boolean_operation(xor1, t2, BoolBinaryOp::Xor)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    assert_eq!(return_kind(&fg)?, NodeKind::IntCmpOp(IntCmpOp::Equal));
+    Ok(())
+}
+
 // ── no-fold edge cases ────────────────────────────────────────────────────
 
 #[test]
