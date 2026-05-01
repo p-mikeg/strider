@@ -1,6 +1,10 @@
 /target
 fixtures/out
 /.worktrees
+/.venv
+__pycache__/
+*.pyc
+.pytest_cache/
 
 # Analyzer example output (cfg.dot/html, graph.dot/html, graph-opt.dot/html)
 /*.dot
