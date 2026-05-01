@@ -24,7 +24,7 @@ graph.
 from __future__ import annotations
 
 import strider
-from strider.pattern import Capture, var, add, int_const
+from strider.pattern import Capture, var, add, call, int_const, load
 
 
 def _run(elf_path):
@@ -52,32 +52,36 @@ def test_orchestrator_resolves_jump_table_x86(x86_switch_elf):
 
 
 def test_case_bodies_match_add_const_pattern(x86_switch_elf):
-    # Each of the 8 case arms has the body `return x + K` for K=1..8.
-    # The post-resolution IR keeps those `add(arg, IntConst(K))`
-    # expressions distinct (one per case body), so pattern matching
-    # against the family must find at least 8 matches.  Use commutative
-    # add() (matches both `add(arg, K)` and `add(K, arg)` orderings).
+    # Cases 0..4 and 6..7 have body `return x + K`.  Case 5 calls
+    # `f(value->a)` so its IR shape is a Load + Call, not an Add —
+    # those `add(_, IntConst(K))` queries must therefore NOT match the
+    # case-5 constant K=6 (since case 5 doesn't add anything).  We
+    # assert ≥4 of the surviving K values (1, 2, 3, 4, 5, 7, 8) — same
+    # tolerance as before.
     result = _run(x86_switch_elf)
     g = result.graph
-
-    k_cap = Capture()
-    pat = add("x", int_const(0).cap("k_unused"))  # placeholder; replaced below
-
-    # We want any `add(_, IntConst(K))` for K in 1..=8.  Use a per-K
-    # query so the assertions tell us which constants survived
-    # constant-folding / casts.
     seen_constants = set()
     for k in range(1, 9):
         hits = g.find_all(add("x", int_const(k)), ignore_casts=True)
         if hits:
             seen_constants.add(k)
-    # At -O2 the compiler may collapse some of x+K into other forms (e.g.
-    # `lea (eax,K)` or strength-reduce); we don't pin every K, but at
-    # least half the cases must survive verbatim.  This is a regression
-    # guard, not a tight contract.
     assert len(seen_constants) >= 4, (
         f"expected ≥4 of x+K (K=1..8) to survive in IR; saw {sorted(seen_constants)}"
     )
+
+
+def test_case5_calls_helper_with_struct_field(x86_switch_elf):
+    # case 5: `return f(value->a)` lifts to `Load(addr)` feeding a
+    # `Call` node.  Pin both shapes — at minimum, the post-resolution
+    # IR must contain a Call (helper invocation) and a Load (the
+    # struct-field read).  This proves the full lift+resolve+optimise
+    # pipeline kept the case-5 arm intact.
+    result = _run(x86_switch_elf)
+    g = result.graph
+    call_hits = g.find_all(call())
+    assert len(call_hits) >= 1, "case 5 must produce a Call to f()"
+    load_hits = g.find_all(load())
+    assert len(load_hits) >= 1, "case 5 must produce a Load for value->a"
 
 
 def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):

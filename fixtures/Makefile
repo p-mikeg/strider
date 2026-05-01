@@ -16,7 +16,7 @@
 #   make clean         — remove out/
 
 OUTDIR := out
-ARCHES := x86 x64 aarch64 aarch64be arm arm_be arm_thumb \
+ARCHES := x86 x86_kernel x64 aarch64 aarch64be arm arm_be arm_thumb \
           mips32le mips32be mips64le mips64be \
           ppc32be ppc32le ppc64be ppc64le
 CASES  := $(notdir $(basename $(wildcard cases/*.c)))

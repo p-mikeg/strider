@@ -36,6 +36,12 @@ class ArchSpec:
 
 ARCHES: list[ArchSpec] = [
     ArchSpec("x86", strider.SleighArch.x86, strider.CallingConvention.x86_cdecl),
+    # x86_kernel: same Sleigh as x86, but the fixtures live in a
+    # separate directory (`fixtures/out/x86_kernel/`) where every case
+    # is compiled with `-mregparm=3` and analysed under
+    # `x86_linux_kernel`.  Mirrors the Rust `Arch::X86Kernel`
+    # variant in crates/strider/tests/common/mod.rs.
+    ArchSpec("x86_kernel", strider.SleighArch.x86, strider.CallingConvention.x86_linux_kernel),
     ArchSpec("x64", strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv_abi),
     ArchSpec("aarch64", strider.SleighArch.aarch64, strider.CallingConvention.aarch64_aapcs64),
     ArchSpec("aarch64be", strider.SleighArch.aarch64be, strider.CallingConvention.aarch64_aapcs64),

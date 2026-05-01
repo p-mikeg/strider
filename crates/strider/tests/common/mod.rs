@@ -38,6 +38,11 @@ pub mod indirect_resolve_helpers;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arch {
     X86,
+    /// x86 32-bit compiled with `-mregparm=3` and analysed under the
+    /// Linux kernel-internal CC (`x86_linux_kernel`).  Same Sleigh
+    /// spec as `X86`; only the CC differs.  Fixtures live under
+    /// `fixtures/out/x86_kernel/` (see `fixtures/arch/x86_kernel.mk`).
+    X86Kernel,
     X64,
     Aarch64,
     Aarch64Be,
@@ -58,6 +63,7 @@ impl Arch {
     pub fn name(self) -> &'static str {
         match self {
             Arch::X86 => "x86",
+            Arch::X86Kernel => "x86_kernel",
             Arch::X64 => "x64",
             Arch::Aarch64 => "aarch64",
             Arch::Aarch64Be => "aarch64be",
@@ -77,6 +83,9 @@ impl Arch {
     pub fn sleigh(self) -> strider::SleighArch {
         match self {
             Arch::X86 => strider::SleighArch::x86(),
+            // x86_kernel uses the same Sleigh spec as x86 — only the
+            // calling convention differs.
+            Arch::X86Kernel => strider::SleighArch::x86(),
             Arch::X64 => strider::SleighArch::x86_64(),
             Arch::Aarch64 => strider::SleighArch::aarch64(),
             Arch::Aarch64Be => strider::SleighArch::aarch64be(),
@@ -96,6 +105,7 @@ impl Arch {
     pub fn cc(self) -> strider::CallingConvention {
         match self {
             Arch::X86 => strider::CallingConvention::x86_cdecl(),
+            Arch::X86Kernel => strider::CallingConvention::x86_linux_kernel(),
             Arch::X64 => strider::CallingConvention::x86_64_systemv_abi(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
             Arch::Aarch64 | Arch::Aarch64Be => strider::CallingConvention::aarch64_aapcs64(),
@@ -356,8 +366,9 @@ macro_rules! per_arch_test {
                 // the test function.  The inner `__one_arch_test!` macro
                 // receives the ignore list verbatim and scans it for a
                 // matching entry using dedicated per-arch arms.
-                $crate::__one_arch_test!(X86,       x86,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
-                $crate::__one_arch_test!(X64,       x64,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X86,       x86,        $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X86Kernel, x86_kernel, $case, $fn_name, $assert { $($skip_arch: $reason),* });
+                $crate::__one_arch_test!(X64,       x64,        $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Aarch64,   aarch64,   $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Aarch64Be, aarch64be, $case, $fn_name, $assert { $($skip_arch: $reason),* });
                 $crate::__one_arch_test!(Arm,       arm,       $case, $fn_name, $assert { $($skip_arch: $reason),* });
@@ -424,6 +435,34 @@ macro_rules! __scan_ignore_x86 {
         #[test]
         fn $fn() {
             let g = $crate::common::analyze($crate::common::Arch::X86, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+}
+
+// `paste!` lower-cases `X86Kernel` to `x86kernel` (no underscore), so
+// the dispatcher's name is `__scan_ignore_x86kernel` — not
+// `__scan_ignore_x86_kernel`.  The fixture path / fn-name suffix
+// uses the underscored form (`x86_kernel`) via the `$fn` argument.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __scan_ignore_x86kernel {
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { X86Kernel: $reason:literal $(, $($_rest:tt)*)? }) => {
+        #[test] #[ignore = $reason]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X86Kernel, $case, $fn_name);
+            $assert(&g);
+        }
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident,
+     { $_skip:ident: $_r:literal $(, $($rest:tt)*)? }) => {
+        $crate::__scan_ignore_x86kernel!($fn:ident, $case, $fn_name, $assert, { $($($rest)*)? });
+    };
+    ($fn:ident : ident, $case:literal, $fn_name:literal, $assert:ident, { $(,)? }) => {
+        #[test]
+        fn $fn() {
+            let g = $crate::common::analyze($crate::common::Arch::X86Kernel, $case, $fn_name);
             $assert(&g);
         }
     };

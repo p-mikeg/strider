@@ -71,6 +71,13 @@ pub struct CallingConvention {
     /// Used by the indirect-branch resolver to recognise `bx lr` /
     /// `pop {pc}` / `jr ra` shapes as `Return`.
     link_register_reg_name: Option<&'static str>,
+    /// The Sleigh register name of the convention's syscall-number
+    /// register (the register that carries the syscall index on entry
+    /// to a kernel from a user-mode `syscall` / `svc` / `int 0x80`
+    /// instruction), or `None` on userland and kernel-internal CCs.
+    /// Resolved into [`BuiltCallingConvention::syscall_number_vn`] by
+    /// [`Self::build`].  Set on the `*_linux_syscall` presets only.
+    syscall_number_reg_name: Option<&'static str>,
 }
 
 /// A calling convention whose register names have been resolved to concrete
@@ -120,6 +127,16 @@ pub struct BuiltCallingConvention {
     /// resolver to classify `BranchIndirect` whose target is the
     /// function-entry value of this varnode as a `Return`.
     pub link_register_vn: Option<rsleigh::Vn>,
+    /// The varnode that holds the syscall number on entry to a kernel
+    /// from a user-mode `syscall` / `svc` / `int 0x80` instruction, or
+    /// `None` on userland and kernel-internal CCs.  Resolved from
+    /// [`CallingConvention::syscall_number_reg_name`] by
+    /// [`CallingConvention::build`].  Consumed by future syscall-aware
+    /// analyses (e.g. a `SyscallNumberDetect` pass parallel to
+    /// `FunctionArgDetect`); `None` on the userland presets is the
+    /// "no syscall semantics" sentinel and is checked by the
+    /// `*_linux_syscall` preset tests.
+    pub syscall_number_vn: Option<rsleigh::Vn>,
 }
 
 impl CallingConvention {
@@ -149,6 +166,7 @@ impl CallingConvention {
             // x86-64 `call` pushes the return address on the stack; there
             // is no architectural link register.
             link_register_reg_name: None,
+            syscall_number_reg_name: None,
         }
     }
 
@@ -184,6 +202,7 @@ impl CallingConvention {
             // AArch64's `lr` is an alias for `x30`; Sleigh's aarch64
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -220,6 +239,7 @@ impl CallingConvention {
             // ARM's `bl` writes the return address to `lr` (= `r14`);
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -258,6 +278,7 @@ impl CallingConvention {
             // MIPS `jal`/`jalr` writes the return address to `$ra`
             // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -286,6 +307,7 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -316,6 +338,7 @@ impl CallingConvention {
             // PowerPC `bl` writes the return address to the `LR` SPR;
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -351,6 +374,7 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -383,6 +407,7 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
+            syscall_number_reg_name: None,
         }
     }
 
@@ -421,6 +446,7 @@ impl CallingConvention {
             // x86 `call` pushes the return address on the stack; there
             // is no architectural link register.
             link_register_reg_name: None,
+            syscall_number_reg_name: None,
         }
     }
 
@@ -449,6 +475,13 @@ impl CallingConvention {
             Some(name) => Some(vn_for_name(sleigh_regs, name)?),
             None => None,
         };
+        // Same propagation rule for the syscall-number register: a
+        // typo in a `*_linux_syscall` preset surfaces here rather than
+        // silently dropping the field at the analysis layer.
+        let syscall_number_vn = match self.syscall_number_reg_name {
+            Some(name) => Some(vn_for_name(sleigh_regs, name)?),
+            None => None,
+        };
         Ok(BuiltCallingConvention {
             arg_passing_regs,
             callee_saved_regs,
@@ -458,7 +491,180 @@ impl CallingConvention {
             stack_arg_offsets: self.stack_arg_offsets.to_vec(),
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn,
+            syscall_number_vn,
         })
+    }
+}
+
+// ── Linux kernel + syscall presets ───────────────────────────────────────────
+//
+// One factory per (arch, role) pair.  Where the kernel-internal CC is
+// identical to the userland one (every supported arch except x86 32-bit),
+// the kernel factory delegates to the userland preset rather than
+// duplicating the field list — keeps a single source of truth and makes
+// "kernel CC = userland CC" obvious by inspection.  For details see
+// docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
+impl CallingConvention {
+    /// Returns the Linux kernel-internal CC for x86 32-bit
+    /// (`-mregparm=3`): the first three integer args go in
+    /// `EAX, EDX, ECX`; remaining args sit on the stack at the same
+    /// cdecl offsets.  Differs from [`Self::x86_cdecl`] only in
+    /// `arg_passing_regs`.
+    #[must_use]
+    pub fn x86_linux_kernel() -> CallingConvention {
+        let mut cc = Self::x86_cdecl();
+        cc.arg_passing_regs = &["EAX", "EDX", "ECX"];
+        cc
+    }
+
+    /// Returns the Linux kernel-internal CC for x86_64.  Identical to
+    /// [`Self::x86_64_systemv_abi`] — the kernel writes its C in
+    /// SystemV (the syscall-entry assembly does the
+    /// `r10`→`rcx` shuffle before calling C handlers, so by the time
+    /// any kernel function is entered its args are already in their
+    /// SystemV slots).  Provided as a self-documenting alias so
+    /// "this is kernel code" is explicit at the call site.
+    #[must_use]
+    pub fn x86_64_linux_kernel() -> CallingConvention {
+        Self::x86_64_systemv_abi()
+    }
+
+    /// Returns the Linux kernel-internal CC for AArch64.  Identical
+    /// to [`Self::aarch64_aapcs64`].  See [`Self::x86_64_linux_kernel`]
+    /// for the rationale on aliases.
+    #[must_use]
+    pub fn aarch64_linux_kernel() -> CallingConvention {
+        Self::aarch64_aapcs64()
+    }
+
+    /// Returns the Linux kernel-internal CC for ARM.  Identical to
+    /// [`Self::arm_aapcs`].
+    #[must_use]
+    pub fn arm_linux_kernel() -> CallingConvention {
+        Self::arm_aapcs()
+    }
+
+    /// Returns the Linux kernel-internal CC for MIPS O32.  Identical
+    /// to [`Self::mips_o32`].
+    #[must_use]
+    pub fn mips_linux_kernel_o32() -> CallingConvention {
+        Self::mips_o32()
+    }
+
+    /// Returns the Linux kernel-internal CC for MIPS N64.  Identical
+    /// to [`Self::mips_n64`].
+    #[must_use]
+    pub fn mips_linux_kernel_n64() -> CallingConvention {
+        Self::mips_n64()
+    }
+
+    /// Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).
+    /// Args in `EBX, ECX, EDX, ESI, EDI, EBP`; syscall number in
+    /// `EAX`; return in `EAX`.  No link register; no stack args (the
+    /// `int 0x80` ABI is register-only).  `callee_saved_regs` is
+    /// empty: every cdecl-callee-saved register (`EBX, ESI, EDI,
+    /// EBP`) is consumed as an argument here, so none of them
+    /// remain in the callee-saved set.  Disjointness between
+    /// `arg_passing_regs` and `callee_saved_regs` is an architectural
+    /// invariant of `BuiltCallingConvention` — see the
+    /// `assert_disjoint` checks in the unit tests.
+    #[must_use]
+    pub fn x86_linux_syscall() -> CallingConvention {
+        let mut cc = Self::x86_cdecl();
+        cc.arg_passing_regs = &["EBX", "ECX", "EDX", "ESI", "EDI", "EBP"];
+        cc.callee_saved_regs = &[];
+        cc.ret_val_regs = &["EAX"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("EAX");
+        cc
+    }
+
+    /// Returns the Linux syscall ABI for x86_64 (`syscall`).  Args in
+    /// `RDI, RSI, RDX, R10, R8, R9` — note `R10` not `RCX` because
+    /// the `syscall` instruction clobbers `RCX` with the return RIP.
+    /// Syscall number in `RAX`; return in `RAX`.
+    #[must_use]
+    pub fn x86_64_linux_syscall() -> CallingConvention {
+        let mut cc = Self::x86_64_systemv_abi();
+        cc.arg_passing_regs = &["RDI", "RSI", "RDX", "R10", "R8", "R9"];
+        cc.ret_val_regs = &["RAX"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("RAX");
+        cc
+    }
+
+    /// Returns the Linux syscall ABI for AArch64 (`svc #0`).  Args in
+    /// `x0..x5`; syscall number in `x8`; return in `x0`.  No link
+    /// register: `svc` returns via `eret` reading `ELR_EL1`, not `lr`.
+    #[must_use]
+    pub fn aarch64_linux_syscall() -> CallingConvention {
+        let mut cc = Self::aarch64_aapcs64();
+        cc.arg_passing_regs = &["x0", "x1", "x2", "x3", "x4", "x5"];
+        cc.ret_val_regs = &["x0"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("x8");
+        cc
+    }
+
+    /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  Args
+    /// in `r0..r6`; syscall number in `r7`; return in `r0`.  Same on
+    /// Thumb.  `callee_saved_regs` strips `r4..r7` (consumed as args
+    /// + syscall number) from the AAPCS callee-saved set; `r8..r11`
+    /// and `lr` remain — the kernel preserves them across the trap.
+    /// Disjointness between `arg_passing_regs`, the syscall-number
+    /// register, and `callee_saved_regs` is an architectural
+    /// invariant of `BuiltCallingConvention`.
+    #[must_use]
+    pub fn arm_linux_syscall() -> CallingConvention {
+        let mut cc = Self::arm_aapcs();
+        cc.arg_passing_regs = &["r0", "r1", "r2", "r3", "r4", "r5", "r6"];
+        cc.callee_saved_regs = &["r8", "r9", "r10", "r11", "lr"];
+        cc.ret_val_regs = &["r0"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("r7");
+        cc
+    }
+
+    /// Returns the Linux syscall ABI for MIPS O32 (`syscall`).  Args
+    /// in `a0..a3`; syscall number in `v0`; return in `v0`.
+    #[must_use]
+    pub fn mips_linux_syscall_o32() -> CallingConvention {
+        let mut cc = Self::mips_o32();
+        cc.arg_passing_regs = &["a0", "a1", "a2", "a3"];
+        cc.ret_val_regs = &["v0"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("v0");
+        cc
+    }
+
+    /// Returns the Linux syscall ABI for MIPS N64 (`syscall`).  Args
+    /// in `a0..a5`; syscall number in `v0`; return in `v0`.
+    #[must_use]
+    pub fn mips_linux_syscall_n64() -> CallingConvention {
+        let mut cc = Self::mips_n64();
+        cc.arg_passing_regs = &["a0", "a1", "a2", "a3", "t0", "t1"];
+        cc.ret_val_regs = &["v0"];
+        cc.ret_val_regs_float = &[];
+        cc.stack_arg_offsets = &[];
+        cc.ret_stack_pop = 0;
+        cc.link_register_reg_name = None;
+        cc.syscall_number_reg_name = Some("v0");
+        cc
     }
 }
 
