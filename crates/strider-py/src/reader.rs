@@ -108,6 +108,27 @@ impl PyMemoryMap {
             None => Ok(None),
         }
     }
+
+    /// Convenience: load every executable section and every non-writable
+    /// section with file-backed data from an ELF file at `path` and add
+    /// them as regions.  Mirrors `reader::ElfFileMemReader::from_path`'s
+    /// region selection.
+    fn add_region_from_elf(&self, path: &str) -> PyResult<()> {
+        let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        let regions = reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj)
+            .map_err(into_reader_err)?;
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
+        inner.extend(regions);
+        let mut slot = self
+            .table
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
+        *slot = None;
+        Ok(())
+    }
 }
 
 /// Internal view that implements `rsleigh::MemReader` for a snapshot of

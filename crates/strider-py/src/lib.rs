@@ -6,6 +6,8 @@ use pyo3::prelude::*;
 
 mod arch;
 mod cc;
+mod cfg;
+mod dot;
 mod errors;
 mod reader;
 mod sleigh;
@@ -18,5 +20,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     cc::register(py, m)?;
     reader::register(py, m)?;
     sleigh::register(py, m)?;
+    cfg::register(py, m)?;
     Ok(())
 }

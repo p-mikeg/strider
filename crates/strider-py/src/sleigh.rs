@@ -25,6 +25,11 @@ pub struct PySleigh {
     /// added in phase 7).
     #[allow(dead_code)]
     pub(crate) arch: target::SleighArch,
+    /// Cached register table.  `Sleigh::regs()` only requires `&self`,
+    /// but we eagerly cache it at construction time so callers can read
+    /// the registers after the inner Sleigh has been moved into a
+    /// downstream consumer (e.g. `cfg::Builder`).
+    pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
@@ -51,10 +56,14 @@ impl PySleigh {
         let reader = PyMemoryMapReader { table };
         let inner = rsleigh::Sleigh::new(arch.inner.sla_spec, arch.inner.pspec, reader)
             .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+        let regs = inner
+            .regs()
+            .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
         Ok(Self {
             inner: Some(inner),
             arch_name: arch.preset_name,
             arch: arch.inner,
+            regs,
         })
     }
 
