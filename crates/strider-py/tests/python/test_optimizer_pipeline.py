@@ -58,6 +58,55 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     assert pipe.post_pass_count() == 2
 
 
+def test_strider_build_optimizer_pipeline(x86_memory_elf):
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    pipe = s.build_optimizer_pipeline()
+    assert pipe.pass_count() > 0
+    assert pipe.post_pass_count() > 0
+
+
+def test_strider_build_stable_optimizer_pipeline(x86_memory_elf):
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    pipe = s.build_stable_optimizer_pipeline()
+    assert pipe.pass_count() > 0
+
+
+def test_strider_build_destructive_optimizer_pipeline(x86_memory_elf):
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    pipe = s.build_destructive_optimizer_pipeline()
+    assert pipe.pass_count() > 0
+
+
+def test_graph_reoptimize(x86_memory_elf):
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    g = s.analyze_cfg(cfg).graph
+    g.reoptimize()
+    g.reoptimize(destructive=True)
+    assert g.node_count() > 0
+
+
 def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()

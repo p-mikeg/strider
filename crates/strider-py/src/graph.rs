@@ -116,6 +116,27 @@ impl PyGraph {
             .run_on_built(&mut graph)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
+
+    /// Convenience: re-run the stable pipeline (and optionally the
+    /// destructive pipeline) on this graph.  Useful after a manual
+    /// rewrite (`graph.rewrite(...)`) to re-converge the graph.
+    #[pyo3(signature = (destructive=false))]
+    fn reoptimize(&self, destructive: bool) -> PyResult<()> {
+        let mut pipe = opt::stable_default_pipeline();
+        if destructive {
+            // Append the destructive passes after the stable ones.
+            pipe.add(opt::RedundantPhis);
+            pipe.add(opt::DeadBranchElimination);
+            pipe.add(opt::CallOtherElide);
+        }
+        let mut graph = self
+            .inner
+            .write()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        pipe.run_on_built(&mut graph).map_err(|e| {
+            crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
+        })
+    }
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

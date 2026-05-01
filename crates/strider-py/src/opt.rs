@@ -99,6 +99,57 @@ impl PyOptimizerPipeline {
         }
     }
 
+    /// Build the convention-aware "full" pipeline mirroring
+    /// `strider::Strider::build_optimizer_pipeline`.
+    pub(crate) fn new_full_default(
+        cc: target::BuiltCallingConvention,
+        arch: target::SleighArch,
+    ) -> Self {
+        let mut state = PipelineState::from_default();
+        state
+            .passes
+            .push(Box::new(opt::StackStoreDetect::from_convention(&cc)));
+        state
+            .passes
+            .push(Box::new(opt::StackLoadForward::from_convention(&cc, &arch)));
+        state
+            .post_passes
+            .push(Box::new(opt::CallStackArgCollect::from_convention(&cc)));
+        state
+            .post_passes
+            .push(Box::new(opt::FunctionArgDetect::from_convention(&cc)));
+        Self::new_with(state)
+    }
+
+    /// Build the stable-only pipeline mirroring
+    /// `strider::Strider::build_stable_optimizer_pipeline`.
+    pub(crate) fn new_stable_default(
+        cc: target::BuiltCallingConvention,
+        arch: target::SleighArch,
+    ) -> Self {
+        let mut state = PipelineState::from_stable_default();
+        state
+            .passes
+            .push(Box::new(opt::StackStoreDetect::from_convention(&cc)));
+        state
+            .passes
+            .push(Box::new(opt::StackLoadForward::from_convention(&cc, &arch)));
+        state
+            .post_passes
+            .push(Box::new(opt::FunctionArgDetect::from_convention(&cc)));
+        Self::new_with(state)
+    }
+
+    /// Build the destructive-only pipeline mirroring
+    /// `strider::Strider::build_destructive_optimizer_pipeline`.
+    pub(crate) fn new_destructive_default(cc: target::BuiltCallingConvention) -> Self {
+        let mut state = PipelineState::from_destructive_default();
+        state
+            .post_passes
+            .push(Box::new(opt::CallStackArgCollect::from_convention(&cc)));
+        Self::new_with(state)
+    }
+
     /// Materialise a real `opt::OptimizerPipeline` from the current
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
