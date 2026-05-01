@@ -73,3 +73,13 @@ def x86_calls_elf() -> pathlib.Path:
 @pytest.fixture
 def x86_patterns_elf() -> pathlib.Path:
     return fixture_path("x86", "patterns")
+
+
+@pytest.fixture
+def x86_indirect_branch_elf() -> pathlib.Path:
+    return fixture_path("x86", "indirect_branch")
+
+
+@pytest.fixture
+def x86_switch_elf() -> pathlib.Path:
+    return fixture_path("x86", "switch")

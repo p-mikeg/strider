@@ -2,6 +2,20 @@
 //!
 //! See `docs/superpowers/specs/2026-05-01-strider-py-design.md`.
 
+// PyO3 0.22's attribute macros (`#[pymethods]`, `#[pyfunction]`,
+// `#[pymodule]`, `create_exception!`) emit calls to `unsafe fn`s
+// (`BoundRef::ref_from_ptr`, `BoundRef::downcast_unchecked`,
+// `unwrap_required_argument`, raw-pointer dereferences) inside
+// generated function bodies that the Rust 2024 edition's
+// `unsafe_op_in_unsafe_fn` lint flags as warnings.  PyO3 0.23+ wraps
+// those calls in explicit `unsafe { … }` blocks; until we cut over to
+// 0.23+ we silence the lint at the crate root rather than sprinkling
+// `#[allow(...)]` on every #[pymethods] impl.  The same release also
+// stops emitting the legacy `gil-refs` feature gate, which fires the
+// `unexpected_cfgs` lint here for the same reason.
+#![allow(unsafe_op_in_unsafe_fn)]
+#![allow(unexpected_cfgs)]
+
 use pyo3::prelude::*;
 
 mod arch;

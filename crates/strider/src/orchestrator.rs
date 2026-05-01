@@ -183,9 +183,15 @@ where
     R: rsleigh::MemReader,
 {
     opts: RunOpts<'a>,
-    /// Accumulator of tier-2 resolutions across iterations.  Replaced
-    /// each iteration (an upgrade like `Single(K1) → Multiple([K1, K2])`
-    /// is a legitimate classification refinement).
+    /// Accumulator of tier-2 resolutions across iterations.
+    /// Monotonically grows: once an anchor's targets land here, the
+    /// CFG-rebuild path keeps using them.  Per-iteration classifications
+    /// overlay this map (so an upgrade like
+    /// `Single(K1) → Multiple([K1, K2])` overwrites the entry), but
+    /// anchors that are no longer in the per-iteration `unresolved`
+    /// list (because the previous Rebuild lowered them to switch
+    /// edges) MUST stay — wiping them re-introduces the placeholder
+    /// on the next rebuild and the loop diverges.
     known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
     /// from `RunConfig::sleigh` at construction; consumed by
@@ -409,7 +415,12 @@ where
             .as_ref()
             .ok_or_else(|| anyhow!("orchestrator classify: graph not initialised"))?;
         let rom_ref: Option<&dyn ReadOnlyMemory> = self.opts.rom.as_deref();
-        let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
+        // Start from the previous iteration's resolutions so anchors
+        // already lowered to switch edges by an earlier Rebuild stay in
+        // the known_targets map.  Wiping them would re-introduce the
+        // BranchIndirect on the next rebuild and the loop would
+        // oscillate between resolved and unresolved.
+        let mut next_known: HashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
         let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor_with_rom_and_sp(

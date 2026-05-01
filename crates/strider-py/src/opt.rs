@@ -150,21 +150,6 @@ impl PyOptimizerPipeline {
         Self::new_with(state)
     }
 
-    /// Append a `LoadReadOnly(rom)` pass to the fixed-point pass list.
-    /// `rom` is taken as `Arc<dyn ReadOnlyMemory>` so we accept both
-    /// `PyMemoryMap` and any Python `ReadOnlyMemory` subclass.
-    pub(crate) fn add_load_readonly_arc(
-        &self,
-        rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
-    ) -> PyResult<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
-        state.passes.push(Box::new(opt::LoadReadOnly(rom)));
-        Ok(())
-    }
-
     /// Materialise a real `opt::OptimizerPipeline` from the current
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
@@ -417,13 +402,22 @@ impl PyLoadReadOnly {
 // ── Polymorphic enum used by add/add_post ──────────────────────────────────
 
 /// Aggregates every pass-wrapper class so `add` / `add_post` can
-/// accept any of them via PyO3's automatic enum dispatch.
+/// accept any of them via PyO3's automatic enum dispatch.  The
+/// `Bound<'py, _>` payload is consumed by `FromPyObject`'s
+/// macro-generated dispatcher to pick the right variant; for the
+/// zero-sized passes we never read it back, hence the `dead_code`
+/// allow on those variants.
 #[derive(FromPyObject)]
 pub enum PyOptPass<'py> {
+    #[allow(dead_code)]
     ConstantFold(Bound<'py, PyConstantFold>),
+    #[allow(dead_code)]
     KnownBits(Bound<'py, PyKnownBits>),
+    #[allow(dead_code)]
     RedundantPhis(Bound<'py, PyRedundantPhis>),
+    #[allow(dead_code)]
     DeadBranchElim(Bound<'py, PyDeadBranchElim>),
+    #[allow(dead_code)]
     CallOtherElide(Bound<'py, PyCallOtherElide>),
     StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
