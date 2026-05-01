@@ -8,6 +8,7 @@ mod arch;
 mod cc;
 mod errors;
 mod reader;
+mod sleigh;
 
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -16,5 +17,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     arch::register(py, m)?;
     cc::register(py, m)?;
     reader::register(py, m)?;
+    sleigh::register(py, m)?;
     Ok(())
 }
