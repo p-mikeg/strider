@@ -44,9 +44,10 @@ pub(crate) type NodeKindCheck =
 /// Kind-level constraint carried by every [`NodePat`].
 ///
 /// Dispatch has two phases:
-/// * [`accepts_discriminant`](Self::accepts_discriminant) — O(1), closure-free.
-///   Used by [`crate::matcher::Matcher::find_all`] to prefilter candidate
-///   roots to the compatible discriminant class.
+/// * [`discriminant`](Self::discriminant) — O(1), closure-free.
+///   Used by [`crate::matcher::Matcher::find_all`] to look up the
+///   matcher's lazy kind-index bucket for the spec's root kind,
+///   skipping every node with a different `NodeKind` discriminant.
 /// * [`matches`](Self::matches) — full check (discriminant + payload).
 ///   Used by [`NodePat::try_match_common`] to gate the whole match.
 ///
