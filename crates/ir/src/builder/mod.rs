@@ -121,6 +121,12 @@ pub struct FunctionBuilder {
     /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
     /// Ignored when `stack_ptr_vn` is `None`.
     pub(crate) ret_stack_pop: i64,
+    /// Lazy `tracked_vn → its largest containing tracked-vn` map.
+    /// Populated on first call to [`Self::largest_container_for`];
+    /// the variable set is fixed at construction so caching is safe.
+    /// Lookup turns the per-call O(V) linear scan in
+    /// `pcode_lift::find_largest_fitting_register` into O(1).
+    pub(crate) largest_container: std::cell::OnceCell<HashMap<rsleigh::Vn, rsleigh::Vn>>,
 }
 
 impl FunctionBuilder {
@@ -347,6 +353,7 @@ impl FunctionBuilder {
             call_clobbered_variables,
             stack_ptr_vn,
             ret_stack_pop,
+            largest_container: std::cell::OnceCell::new(),
         };
         fb.build_entry()?;
         Ok(fb)
@@ -377,6 +384,60 @@ impl FunctionBuilder {
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
         self.variable_to_id.keys()
+    }
+
+    /// Returns the largest tracked variable in the same fixed-offset
+    /// space (REGISTER or UNIQUE) that fully contains `reg`, or
+    /// `None` if no tracked variable covers it.
+    ///
+    /// Result-cached: the lookup table is computed once on first
+    /// call (O(V²) one-shot) and consulted in O(1) thereafter.
+    /// Used by `pcode_lift::ValueLifter::find_largest_fitting_register`
+    /// on every register read/write to apply Sleigh's container-
+    /// aliasing rule (e.g. `al` → `rax` on x86_64).
+    ///
+    /// Returns `None` for varnodes outside REGISTER/UNIQUE space —
+    /// containment-by-offset isn't meaningful for CONST or memory.
+    /// Callers (currently `find_largest_fitting_register`) gate on
+    /// the space themselves before calling.
+    #[must_use]
+    pub fn largest_container_for(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
+        let map = self.largest_container.get_or_init(|| {
+            // For each tracked variable, find its largest container
+            // among all tracked variables in the same space.  O(V²)
+            // up front; amortised across every subsequent lookup.
+            //
+            // Range arithmetic uses `saturating_add` because some
+            // Sleigh varnodes (notably ppc64 / aarch64be CR slices)
+            // sit at very high offsets where `off + size` would
+            // overflow `u64`.  Saturation is safe: a saturated
+            // endpoint can only fail the containment test (it's the
+            // weakest possible upper bound), never spuriously
+            // succeed.
+            let vars: Vec<&rsleigh::Vn> = self.variable_to_id.keys().collect();
+            let mut out: HashMap<rsleigh::Vn, rsleigh::Vn> = HashMap::with_capacity(vars.len());
+            for v in &vars {
+                let v_start = v.addr.off;
+                let v_end = v_start.saturating_add(u64::from(v.size));
+                let mut best: rsleigh::Vn = **v;
+                for other in &vars {
+                    if other.addr.space != v.addr.space {
+                        continue;
+                    }
+                    let s = other.addr.off;
+                    let e = s.saturating_add(u64::from(other.size));
+                    if s > v_start || e < v_end {
+                        continue;
+                    }
+                    if other.size > best.size {
+                        best = **other;
+                    }
+                }
+                out.insert(**v, best);
+            }
+            out
+        });
+        map.get(reg).copied()
     }
 
     /// Returns the [`rsleigh::Vn`] tracked at the given [`VarId`], or

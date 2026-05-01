@@ -133,6 +133,18 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
+        // Fast path: the IR builder's lazy lookup table covers every
+        // tracked varnode.  In production all `reg`s passed here are
+        // tracked (the lifter only sees varnodes Sleigh emitted from
+        // the function's pcode + the calling-convention regs, all of
+        // which are passed to `FunctionBuilder::new_raw`).
+        if let Some(container) = self.builder.largest_container_for(reg) {
+            return Ok(container);
+        }
+        // Slow fallback for the rare case the reg isn't tracked
+        // (defensive — preserves the previous behaviour and lets
+        // tests that hand-craft a Vn without registering it still
+        // resolve a containment).
         let reg_start = reg.addr.off;
         let reg_end = reg_start + reg.size as u64;
         let mut best: Option<rsleigh::Vn> = None;
@@ -145,7 +157,6 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             if s > reg_start || e < reg_end {
                 continue;
             }
-            // Contained.  Take it if it's strictly wider than the current best.
             if best.is_none_or(|b| b.size < sleigh_reg.size) {
                 best = Some(*sleigh_reg);
             }
