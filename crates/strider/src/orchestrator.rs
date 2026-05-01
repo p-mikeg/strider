@@ -211,6 +211,24 @@ where
     /// every iteration; threaded into each fresh `cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
+    /// Cached set of varnodes seen so far across all CFG iterations.
+    /// `find_all_unique_vns` would otherwise re-scan every region's
+    /// every instruction's every varnode on every Rebuild iteration;
+    /// here we only scan the regions added since the previous
+    /// iteration (petgraph's `StableDiGraph` allocates monotonic
+    /// `NodeIndex`s, so the new regions sit at indices
+    /// `[prev_count..current_count)`).
+    ///
+    /// The set is conservative under region splits: a split region's
+    /// original vns stay in the cache even if the original's insn
+    /// list got truncated.  Over-tracking a vn allocates one extra
+    /// `InitialVar` (cheap) and never miscompiles.
+    vn_cache: std::collections::HashSet<rsleigh::Vn>,
+    /// Region count at the most recent `find_all_unique_vns` call.
+    /// `vn_cache` is up-to-date for the first `vn_cache_region_count`
+    /// regions in the CFG; later regions need to be scanned and unioned
+    /// into the cache.
+    vn_cache_region_count: usize,
 }
 
 impl<'a, B> LoopState<'a, B>
@@ -233,6 +251,8 @@ where
             lr_vn,
             sp_vn,
             decode_cache: DecodeCache::new(),
+            vn_cache: std::collections::HashSet::new(),
+            vn_cache_region_count: 0,
             opts: RunOpts {
                 strider: config.strider,
                 start_addr: config.start_addr,
@@ -250,8 +270,14 @@ where
             .sleigh
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at build_iter_0"))?;
-        let (graph, unresolved, region_index, sleigh) =
-            build_lift_stable(sleigh, &self.opts, &self.known_targets, &self.decode_cache)?;
+        let (graph, unresolved, region_index, sleigh) = build_lift_stable(
+            sleigh,
+            &self.opts,
+            &self.known_targets,
+            &self.decode_cache,
+            &mut self.vn_cache,
+            &mut self.vn_cache_region_count,
+        )?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
@@ -337,8 +363,14 @@ where
             .sleigh
             .take()
             .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at rebuild"))?;
-        let (graph, unresolved, region_index, sleigh) =
-            build_lift_stable(sleigh, &self.opts, &self.known_targets, &self.decode_cache)?;
+        let (graph, unresolved, region_index, sleigh) = build_lift_stable(
+            sleigh,
+            &self.opts,
+            &self.known_targets,
+            &self.decode_cache,
+            &mut self.vn_cache,
+            &mut self.vn_cache_region_count,
+        )?;
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
@@ -588,6 +620,8 @@ fn build_lift_stable<B>(
     opts: &RunOpts<'_>,
     known_targets: &HashMap<PcodeInsnAddr, ResolvedTargets>,
     decode_cache: &DecodeCache,
+    vn_cache: &mut std::collections::HashSet<rsleigh::Vn>,
+    vn_cache_region_count: &mut usize,
 ) -> Result<(
     ir::BuiltFunctionGraph,
     Vec<(PcodeInsnAddr, ir::Value)>,
@@ -619,7 +653,25 @@ where
             .with_decode_cache(decode_cache.clone())
             .build()?;
 
-    let outcome = opts.strider.analyze_cfg(&cfg)?;
+    // Vn cache: scan only the regions added since the previous
+    // iteration (petgraph's StableDiGraph allocates monotonic
+    // NodeIndexes, so `regions().skip(prev_count)` yields exactly
+    // the new ones).  At iter 0, scans every region.  Region splits
+    // leave the cache slightly conservative — see the field doc on
+    // LoopState::vn_cache for why that's safe.
+    let regions_now: Vec<&cfg::Region> = cfg.regions().collect();
+    for region in regions_now.iter().skip(*vn_cache_region_count) {
+        for wrapped in region.insns.iter() {
+            for vn in wrapped.insn.all_vns() {
+                vn_cache.insert(vn);
+            }
+        }
+    }
+    *vn_cache_region_count = regions_now.len();
+    let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
+    all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
+
+    let outcome = opts.strider.analyze_cfg_with_vns(&cfg, all_vns)?;
     let region_index = RegionIndex::from_handles(&outcome.region_handles);
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;

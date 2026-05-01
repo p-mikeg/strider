@@ -26,11 +26,18 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
 impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Creates a new `IrStrider` for the given CFG.
     ///
-    /// Collects all unique varnodes referenced by any instruction in `cfg` and
-    /// constructs the IR [`FunctionBuilder`] with calling-convention
-    /// information from `strider`.
-    fn new(strider: &'a Strider, cfg: &'a cfg::Cfg<R>) -> Result<Self> {
-        let all_vns = strider.find_all_unique_vns(cfg);
+    /// Constructs the IR [`FunctionBuilder`] with the supplied
+    /// `all_vns` (the set of every varnode any instruction in `cfg`
+    /// references, sorted by `pcode_lift::vn_sort_key` for stable
+    /// `VarId` numbering).  When the caller has a cached vn list
+    /// (e.g. the orchestrator across rebuild iterations) it can pass
+    /// it directly; the convenience [`Self::new_scanning`] does the
+    /// scan in-place.
+    pub(crate) fn new(
+        strider: &'a Strider,
+        cfg: &'a cfg::Cfg<R>,
+        all_vns: Vec<rsleigh::Vn>,
+    ) -> Result<Self> {
         let builder = ir::FunctionBuilder::new(all_vns, &strider.calling_convention)?;
         Ok(Self {
             strider,
@@ -39,4 +46,5 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             unresolved_branches: Vec::new(),
         })
     }
+
 }

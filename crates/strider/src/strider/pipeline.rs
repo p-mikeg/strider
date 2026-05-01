@@ -189,7 +189,7 @@ impl Strider {
     ///
     /// Determinism (sort by `(space-shortcut, offset, size)`) is required
     /// so that downstream `VarId` numbering is stable across runs.
-    pub(super) fn find_all_unique_vns<R: rsleigh::MemReader>(
+    pub(crate) fn find_all_unique_vns<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Vec<rsleigh::Vn> {
@@ -222,7 +222,24 @@ impl Strider {
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Result<AnalyzeOutcome> {
-        let mut ir_strider = IrStrider::new(self, cfg)?;
+        self.analyze_cfg_with_vns(cfg, self.find_all_unique_vns(cfg))
+    }
+
+    /// Variant of [`Self::analyze_cfg`] that takes a pre-computed
+    /// vn set — used by the orchestrator to share its
+    /// [`super::super::orchestrator`] vn cache across rebuild
+    /// iterations.  The supplied `all_vns` must be sorted by
+    /// `pcode_lift::vn_sort_key` (otherwise downstream `VarId`
+    /// numbering loses determinism) and must include every varnode
+    /// any instruction in `cfg` references — under-tracking would
+    /// drop pcode reads.  Over-tracking is safe but allocates one
+    /// extra `InitialVar` per superfluous vn.
+    pub fn analyze_cfg_with_vns<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+        all_vns: Vec<rsleigh::Vn>,
+    ) -> Result<AnalyzeOutcome> {
+        let mut ir_strider = IrStrider::new(self, cfg, all_vns)?;
         ir_strider.builder.build_entry()?;
 
         // Map every CFG region id to its newly-allocated IR region id.
