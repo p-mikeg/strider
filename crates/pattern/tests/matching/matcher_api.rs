@@ -590,3 +590,65 @@ fn ignore_casts_after_mask_widens_to_all() {
         "ignore_casts() after a mask must widen to all()"
     );
 }
+
+// ── find_all_multi: equivalence with sequential find_all ──────────────────
+
+/// `find_all_multi(&[p1, p2])` must return the same per-pattern results
+/// as calling `find_all(p1)` and `find_all(p2)` separately.
+#[test]
+fn find_all_multi_matches_sequential_find_all() {
+    let g = shapes::add_nested_3(5, 7, 11);
+    let m = Matcher::new(&g);
+
+    let p_add: Pat = add(any(), any()).into();
+    let p_const: Pat = any_int_const(Capture::new()).into();
+    let p_load: Pat = load().into();
+
+    let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]);
+
+    let seq_add = m.find_all(&p_add);
+    let seq_const = m.find_all(&p_const);
+    let seq_load = m.find_all(&p_load);
+
+    let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
+    assert_eq!(roots(&multi[0]), roots(&seq_add));
+    assert_eq!(roots(&multi[1]), roots(&seq_const));
+    assert_eq!(roots(&multi[2]), roots(&seq_load));
+}
+
+/// Empty input slice returns an empty outer Vec.
+#[test]
+fn find_all_multi_empty_input() {
+    let g = shapes::add_consts(2, 3);
+    let m = Matcher::new(&g);
+    let results = m.find_all_multi(&[]);
+    assert!(results.is_empty());
+}
+
+/// All-wildcard patterns route through the cached preorder; per-pattern
+/// results must match each `find_all` call separately.
+#[test]
+fn find_all_multi_all_wildcards() {
+    let g = shapes::add_consts(1, 2);
+    let m = Matcher::new(&g);
+    let p1: Pat = any();
+    let p2: Pat = any();
+    let multi = m.find_all_multi(&[&p1, &p2]);
+    assert_eq!(multi[0].len(), m.find_all(&p1).len());
+    assert_eq!(multi[1].len(), m.find_all(&p2).len());
+}
+
+/// Mixed concrete + wildcard patterns: concretes go through their
+/// kind-buckets, the wildcard sweeps the cached preorder.  Both per-
+/// pattern results must match `find_all`.
+#[test]
+fn find_all_multi_mixed_concrete_and_wildcard() {
+    let g = shapes::add_nested_3(2, 3, 5);
+    let m = Matcher::new(&g);
+    let p_add: Pat = add(any(), any()).into();
+    let p_wild: Pat = any();
+    let multi = m.find_all_multi(&[&p_add, &p_wild]);
+    let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
+    assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add)));
+    assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild)));
+}

@@ -92,17 +92,17 @@ impl KindSpec {
         }
     }
 
-    /// Cheap prefilter: true iff the candidate's discriminant could match.
-    /// `Any` accepts everything; the other variants accept only their stored
-    /// discriminant.
+    /// Returns the unique `NodeKind` discriminant this spec accepts,
+    /// or `None` for the wildcard [`Self::Any`].  Used by
+    /// [`crate::matcher::Matcher::find_all`] to look up the kind
+    /// index's bucket for concrete-rooted patterns rather than scanning
+    /// every node.
     #[inline]
-    pub(crate) fn accepts_discriminant(&self, kind: &NodeKind) -> bool {
+    pub(crate) fn discriminant(&self) -> Option<std::mem::Discriminant<NodeKind>> {
         match self {
-            Self::Any => true,
-            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => {
-                *d == std::mem::discriminant(kind)
-            }
-            Self::Exact(k) => std::mem::discriminant(k) == std::mem::discriminant(kind),
+            Self::Any => None,
+            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => Some(*d),
+            Self::Exact(k) => Some(std::mem::discriminant(k)),
         }
     }
 
