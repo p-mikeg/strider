@@ -73,9 +73,13 @@ fn build_high_fanin(n: usize) -> (Graph, ir::node::NodeId) {
 
 fn bench_high_fanout(c: &mut Criterion) {
     let mut group = c.benchmark_group("validate/high_fanout");
-    for n in [100usize, 1_000, 10_000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, &n| {
-            let (graph, entry) = build_high_fanout(n);
+    // Sample sizes shrink at the largest N because each iteration is
+    // 100s of µs — Criterion's default sample-size still completes in
+    // ≤30 s.  Add 100K to surface where O(N²) regressions would
+    // otherwise hide behind sub-second measurements.
+    for n in [100usize, 1_000, 10_000, 100_000].iter() {
+        let (graph, entry) = build_high_fanout(*n);
+        group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, _| {
             b.iter(|| {
                 let _ = validate(black_box(&graph), black_box(entry));
             });
@@ -86,9 +90,9 @@ fn bench_high_fanout(c: &mut Criterion) {
 
 fn bench_high_fanin(c: &mut Criterion) {
     let mut group = c.benchmark_group("validate/high_fanin");
-    for n in [100usize, 1_000, 10_000].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, &n| {
-            let (graph, entry) = build_high_fanin(n);
+    for n in [100usize, 1_000, 10_000, 100_000].iter() {
+        let (graph, entry) = build_high_fanin(*n);
+        group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, _| {
             b.iter(|| {
                 let _ = validate(black_box(&graph), black_box(entry));
             });

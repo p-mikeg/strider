@@ -32,7 +32,10 @@ fn build_mixed(n: usize) -> ir::BuiltFunctionGraph {
 
 fn bench_default(c: &mut Criterion) {
     let mut group = c.benchmark_group("default_pipeline/mixed");
-    for n in [100usize, 1_000, 10_000].iter() {
+    // Sample size scales down for the largest N (each iter is seconds);
+    // Criterion still produces statistically significant reports.
+    group.sample_size(20);
+    for n in [100usize, 1_000, 10_000, 100_000].iter() {
         group.bench_with_input(BenchmarkId::from_parameter(n), n, |b, &n| {
             b.iter_batched(
                 || build_mixed(n),
