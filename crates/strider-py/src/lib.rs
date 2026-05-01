@@ -11,6 +11,7 @@ mod dot;
 mod errors;
 mod graph;
 mod opt;
+mod pattern;
 mod reader;
 mod run;
 mod sleigh;
@@ -29,5 +30,6 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     strider_cls::register(py, m)?;
     opt::register(py, m)?;
     run::register(py, m)?;
+    pattern::register(py, m)?;
     Ok(())
 }
