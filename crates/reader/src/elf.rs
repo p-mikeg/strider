@@ -392,8 +392,7 @@ pub struct RelocationStats {
 /// Walks `obj.dynamic_relocations()` (Relocations from `.rela.dyn`,
 /// `.rela.plt`, …).  For each entry, computes the target address
 /// from the relocation's symbol or section, then writes the encoded
-/// value (per [`RelocationKind`]) into the region containing the
-/// relocation site.
+/// value into the region containing the relocation site.
 ///
 /// Used for ET_DYN binaries (FreeBSD kernels, PIE userland) whose
 /// `.text` ships with unresolved `call rel32` placeholders.  ET_REL
@@ -401,6 +400,46 @@ pub struct RelocationStats {
 /// per-section tables and are not currently iterated here — the
 /// dynamic-relocations API is sufficient for the kernel + PIE
 /// shapes that motivated this function.
+///
+/// # Supported relocation kinds
+///
+/// Per [`RelocationKind`] (object's high-level enum):
+/// * `Absolute` — `S + A` (e.g. `R_X86_64_64`).  Symbol-targeted.
+/// * `Relative` — `S + A - P` (e.g. `R_X86_64_PC32`,
+///   `R_X86_64_PC64`, `R_AARCH64_PREL32/PREL64`,
+///   `R_386_PC32`).  Symbol-targeted.
+/// * `PltRelative` — same value as `Relative` (e.g.
+///   `R_X86_64_PLT32`, `R_AARCH64_CALL26`, `R_386_PLT32`).  We
+///   don't materialise a PLT — the symbol's own address is used.
+///
+/// Per raw `r_type` (object reports these as
+/// `RelocationKind::Unknown`):
+/// * `R_X86_64_RELATIVE` / `R_386_RELATIVE` /
+///   `R_AARCH64_RELATIVE` / `R_ARM_RELATIVE` — write
+///   `image_base + addend` (image_base modelled as 0).
+/// * `R_X86_64_GLOB_DAT` / `R_X86_64_JUMP_SLOT` and the
+///   i386 / aarch64 / arm equivalents — write the symbol's
+///   address at the slot (S semantics, eagerly resolved).
+///
+/// Symbol indices in dynamic relocations reference the dynamic
+/// symbol table (`.dynsym`); the applier dispatches through
+/// `obj.dynamic_symbol_table()` and falls back to `.symtab` only
+/// for ET_REL files where `dynamic_symbol_table()` is `None`.
+///
+/// # NOT supported
+///
+/// * `Got` / `GotRelative` / `GotBaseRelative` / `GotBaseOffset` —
+///   the analyser would need a synthesised GOT section to write
+///   into, which we don't allocate.
+/// * Architecture-specific encodings whose payload doesn't fit a
+///   simple `value_low_bytes_at_offset` write (Thumb branches,
+///   AArch64 ADR_PREL_PG_HI21 + ADD_ABS_LO12_NC pairs, MIPS
+///   HI16/LO16 splits, PPC TOC relocations).  These come back as
+///   `RelocationKind::Unknown` with `size = 0` and are counted
+///   under `skipped_unsupported_kind`.
+/// * MIPS / PowerPC kernel/userland binaries' specialised
+///   relocation types — none of strider's current users hit them,
+///   so they're left as a future-work item.
 ///
 /// # Errors
 ///
@@ -436,6 +475,55 @@ pub fn apply_elf_relocations(
         // 32-bit on 32-bit).  Without this branch every PIE binary's
         // `dispatch_table[]` slot reads zero post-load.
         if let Some((value, size_bytes)) = image_relative_reloc(&reloc, obj.architecture()) {
+            if let Some(region) = regions
+                .iter_mut()
+                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
+            {
+                let off = (site_addr - region.start_addr()) as usize;
+                write_at(region.data_mut(), off, value, size_bytes, endian_le);
+                stats.applied += 1;
+            } else {
+                stats.skipped_no_region += 1;
+            }
+            continue;
+        }
+
+        // GOT-data and PLT-jump slots (`R_*_GLOB_DAT` / `R_*_JUMP_SLOT`).
+        // Object 0.38 reports these as `RelocationKind::Unknown` with
+        // `size = 0`, but they have well-defined "S" semantics: write
+        // the symbol's address at the site.  Resolving eagerly means
+        // analysis-time `Load(GOT[...])` reads the real target without
+        // having to model a PLT.
+        if let Some(size_bytes) = got_or_plt_slot_reloc_size(&reloc, obj.architecture()) {
+            // Need the target symbol for these (no symbol → skip).
+            let target_addr = match reloc.target() {
+                RelocationTarget::Symbol(idx) => {
+                    let resolved = if let Some(dynsym) = obj.dynamic_symbol_table() {
+                        dynsym
+                            .symbol_by_index(idx)
+                            .map(|s| (s.address(), s.is_undefined()))
+                            .ok()
+                    } else {
+                        obj.symbol_by_index(idx)
+                            .map(|s| (s.address(), s.is_undefined()))
+                            .ok()
+                    };
+                    let Some((addr, undef)) = resolved else {
+                        stats.skipped_unresolved_target += 1;
+                        continue;
+                    };
+                    if addr == 0 && undef {
+                        stats.skipped_unresolved_target += 1;
+                        continue;
+                    }
+                    addr
+                }
+                _ => {
+                    stats.skipped_unresolved_target += 1;
+                    continue;
+                }
+            };
+            let value = target_addr.wrapping_add(reloc.addend() as u64);
             if let Some(region) = regions
                 .iter_mut()
                 .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
@@ -576,6 +664,58 @@ fn image_relative_reloc(
     // base = 0).  Addends are i64 in object's API but represent
     // unsigned virtual addresses for these types — bitcast.
     Some((reloc.addend() as u64, size_bytes))
+}
+
+/// Detects the GOT/PLT-slot relocation family — relocations whose
+/// runtime semantics are "write the symbol's address (S) at the
+/// site", with no PC subtraction or addend mixing.  These are the
+/// `R_*_GLOB_DAT` (GOT data slot) and `R_*_JUMP_SLOT` (PLT lazy-bind
+/// slot) types.  At analysis time we resolve them eagerly: the
+/// symbol's address goes into the slot, so a `Load(GOT[...])` reads
+/// the real target and indirect-call patterns work without a PLT
+/// model.
+///
+/// Object 0.38 reports both as `RelocationKind::Unknown` with
+/// `size = 0`, so the size is determined by the arch (8 bytes on
+/// 64-bit, 4 bytes on 32-bit).  Returns `Some(size_bytes)` when the
+/// relocation is one of the recognised GLOB_DAT / JUMP_SLOT types
+/// AND has a symbol target — caller is responsible for computing
+/// the value (`target_addr + addend`).
+fn got_or_plt_slot_reloc_size(
+    reloc: &object::Relocation,
+    arch: object::Architecture,
+) -> Option<usize> {
+    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+        return None;
+    };
+    use object::Architecture as A;
+    match arch {
+        A::X86_64
+            if r_type == object::elf::R_X86_64_GLOB_DAT
+                || r_type == object::elf::R_X86_64_JUMP_SLOT =>
+        {
+            Some(8)
+        }
+        A::I386
+            if r_type == object::elf::R_386_GLOB_DAT
+                || r_type == object::elf::R_386_JMP_SLOT =>
+        {
+            Some(4)
+        }
+        A::Aarch64
+            if r_type == object::elf::R_AARCH64_GLOB_DAT
+                || r_type == object::elf::R_AARCH64_JUMP_SLOT =>
+        {
+            Some(8)
+        }
+        A::Arm
+            if r_type == object::elf::R_ARM_GLOB_DAT
+                || r_type == object::elf::R_ARM_JUMP_SLOT =>
+        {
+            Some(4)
+        }
+        _ => None,
+    }
 }
 
 /// Writes `value`'s low `size_bytes` bytes into `bytes` starting at

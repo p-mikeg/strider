@@ -22,6 +22,56 @@ use pyo3::types::PyBytes;
 use crate::errors::into_reader_err;
 use reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
+// ── PyRelocationStats — return type for apply_elf_relocations ────────────
+
+/// Counts from a single `apply_elf_relocations` run.  Mirrors the
+/// fields of `reader::elf::RelocationStats` one-to-one.  Useful for
+/// post-load diagnostics: a binary that reports `applied = 0` but
+/// `seen > 0` is signalling that every relocation kind it carries is
+/// unsupported (or every target is undefined / outside the loaded
+/// region set).
+#[pyclass(name = "RelocationStats", module = "strider", frozen)]
+#[derive(Clone, Copy)]
+pub struct PyRelocationStats {
+    #[pyo3(get)]
+    pub seen: usize,
+    #[pyo3(get)]
+    pub applied: usize,
+    #[pyo3(get)]
+    pub skipped_unresolved_target: usize,
+    #[pyo3(get)]
+    pub skipped_unsupported_kind: usize,
+    #[pyo3(get)]
+    pub skipped_no_region: usize,
+}
+
+#[pymethods]
+impl PyRelocationStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "RelocationStats(seen={}, applied={}, skipped_unresolved_target={}, \
+             skipped_unsupported_kind={}, skipped_no_region={})",
+            self.seen,
+            self.applied,
+            self.skipped_unresolved_target,
+            self.skipped_unsupported_kind,
+            self.skipped_no_region,
+        )
+    }
+}
+
+impl From<reader::elf::RelocationStats> for PyRelocationStats {
+    fn from(s: reader::elf::RelocationStats) -> Self {
+        Self {
+            seen: s.seen,
+            applied: s.applied,
+            skipped_unresolved_target: s.skipped_unresolved_target,
+            skipped_unsupported_kind: s.skipped_unsupported_kind,
+            skipped_no_region: s.skipped_no_region,
+        }
+    }
+}
+
 // ── PyMemoryMap (data-only fast path) ────────────────────────────────────
 
 /// Owned-data memory map. Implements `rsleigh::MemReader` (via the
@@ -175,6 +225,42 @@ impl PyMemoryMap {
             .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
         elfs.push(obj);
         Ok(())
+    }
+
+    /// Apply the ELF at `path`'s dynamic relocations to the regions
+    /// already loaded into this MemoryMap.  Returns the
+    /// `RelocationStats` breakdown so callers can sanity-check the
+    /// outcome (e.g. a binary that reports `applied == 0` but
+    /// `seen > 0` is signalling its relocation kinds aren't ones the
+    /// applier models — see `crates/reader/src/elf.rs::apply_elf_relocations`
+    /// for the supported set).
+    ///
+    /// This is the unbundled form of
+    /// `add_region_from_elf(path, apply_relocations=True)`: the load
+    /// step already happened (perhaps via a different ELF, raw
+    /// `add_region`, or a callback `MemReader`), and the user just
+    /// wants to overlay relocations from the supplied ELF onto the
+    /// existing regions.  Use `add_region_from_elf(path,
+    /// apply_relocations=True)` when the same ELF supplies both the
+    /// regions and the relocations — that path also widens section
+    /// coverage to include `.data.rel.ro`.
+    fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
+        let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        let mut regions = self
+            .inner
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
+        let stats = reader::elf::apply_elf_relocations(&mut regions, &obj)
+            .map_err(into_reader_err)?;
+        // Invalidate the lookup table — we just rewrote the region
+        // bytes in place, so any cached lookup that held the old
+        // contents must be rebuilt before the next read.
+        let mut slot = self
+            .table
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
+        *slot = None;
+        Ok(stats.into())
     }
 
     /// Look up the address of a function/data symbol across every ELF
@@ -534,5 +620,6 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryMap>()?;
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
+    m.add_class::<PyRelocationStats>()?;
     Ok(())
 }

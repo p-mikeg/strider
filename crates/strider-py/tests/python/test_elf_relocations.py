@@ -104,3 +104,54 @@ def test_apply_relocations_default_argument_is_false():
     mem.add_region_from_elf(str(elf))
     table_addr = mem.symbol("dispatch_table")
     assert mem.read(table_addr, 8) is None  # no .data.rel.ro coverage
+
+
+def test_apply_elf_relocations_method_returns_stats():
+    """Standalone form: load some way (here via the wider apply=True
+    path), then call apply_elf_relocations(path) to get the stats."""
+    elf = X64_RELOCS()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf), apply_relocations=True)
+    stats = mem.apply_elf_relocations(str(elf))
+    # Every reloc in elf_relocs.elf is one we model
+    # (R_X86_64_64 / R_X86_64_GLOB_DAT / R_X86_64_JUMP_SLOT) and the
+    # widened load covered every site, so applied should equal seen.
+    assert stats.seen >= 6, f"seen too low: {stats!r}"
+    assert stats.applied == stats.seen, (
+        f"some relocs unexpectedly skipped: {stats!r}"
+    )
+    assert stats.skipped_unsupported_kind == 0
+    assert stats.skipped_no_region == 0
+
+
+def test_apply_elf_relocations_reports_skipped_no_region():
+    """When the load step omits `.data.rel.ro` (default behaviour),
+    the standalone applier counts the relocs as `skipped_no_region`
+    rather than silently dropping them."""
+    elf = X64_RELOCS()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf))  # default: no `.data.rel.ro`
+    stats = mem.apply_elf_relocations(str(elf))
+    # Sites in `.data.rel.ro` aren't in any region → skipped_no_region.
+    assert stats.skipped_no_region >= 4, (
+        f"expected ≥4 dispatch_table sites skipped: {stats!r}"
+    )
+    assert stats.applied == 0
+
+
+def test_relocation_stats_repr_round_trips():
+    """`RelocationStats` repr is stable enough to use in test
+    diagnostics; the field accessors match the doc-comment."""
+    elf = X64_RELOCS()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf), apply_relocations=True)
+    stats = mem.apply_elf_relocations(str(elf))
+    s = repr(stats)
+    for field in (
+        "seen",
+        "applied",
+        "skipped_unresolved_target",
+        "skipped_unsupported_kind",
+        "skipped_no_region",
+    ):
+        assert field in s, f"repr missing {field!r}: {s}"
