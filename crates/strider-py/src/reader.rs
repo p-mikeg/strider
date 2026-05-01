@@ -12,8 +12,10 @@
 //! `Sleigh<AnyMemReader>` type without monomorphising the entire
 //! pipeline twice.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
+use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -35,6 +37,12 @@ pub struct PyMemoryMap {
     inner: Arc<RwLock<Vec<MemRegion>>>,
     /// Lazily-rebuilt lookup table; cleared on every `add_region`.
     table: Arc<RwLock<Option<Arc<MemRegionsLookupTable>>>>,
+    /// Loaded ELF objects, in `add_region_from_elf` insertion order.
+    /// Kept around so `symbol(name)` / `symbols()` can resolve names
+    /// without forcing the user to re-parse the file via pyelftools.
+    /// `object::File<'static>` borrows from a leaked byte slice (see
+    /// `reader::load_elf`), so storing it here is sound.
+    elfs: Arc<RwLock<Vec<object::File<'static>>>>,
 }
 
 impl PyMemoryMap {
@@ -76,6 +84,7 @@ impl PyMemoryMap {
         Self {
             inner: Arc::new(RwLock::new(Vec::new())),
             table: Arc::new(RwLock::new(None)),
+            elfs: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -137,7 +146,70 @@ impl PyMemoryMap {
             .write()
             .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap table lock poisoned")))?;
         *slot = None;
+        // Cache the ELF for subsequent symbol() / symbols() / entry_point() calls.
+        let mut elfs = self
+            .elfs
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        elfs.push(obj);
         Ok(())
+    }
+
+    /// Look up the address of a function/data symbol across every ELF
+    /// loaded into this MemoryMap via `add_region_from_elf`.  Returns
+    /// the first match in load order; raises `ReaderError` when no
+    /// loaded ELF defines the name.
+    fn symbol(&self, name: &str) -> PyResult<u64> {
+        let elfs = self
+            .elfs
+            .read()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        for obj in elfs.iter() {
+            if let Some(sym) = obj.symbol_by_name(name) {
+                return Ok(sym.address());
+            }
+        }
+        Err(into_reader_err(anyhow::anyhow!(
+            "symbol {name:?} not found in any ELF loaded into this MemoryMap \
+             ({} loaded)", elfs.len()
+        )))
+    }
+
+    /// All function/data symbols across every loaded ELF as a
+    /// `dict[str, int]`.  Symbols with empty names or zero addresses
+    /// (typical for synthetic linker entries) are skipped.  When two
+    /// ELFs define the same name, the earlier-loaded one wins.
+    fn symbols(&self) -> PyResult<HashMap<String, u64>> {
+        let elfs = self
+            .elfs
+            .read()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        let mut out: HashMap<String, u64> = HashMap::new();
+        for obj in elfs.iter() {
+            for sym in obj.symbols() {
+                let Ok(name) = sym.name() else { continue };
+                if name.is_empty() || sym.address() == 0 {
+                    continue;
+                }
+                out.entry(name.to_string()).or_insert(sym.address());
+            }
+        }
+        Ok(out)
+    }
+
+    /// ELF entry-point address from the first loaded ELF.  Raises
+    /// `ReaderError` when no ELF has been loaded yet.
+    fn entry_point(&self) -> PyResult<u64> {
+        let elfs = self
+            .elfs
+            .read()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap elfs lock poisoned")))?;
+        let first = elfs.first().ok_or_else(|| {
+            into_reader_err(anyhow::anyhow!(
+                "no ELF loaded into this MemoryMap; call add_region_from_elf first"
+            ))
+        })?;
+        Ok(first.entry())
     }
 }
 

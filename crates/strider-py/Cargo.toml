@@ -20,6 +20,7 @@ reader = { workspace = true }
 target = { workspace = true }
 dot = { workspace = true }
 rsleigh = { workspace = true }
+object = { workspace = true }
 
 [lints]
 workspace = true

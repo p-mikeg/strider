@@ -6,11 +6,19 @@ Strider lifts native binaries to a sea-of-nodes IR, runs an
 optimization pipeline, and exposes the lifted IR for arbitrary pattern
 queries.  This crate is the Python entry point.
 
+> **See [`examples/python/`](examples/python/) for runnable end-to-end
+> walkthroughs of every major surface — quickstart, custom Python
+> readers, pattern rewrites, custom optimizer pipelines, visualization,
+> complex pattern queries, callback-style ROMs.**
+
 ## Build (development)
 
 From this directory:
 
-    pip install maturin pyelftools patchelf
+    pip install maturin patchelf
+    # pyelftools is only needed if you want to use it directly; the
+    # examples and tests use MemoryMap.symbol(...) instead.
+    pip install pyelftools  # optional
     maturin develop
 
 Then run the test suite:
@@ -37,7 +45,8 @@ CPython 3.9+ version.  No CI / PyPI upload is configured; install via
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Load a binary into a MemoryMap.
+# 1. Load a binary into a MemoryMap (caches the parsed ELF for symbol
+#    lookups — no pyelftools dance needed).
 mem = strider.MemoryMap()
 mem.add_region_from_elf("fixtures/out/x86/memory.elf")
 
@@ -48,7 +57,7 @@ result = strider.run(
     cc=strider.CallingConvention.x86_cdecl(),
     mem=mem,
     rom=mem,
-    entry=0x401000,  # whatever symbol you care about
+    entry=mem.symbol("array_sum"),     # or any address int
     allow_code_before_start_addr=True,
 )
 

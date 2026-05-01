@@ -1193,6 +1193,7 @@ dependencies = [
  "cfg",
  "dot",
  "ir",
+ "object",
  "opt",
  "pattern",
  "pyo3",
