@@ -105,7 +105,11 @@ struct RegionIndex {
 }
 
 struct RegionExitInfo {
-    exit_vn_to_value: HashMap<rsleigh::Vn, NodeOutputId>,
+    /// Shared with the source `RegionLiftHandles::exit_vn_to_value`
+    /// — `Arc::clone` here saves a deep `HashMap` clone per region
+    /// per iteration.  The map is never mutated post-build, so
+    /// shared ownership is safe.
+    exit_vn_to_value: std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>,
 }
 
 impl RegionIndex {
@@ -115,7 +119,7 @@ impl RegionIndex {
             by_exit_control.insert(
                 h.exit_control,
                 RegionExitInfo {
-                    exit_vn_to_value: h.exit_vn_to_value.clone(),
+                    exit_vn_to_value: std::sync::Arc::clone(&h.exit_vn_to_value),
                 },
             );
         }

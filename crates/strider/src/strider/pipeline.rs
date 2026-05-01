@@ -26,7 +26,12 @@ pub struct RegionLiftHandles {
     /// Per-var entry-boundary `VarPhi` `NodeId`s, keyed by `Vn`.
     pub entry_var_phis: std::collections::HashMap<rsleigh::Vn, ir::node::NodeId>,
     /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
-    pub exit_vn_to_value: std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>,
+    ///
+    /// Wrapped in `Arc` so the orchestrator's per-iteration
+    /// `RegionIndex::from_handles` can `Arc::clone` instead of
+    /// deep-cloning the map (the map is never mutated post-build).
+    pub exit_vn_to_value:
+        std::sync::Arc<std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
@@ -376,7 +381,7 @@ impl Strider {
                 exit_control,
                 exit_memory,
                 entry_var_phis,
-                exit_vn_to_value,
+                exit_vn_to_value: std::sync::Arc::new(exit_vn_to_value),
             });
         }
 
