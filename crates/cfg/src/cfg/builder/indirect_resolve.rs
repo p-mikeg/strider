@@ -180,9 +180,14 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
 
     // If the caller supplied a ReadOnlyMemory, resolve constant-address
     // loads against it and re-run the core fold pipeline so the loaded
-    // constants propagate.
-    if let Some(rom) = rom {
-        resolve_const_loads(&mut fg, rom)?;
+    // constants propagate.  Skip the second pipeline run when the
+    // load-folding step didn't actually fold anything — there's
+    // nothing new for ConstantFold + KnownBits + RedundantPhis to
+    // chew on, so the second sweep would converge in zero rewrites
+    // (Task 15).
+    if let Some(rom) = rom
+        && resolve_const_loads(&mut fg, rom)?
+    {
         make_resolver_pipeline().run_on_built(&mut fg)?;
     }
 
@@ -259,8 +264,9 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
 fn resolve_const_loads(
     fg: &mut ir::BuiltFunctionGraph,
     rom: &dyn ReadOnlyMemory,
-) -> Result<()> {
+) -> Result<bool> {
     let nodes: Vec<_> = fg.preorder().collect();
+    let mut any_folded = false;
     for node_id in nodes {
         let kind = *fg.graph.node_kind(node_id);
         let ir::node::NodeKind::Load(space) = kind else {
@@ -286,9 +292,11 @@ fn resolve_const_loads(
             continue;
         };
         let new_out = fg.graph.make_int_const(masked, ty)?;
-        fg.graph.replace_all_uses(data_out, new_out)?;
+        if fg.graph.replace_all_uses(data_out, new_out)? {
+            any_folded = true;
+        }
     }
-    Ok(())
+    Ok(any_folded)
 }
 
 /// Locates the unique `Return` node in `fg`.

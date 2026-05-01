@@ -371,8 +371,13 @@ impl OptimizerOnBuilt for KnownBits {
         // *other* operand was previously unknown become fully-determined.
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
-        let mut outputs: Vec<NodeOutputId> = Vec::new();
-        let mut consumers: Vec<NodeId> = Vec::new();
+        // Inline up to 4 outputs / 8 consumers per iteration — these
+        // bounds cover the vast majority of IR nodes (most ops have
+        // 1 output and ≤ 8 consumers); larger nodes spill to the heap
+        // transparently.  Saves a heap allocation per worklist pop on
+        // the hot rewrite path.
+        let mut outputs: smallvec::SmallVec<[NodeOutputId; 4]> = smallvec::SmallVec::new();
+        let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             // Already-constant nodes have nothing to rewrite.
             if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
