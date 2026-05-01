@@ -34,13 +34,17 @@ def test_add_with_strings():
 
 
 def test_load_with_addr():
+    # `load()` now returns a `LoadPat` typed builder; finalise via
+    # `.into_pat()` for the back-compat assertion.  Builder forms
+    # (`load().addr(...)`, `load().space(...)`) are accepted by
+    # `Graph.find_all` directly via `PatLike`.
     p = load(addr=add("base", "off"))
-    assert isinstance(p, Pat)
+    assert isinstance(p.into_pat(), Pat)
 
 
 def test_store_with_addr_and_data():
     p = store(addr="ptr", data=int_const(0))
-    assert isinstance(p, Pat)
+    assert isinstance(p.into_pat(), Pat)
 
 
 def test_underscore_string_means_wildcard():
@@ -81,16 +85,22 @@ def test_call_constructor():
 
 
 def test_ret_constructor():
-    assert isinstance(ret(), Pat)
+    # `ret()` returns a `RetPat` typed builder (chain `.preceded_by`,
+    # `.ret_val(idx, p)`).  Finalise via `.into_pat()`.
+    assert isinstance(ret().into_pat(), Pat)
 
 
 def test_if_constructor():
-    assert isinstance(if_(), Pat)
-    assert isinstance(if_(cond="cnd"), Pat)
+    # `if_()` returns an `IfPat` typed builder (chain `.cond`,
+    # `.true_branch`, `.false_branch`).
+    assert isinstance(if_().into_pat(), Pat)
+    assert isinstance(if_(cond="cnd").into_pat(), Pat)
 
 
 def test_phi_constructor():
-    assert isinstance(phi(), Pat)
+    # `phi()` returns a `PhiPat` typed builder (chain `.for_vn`,
+    # `.input(idx, p)`).
+    assert isinstance(phi().into_pat(), Pat)
 
 
 def test_initial_var_constructor():

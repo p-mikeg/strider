@@ -101,9 +101,15 @@ def test_run_via_callback_reader(x86_memory_elf):
 
 
 class ConstReadOnlyMemory(ReadOnlyMemory):
-    """Returns a fixed sequence of bytes for any address in [0x4000, 0x4100)."""
+    """Returns a fixed sequence of bytes for any address in [0x4000, 0x4100).
 
-    SPACE_RAM = 0
+    `read` only takes `(addr, size)`: the underlying Rust trait
+    carries a `VnSpace` for symmetry with the IR's `Load` nodes,
+    but the LoadReadOnly pass only ever fires on RAM loads, so the
+    Python ABC narrows the surface to RAM only — non-RAM reads
+    return None automatically without ever calling the user's
+    method.
+    """
 
     def __init__(self):
         super().__init__()
@@ -111,10 +117,8 @@ class ConstReadOnlyMemory(ReadOnlyMemory):
         self.data = bytes.fromhex("deadbeef00000000")
         self.calls = 0
 
-    def read(self, space_id: int, addr: int, size: int):
+    def read(self, addr: int, size: int):
         self.calls += 1
-        if space_id != self.SPACE_RAM:
-            return None
         if addr < 0x4000 or addr >= 0x4000 + len(self.data):
             return None
         if addr - 0x4000 + size > len(self.data):
@@ -126,7 +130,7 @@ class ConstReadOnlyMemory(ReadOnlyMemory):
 def test_read_only_memory_subclass_default_raises():
     r = ReadOnlyMemory()
     with pytest.raises(NotImplementedError):
-        r.read(0, 0x4000, 4)
+        r.read(0x4000, 4)
 
 
 def test_load_readonly_accepts_callback_subclass():

@@ -109,18 +109,96 @@ impl PyPat {
     }
 }
 
-/// Polymorphic input for builder field methods: accepts a `Pat`, a
-/// `Capture`, a string (which interns to a Capture), or any of the
-/// typed builders that finalise to a `Pat` (e.g. `CallPat`,
-/// `IntBinaryPat`).  Adding a typed builder variant here lets users
-/// pass the un-finalised builder directly into field setters and
-/// query methods without a manual `.into_pat()` call.
+/// `CastMask` — bitset selecting which value-passthrough cast
+/// `NodeKind`s the matcher walks through transparently.  Mirrors
+/// `pattern::CastMask`.  Construct via the classmethods (`zero_extend`,
+/// `sign_extend`, `extend`, `truncate`, `cast_to_int`, `cast_to_bool`,
+/// `cast_to_float`, `int_bits_to_float`, `float_bits_to_int`,
+/// `all`, `none`/`empty`); combine with `|` (Python `__or__`).
+///
+/// Pass to `Graph.find_all(pat, ignore_casts_mask=...)` — granular
+/// alternative to the all-or-nothing `ignore_casts=True`.
+#[pyclass(name = "CastMask", module = "strider.pattern", frozen)]
+#[derive(Clone, Copy)]
+pub struct PyCastMask {
+    pub(crate) inner: pattern::CastMask,
+}
+
+#[pymethods]
+impl PyCastMask {
+    #[classmethod] fn zero_extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::ZERO_EXTEND }
+    }
+    #[classmethod] fn sign_extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::SIGN_EXTEND }
+    }
+    #[classmethod] fn extend(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::EXTEND }
+    }
+    #[classmethod] fn truncate(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::TRUNCATE }
+    }
+    #[classmethod] fn cast_to_int(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::CAST_TO_INT }
+    }
+    #[classmethod] fn cast_to_bool(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::CAST_TO_BOOL }
+    }
+    #[classmethod] fn cast_to_float(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::CAST_TO_FLOAT }
+    }
+    #[classmethod] fn int_bits_to_float(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::INT_BITS_TO_FLOAT }
+    }
+    #[classmethod] fn float_bits_to_int(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::FLOAT_BITS_TO_INT }
+    }
+    #[classmethod] fn all(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::all() }
+    }
+    #[classmethod] fn none(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: pattern::CastMask::empty() }
+    }
+
+    fn __or__(&self, other: &Self) -> Self {
+        Self { inner: self.inner | other.inner }
+    }
+    fn __and__(&self, other: &Self) -> Self {
+        Self { inner: self.inner & other.inner }
+    }
+    fn __eq__(&self, other: &Self) -> bool { self.inner == other.inner }
+    fn __hash__(&self) -> u64 { self.inner.bits() as u64 }
+    fn bits(&self) -> u32 { self.inner.bits() }
+
+    fn __repr__(&self) -> String {
+        format!("CastMask(0b{:08b})", self.inner.bits())
+    }
+}
+
+/// Polymorphic input for builder field methods and `Graph.find_all`.
+/// Accepts a `Pat`, a `Capture`, a string (which interns to a
+/// Capture), or any of the typed builders that finalise to a `Pat`.
+/// Adding a typed builder variant here lets users pass the
+/// un-finalised builder directly into field setters and query
+/// methods without a manual `.into_pat()` call.
 #[derive(FromPyObject)]
 pub enum PatLike<'py> {
     Pat(Bound<'py, PyPat>),
     Capture(Bound<'py, PyCapture>),
     Str(Bound<'py, PyString>),
     CallPat(Bound<'py, PyCallPat>),
+    CallOtherPat(Bound<'py, PyCallOtherPat>),
+    RetPat(Bound<'py, PyRetPat>),
+    IfPat(Bound<'py, PyIfPat>),
+    LoadPat(Bound<'py, PyLoadPat>),
+    StorePat(Bound<'py, PyStorePat>),
+    StackStorePat(Bound<'py, PyStackStorePat>),
+    StackStorePhiPat(Bound<'py, PyStackStorePhiPat>),
+    PhiPat(Bound<'py, PyPhiPat>),
+    FunctionArgPat(Bound<'py, PyFunctionArgPat>),
+    IntBinaryPat(Bound<'py, PyIntBinaryPat>),
+    BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
+    FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
 }
 
 impl PatLike<'_> {
@@ -139,6 +217,18 @@ impl PatLike<'_> {
                 }
             }
             PatLike::CallPat(b) => Ok(b.borrow().finalise()),
+            PatLike::CallOtherPat(b) => Ok(b.borrow().finalise()),
+            PatLike::RetPat(b) => Ok(b.borrow().finalise()),
+            PatLike::IfPat(b) => Ok(b.borrow().finalise()),
+            PatLike::LoadPat(b) => Ok(b.borrow().finalise()),
+            PatLike::StorePat(b) => Ok(b.borrow().finalise()),
+            PatLike::StackStorePat(b) => Ok(b.borrow().finalise()),
+            PatLike::StackStorePhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::PhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
+            PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
+            PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
+            PatLike::FloatBinaryPat(b) => Ok(b.borrow().finalise()),
         }
     }
 }
@@ -399,19 +489,164 @@ pub fn initial_var() -> PyPat {
     PyPat::from_pat(pattern::initial_var())
 }
 
+/// Match `InitialVar(vn)` for a specific varnode.  Use the
+/// `Sleigh.reg("RAX")` / `Vn(...)` helpers in the `strider` module
+/// to construct the `Vn`.
 #[pyfunction]
-pub fn function_arg(i: u32) -> PyPat {
-    PyPat::from_pat(pattern::function_arg(i).into())
+pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
+    PyPat::from_pat(pattern::initial_var_for(vn.inner))
+}
+
+// ── PhiPat ───────────────────────────────────────────────────────────
+
+/// Typed builder for `VarPhi` / `MemPhi` / `ValuePhi` patterns.
+/// Chain `.for_vn(vn)` to constrain the matched VarPhi to a specific
+/// varnode, and `.input(idx, p)` to constrain the value arriving
+/// from the given predecessor slot.
+#[pyclass(name = "PhiPat", module = "strider.pattern")]
+pub struct PyPhiPat {
+    for_vn: std::cell::RefCell<Option<rsleigh::Vn>>,
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyPhiPat {
+    fn new() -> Self {
+        Self {
+            for_vn: std::cell::RefCell::new(None),
+            inputs: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = if let Some(vn) = *self.for_vn.borrow() {
+            pattern::phi_for(vn)
+        } else {
+            pattern::phi()
+        };
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
+            b = b.input(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyPhiPat {
+    fn for_vn(slf: Py<Self>, py: Python<'_>, vn: crate::sleigh::PyVn) -> Py<Self> {
+        slf.borrow(py).for_vn.replace(Some(vn.inner)); slf
+    }
+    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
-pub fn function_arg_any() -> PyPat {
-    PyPat::from_pat(pattern::function_arg_any().into())
+pub fn phi() -> PyPhiPat { PyPhiPat::new() }
+
+/// Match `VarPhi` for a specific varnode.  Equivalent to
+/// `phi().for_vn(vn)` but reads more naturally at the call site.
+#[pyfunction]
+pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
+    let b = PyPhiPat::new();
+    b.for_vn.replace(Some(vn.inner));
+    b
+}
+
+// ── FunctionArgPat ───────────────────────────────────────────────────
+
+/// Typed builder for `FunctionArg` node patterns.  Chain
+/// `.index(i)` to constrain the argument position and
+/// `.source_register(vn)` / `.source_stack(space, offset)` to
+/// constrain where the argument was sourced from (matches the
+/// `FunctionArgSource::Register` / `FunctionArgSource::Stack`
+/// variants of the IR enum).
+#[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
+pub struct PyFunctionArgPat {
+    source: std::cell::RefCell<Option<ir::node::FunctionArgSource>>,
+    index: std::cell::RefCell<Option<u32>>,
+}
+
+impl PyFunctionArgPat {
+    fn new() -> Self {
+        Self {
+            source: std::cell::RefCell::new(None),
+            index: std::cell::RefCell::new(None),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::function_arg_any();
+        if let Some(s) = *self.source.borrow() { b = b.source(s); }
+        if let Some(i) = *self.index.borrow() { b = b.index(i); }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyFunctionArgPat {
+    fn index(slf: Py<Self>, py: Python<'_>, i: u32) -> Py<Self> {
+        slf.borrow(py).index.replace(Some(i)); slf
+    }
+    fn source_register(slf: Py<Self>, py: Python<'_>, vn: crate::sleigh::PyVn) -> Py<Self> {
+        slf.borrow(py).source.replace(Some(ir::node::FunctionArgSource::Register(vn.inner))); slf
+    }
+    fn source_stack(slf: Py<Self>, py: Python<'_>, space: crate::sleigh::PyVnSpace, offset: i64) -> Py<Self> {
+        slf.borrow(py).source.replace(Some(ir::node::FunctionArgSource::Stack {
+            space: space.inner,
+            offset,
+        }));
+        slf
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
-pub fn phi() -> PyPat {
-    PyPat::from_pat(pattern::phi().into())
+pub fn function_arg(i: u32) -> PyFunctionArgPat {
+    let b = PyFunctionArgPat::new();
+    b.index.replace(Some(i));
+    b
+}
+
+#[pyfunction]
+pub fn function_arg_any() -> PyFunctionArgPat {
+    PyFunctionArgPat::new()
+}
+
+/// Match a `FunctionArg` whose source is a specific register.
+#[pyfunction]
+pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
+    let b = PyFunctionArgPat::new();
+    b.source.replace(Some(ir::node::FunctionArgSource::Register(vn.inner)));
+    b
+}
+
+/// Match a `FunctionArg` whose source is a specific stack slot.
+#[pyfunction]
+pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i64) -> PyFunctionArgPat {
+    let b = PyFunctionArgPat::new();
+    b.source.replace(Some(ir::node::FunctionArgSource::Stack { space: space.inner, offset }));
+    b
 }
 
 #[pyfunction]
@@ -453,6 +688,40 @@ int_binop!(int_sle);
 int_binop!(int_carry);
 int_binop!(int_scarry);
 int_binop!(int_sborrow);
+
+/// Match a specific `IntCmpOp` variant.  Op names: "Equal",
+/// "Less" / "lt", "LessEqual" / "le", "Sless" / "slt",
+/// "SlessEqual" / "sle", "Carry", "Scarry", "Sborrow".  Pair with
+/// `var(c)` / `int_const(K)` operands when you need a specific
+/// shape.  Note: there is no `IntNotEqual` variant — the lifter
+/// lowers `p-code INT_NOTEQUAL` to `BoolNeg(IntEqual)`, so to match
+/// `a != b` use `bool_not(int_cmp("Equal", a, b))`.
+#[pyfunction]
+pub fn int_cmp(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+    let cmp_op = parse_int_cmp_op(op)?;
+    let lp = l.into_pat()?;
+    let rp = r.into_pat()?;
+    Ok(PyPat::from_pat(pattern::int_cmp(cmp_op, lp, rp)))
+}
+
+fn parse_int_cmp_op(name: &str) -> PyResult<ir::IntCmpOp> {
+    use ir::IntCmpOp::*;
+    Ok(match name {
+        "Equal" | "eq" | "equal" => Equal,
+        "Less" | "lt" | "less" => Less,
+        "LessEqual" | "le" | "less_equal" => LessEqual,
+        "Sless" | "slt" | "sless" => Sless,
+        "SlessEqual" | "sle" | "sless_equal" => SlessEqual,
+        "Carry" | "carry" => Carry,
+        "Scarry" | "scarry" => Scarry,
+        "Sborrow" | "sborrow" => Sborrow,
+        other => {
+            return Err(into_pattern_err(anyhow::anyhow!(
+                "unknown IntCmpOp variant {other:?}"
+            )))
+        }
+    })
+}
 
 // ── Integer unary ops ────────────────────────────────────────────────────
 
@@ -614,50 +883,246 @@ pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
 
 // ── Memory ───────────────────────────────────────────────────────────────
 
+/// Typed builder for `Load` node patterns.  Chain `.addr(p)` to
+/// constrain the address operand and `.space(s)` to restrict the
+/// match to a specific memory space (e.g. `VnSpace.ram()`).
+#[pyclass(name = "LoadPat", module = "strider.pattern")]
+pub struct PyLoadPat {
+    addr: std::cell::RefCell<Option<pattern::Pat>>,
+    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+}
+
+impl PyLoadPat {
+    fn new() -> Self {
+        Self { addr: std::cell::RefCell::new(None), space: std::cell::RefCell::new(None) }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::load();
+        if let Some(s) = *self.space.borrow() { b = b.space(s); }
+        if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyLoadPat {
+    fn addr(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).addr.replace(Some(pat));
+        Ok(slf)
+    }
+    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
+        slf.borrow(py).space.replace(Some(s.inner));
+        slf
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
+}
+
 #[pyfunction]
 #[pyo3(signature = (addr=None))]
-pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyPat> {
-    let mut b = pattern::load();
+pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
+    let b = PyLoadPat::new();
     if let Some(a) = addr {
-        b = b.addr(a.into_pat()?);
+        b.addr.replace(Some(a.into_pat()?));
     }
-    Ok(PyPat::from_pat(b.into()))
+    Ok(b)
+}
+
+/// Typed builder for `Store` node patterns.  Chain `.addr(p)`,
+/// `.data(p)`, `.space(s)` to constrain the address, value, and
+/// memory space respectively.
+#[pyclass(name = "StorePat", module = "strider.pattern")]
+pub struct PyStorePat {
+    addr: std::cell::RefCell<Option<pattern::Pat>>,
+    data: std::cell::RefCell<Option<pattern::Pat>>,
+    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+}
+
+impl PyStorePat {
+    fn new() -> Self {
+        Self {
+            addr: std::cell::RefCell::new(None),
+            data: std::cell::RefCell::new(None),
+            space: std::cell::RefCell::new(None),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::store();
+        if let Some(s) = *self.space.borrow() { b = b.space(s); }
+        if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
+        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyStorePat {
+    fn addr(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).addr.replace(Some(pat));
+        Ok(slf)
+    }
+    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).data.replace(Some(pat));
+        Ok(slf)
+    }
+    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
+        slf.borrow(py).space.replace(Some(s.inner));
+        slf
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
 #[pyo3(signature = (addr=None, data=None))]
-pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<PyPat> {
-    let mut b = pattern::store();
-    if let Some(a) = addr {
-        b = b.addr(a.into_pat()?);
+pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<PyStorePat> {
+    let b = PyStorePat::new();
+    if let Some(a) = addr { b.addr.replace(Some(a.into_pat()?)); }
+    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    Ok(b)
+}
+
+/// Typed builder for `StackStore` node patterns.  Chain
+/// `.offset(o)`, `.data(p)`, `.space(s)`.
+#[pyclass(name = "StackStorePat", module = "strider.pattern")]
+pub struct PyStackStorePat {
+    offset: std::cell::RefCell<Option<i64>>,
+    data: std::cell::RefCell<Option<pattern::Pat>>,
+    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+}
+
+impl PyStackStorePat {
+    fn new() -> Self {
+        Self {
+            offset: std::cell::RefCell::new(None),
+            data: std::cell::RefCell::new(None),
+            space: std::cell::RefCell::new(None),
+        }
     }
-    if let Some(v) = data {
-        b = b.data(v.into_pat()?);
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::stack_store();
+        if let Some(s) = *self.space.borrow() { b = b.space(s); }
+        if let Some(o) = *self.offset.borrow() { b = b.offset(o); }
+        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
+        b.into()
     }
-    Ok(PyPat::from_pat(b.into()))
+}
+
+#[pymethods]
+impl PyStackStorePat {
+    fn offset(slf: Py<Self>, py: Python<'_>, o: i64) -> Py<Self> {
+        slf.borrow(py).offset.replace(Some(o)); slf
+    }
+    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).data.replace(Some(pat));
+        Ok(slf)
+    }
+    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
+        slf.borrow(py).space.replace(Some(s.inner)); slf
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
 #[pyo3(signature = (offset=None, data=None))]
-pub fn stack_store(offset: Option<i64>, data: Option<PatLike<'_>>) -> PyResult<PyPat> {
-    let mut b = pattern::stack_store();
-    if let Some(o) = offset {
-        b = b.offset(o);
+pub fn stack_store(offset: Option<i64>, data: Option<PatLike<'_>>) -> PyResult<PyStackStorePat> {
+    let b = PyStackStorePat::new();
+    if let Some(o) = offset { b.offset.replace(Some(o)); }
+    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    Ok(b)
+}
+
+/// Typed builder for `StackStorePhi` node patterns.  Chain
+/// `.data(p)`, `.space(s)`, `.offsets(list)` (per-predecessor stack
+/// offsets).
+#[pyclass(name = "StackStorePhiPat", module = "strider.pattern")]
+pub struct PyStackStorePhiPat {
+    data: std::cell::RefCell<Option<pattern::Pat>>,
+    space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+    offsets: std::cell::RefCell<Option<Vec<i64>>>,
+}
+
+impl PyStackStorePhiPat {
+    fn new() -> Self {
+        Self {
+            data: std::cell::RefCell::new(None),
+            space: std::cell::RefCell::new(None),
+            offsets: std::cell::RefCell::new(None),
+        }
     }
-    if let Some(v) = data {
-        b = b.data(v.into_pat()?);
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::stack_store_phi();
+        if let Some(s) = *self.space.borrow() { b = b.space(s); }
+        if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
+        if let Some(os) = self.offsets.borrow().clone() { b = b.offsets(os); }
+        b.into()
     }
-    Ok(PyPat::from_pat(b.into()))
+}
+
+#[pymethods]
+impl PyStackStorePhiPat {
+    fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).data.replace(Some(pat));
+        Ok(slf)
+    }
+    fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
+        slf.borrow(py).space.replace(Some(s.inner)); slf
+    }
+    fn offsets(slf: Py<Self>, py: Python<'_>, os: Vec<i64>) -> Py<Self> {
+        slf.borrow(py).offsets.replace(Some(os)); slf
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
 #[pyo3(signature = (data=None))]
-pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyPat> {
-    let mut b = pattern::stack_store_phi();
-    if let Some(v) = data {
-        b = b.data(v.into_pat()?);
-    }
-    Ok(PyPat::from_pat(b.into()))
+pub fn stack_store_phi(data: Option<PatLike<'_>>) -> PyResult<PyStackStorePhiPat> {
+    let b = PyStackStorePhiPat::new();
+    if let Some(v) = data { b.data.replace(Some(v.into_pat()?)); }
+    Ok(b)
 }
 
 // ── Calls ────────────────────────────────────────────────────────────────
@@ -769,24 +1234,196 @@ pub fn call(at: Option<u64>) -> PyCallPat {
     b
 }
 
-#[pyfunction]
-pub fn call_other() -> PyPat {
-    PyPat::from_pat(pattern::call_other().into())
+// ── CallOtherPat ─────────────────────────────────────────────────────────
+
+/// Typed builder for `CallOther` node patterns.  Mirrors
+/// `pattern::CallOtherPat` — chain `.user_op_id(v)` to constrain the
+/// user-op id (e.g. ARM `setISAMode`'s id) and `.arg(idx, p)` to
+/// constrain a specific argument.
+#[pyclass(name = "CallOtherPat", module = "strider.pattern")]
+pub struct PyCallOtherPat {
+    user_op_id: std::cell::RefCell<Option<u64>>,
+    args: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyCallOtherPat {
+    fn new() -> Self {
+        Self {
+            user_op_id: std::cell::RefCell::new(None),
+            args: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::call_other();
+        if let Some(id) = *self.user_op_id.borrow() {
+            b = b.user_op_id(id);
+        }
+        for (idx, p) in self.args.borrow().iter().cloned() {
+            b = b.arg(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyCallOtherPat {
+    fn user_op_id(slf: Py<Self>, py: Python<'_>, v: u64) -> Py<Self> {
+        slf.borrow(py).user_op_id.replace(Some(v));
+        slf
+    }
+    fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).args.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
-pub fn ret() -> PyPat {
-    PyPat::from_pat(pattern::ret().into())
+pub fn call_other() -> PyCallOtherPat {
+    PyCallOtherPat::new()
+}
+
+// ── RetPat ───────────────────────────────────────────────────────────────
+
+/// Typed builder for `Return` node patterns.  Chain `.preceded_by(p)`
+/// to match Returns whose direct ctrl predecessor is `p` (typically a
+/// `ControlState` after a Call), and `.ret_val(idx, p)` to constrain
+/// the value returned at ABI position `idx`.
+#[pyclass(name = "RetPat", module = "strider.pattern")]
+pub struct PyRetPat {
+    preceded_by: std::cell::RefCell<Option<pattern::Pat>>,
+    ret_vals: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyRetPat {
+    fn new() -> Self {
+        Self {
+            preceded_by: std::cell::RefCell::new(None),
+            ret_vals: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::ret();
+        if let Some(p) = self.preceded_by.borrow().clone() {
+            b = b.preceded_by(p);
+        }
+        for (idx, p) in self.ret_vals.borrow().iter().cloned() {
+            b = b.ret_val(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyRetPat {
+    fn preceded_by(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).preceded_by.replace(Some(pat));
+        Ok(slf)
+    }
+    fn ret_val(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).ret_vals.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
+}
+
+#[pyfunction]
+pub fn ret() -> PyRetPat {
+    PyRetPat::new()
+}
+
+// ── IfPat ────────────────────────────────────────────────────────────────
+
+/// Typed builder for `If` node patterns.  Chain `.cond(p)`,
+/// `.true_branch(p)`, `.false_branch(p)` to constrain the condition
+/// and the consumers of the true/false outputs.  When `cond` is set
+/// the matcher also tries the compiler-inverted layout (input
+/// `Not(cond)` with branches swapped) — see `pattern::IfPat` docs.
+#[pyclass(name = "IfPat", module = "strider.pattern")]
+pub struct PyIfPat {
+    cond: std::cell::RefCell<Option<pattern::Pat>>,
+    true_branch: std::cell::RefCell<Option<pattern::Pat>>,
+    false_branch: std::cell::RefCell<Option<pattern::Pat>>,
+}
+
+impl PyIfPat {
+    fn new() -> Self {
+        Self {
+            cond: std::cell::RefCell::new(None),
+            true_branch: std::cell::RefCell::new(None),
+            false_branch: std::cell::RefCell::new(None),
+        }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::if_node();
+        if let Some(c) = self.cond.borrow().clone() { b = b.cond(c); }
+        if let Some(t) = self.true_branch.borrow().clone() { b = b.true_branch(t); }
+        if let Some(f) = self.false_branch.borrow().clone() { b = b.false_branch(f); }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyIfPat {
+    fn cond(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).cond.replace(Some(pat));
+        Ok(slf)
+    }
+    fn true_branch(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).true_branch.replace(Some(pat));
+        Ok(slf)
+    }
+    fn false_branch(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).false_branch.replace(Some(pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
 #[pyo3(signature = (cond=None))]
-pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyPat> {
-    let mut b = pattern::if_node();
+pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
+    let b = PyIfPat::new();
     if let Some(c) = cond {
-        b = b.cond(c.into_pat()?);
+        b.cond.replace(Some(c.into_pat()?));
     }
-    Ok(PyPat::from_pat(b.into()))
+    Ok(b)
 }
 
 // ── Typed family dispatchers (with .ordered() chain via PyOrderedBinary) ──
@@ -860,7 +1497,7 @@ pub struct PyIntBinaryPat {
 }
 
 impl PyIntBinaryPat {
-    fn finalise(&self) -> pattern::Pat {
+    pub(crate) fn finalise(&self) -> pattern::Pat {
         let mut b = pattern::int_binary(self.op, self.lhs.clone(), self.rhs.clone());
         if self.ordered {
             b = b.ordered();
@@ -902,7 +1539,7 @@ pub struct PyBoolBinaryPat {
 }
 
 impl PyBoolBinaryPat {
-    fn finalise(&self) -> pattern::Pat {
+    pub(crate) fn finalise(&self) -> pattern::Pat {
         let mut b = pattern::bool_binary(self.op, self.lhs.clone(), self.rhs.clone());
         if self.ordered {
             b = b.ordered();
@@ -944,7 +1581,7 @@ pub struct PyFloatBinaryPat {
 }
 
 impl PyFloatBinaryPat {
-    fn finalise(&self) -> pattern::Pat {
+    pub(crate) fn finalise(&self) -> pattern::Pat {
         let mut b = pattern::float_binary(self.op, self.lhs.clone(), self.rhs.clone());
         if self.ordered {
             b = b.ordered();
@@ -1082,6 +1719,16 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBoolBinaryPat>()?;
     m.add_class::<PyFloatBinaryPat>()?;
     m.add_class::<PyCallPat>()?;
+    m.add_class::<PyCallOtherPat>()?;
+    m.add_class::<PyRetPat>()?;
+    m.add_class::<PyIfPat>()?;
+    m.add_class::<PyLoadPat>()?;
+    m.add_class::<PyStorePat>()?;
+    m.add_class::<PyStackStorePat>()?;
+    m.add_class::<PyStackStorePhiPat>()?;
+    m.add_class::<PyPhiPat>()?;
+    m.add_class::<PyFunctionArgPat>()?;
+    m.add_class::<PyCastMask>()?;
 
     macro_rules! add_fn {
         ($name:ident) => {
@@ -1098,10 +1745,15 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(any_bool_const);
     add_fn!(any_float_const);
     add_fn!(initial_var);
+    add_fn!(initial_var_for);
     add_fn!(function_arg);
     add_fn!(function_arg_any);
+    add_fn!(function_arg_reg);
+    add_fn!(function_arg_stack);
     add_fn!(phi);
+    add_fn!(phi_for);
     add_fn!(predicate);
+    add_fn!(int_cmp);
     // int binary
     add_fn!(add);
     add_fn!(sub);

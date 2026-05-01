@@ -138,26 +138,45 @@ impl PyGraph {
         })
     }
 
-    /// Find every site where `pat` matches.  `ignore_casts` and
-    /// `ignore_control_states` mirror the Rust matcher options.
-    /// `pat` accepts any `PatLike` (a `Pat`, a typed builder like
-    /// `CallPat`, a `Capture`, or a string capture-name) — typed
-    /// builders (e.g. `call().arg(0, int_const(8))`) are finalised
-    /// implicitly so the call site stays uncluttered by `.into_pat()`.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_control_states=false))]
+    /// Find every site where `pat` matches.  `pat` accepts any
+    /// `PatLike` (a `Pat`, a typed builder like `CallPat`, a
+    /// `Capture`, or a string capture-name) — typed builders (e.g.
+    /// `call().arg(0, int_const(8))`) are finalised implicitly so
+    /// the call site stays uncluttered by `.into_pat()`.
+    ///
+    /// Matcher options:
+    /// * `ignore_casts=True` — walk through every value-passthrough
+    ///   cast `NodeKind` (Extend / Truncate / CastTo* / Bits-cast).
+    ///   Equivalent to `ignore_casts_mask=CastMask.all()`.
+    /// * `ignore_casts_mask=mask` — granular per-cast walk-through.
+    ///   Compose via `CastMask.extend() | CastMask.truncate()`.
+    ///   Mutually exclusive with `ignore_casts`; passing both is an
+    ///   error.
+    /// * `ignore_control_states=True` — walk through `ControlState`
+    ///   region-join nodes between an `If`'s output and the
+    ///   matched consumer.
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_control_states=false, ignore_casts_mask=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
         pat: crate::pattern::PatLike<'_>,
         ignore_casts: bool,
         ignore_control_states: bool,
+        ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
+        if ignore_casts && ignore_casts_mask.is_some() {
+            return Err(crate::errors::into_pattern_err(anyhow::anyhow!(
+                "find_all: pass either ignore_casts=True or ignore_casts_mask=...; not both"
+            )));
+        }
         let pat = pat.into_pat()?;
         let g_borrow = slf.borrow(py);
         let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let mut matcher = pattern::Matcher::new(&graph_guard);
         if ignore_casts {
             matcher = matcher.ignore_casts();
+        } else if let Some(m) = ignore_casts_mask {
+            matcher = matcher.ignore_casts_mask(m.inner);
         }
         if ignore_control_states {
             matcher = matcher.ignore_control_states();

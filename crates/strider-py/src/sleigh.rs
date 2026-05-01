@@ -75,11 +75,146 @@ impl PySleigh {
         self.arch_name
     }
 
+    /// Look up a register by Sleigh name and return its varnode.
+    /// Returns `None` when the name is not in the register table for
+    /// this arch.  Use the resulting `Vn` with pattern constructors
+    /// like `phi_for(vn)` / `initial_var_for(vn)` /
+    /// `function_arg_reg(vn)` to query the IR for occurrences of
+    /// that specific register.
+    fn reg(&self, name: &str) -> Option<PyVn> {
+        self.regs.name_to_vn(name).map(PyVn::from_inner)
+    }
+
     fn __repr__(&self) -> String {
         format!("Sleigh(arch={})", self.arch_name)
     }
 }
 
+// ── PyVnSpace + PyVn ────────────────────────────────────────────────
+
+/// One of Sleigh's built-in address spaces.  Frozen pyclass so users
+/// can pass `VnSpace.RAM()` to builder methods that take a space
+/// constraint (`load().space(...)`, `function_arg_stack(...)`, etc.)
+/// without having to thread a `Sleigh` through.
+///
+/// Strider exposes the four standard Sleigh spaces; binaries that
+/// reference an exotic custom space can construct one via the
+/// `VnSpace.from_id(u32)` escape hatch.
+#[pyclass(name = "VnSpace", module = "strider", frozen)]
+#[derive(Clone, Copy)]
+pub struct PyVnSpace {
+    pub(crate) inner: rsleigh::VnSpace,
+}
+
+#[pymethods]
+impl PyVnSpace {
+    #[classmethod]
+    fn ram(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: rsleigh::VnSpace::RAM }
+    }
+    #[classmethod]
+    fn register(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: rsleigh::VnSpace::REGISTER }
+    }
+    #[classmethod]
+    fn const_(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: rsleigh::VnSpace::CONST }
+    }
+    #[classmethod]
+    fn unique(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self { inner: rsleigh::VnSpace::UNIQUE }
+    }
+
+    fn name(&self) -> &'static str {
+        if self.inner == rsleigh::VnSpace::RAM { "RAM" }
+        else if self.inner == rsleigh::VnSpace::REGISTER { "REGISTER" }
+        else if self.inner == rsleigh::VnSpace::CONST { "CONST" }
+        else if self.inner == rsleigh::VnSpace::UNIQUE { "UNIQUE" }
+        else { "OTHER" }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("VnSpace.{}", self.name().to_lowercase())
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        // Sleigh spaces compare by pointer; hash via the same identity.
+        let p: *const () = (&self.inner) as *const _ as *const ();
+        p as usize as u64
+    }
+}
+
+/// A Sleigh varnode — `(space, offset, size_in_bytes)`.  Used as the
+/// argument to pattern builders that pin a specific varnode
+/// (`phi_for(vn)`, `initial_var_for(vn)`, `function_arg_reg(vn)`,
+/// `function_arg_stack(space, offset)`).
+///
+/// Construct via:
+/// * `Sleigh.reg("RAX")` — looks up a register's varnode by Sleigh
+///   register name; returns `None` when the name isn't a register.
+/// * `Vn(space, off, size)` — direct construction (for stack
+///   varnodes, custom spaces).
+#[pyclass(name = "Vn", module = "strider", frozen)]
+#[derive(Clone, Copy)]
+pub struct PyVn {
+    pub(crate) inner: rsleigh::Vn,
+}
+
+impl PyVn {
+    pub(crate) fn from_inner(inner: rsleigh::Vn) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl PyVn {
+    #[new]
+    fn new(space: PyVnSpace, off: u64, size: u32) -> Self {
+        Self {
+            inner: rsleigh::Vn {
+                size,
+                addr: rsleigh::VnAddr { off, space: space.inner },
+            },
+        }
+    }
+
+    #[getter]
+    fn space(&self) -> PyVnSpace {
+        PyVnSpace { inner: self.inner.addr.space }
+    }
+    #[getter]
+    fn off(&self) -> u64 {
+        self.inner.addr.off
+    }
+    #[getter]
+    fn size(&self) -> u32 {
+        self.inner.size
+    }
+
+    fn __repr__(&self) -> String {
+        let space_name = PyVnSpace { inner: self.inner.addr.space }.name();
+        format!("Vn(space=VnSpace.{}, off={:#x}, size={})",
+            space_name.to_lowercase(), self.inner.addr.off, self.inner.size)
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+
+    fn __hash__(&self) -> u64 {
+        let mut h = self.inner.addr.off;
+        h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h
+    }
+}
+
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PySleigh>()
+    m.add_class::<PySleigh>()?;
+    m.add_class::<PyVnSpace>()?;
+    m.add_class::<PyVn>()?;
+    Ok(())
 }

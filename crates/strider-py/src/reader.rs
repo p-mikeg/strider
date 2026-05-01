@@ -388,8 +388,18 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 // ── PyReadOnlyMemory (callback ABC) ──────────────────────────────────────
 
 /// Python-subclassable abstract base for `LoadReadOnly`.  Subclasses
-/// override `read(space_id, addr, size) -> Optional[int]` returning the
-/// little-endian-decoded value or None for unmapped.
+/// override `read(addr, size) -> Optional[int]` returning the
+/// little-endian-decoded value or `None` for unmapped.
+///
+/// The Rust trait `reader::ReadOnlyMemory::read(VnSpace, addr, size)`
+/// takes a varnode-space because the IR's `Load` nodes carry one
+/// (`Load(VnSpace::REGISTER)` is a register read; `Load(VnSpace::RAM)`
+/// is a memory read).  In practice the `LoadReadOnly` pass only
+/// fires on RAM loads — every other space is either a register read
+/// (folded via varnode aliasing) or a constant/unique value (no rom
+/// involved) — so the Python ABC narrows the surface to RAM only.
+/// Non-RAM reads return `None` automatically without ever calling
+/// the user's `read` method.
 #[pyclass(name = "ReadOnlyMemory", module = "strider", subclass)]
 pub struct PyReadOnlyMemory;
 
@@ -402,7 +412,7 @@ impl PyReadOnlyMemory {
     }
 
     #[allow(unused_variables)]
-    fn read(&self, space_id: u32, addr: u64, size: usize) -> PyResult<Option<u64>> {
+    fn read(&self, addr: u64, size: usize) -> PyResult<Option<u64>> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "ReadOnlyMemory.read must be overridden by subclass",
         ))
@@ -416,34 +426,22 @@ pub struct PyReadOnlyMemoryAdapter {
 
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
     fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+        // The trait carries `space` for symmetry with the IR's `Load`
+        // nodes, but a Python rom only ever needs to model RAM (every
+        // other space is folded by varnode aliasing or constant
+        // propagation before reaching `LoadReadOnly`).  Skip the
+        // GIL acquisition entirely for non-RAM reads so the Python
+        // override sees only the calls it can answer.
+        if space != rsleigh::VnSpace::RAM {
+            return None;
+        }
         Python::with_gil(|py| -> Option<u64> {
-            let space_id = space_to_u32(space);
-            let result = self
-                .py_obj
-                .call_method1(py, "read", (space_id, addr, size))
-                .ok()?;
+            let result = self.py_obj.call_method1(py, "read", (addr, size)).ok()?;
             if result.is_none(py) {
                 return None;
             }
             result.extract::<u64>(py).ok()
         })
-    }
-}
-
-/// Map a `VnSpace` to a stable u32 identifier exposed to Python.  The
-/// caller's Python `read` impl can use this to distinguish RAM (0)
-/// from REGISTER (1) or other spaces.
-fn space_to_u32(s: rsleigh::VnSpace) -> u32 {
-    if s == rsleigh::VnSpace::RAM {
-        0
-    } else if s == rsleigh::VnSpace::REGISTER {
-        1
-    } else if s == rsleigh::VnSpace::CONST {
-        2
-    } else if s == rsleigh::VnSpace::UNIQUE {
-        3
-    } else {
-        u32::MAX
     }
 }
 

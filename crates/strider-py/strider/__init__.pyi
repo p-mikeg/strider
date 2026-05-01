@@ -94,13 +94,19 @@ class MemReader:
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
 
 class ReadOnlyMemory:
-    """Subclass and override `read(space_id, addr, size) -> Optional[int]`
-    to back a `LoadReadOnly` opt pass with Python data.  Returned
-    integer is the little-endian-decoded value.
+    """Subclass and override `read(addr, size) -> Optional[int]` to
+    back a `LoadReadOnly` opt pass with Python data.  Returned
+    integer is the little-endian-decoded value of `size` bytes
+    starting at `addr`.
+
+    The pass only invokes `read` for RAM loads — non-RAM spaces
+    (REGISTER, CONST, UNIQUE) are short-circuited by the adapter
+    before reaching Python, so subclasses don't need to filter on
+    space.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-    def read(self, space_id: int, addr: int, size: int) -> Optional[int]: ...
+    def read(self, addr: int, size: int) -> Optional[int]: ...
 
 # ── Sleigh / CFG / Strider ──────────────────────────────────────────────
 
