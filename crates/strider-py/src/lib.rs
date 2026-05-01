@@ -9,8 +9,10 @@ mod cc;
 mod cfg;
 mod dot;
 mod errors;
+mod graph;
 mod reader;
 mod sleigh;
+mod strider_cls;
 
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -21,5 +23,7 @@ fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     reader::register(py, m)?;
     sleigh::register(py, m)?;
     cfg::register(py, m)?;
+    graph::register(py, m)?;
+    strider_cls::register(py, m)?;
     Ok(())
 }
