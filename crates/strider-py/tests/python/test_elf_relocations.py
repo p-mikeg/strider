@@ -153,5 +153,32 @@ def test_relocation_stats_repr_round_trips():
         "skipped_unresolved_target",
         "skipped_unsupported_kind",
         "skipped_no_region",
+        "unsupported_r_types",
     ):
         assert field in s, f"repr missing {field!r}: {s}"
+
+
+def test_unsupported_r_types_is_empty_when_all_applied():
+    """When every relocation in the ELF is one we model, the
+    diagnostic list is empty.  This pins the absence of
+    false-positives in the unsupported-kind tracker."""
+    elf = X64_RELOCS()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf), apply_relocations=True)
+    stats = mem.apply_elf_relocations(str(elf))
+    assert stats.skipped_unsupported_kind == 0
+    assert stats.unsupported_r_types == []
+
+
+def test_unsupported_r_types_field_exists_on_default_load():
+    """The list is present whether or not it has entries — pin the
+    accessor's existence so future API removals can't go quiet."""
+    elf = X64_RELOCS()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf))
+    stats = mem.apply_elf_relocations(str(elf))
+    # Default load doesn't include `.data.rel.ro`, so every reloc is
+    # skipped_no_region — but it's not unsupported_kind, so the
+    # diagnostic list stays empty.  The point of this test is to pin
+    # the accessor itself, not the contents.
+    assert isinstance(stats.unsupported_r_types, list)

@@ -30,8 +30,13 @@ use reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 /// `seen > 0` is signalling that every relocation kind it carries is
 /// unsupported (or every target is undefined / outside the loaded
 /// region set).
+///
+/// `unsupported_r_types` lists the raw ELF `r_type` codes the applier
+/// classified as unsupported.  Use it to self-diagnose what's
+/// missing on a specific binary — pair with the System V ABI
+/// per-arch relocation tables to identify each code.
 #[pyclass(name = "RelocationStats", module = "strider", frozen)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PyRelocationStats {
     #[pyo3(get)]
     pub seen: usize,
@@ -43,6 +48,8 @@ pub struct PyRelocationStats {
     pub skipped_unsupported_kind: usize,
     #[pyo3(get)]
     pub skipped_no_region: usize,
+    #[pyo3(get)]
+    pub unsupported_r_types: Vec<u32>,
 }
 
 #[pymethods]
@@ -50,12 +57,14 @@ impl PyRelocationStats {
     fn __repr__(&self) -> String {
         format!(
             "RelocationStats(seen={}, applied={}, skipped_unresolved_target={}, \
-             skipped_unsupported_kind={}, skipped_no_region={})",
+             skipped_unsupported_kind={}, skipped_no_region={}, \
+             unsupported_r_types={:?})",
             self.seen,
             self.applied,
             self.skipped_unresolved_target,
             self.skipped_unsupported_kind,
             self.skipped_no_region,
+            self.unsupported_r_types,
         )
     }
 }
@@ -68,6 +77,7 @@ impl From<reader::elf::RelocationStats> for PyRelocationStats {
             skipped_unresolved_target: s.skipped_unresolved_target,
             skipped_unsupported_kind: s.skipped_unsupported_kind,
             skipped_no_region: s.skipped_no_region,
+            unsupported_r_types: s.unsupported_r_types,
         }
     }
 }

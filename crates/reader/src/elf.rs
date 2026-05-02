@@ -365,7 +365,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 /// breakdown rather than a single integer so callers can surface
 /// "this binary had 1234 relocations, we applied 1000 of them" to
 /// the user when something looks off.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RelocationStats {
     /// Total relocations seen across every iterated table.
     pub seen: usize,
@@ -384,6 +384,14 @@ pub struct RelocationStats {
     /// `regions` passed in (e.g. .data / .bss relocations when the
     /// caller only loaded code-and-readonly sections).
     pub skipped_no_region: usize,
+    /// Sorted+deduped list of raw ELF `r_type` codes the applier
+    /// classified as unsupported (i.e. that incremented
+    /// `skipped_unsupported_kind`).  Surfaces *which* kinds the
+    /// binary actually uses that we don't model; pair with
+    /// `obj.architecture()` and the System V ABI per-arch
+    /// relocation tables to identify each.  Empty when
+    /// `skipped_unsupported_kind == 0`.
+    pub unsupported_r_types: Vec<u32>,
 }
 
 /// Patches relocations in `regions` in-place using the ELF's
@@ -574,11 +582,11 @@ pub fn apply_elf_relocations(
                 }
             },
             RelocationTarget::Absolute => {
-                stats.skipped_unsupported_kind += 1;
+                record_unsupported(&reloc, &mut stats);
                 continue;
             }
             _ => {
-                stats.skipped_unsupported_kind += 1;
+                record_unsupported(&reloc, &mut stats);
                 continue;
             }
         };
@@ -596,7 +604,7 @@ pub fn apply_elf_relocations(
                 .wrapping_add(addend as u64)
                 .wrapping_sub(site_addr),
             _ => {
-                stats.skipped_unsupported_kind += 1;
+                record_unsupported(&reloc, &mut stats);
                 continue;
             }
         };
@@ -632,32 +640,74 @@ pub fn apply_elf_relocations(
     Ok(stats)
 }
 
-/// Detects the `R_*_RELATIVE` family — image-base + addend
-/// relocations that have no symbol/section target.  Returns
-/// `Some((value_to_write, size_bytes))` when matched.  Image base is
-/// modelled as 0 (the binary's link-time virtual address layout),
-/// so the value is just the addend.
+/// Increment `stats.skipped_unsupported_kind` and record the raw
+/// ELF `r_type` of `reloc` (deduped, sorted) onto
+/// `stats.unsupported_r_types` so callers can self-diagnose which
+/// kinds their binary uses that we don't model.  No-op when the
+/// reloc isn't ELF-flavoured.
+fn record_unsupported(reloc: &object::Relocation, stats: &mut RelocationStats) {
+    stats.skipped_unsupported_kind += 1;
+    if let RelocationFlags::Elf { r_type } = reloc.flags() {
+        if let Err(idx) = stats.unsupported_r_types.binary_search(&r_type) {
+            stats.unsupported_r_types.insert(idx, r_type);
+        }
+    }
+}
+
+/// Detects the `R_*_RELATIVE` and `R_*_IRELATIVE` families —
+/// image-base + addend relocations that have no symbol/section
+/// target.  Returns `Some((value_to_write, size_bytes))` when
+/// matched.  Image base is modelled as 0 (the binary's link-time
+/// virtual address layout), so the value is just the addend.
 ///
 /// The `r_type` constants for `R_X86_64_RELATIVE` and
 /// `R_386_RELATIVE` collide (both = 8), as do several others across
 /// arches, so we dispatch on the file's `Architecture` first and
 /// only check `r_type` against the appropriate arch's constant.
+///
+/// `IRELATIVE` is the IFUNC-resolver variant: its addend is the
+/// address of an indirect-resolver function the dynamic linker
+/// would call to compute the actual slot value at runtime.  For
+/// static analysis we write the resolver's address into the slot
+/// — that's what the analyser sees in lieu of running the
+/// resolver.  Treating IRELATIVE the same as RELATIVE is the
+/// soundest static approximation.
 fn image_relative_reloc(
     reloc: &object::Relocation,
     arch: object::Architecture,
 ) -> Option<(u64, usize)> {
-    // R_*_RELATIVE comes through with an `Absolute` target (no
-    // symbol) and an `Unknown` kind (object 0.38 doesn't enumerate
-    // them), so we have to look at the raw type code.
+    // R_*_RELATIVE / IRELATIVE come through with an `Absolute`
+    // target (no symbol) and an `Unknown` kind (object 0.38 doesn't
+    // enumerate them), so we look at the raw type code.
     let RelocationFlags::Elf { r_type } = reloc.flags() else {
         return None;
     };
     use object::Architecture as A;
     let size_bytes = match arch {
-        A::X86_64 if r_type == object::elf::R_X86_64_RELATIVE => 8,
-        A::I386 if r_type == object::elf::R_386_RELATIVE => 4,
-        A::Aarch64 if r_type == object::elf::R_AARCH64_RELATIVE => 8,
-        A::Arm if r_type == object::elf::R_ARM_RELATIVE => 4,
+        A::X86_64
+            if r_type == object::elf::R_X86_64_RELATIVE
+                || r_type == object::elf::R_X86_64_IRELATIVE =>
+        {
+            8
+        }
+        A::I386
+            if r_type == object::elf::R_386_RELATIVE
+                || r_type == object::elf::R_386_IRELATIVE =>
+        {
+            4
+        }
+        A::Aarch64
+            if r_type == object::elf::R_AARCH64_RELATIVE
+                || r_type == object::elf::R_AARCH64_IRELATIVE =>
+        {
+            8
+        }
+        A::Arm
+            if r_type == object::elf::R_ARM_RELATIVE
+                || r_type == object::elf::R_ARM_IRELATIVE =>
+        {
+            4
+        }
         _ => return None,
     };
     // For image-relative, the addend is the resolved value (image
