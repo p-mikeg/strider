@@ -23,7 +23,6 @@ fn const_then_return_validates() {
 fn every_int_binary_op_validates() {
     for op in [
         IntBinaryOp::Add,
-        IntBinaryOp::Sub,
         IntBinaryOp::Mul,
         IntBinaryOp::And,
         IntBinaryOp::Or,

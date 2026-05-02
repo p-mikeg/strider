@@ -39,7 +39,6 @@ pub(super) fn eval_int_binary(
     let shift = |s: u128| -> u32 { s as u32 };
     let raw: u128 = match op {
         IntBinaryOp::Add => l.wrapping_add(r),
-        IntBinaryOp::Sub => l.wrapping_sub(r),
         IntBinaryOp::Mul => l.wrapping_mul(r),
         IntBinaryOp::And => l & r,
         IntBinaryOp::Or => l | r,

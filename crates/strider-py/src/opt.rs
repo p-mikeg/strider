@@ -272,22 +272,6 @@ impl PyCallOtherElide {
     fn new() -> Self { Self }
 }
 
-/// `SubToAdd` — opt-in canonicalisation pass that rewrites
-/// `sub(a, IntConst(K))` → `add(a, IntConst(-K))`.
-///
-/// Not part of any default pipeline.  Add it manually when you want
-/// pattern queries for `x--` / `x - K` shapes to match a single
-/// `add(x, signed_int_const(-K))` form regardless of which encoding
-/// the compiler chose.  See the Rust pass's module-level doc for
-/// the trade-off (`crates/opt/src/sub_to_add/mod.rs`).
-#[pyclass(name = "SubToAdd", module = "strider.opt")]
-pub struct PySubToAdd;
-#[pymethods]
-impl PySubToAdd {
-    #[new]
-    fn new() -> Self { Self }
-}
-
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
 // Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
@@ -435,8 +419,6 @@ pub enum PyOptPass<'py> {
     DeadBranchElim(Bound<'py, PyDeadBranchElim>),
     #[allow(dead_code)]
     CallOtherElide(Bound<'py, PyCallOtherElide>),
-    #[allow(dead_code)]
-    SubToAdd(Bound<'py, PySubToAdd>),
     StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
@@ -452,7 +434,6 @@ impl PyOptPass<'_> {
             PyOptPass::RedundantPhis(_) => Box::new(opt::RedundantPhis),
             PyOptPass::DeadBranchElim(_) => Box::new(opt::DeadBranchElimination),
             PyOptPass::CallOtherElide(_) => Box::new(opt::CallOtherElide),
-            PyOptPass::SubToAdd(_) => Box::new(opt::SubToAdd),
             PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
@@ -472,7 +453,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRedundantPhis>()?;
     m.add_class::<PyDeadBranchElim>()?;
     m.add_class::<PyCallOtherElide>()?;
-    m.add_class::<PySubToAdd>()?;
     m.add_class::<PyStackStoreDetect>()?;
     m.add_class::<PyStackLoadForward>()?;
     m.add_class::<PyFunctionArgDetect>()?;

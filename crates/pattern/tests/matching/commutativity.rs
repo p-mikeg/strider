@@ -79,7 +79,14 @@ fn commutative_match_with_identical_operands_emits_one() {
 
 #[test]
 fn sub_does_not_commute() {
-    let g = shapes::int_bin(5, 3, IntBinaryOp::Sub);
+    // `pattern::sub(a, b)` is an ergonomic alias for `Add(a, Neg(b))`.
+    // Build the lowered `5 - 3` shape directly via the test helper and
+    // verify operand order is preserved (i.e. swapping captures fails).
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let lowered = t.sub(l, r);
+    let g = t.ret_val(lowered);
     a::none(&g, sub(int_const(3), int_const(5)));
     a::matches(&g, sub(int_const(5), int_const(3)), 1);
 }

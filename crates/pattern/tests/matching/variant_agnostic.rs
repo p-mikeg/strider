@@ -27,7 +27,6 @@ use super::support::{Tb, assertions as a};
 fn int_binary_any_captures_each_variant() {
     for op in [
         IntBinaryOp::Add,
-        IntBinaryOp::Sub,
         IntBinaryOp::Mul,
         IntBinaryOp::Xor,
         IntBinaryOp::ShiftLeft,
@@ -280,10 +279,16 @@ fn int_binary_any_does_not_match_bool_op() {
 
 #[test]
 fn variant_any_composes_with_value_capture() {
+    // Use `mul` here — the previous fixture used `sub`, but
+    // `IntBinaryOp::Sub` is no longer a primitive (lifter lowers it to
+    // `Add(_, Neg(_))`), so a graph built with `t.sub(100, 50)` doesn't
+    // expose the `IntConst(50)` as a direct binary-op operand any more.
+    // `mul` is a single primitive node with two direct operands and tests
+    // the same op-variant + value-capture composition.
     let mut t = Tb::empty();
     let l = t.u64(100);
     let r = t.u64(50);
-    let v = t.sub(l, r);
+    let v = t.mul(l, r);
     let g = t.ret_val(v);
 
     let ov = Capture::new();
@@ -291,7 +296,7 @@ fn variant_any_composes_with_value_capture() {
     let rv = Capture::new();
     let m = a::unique(&g, int_binary_any(ov, any_int_const(lv), any_int_const(rv)));
 
-    assert_eq!(m.get_int_binary_op(ov, &g), Some(IntBinaryOp::Sub));
+    assert_eq!(m.get_int_binary_op(ov, &g), Some(IntBinaryOp::Mul));
     assert_eq!(m.get_uint(lv, &g), Some(100));
     assert_eq!(m.get_uint(rv, &g), Some(50));
 }

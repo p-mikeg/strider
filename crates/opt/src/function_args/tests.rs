@@ -941,7 +941,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let sp_t = b.read_variable(&sp)?;
     let four_t = b.build_int_const(4u64, NodeOutputType::U32)?;
     let sp_t_new =
-        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_int_sub(sp_t, four_t, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_t_new)?;
     b.build_branch(join)?;
 
@@ -950,7 +950,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let sp_e = b.read_variable(&sp)?;
     let eight_e = b.build_int_const(8u64, NodeOutputType::U32)?;
     let sp_e_new =
-        b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_int_sub(sp_e, eight_e, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_e_new)?;
     b.build_branch(join)?;
 

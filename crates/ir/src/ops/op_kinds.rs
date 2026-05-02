@@ -53,12 +53,15 @@ pub enum IntCmpOp {
 }
 
 /// Binary arithmetic and bitwise operations on integer values.
+///
+/// `Sub` is intentionally absent: the pcode-lift dispatch lowers
+/// `IntSub(a, b)` at lift time to `Add(a, IntUnaryOp::Neg(b))`.  Patterns
+/// and passes see one canonical form for subtraction; the
+/// `pattern::sub(a, b)` ergonomic alias produces the lowered shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntBinaryOp {
     /// Wrapping addition: `l + r`.
     Add,
-    /// Wrapping subtraction: `l - r`.
-    Sub,
     /// Bitwise and: `l & r`.
     And,
     /// Bitwise or: `l | r`.

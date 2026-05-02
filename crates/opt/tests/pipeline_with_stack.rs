@@ -38,7 +38,7 @@ fn store_then_load_at_same_offset_forwarded() -> opt::Result<()> {
     b.set_region(region);
     let sp_v = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let addr = b.build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
     let data = b.build_int_const(0x42u64, NodeOutputType::U32)?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -71,11 +71,11 @@ fn full_call_pipeline_collects_args() -> opt::Result<()> {
     b.set_region(region);
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-    let sp_v1 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let sp_v1 = b.build_int_sub(sp_v0, four, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_v1)?;
     let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-    let sp_v2 = b.build_int_binary_operation(sp_v1, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let sp_v2 = b.build_int_sub(sp_v1, four, NodeOutputType::U32)?;
     b.write_variable(&sp, sp_v2)?;
     let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;

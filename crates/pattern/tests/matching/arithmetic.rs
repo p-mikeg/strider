@@ -27,7 +27,6 @@ fn add_wrong_operand_rejects() {
 fn every_int_binary_op_has_a_working_ctor() {
     type Ctor = fn(Pat, Pat) -> Pat;
     let ctor_add: Ctor = |l, r| add(l, r).into();
-    let ctor_sub: Ctor = |l, r| sub(l, r).into();
     let ctor_mul: Ctor = |l, r| mul(l, r).into();
     let ctor_div: Ctor = |l, r| div(l, r).into();
     let ctor_sdiv: Ctor = |l, r| sdiv(l, r).into();
@@ -42,7 +41,6 @@ fn every_int_binary_op_has_a_working_ctor() {
 
     let cases: &[(IntBinaryOp, Ctor)] = &[
         (IntBinaryOp::Add, ctor_add),
-        (IntBinaryOp::Sub, ctor_sub),
         (IntBinaryOp::Mul, ctor_mul),
         (IntBinaryOp::Div, ctor_div),
         (IntBinaryOp::Sdiv, ctor_sdiv),
@@ -64,9 +62,23 @@ fn every_int_binary_op_has_a_working_ctor() {
 
 #[test]
 fn wrong_op_rejects() {
-    let g = shapes::int_bin_5_3(IntBinaryOp::Sub);
+    // Use Mul as the "different op" graph (Sub no longer exists; the
+    // pattern's wrong-op-rejection check is op-agnostic).
+    let g = shapes::int_bin_5_3(IntBinaryOp::Mul);
     a::none(&g, add(int_const(5), int_const(3)));
-    a::none(&g, mul(int_const(5), int_const(3)));
+}
+
+/// `pattern::sub(a, b)` is an ergonomic alias that constructs the lowered
+/// shape `Add(a, Neg(b))`.  Build the lowered shape directly and verify
+/// the alias matches it.
+#[test]
+fn sub_matches_lowered_shape() {
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let lowered = t.sub(l, r);  // Tb::sub builds Add(l, Neg(r)) directly.
+    let g = t.ret_val(lowered);
+    a::matches(&g, sub(int_const(5), int_const(3)), 1);
 }
 
 // ── Integer unary ops ─────────────────────────────────────────────────────────

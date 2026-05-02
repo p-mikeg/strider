@@ -80,7 +80,7 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> ir::BuiltFunctionGraph {
         .build_int_binary_operation(bc, z0, IntBinaryOp::Add, NodeOutputType::U64)
         .unwrap();
     let diff = bd
-        .build_int_binary_operation(lhs, rhs, IntBinaryOp::Sub, NodeOutputType::U64)
+        .build_int_sub(lhs, rhs, NodeOutputType::U64)
         .unwrap();
     bd.build_return(Some(diff), &[]).unwrap();
     bd.build().unwrap()

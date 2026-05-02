@@ -20,7 +20,7 @@ fn build_pushes(n: usize) -> ir::BuiltFunctionGraph {
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
     for i in 0..n as u64 {
         sp_v = b
-            .build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)
+            .build_int_sub(sp_v, four, NodeOutputType::U32)
             .unwrap();
         b.write_variable(&sp, sp_v).unwrap();
         let data = b.build_int_const(i, NodeOutputType::U32).unwrap();

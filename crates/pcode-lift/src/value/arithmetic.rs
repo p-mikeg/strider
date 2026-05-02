@@ -136,4 +136,29 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
         self.write_vn(out_vn, le)
     }
+
+    /// Lowers `IntSub(a, b)` to `IntAdd(a, IntUnaryOp::Neg(b))`.
+    ///
+    /// `a - b ≡ a + (-b)` modulo 2^W; the wrap semantics of `IntAdd`
+    /// preserve `IntSub`'s exact bit-pattern result.  Removes the
+    /// redundant `IntBinaryOp::Sub` variant — patterns and passes see
+    /// one canonical shape (`Add` plus an optional inner `Neg`).
+    ///
+    /// For constant-RHS subtractions (`a - K`), the produced shape is
+    /// `Add(a, Neg(IntConst(K)))`, which `ConstantFold` collapses to
+    /// `Add(a, IntConst(-K))` immediately — no persisted node-count
+    /// regression.  Variable-RHS subtractions add one `Neg` node.
+    pub(super) fn handle_int_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let out_ty = out_vn.size.try_into()?;
+        let neg_rhs = self
+            .builder
+            .build_int_unary_operation(rhs, IntUnaryOp::Neg, out_ty)?;
+        let sum =
+            self.builder
+                .build_int_binary_operation(lhs, neg_rhs, IntBinaryOp::Add, out_ty)?;
+        self.write_vn(out_vn, sum)
+    }
 }

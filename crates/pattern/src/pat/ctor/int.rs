@@ -20,8 +20,6 @@ pub fn int_binary(op: IntBinaryOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> 
 decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
     /// Matches an unsigned addition node (`lhs + rhs`).  Commutative.
     (add, Add),
-    /// Matches an unsigned subtraction node (`lhs - rhs`).  Not commutative.
-    (sub, Sub),
     /// Matches an unsigned multiplication node.  Commutative.
     (mul, Mul),
     /// Matches an unsigned division node.  Not commutative.
@@ -45,6 +43,21 @@ decl_pat_binary_ops!(int_binary, IntBinaryOp, IntBinaryOpPat, [
     /// Matches an arithmetic (signed) right-shift node.  Not commutative.
     (sshr, SShiftRight),
 ]);
+
+/// Matches a subtraction `lhs - rhs`.
+///
+/// `IntBinaryOp::Sub` is not a primitive in this IR; pcode-lift lowers
+/// `IntSub(a, b)` at lift time to `Add(a, IntUnaryOp::Neg(b))`.  This
+/// constructor produces the lowered shape directly so `sub(a, b)`
+/// matches the same IR `a - b` produces.  For constant-RHS the `Neg`
+/// folds to a negative `IntConst` via `ConstantFold`, so a real-world
+/// graph after the optimizer typically shows `Add(a, IntConst(-K))`;
+/// match that with `add(a, signed_int_const(-K))`.
+pub fn sub(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::builders::unary_pat;
+    let neg_rhs = unary_pat(IntUnaryOp::Neg, rhs.into());
+    BinaryOpPat::new(IntBinaryOp::Add, lhs.into(), neg_rhs).into()
+}
 
 // ── Integer unary ops ─────────────────────────────────────────────────────────
 

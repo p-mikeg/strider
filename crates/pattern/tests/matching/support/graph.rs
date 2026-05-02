@@ -123,8 +123,11 @@ impl Tb {
     pub fn add(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
+    /// Builds the canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
+    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
     pub fn sub(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
-        self.int_bin(l, r, IntBinaryOp::Sub)
+        let neg = self.int_un(r, ir::IntUnaryOp::Neg);
+        self.int_bin(l, neg, IntBinaryOp::Add)
     }
     pub fn mul(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
         self.int_bin(l, r, IntBinaryOp::Mul)

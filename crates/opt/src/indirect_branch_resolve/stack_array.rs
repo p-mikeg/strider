@@ -350,30 +350,17 @@ fn flatten_add_tree(
     }
     *budget += 1;
     let node = graph.get_node_from_output(out);
-    match graph.node_kind(node) {
-        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(node) {
-                flatten_add_tree(graph, lhs, acc, extra_offset, budget);
-                flatten_add_tree(graph, rhs, acc, extra_offset, budget);
-                return;
-            }
+    if let NodeKind::IntBinaryOp(IntBinaryOp::Add) = graph.node_kind(node) {
+        if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(node) {
+            // `addr -= K` from arm/arm-thumb stack-array dispatch lowering
+            // arrives as `Add(addr, Neg(IntConst(K)))` (or the post-fold
+            // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
+            // `Neg(IntConst)`, so the per-term decompose step downstream
+            // catches that constant via the `None` arm at line ~307.
+            flatten_add_tree(graph, lhs, acc, extra_offset, budget);
+            flatten_add_tree(graph, rhs, acc, extra_offset, budget);
+            return;
         }
-        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(node) {
-                // Only handle Sub with a constant rhs (the common
-                // "addr -= K" idiom from arm/arm-thumb stack-array
-                // dispatch lowering).  Negate the constant and roll it
-                // into extra_offset; recurse on lhs.  When rhs is
-                // non-constant, push the Sub unmodified — the per-term
-                // decompose step downstream will fail closed.
-                if let Some(c) = crate::sp_expr::int_const_signed(graph, rhs) {
-                    *extra_offset = extra_offset.wrapping_sub(c);
-                    flatten_add_tree(graph, lhs, acc, extra_offset, budget);
-                    return;
-                }
-            }
-        }
-        _ => {}
     }
     acc.push(out);
 }
@@ -559,7 +546,7 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let off = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off, IntBinaryOp::Sub, NodeOutputType::U64)
+            .build_int_sub(sp_val, off, NodeOutputType::U64)
             .unwrap();
         let v = b.build_int_const(0xCAFEu64, NodeOutputType::U64).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
@@ -598,7 +585,7 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let off24 = b.build_int_const(24u64, NodeOutputType::U64).unwrap();
         let addr_24 = b
-            .build_int_binary_operation(sp_val, off24, IntBinaryOp::Sub, NodeOutputType::U64)
+            .build_int_sub(sp_val, off24, NodeOutputType::U64)
             .unwrap();
         let v = b.build_int_const(0x1234u64, NodeOutputType::U64).unwrap();
         b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();

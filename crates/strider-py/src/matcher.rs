@@ -232,7 +232,6 @@ fn int_binary_op_name(op: ir::IntBinaryOp) -> String {
     use ir::IntBinaryOp::*;
     match op {
         Add => "Add",
-        Sub => "Sub",
         Mul => "Mul",
         Div => "Div",
         Sdiv => "Sdiv",

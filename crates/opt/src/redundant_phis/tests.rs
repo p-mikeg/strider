@@ -29,7 +29,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     let sp_entry = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32)?;
     let shared_sp =
-        b.build_int_binary_operation(sp_entry, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_int_sub(sp_entry, four, NodeOutputType::U32)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, a, bb)?;
 

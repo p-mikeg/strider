@@ -191,11 +191,37 @@ pub(crate) fn step_through_store(
 /// Reads an integer-constant output as signed, sign-extended from its declared
 /// bit width. Returns `None` for non-integer-constant or when the
 /// sign-extended value does not fit in `i64`.
+///
+/// Also recognises `IntUnaryOp::Neg(IntConst(K))` as the signed value `-K`
+/// so callers can treat the lowered subtraction shape
+/// (`Add(_, Neg(IntConst(K)))`) the same way they treat the post-`ConstantFold`
+/// shape (`Add(_, IntConst(-K))`).  Without this peephole the SP-expression
+/// walker would return `None` during fixed-point iterations where
+/// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
+/// `StackStoreDetect`'s ability to make progress on the same iteration.
 #[must_use]
 pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
-    let c = g.int_const_val(out)?;
-    let signed = g.output_kind(out).as_value()?.get_signed_int(u128::from(c))?;
-    i64::try_from(signed).ok()
+    if let Some(c) = g.int_const_val(out) {
+        let signed = g.output_kind(out).as_value()?.get_signed_int(u128::from(c))?;
+        return i64::try_from(signed).ok();
+    }
+    // Peephole: Neg(IntConst(K)) → -K.  The lifter produces this shape for
+    // every `IntSub _, IntConst(K)`; intermediate fixed-point iterations
+    // may inspect the graph before `ConstantFold` collapses the
+    // `Neg(IntConst)` to a single negative `IntConst`.
+    let node = g.get_node_from_output(out);
+    if matches!(g.node_kind(node), NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)) {
+        let inputs = g.node_inputs(node);
+        if inputs.len() == 1 {
+            let inner = inputs[0];
+            let k = g.int_const_val(inner)?;
+            let inner_ty = g.output_kind(inner).as_value()?;
+            let signed = inner_ty.get_signed_int(u128::from(k))?;
+            let neg = signed.checked_neg()?;
+            return i64::try_from(neg).ok();
+        }
+    }
+    None
 }
 
 /// Per-pass-call memo for `decompose_sp`.
@@ -265,17 +291,6 @@ fn decompose_sp_inner(
             } else {
                 None
             }
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::Sub) => {
-            let inputs = g.node_inputs(node);
-            if inputs.len() != 2 {
-                return None;
-            }
-            let l = inputs[0];
-            let r = inputs[1];
-            int_const_signed(g, r).and_then(|c| {
-                decompose_sp(g, l, sp_vn, memo, visiting).map(|e| e.shifted(c.wrapping_neg()))
-            })
         }
         // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
         // `0xfffffff0` for SSE-aligned frames).  The And's output is
@@ -455,7 +470,7 @@ mod tests {
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
@@ -496,7 +511,7 @@ mod tests {
         b.set_region(region);
         let sp_val = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let addr = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
@@ -550,10 +565,10 @@ mod tests {
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
         let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
-        let s1 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
-        let s2 = b.build_int_binary_operation(s1, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let s1 = b.build_int_sub(sp_val, four, NodeOutputType::U32)?;
+        let s2 = b.build_int_sub(s1, eight, NodeOutputType::U32)?;
         let s3 =
-            b.build_int_binary_operation(s2, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
+            b.build_int_sub(s2, twelve, NodeOutputType::U32)?;
         b.build_return(Some(s3), &[])?;
         let fg = b.build()?;
 
@@ -624,7 +639,7 @@ mod tests {
         let sp_a = b.read_variable(&sp)?;
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_minus_4 =
-            b.build_int_binary_operation(sp_a, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+            b.build_int_sub(sp_a, four, NodeOutputType::U32)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
@@ -715,8 +730,7 @@ mod tests {
         let aligned = b.build_int_binary_operation(
             sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
         let frame = b.build_int_const(0x1D0u64, NodeOutputType::U32)?;
-        let post_sub = b.build_int_binary_operation(
-            aligned, frame, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let post_sub = b.build_int_sub(aligned, frame, NodeOutputType::U32)?;
         b.build_return(Some(post_sub), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();

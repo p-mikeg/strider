@@ -350,6 +350,74 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
 }
 
 #[test]
+fn lift_int_sub_lowers_to_add_neg() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add)),
+        "expected IntBinaryOp::Add in graph (the lowering wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)),
+        "expected IntUnaryOp::Neg in graph (the negated rhs)"
+    );
+}
+
+/// Two `IntSub` lifts of structurally-identical operands must dedupe via the
+/// IR's node cache: the canonical lowered shape `Add(a, Neg(b))` is built
+/// from cacheable node kinds, so the second lift reuses both the inner
+/// `Neg(b)` node and the outer `Add` node.  Regression guard against the
+/// lowering accidentally synthesising fresh non-cacheable nodes.
+#[test]
+fn lift_int_sub_caches_lowered_shape() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let count_subs_in_graph = |b: &ir::FunctionBuilder| -> usize {
+        b.body()
+            .graph
+            .all_node_ids()
+            .filter(|&id| matches!(b.body().graph.node_kind(id), NodeKind::IntBinaryOp(ir::IntBinaryOp::Add)))
+            .count()
+    };
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let after_first = count_subs_in_graph(&builder);
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        // Same operands, different output reg — the value-producing nodes
+        // should still dedupe through the cache.
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(reg(4)),
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let after_second = count_subs_in_graph(&builder);
+    assert_eq!(
+        after_first, after_second,
+        "second IntSub lift must dedupe the lowered Add+Neg shape via the node cache"
+    );
+}
+
+#[test]
 fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();

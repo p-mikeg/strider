@@ -32,7 +32,6 @@ enum Step {
 fn int_op() -> impl Strategy<Value = IntBinaryOp> {
     prop_oneof![
         Just(IntBinaryOp::Add),
-        Just(IntBinaryOp::Sub),
         Just(IntBinaryOp::Mul),
         Just(IntBinaryOp::And),
         Just(IntBinaryOp::Or),

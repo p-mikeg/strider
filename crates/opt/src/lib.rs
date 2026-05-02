@@ -45,7 +45,6 @@ mod load_readonly;
 mod redundant_phis;
 pub mod stack_load_forward;
 mod stack_store;
-mod sub_to_add;
 #[cfg(test)]
 mod test_support;
 
@@ -65,7 +64,6 @@ pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};
-pub use sub_to_add::SubToAdd;
 
 /// Stable subset of the default pipeline — passes whose rewrites survive
 /// the addition of new phi inputs in a later strider fixed-point

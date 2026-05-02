@@ -232,15 +232,25 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         self.write_vn(out_vn, out)
     }
 
+    /// `PtrSub(base, index)` lowers to `Add(base, Neg(index))` via the
+    /// same canonicalisation that `IntSub` uses.  See
+    /// [`super::arithmetic::ValueLifter::handle_int_sub`] for the
+    /// rationale behind avoiding `IntBinaryOp::Sub`.
     pub(super) fn handle_ptr_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::require_output_vn(insn)?;
+        let out_ty = out_vn.size.try_into()?;
+        let neg_index = self.builder.build_int_unary_operation(
+            index,
+            ir::IntUnaryOp::Neg,
+            out_ty,
+        )?;
         let out = self.builder.build_int_binary_operation(
             base,
-            index,
-            IntBinaryOp::Sub,
-            out_vn.size.try_into()?,
+            neg_index,
+            IntBinaryOp::Add,
+            out_ty,
         )?;
         self.write_vn(out_vn, out)
     }

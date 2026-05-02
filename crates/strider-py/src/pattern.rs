@@ -1510,10 +1510,13 @@ pub fn if_(cond: Option<PatLike<'_>>) -> PyResult<PyIfPat> {
 // The op is a string that maps to the IR enum variant name.
 
 fn parse_int_binary_op(name: &str) -> PyResult<ir::IntBinaryOp> {
+    // `Sub` is deliberately absent: `IntBinaryOp::Sub` is not a primitive
+    // in this IR.  Python callers wanting `a - b` should use
+    // `pattern.sub(a, b)` (which constructs the lowered
+    // `Add(a, IntUnaryOp::Neg(b))` shape directly).
     use ir::IntBinaryOp::*;
     Ok(match name {
         "Add" | "add" => Add,
-        "Sub" | "sub" => Sub,
         "Mul" | "mul" => Mul,
         "Div" | "div" => Div,
         "Sdiv" | "sdiv" => Sdiv,

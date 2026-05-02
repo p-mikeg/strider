@@ -144,6 +144,30 @@ impl FunctionBuilder {
         ))
     }
 
+    /// Emits the canonical lowered shape for `lhs - rhs`:
+    /// `Add(lhs, IntUnaryOp::Neg(rhs))`.
+    ///
+    /// `IntBinaryOp::Sub` is not a primitive in this IR; pcode-lift lowers
+    /// `IntSub` opcodes at lift time.  This helper constructs the same
+    /// shape from the builder API, useful in tests and any caller that
+    /// needs to synthesise a subtraction without going through pcode-lift.
+    /// For constant-RHS subtractions, `ConstantFold` collapses the
+    /// `Neg(IntConst(K))` into `IntConst(-K)`, so post-optimisation the
+    /// graph typically shows a single `Add(_, IntConst(-K))` node.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ExpectedValue` if either operand is not a value edge.
+    pub fn build_int_sub(
+        &mut self,
+        lhs_id: NodeOutputId,
+        rhs_id: NodeOutputId,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let neg_rhs = self.build_int_unary_operation(rhs_id, IntUnaryOp::Neg, output_type)?;
+        self.build_int_binary_operation(lhs_id, neg_rhs, IntBinaryOp::Add, output_type)
+    }
+
     /// Emits a `Popcount` node that counts set bits in `input_id`.
     ///
     /// # Errors

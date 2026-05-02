@@ -124,7 +124,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let eight = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
         let plus = b.build_int_binary_operation(x, eight, IntBinaryOp::Add, NodeOutputType::U64)?;
-        b.build_int_binary_operation(plus, eight, IntBinaryOp::Sub, NodeOutputType::U64)
+        b.build_int_sub(plus, eight, NodeOutputType::U64)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     // After full collapse, the return-value-producing node must NOT be an
@@ -132,10 +132,7 @@ fn reassoc_then_identity_collapses_to_x() -> opt::Result<()> {
     // VarPhi/InitialVar read).
     let kind = return_kind(&fg)?;
     assert!(
-        !matches!(
-            kind,
-            NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Sub)
-        ),
+        !matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)),
         "(x+8)-8 must collapse to x; got {kind:?}"
     );
     Ok(())
@@ -156,7 +153,7 @@ fn stack_pipeline_full_cooperation() -> opt::Result<()> {
     b.set_region(region);
     let sp_v = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, NodeOutputType::U32).unwrap();
-    let addr = b.build_int_binary_operation(sp_v, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+    let addr = b.build_int_sub(sp_v, four, NodeOutputType::U32)?;
     let data = b.build_int_const(0xCAFEu64, NodeOutputType::U32).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
@@ -336,17 +333,22 @@ fn pipeline_no_change_on_already_optimal() -> opt::Result<()> {
 /// `0 - x` for U64 — there is no algebraic identity for this; the pipeline
 /// must leave the Sub node intact.
 #[test]
-fn pipeline_keeps_zero_sub_x() -> opt::Result<()> {
+fn pipeline_keeps_zero_sub_x_as_neg() -> opt::Result<()> {
+    // `0 - x` lifts via the canonical lowering to `Add(0, Neg(x))`.
+    // The `x + 0 → x` identity rule then collapses the `Add(0, Neg(x))`
+    // chain to a bare `IntUnaryOp::Neg(x)` — exactly what `0 - x` means
+    // arithmetically.  Pin the post-pipeline kind here to surface any
+    // regression that breaks the identity-rule chain.
     let vn = reg_vn(0x1000, 8);
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let zero = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
-        b.build_int_binary_operation(zero, x, IntBinaryOp::Sub, NodeOutputType::U64)
+        b.build_int_sub(zero, x, NodeOutputType::U64)
     })?;
     default_pipeline().run(&mut fg.graph, fg.entry)?;
     let kind = return_kind(&fg)?;
     assert!(
-        matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Sub)),
-        "0 - x has no identity rule, expected Sub, got {kind:?}"
+        matches!(kind, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)),
+        "0 - x must collapse to Neg(x) post-pipeline, got {kind:?}"
     );
     Ok(())
 }
