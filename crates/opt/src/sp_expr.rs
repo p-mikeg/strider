@@ -277,6 +277,42 @@ fn decompose_sp_inner(
                 decompose_sp(g, l, sp_vn, memo, visiting).map(|e| e.shifted(c.wrapping_neg()))
             })
         }
+        // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
+        // `0xfffffff0` for SSE-aligned frames).  The And's output is
+        // runtime-aligned `(SP & mask)` — its exact value depends on the
+        // entry SP's alignment, so the offset relative to `InitialVar(sp)`
+        // is unknown.  But within the function the And's output is *fixed*
+        // and serves as a stable opaque base for every subsequent stack
+        // address.  Return `Terminal { base: <And output>, offset: 0 }`
+        // so downstream Adds / Subs of constants chain through normally
+        // and `StackStoreDetect` can rewrite the post-alignment stores
+        // into `StackStore`s sharing this base.  Subsequent walkers
+        // (`CallStackArgCollect`, `StackLoadForward`) compare offsets
+        // relative to the matched base, so every aligned-frame store is
+        // mutually comparable.
+        //
+        // Only matches when the non-mask operand is itself an SP-rooted
+        // expression — guards against `And(rax, mask)` accidentally
+        // producing a fake stack base.
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+            let inputs = g.node_inputs(node);
+            if inputs.len() != 2 {
+                return None;
+            }
+            let l = inputs[0];
+            let r = inputs[1];
+            let sp_input = if int_const_signed(g, r).is_some() {
+                l
+            } else if int_const_signed(g, l).is_some() {
+                r
+            } else {
+                return None;
+            };
+            decompose_sp(g, sp_input, sp_vn, memo, visiting).map(|_| SpExpr::Terminal {
+                base: out,
+                offset: 0,
+            })
+        }
         _ => None,
     }
 }
@@ -614,6 +650,93 @@ mod tests {
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
         );
+        Ok(())
+    }
+
+    /// FreeBSD i386 10.0 prologue: `and $0xfffffff8, %esp` aligns the
+    /// stack to 8 bytes after the saved-register pushes.  All subsequent
+    /// stack arithmetic is anchored at the And's output, not at
+    /// `InitialVar(sp)`, so `decompose_sp` must recognise the And and
+    /// treat its output as a stable opaque base (offset 0) — otherwise
+    /// every store after the alignment dance is a non-decomposable
+    /// `Store(_)`, and `CallStackArgCollect` walks past the call's args
+    /// as "non-aliasing".
+    #[test]
+    fn decompose_sp_and_with_alignment_mask_yields_opaque_base() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        // Simulate `and $0xfffffff8, %esp`.
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let aligned = b.build_int_binary_operation(
+            sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+        b.build_return(Some(aligned), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = FxHashSet::default();
+        let r = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting);
+        // The aligned output is a stable opaque base.  Offset = 0
+        // because the alignment can shift the value by 0..7 bytes — we
+        // can't pin a constant delta, but we *can* pin a stable
+        // `NodeOutputId` that subsequent decompositions reference.
+        let Some(SpExpr::Terminal { base, offset }) = r else {
+            panic!("expected Terminal from And-aligned SP, got {r:?}");
+        };
+        assert_eq!(offset, 0, "And-aligned base offset must be 0");
+        // Base must NOT be the InitialVar(sp) output — it's the And output.
+        let base_node = fg.graph.get_node_from_output(base);
+        assert!(
+            matches!(*fg.graph.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
+            "And-aligned base must point to the And node, got {:?}",
+            fg.graph.node_kind(base_node)
+        );
+        Ok(())
+    }
+
+    /// Following the alignment dance, the function does
+    /// `sub $0x1d0, %esp` (the local-frame reservation).  The post-Sub
+    /// SP must decompose to the *same* opaque base (the And output),
+    /// just with a non-zero offset.  Without this, every cdecl call
+    /// site after the alignment dance has args at addresses that
+    /// `decompose_sp` cannot relate to each other, breaking
+    /// `CallStackArgCollect`.
+    #[test]
+    fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::U32)?;
+        let aligned = b.build_int_binary_operation(
+            sp_val, mask, IntBinaryOp::And, NodeOutputType::U32)?;
+        let frame = b.build_int_const(0x1D0u64, NodeOutputType::U32)?;
+        let post_sub = b.build_int_binary_operation(
+            aligned, frame, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.build_return(Some(post_sub), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting = FxHashSet::default();
+        let aligned_dec = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting)
+            .expect("aligned must decompose");
+        let post_sub_dec = decompose_sp(&fg.graph, post_sub, sp, &mut memo, &mut visiting)
+            .expect("post_sub must decompose");
+        let SpExpr::Terminal { base: aligned_base, offset: aligned_off } = aligned_dec else {
+            panic!("aligned must be Terminal");
+        };
+        let SpExpr::Terminal { base: post_sub_base, offset: post_sub_off } = post_sub_dec else {
+            panic!("post_sub must be Terminal");
+        };
+        assert_eq!(
+            aligned_base, post_sub_base,
+            "post-Sub base must equal post-And base (opaque base shared)"
+        );
+        assert_eq!(aligned_off, 0);
+        assert_eq!(post_sub_off, -0x1D0, "Sub by 0x1D0 shifts offset by -0x1D0");
         Ok(())
     }
 }
