@@ -111,14 +111,8 @@ EXPECTED_PATTERN = {
     "float_bin_any", "float_un_any", "float_cmp_any",
 }
 
-# `or_` / `and_` are escaped Python keywords — the Rust pyfunction
-# names are `or` / `and`, not `or_` / `and_`.  Adjust the expected
-# set to whichever convention the wrapper actually uses (see register
-# in src/pattern.rs).  Currently we expose them as the bare keywords
-# `or` / `and`, which Python accepts as attribute names.
-
-EXPECTED_PATTERN.add("or")
-EXPECTED_PATTERN.add("and")
+EXPECTED_PATTERN.add("or_")
+EXPECTED_PATTERN.add("and_")
 
 
 def test_top_level_surface():

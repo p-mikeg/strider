@@ -143,10 +143,6 @@ def count_pat(g, p) -> int:
     return len(g.find_all(_to_pat(p)))
 
 
-# `and_` / `or_` are exposed verbatim as `and` / `or` by the Rust
-# bindings (Python keyword names — accessible only via `getattr`).
-# Use `getattr(pat, "and")` rather than `pat.and_` for the bitwise
-# variants until strider-py adds the trailing-underscore aliases.
 _INT_BINOP_BUILDERS = {
     "Add": pat.add,
     "Sub": pat.sub,
@@ -155,8 +151,8 @@ _INT_BINOP_BUILDERS = {
     "Sdiv": pat.sdiv,
     "Rem": pat.rem,
     "Srem": pat.srem,
-    "And": getattr(pat, "and"),
-    "Or": getattr(pat, "or"),
+    "And": pat.and_,
+    "Or": pat.or_,
     "Xor": pat.xor,
     "ShiftLeft": pat.shl,
     "ShiftRight": pat.shr,

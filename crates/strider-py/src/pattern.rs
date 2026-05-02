@@ -709,8 +709,19 @@ int_binop!(srem);
 int_binop!(shl);
 int_binop!(shr);
 int_binop!(sshr);
-int_binop!(and);
-int_binop!(or);
+// `and` / `or` are Python keywords; expose as `and_` / `or_`.
+#[pyfunction(name = "and_")]
+pub fn and_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+    let lp = l.into_pat()?;
+    let rp = r.into_pat()?;
+    Ok(PyPat::from_pat(pattern::and(lp, rp).into()))
+}
+#[pyfunction(name = "or_")]
+pub fn or_(l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
+    let lp = l.into_pat()?;
+    let rp = r.into_pat()?;
+    Ok(PyPat::from_pat(pattern::or(lp, rp).into()))
+}
 int_binop!(xor);
 int_binop!(int_eq);
 int_binop!(int_lt);
@@ -1798,8 +1809,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(shl);
     add_fn!(shr);
     add_fn!(sshr);
-    add_fn!(and);
-    add_fn!(or);
+    add_fn!(and_);
+    add_fn!(or_);
     add_fn!(xor);
     add_fn!(int_eq);
     add_fn!(int_lt);
