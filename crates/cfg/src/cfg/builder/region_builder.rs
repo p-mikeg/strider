@@ -317,20 +317,74 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     .first()
                     .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-
-                // We reached the end of the current region
-                let region = self.finish_current_region(RegionTerminator::CondBranch)?;
-
-                // Add the true case
-                self.builder
-                    .work_queue
-                    .push((Some((region, RegionEdgeKind::IfCaseTrue)), target_addr));
                 let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
-                // Add the false case
-                self.builder
-                    .work_queue
-                    .push((Some((region, RegionEdgeKind::IfCaseFalse)), next_insn_addr));
+                // Pre-classify both successors against the function bounds.
+                // Lifting an OOB successor address would otherwise read past
+                // `start + fn_max_size`, and on architectures where the OOB
+                // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
+                // the inner lift loop never appends to `self.insns`, so the
+                // upper-bound truncation in `build()` never fires.
+                let true_oob = self.is_branch_tail_call(target_addr)?;
+                let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
+
+                match (true_oob, false_oob) {
+                    (false, false) => {
+                        // Both in-range — original CondBranch behaviour.
+                        let region =
+                            self.finish_current_region(RegionTerminator::CondBranch)?;
+                        self.builder.work_queue.push((
+                            Some((region, RegionEdgeKind::IfCaseTrue)),
+                            target_addr,
+                        ));
+                        self.builder.work_queue.push((
+                            Some((region, RegionEdgeKind::IfCaseFalse)),
+                            next_insn_addr,
+                        ));
+                    }
+                    (true, true) => {
+                        // Both successors leave the function — collapse to a
+                        // single TailCall to the taken target.  The IR layer
+                        // lifts this as `Call(IntConst(target)) + Return`,
+                        // and `SpecialTerm::TailCall::skips_opcode` is
+                        // extended to also skip the trailing `CondBranch`
+                        // insn that lives in `self.insns`.
+                        self.finish_current_region(RegionTerminator::TailCall {
+                            target: target_addr.machine_addr.addr,
+                        })?;
+                    }
+                    (true, false) | (false, true) => {
+                        // Exactly one successor leaves the function.  Pop
+                        // the trailing `CondBranch` insn from `self.insns`
+                        // so the IR's per-region loop does not re-route it
+                        // through `handle_cond_branch` (which would fail
+                        // looking up the missing OOB edge), and emit
+                        // `RegionTerminator::Branch` to the in-range
+                        // successor.  The conditional is lost, but the
+                        // lift completes.
+                        //
+                        // If popping leaves the region empty (the function
+                        // body is exactly the conditional jump and nothing
+                        // else), fall back to `TailCall` to the in-range
+                        // target so `add_region`'s non-empty invariant
+                        // holds.  This degenerate case loses the in-range
+                        // edge entirely, but it is essentially unobserved
+                        // in real binaries.
+                        let in_range = if true_oob { next_insn_addr } else { target_addr };
+                        if self.insns.len() > 1 {
+                            self.insns.pop();
+                            let region =
+                                self.finish_current_region(RegionTerminator::Branch)?;
+                            self.builder
+                                .work_queue
+                                .push((Some((region, RegionEdgeKind::Branch)), in_range));
+                        } else {
+                            self.finish_current_region(RegionTerminator::TailCall {
+                                target: in_range.machine_addr.addr,
+                            })?;
+                        }
+                    }
+                }
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::Return => {

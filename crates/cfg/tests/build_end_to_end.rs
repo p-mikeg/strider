@@ -142,6 +142,80 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 /// Fix: at the top of every `RegionBuilder::build()` iteration, if the
 /// (already-advanced) `cur_addr` is past `start + fn_max_size`, finish
 /// the region with `TailCall { target: cur_addr.machine_addr }`.
+/// Companion to `fall_through_past_fn_max_size_terminates_as_tail_call`:
+/// when a `CondBranch` (jcc) sits exactly at the function's upper
+/// bound, its fall-through `next_insn_addr` lands past `start +
+/// fn_max_size`.  Pre-fix, the cfg builder enqueued the OOB
+/// fall-through address as a normal work-queue item, lifting whatever
+/// machine bytes lived there.  Post-fix the builder pre-classifies
+/// both `CondBranch` targets and drops the OOB edge — when only the
+/// fall-through is OOB, the region's terminator becomes `Branch` to
+/// the in-range taken target (the conditional collapses but the lift
+/// proceeds).
+#[test]
+fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
+    // 0x1000: `xor eax, eax`        (2 bytes, sets ZF)
+    // 0x1002: `je 0x1000`           (2 bytes, taken target = 0x1000, in-range;
+    //                                fall-through = 0x1004, OOB at fn_max_size=4)
+    let mut bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
+    // Pad so any over-read past the bound (orchestrator decode probes,
+    // pre-classification lifts, etc.) finds valid memory.
+    bytes.extend(std::iter::repeat_n(0x90u8, 64));
+    let opts = OptionsBuilder::new().set_function_max_size(4).build();
+    let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
+
+    // The entry region terminator must NOT be CondBranch (the OOB
+    // fall-through would have crashed the IR layer's `handle_cond_branch`,
+    // which requires both successors to exist).
+    assert!(
+        !matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::CondBranch),
+        "entry region must not retain CondBranch when one successor is OOB"
+    );
+}
+
+/// Both `CondBranch` targets OOB: the function leaves either way, so
+/// the region collapses to `TailCall { target: <taken_target> }`.
+#[test]
+fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
+    // 0x1000: `xor eax, eax`             (2 bytes)
+    // 0x1002: `je 0x1100`                (6 bytes for `0F 84 rel32`; both
+    //                                     taken (0x1100) and fall-through
+    //                                     (0x1008) are OOB at fn_max_size=2)
+    // The bound is `2`, so even the second instruction is OOB — we'll
+    // never reach the jcc.  Use a smaller setup: place jcc as the
+    // first instruction within fn_max_size that still has both
+    // targets OOB.  fn_max_size=6 → end=0x1006.  Taken target via
+    // rel8: `74 7E` → +0x7e → 0x1080 (OOB).  Fall-through 0x1002 (in!).
+    // So we need both rel target AND fall-through to be OOB.  Use:
+    //   xor eax,eax (2 bytes) at 0x1000
+    //   je   0x108? (rel8 = +0x7e, 2 bytes) at 0x1002 → taken=0x1082 OOB
+    //   nop         (filler) at 0x1004
+    // fn_max_size=4 with rel8 puts taken OOB but fall-through (0x1004)
+    // in-range.  We need a *single*-instruction setup where the
+    // CondBranch is the FIRST insn and BOTH its outcomes are OOB.
+    //
+    // x86 jcc rel8 is 2 bytes.  Place it at 0x1000 with fn_max_size=2:
+    //   0x1000: 74 7E      → je 0x1080 (taken OOB)
+    //   fall-through 0x1002 also OOB.
+    //
+    // This requires entering the region's CondBranch arm before the
+    // `cur_addr` bound check fires — `RegionBuilder::build` lifts and
+    // processes the jcc on the very first iteration.
+    let mut bytes = vec![0x74u8, 0x7e];
+    bytes.extend(std::iter::repeat_n(0x90u8, 256));
+    let opts = OptionsBuilder::new().set_function_max_size(2).build();
+    let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
+
+    // Both successors OOB → terminator is TailCall (the function
+    // leaves either way).  The exact target (taken vs fall-through)
+    // doesn't carry observable semantics; pin the kind only.
+    assert!(
+        matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
+        "entry region must collapse to TailCall when both CondBranch successors are OOB; got {:?}",
+        cfg.graph[cfg.entry].terminator
+    );
+}
+
 #[test]
 fn fall_through_past_fn_max_size_terminates_as_tail_call() {
     // 0x1000: `xor eax, eax` (2 bytes, ≥1 pcode insn — appends to the

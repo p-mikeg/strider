@@ -445,13 +445,26 @@ impl SpecialTerm {
     /// Returns true when the per-region per-insn loop should skip
     /// `opcode` because the post-loop dispatcher will lift it via a
     /// dedicated handler.  `Unresolved`/`Switch` skip `BranchIndirect`;
-    /// `TailCall` skips the direct `Branch`.
+    /// `TailCall` skips both `Branch` (the standard direct-tail-call
+    /// case) AND `CondBranch` (the `cfg::RegionBuilder` collapse path
+    /// for a conditional jump whose successors all leave the function).
+    ///
+    /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
+    /// finishes a region the moment ANY control-flow opcode (`Branch`,
+    /// `CondBranch`, `Return`, `BranchIndirect`) is processed, so at
+    /// most one such opcode appears in any region's insn list and it is
+    /// always the trailing entry.  Widening this set is therefore
+    /// mutually exclusive: the matched opcode is always the trailing
+    /// terminator, never an inner pcode op.
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
             SpecialTerm::Unresolved(..) | SpecialTerm::Switch(..) => {
                 opcode == rsleigh::Opcode::BranchIndirect
             }
-            SpecialTerm::TailCall(..) => opcode == rsleigh::Opcode::Branch,
+            SpecialTerm::TailCall(..) => matches!(
+                opcode,
+                rsleigh::Opcode::Branch | rsleigh::Opcode::CondBranch
+            ),
         }
     }
 }
