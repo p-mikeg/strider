@@ -384,6 +384,44 @@ impl<'g> Matcher<'g> {
     /// typical patterns the shared-capture filter prunes the
     /// cross-product aggressively, so real-world performance is
     /// closer to O(N_max).
+    ///
+    /// # Worked example — recovering a struct-field offset
+    ///
+    /// To recover `nd.ni_vp`'s offset given a `vn_open(&nd, …)` call
+    /// followed by a `script_vp = nd.ni_vp` field read, the natural
+    /// thought is "capture `&nd` and find loads relative to it."  But
+    /// constant-fold reassociates `Add(Add(rbp, K1), K_field)` into
+    /// `Add(rbp, K1+K_field)` (see `opt::ConstantFold`), so `&nd` does
+    /// not survive as a shared sub-expression of the load.  Anchor on
+    /// the frame base (`InitialVar(rbp)` / `InitialVar(rsp)`) instead
+    /// — both the call's arg and the load's address reference the
+    /// same dedup'd `InitialVar` node, and the join is trivial:
+    ///
+    /// ```ignore
+    /// let k_call = Capture::new();         // K1 — &nd offset from frame base
+    /// let k_load = Capture::new();         // K2 — nd.ni_vp offset from frame base
+    /// let pats = [
+    ///     // call(at=vn_open).arg(0, lea rbp+K1)
+    ///     call().target(int_const(VN_OPEN_ADDR))
+    ///         .arg(0, add(initial_var_for(rbp), any_int_const(k_call)).ordered())
+    ///         .into_pat(),
+    ///     // load at rbp+K2
+    ///     load().addr(add(initial_var_for(rbp), any_int_const(k_load)).ordered())
+    ///         .into_pat(),
+    /// ];
+    /// let pat_refs: Vec<&Pat> = pats.iter().collect();
+    /// for tup in matcher.find_all_requirements(&pat_refs) {
+    ///     let k1 = tup[0].get_uint(k_call, &graph)?;
+    ///     let k2 = tup[1].get_uint(k_load, &graph)?;
+    ///     let ni_vp_offset = (k2 as i64) - (k1 as i64); // recovered field offset
+    /// }
+    /// ```
+    ///
+    /// If the load on the same stack slot was earlier rewritten by
+    /// `StackLoadForward`, the field read is folded away and this
+    /// query returns nothing.  Add a `stack_store(...)` arm to the
+    /// pattern set when the field is being *written* rather than
+    /// *read*.
     pub fn find_all_requirements(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
         if pats.is_empty() {
             return Vec::new();

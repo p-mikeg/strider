@@ -180,6 +180,54 @@ impl Match {
         }
     }
 
+    /// If the node bound to `c` is a [`NodeKind::StackStore`], returns
+    /// its compile-time SP-relative offset.  Returns `None` for an
+    /// unbound capture or a non-`StackStore` producer.
+    ///
+    /// Pairs with `pattern::stack_store().capture(c)` for queries that
+    /// need to recover the offset value (e.g. cross-pattern field-
+    /// offset recoveries: capture the stack store, capture an
+    /// `any_int_const(other)` on the call-arg side, compute the
+    /// difference).
+    #[must_use]
+    pub fn stack_offset(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i64> {
+        let node = self.bindings.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::StackStore { offset, .. } => Some(*offset),
+            _ => None,
+        }
+    }
+
+    /// If the node bound to `c` is a [`NodeKind::StackStorePhi`] with
+    /// a populated side-table, returns its per-predecessor offset
+    /// slice from [`ir::Graph::stack_phi_offsets`].  Slice ordering
+    /// follows IR predecessor order.
+    ///
+    /// Returns `None` for:
+    /// * an unbound capture,
+    /// * a non-`StackStorePhi` producer, OR
+    /// * a `StackStorePhi` whose side-table entry is empty (a
+    ///   malformed-graph / un-populated state — the side table
+    ///   defaults to an empty `Vec` for any node never written by
+    ///   `StackStoreDetect`).  Collapsing the empty side-table case
+    ///   to `None` keeps callers from silently iterating zero
+    ///   offsets thinking they captured a real phi shape.
+    #[must_use]
+    pub fn stack_phi_offsets<'g>(
+        &self,
+        c: Capture,
+        graph: &'g BuiltFunctionGraph,
+    ) -> Option<&'g [i64]> {
+        let node = self.bindings.get_node(c)?;
+        match graph.graph.node_kind(node) {
+            NodeKind::StackStorePhi { .. } => {
+                let slice = graph.graph.stack_phi_offsets(node);
+                if slice.is_empty() { None } else { Some(slice) }
+            }
+            _ => None,
+        }
+    }
+
     /// Returns an owned copy of the full [`Bindings`] captured by this match.
     /// Used by the rewrite-rule interpreter (drops the `Matcher` borrow
     /// before mutating the graph) and by tests.

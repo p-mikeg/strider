@@ -117,12 +117,17 @@ impl From<StorePat> for Pat {
 pub struct StackStorePat {
     space: Option<rsleigh::VnSpace>,
     offset: Option<i64>,
+    /// Set-membership constraint over the offset, applied alongside
+    /// (and AND-combined with) [`Self::offset`] when both are set.
+    /// `Some(empty)` means "match nothing" (vacuous false); `None`
+    /// means "no set constraint".
+    offset_any: Option<Vec<i64>>,
     data: Option<Pat>,
 }
 
 impl StackStorePat {
     pub(crate) fn new() -> Self {
-        Self { space: None, offset: None, data: None }
+        Self { space: None, offset: None, offset_any: None, data: None }
     }
     /// Restrict the match to stack-stores in address space `s`.
     #[must_use]
@@ -136,6 +141,18 @@ impl StackStorePat {
         self.offset = Some(o);
         self
     }
+    /// Match only stack-stores whose offset is in `offsets`.  Useful
+    /// when scanning for "any of these known field offsets".  Empty
+    /// `offsets` vacuously fails (matches nothing) — mirrors the
+    /// contract of [`crate::int_const_any_of`].
+    #[must_use]
+    pub fn offset_any<I>(mut self, offsets: I) -> Self
+    where
+        I: IntoIterator<Item = i64>,
+    {
+        self.offset_any = Some(offsets.into_iter().collect());
+        self
+    }
     /// Constrain the stored value.
     pub fn data(mut self, p: impl Into<Pat>) -> Self {
         self.data = Some(p.into());
@@ -145,7 +162,7 @@ impl StackStorePat {
 
 impl From<StackStorePat> for Pat {
     fn from(b: StackStorePat) -> Pat {
-        let StackStorePat { space, offset, data } = b;
+        let StackStorePat { space, offset, offset_any, data } = b;
         // StackStore inputs = [memory(0), base(1), data(2)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
         if let Some(data_pat) = data {
@@ -155,16 +172,29 @@ impl From<StackStorePat> for Pat {
             space: rsleigh::VnSpace::RAM,
             offset: 0,
         };
-        let kind = if space.is_none() && offset.is_none() {
+        let kind = if space.is_none() && offset.is_none() && offset_any.is_none() {
             KindSpec::variant(&exemplar)
         } else {
             KindSpec::variant_with(&exemplar, move |k| {
-                matches!(
-                    k,
-                    NodeKind::StackStore { space: actual_space, offset: actual_offset }
-                        if space.is_none_or(|s| *actual_space == s)
-                            && offset.is_none_or(|o| *actual_offset == o)
-                )
+                let NodeKind::StackStore {
+                    space: actual_space,
+                    offset: actual_offset,
+                } = k
+                else {
+                    return false;
+                };
+                if space.is_some_and(|s| *actual_space != s) {
+                    return false;
+                }
+                if offset.is_some_and(|o| *actual_offset != o) {
+                    return false;
+                }
+                if let Some(set) = &offset_any
+                    && !set.iter().any(|o| *o == *actual_offset)
+                {
+                    return false;
+                }
+                true
             })
         };
         NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()

@@ -190,6 +190,35 @@ impl PyMatch {
         let g = g.read_inner().map_err(into_strider_err)?;
         Ok(self.inner.get_vn(cap, &g).map(crate::sleigh::PyVn::from_inner))
     }
+
+    /// If `c` binds a `StackStore` node, returns its compile-time
+    /// SP-relative offset.  `None` for an unbound capture or a
+    /// non-`StackStore` producer.
+    ///
+    /// Pairs with `stack_store().capture(c)` for cross-pattern
+    /// field-offset recoveries — capture the stack store, capture an
+    /// `any_int_const(other)` on the call-arg side, compute the
+    /// difference.
+    fn stack_offset(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i64>> {
+        let cap = key.resolve()?;
+        let g = self.graph.borrow(py);
+        let g = g.read_inner().map_err(into_strider_err)?;
+        Ok(self.inner.stack_offset(cap, &g))
+    }
+
+    /// If `c` binds a `StackStorePhi`, returns its per-predecessor
+    /// offset list (read from `Graph::stack_phi_offsets`).  `None`
+    /// for an unbound capture or a non-`StackStorePhi` producer.
+    fn stack_phi_offsets(
+        &self,
+        py: Python<'_>,
+        key: CaptureKey<'_>,
+    ) -> PyResult<Option<Vec<i64>>> {
+        let cap = key.resolve()?;
+        let g = self.graph.borrow(py);
+        let g = g.read_inner().map_err(into_strider_err)?;
+        Ok(self.inner.stack_phi_offsets(cap, &g).map(<[i64]>::to_vec))
+    }
 }
 
 // ── Op-variant name helpers ──────────────────────────────────────────────

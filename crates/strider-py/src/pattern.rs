@@ -1063,10 +1063,11 @@ pub fn store(addr: Option<PatLike<'_>>, data: Option<PatLike<'_>>) -> PyResult<P
 }
 
 /// Typed builder for `StackStore` node patterns.  Chain
-/// `.offset(o)`, `.data(p)`, `.space(s)`.
+/// `.offset(o)`, `.offset_any([…])`, `.data(p)`, `.space(s)`.
 #[pyclass(name = "StackStorePat", module = "strider.pattern")]
 pub struct PyStackStorePat {
     offset: std::cell::RefCell<Option<i64>>,
+    offset_any: std::cell::RefCell<Option<Vec<i64>>>,
     data: std::cell::RefCell<Option<pattern::Pat>>,
     space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
 }
@@ -1075,6 +1076,7 @@ impl PyStackStorePat {
     fn new() -> Self {
         Self {
             offset: std::cell::RefCell::new(None),
+            offset_any: std::cell::RefCell::new(None),
             data: std::cell::RefCell::new(None),
             space: std::cell::RefCell::new(None),
         }
@@ -1083,6 +1085,7 @@ impl PyStackStorePat {
         let mut b = pattern::stack_store();
         if let Some(s) = *self.space.borrow() { b = b.space(s); }
         if let Some(o) = *self.offset.borrow() { b = b.offset(o); }
+        if let Some(set) = self.offset_any.borrow().clone() { b = b.offset_any(set); }
         if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
         b.into()
     }
@@ -1092,6 +1095,12 @@ impl PyStackStorePat {
 impl PyStackStorePat {
     fn offset(slf: Py<Self>, py: Python<'_>, o: i64) -> Py<Self> {
         slf.borrow(py).offset.replace(Some(o)); slf
+    }
+    /// Match only stack-stores whose offset is in `offsets`.  Empty
+    /// list vacuously fails (matches nothing) — mirrors the contract
+    /// of `int_const_any_of`.
+    fn offset_any(slf: Py<Self>, py: Python<'_>, offsets: Vec<i64>) -> Py<Self> {
+        slf.borrow(py).offset_any.replace(Some(offsets)); slf
     }
     fn data(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
         let pat = p.into_pat()?;
