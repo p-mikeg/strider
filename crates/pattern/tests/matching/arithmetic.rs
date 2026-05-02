@@ -121,9 +121,7 @@ fn every_int_cmp_op_has_a_working_ctor() {
     let cases: &[(IntCmpOp, Ctor)] = &[
         (IntCmpOp::Equal, |l, r| int_eq(l, r)),
         (IntCmpOp::Less, |l, r| int_lt(l, r)),
-        (IntCmpOp::LessEqual, |l, r| int_le(l, r)),
         (IntCmpOp::Sless, |l, r| int_slt(l, r)),
-        (IntCmpOp::SlessEqual, |l, r| int_sle(l, r)),
         (IntCmpOp::Carry, |l, r| int_carry(l, r)),
         (IntCmpOp::Scarry, |l, r| int_scarry(l, r)),
         (IntCmpOp::Sborrow, |l, r| int_sborrow(l, r)),
@@ -132,6 +130,23 @@ fn every_int_cmp_op_has_a_working_ctor() {
         let g = shapes::int_cmp_5_3(op);
         a::matches(&g, ctor(int_const(5), int_const(3)), 1);
     }
+}
+
+/// `int_le(a, b)` is an ergonomic alias for the lowered shape
+/// `BoolNeg(IntLess(b, a))` — `IntCmpOp::LessEqual` is not a primitive
+/// in the IR.  Build the lowered shape directly and verify the ctor
+/// matches it.
+#[test]
+fn int_le_matches_lowered_shape() {
+    let g = shapes::int_le_lowered_5_3();
+    a::matches(&g, int_le(int_const(5), int_const(3)), 1);
+}
+
+/// Signed analogue of [`int_le_matches_lowered_shape`].
+#[test]
+fn int_sle_matches_lowered_shape() {
+    let g = shapes::int_sle_lowered_5_3();
+    a::matches(&g, int_sle(int_const(5), int_const(3)), 1);
 }
 
 #[test]

@@ -765,12 +765,14 @@ pub fn int_cmp(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
 
 fn parse_int_cmp_op(name: &str) -> PyResult<ir::IntCmpOp> {
     use ir::IntCmpOp::*;
+    // `LessEqual` / `SlessEqual` are deliberately absent: the IR has no
+    // such primitives.  Python callers wanting `a <= b` must use
+    // `pattern.int_le(a, b)` (or `pattern.int_sle` for signed), which
+    // construct the lowered `BoolNeg(IntLess(b, a))` shape.
     Ok(match name {
         "Equal" | "eq" | "equal" => Equal,
         "Less" | "lt" | "less" => Less,
-        "LessEqual" | "le" | "less_equal" => LessEqual,
         "Sless" | "slt" | "sless" => Sless,
-        "SlessEqual" | "sle" | "sless_equal" => SlessEqual,
         "Carry" | "carry" => Carry,
         "Scarry" | "scarry" => Scarry,
         "Sborrow" | "sborrow" => Sborrow,

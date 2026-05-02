@@ -262,9 +262,7 @@ fn int_cmp_op_name(op: ir::IntCmpOp) -> String {
     match op {
         Equal => "Equal",
         Less => "Less",
-        LessEqual => "LessEqual",
         Sless => "Sless",
-        SlessEqual => "SlessEqual",
         Carry => "Carry",
         Scarry => "Scarry",
         Sborrow => "Sborrow",

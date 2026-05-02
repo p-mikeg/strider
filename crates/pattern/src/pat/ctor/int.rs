@@ -75,12 +75,8 @@ decl_pat_cmp_ops!(int_cmp, IntCmpOp, Pat, [
     (int_eq, Equal),
     /// Matches an unsigned less-than comparison (`lhs < rhs`).
     (int_lt, Less),
-    /// Matches an unsigned less-or-equal comparison (`lhs <= rhs`).
-    (int_le, LessEqual),
     /// Matches a signed less-than comparison.
     (int_slt, Sless),
-    /// Matches a signed less-or-equal comparison.
-    (int_sle, SlessEqual),
     /// Matches an unsigned addition carry-out check.
     (int_carry, Carry),
     /// Matches a signed addition overflow check.
@@ -88,3 +84,23 @@ decl_pat_cmp_ops!(int_cmp, IntCmpOp, Pat, [
     /// Matches a signed subtraction borrow check.
     (int_sborrow, Sborrow),
 ]);
+
+/// Matches an unsigned less-or-equal comparison (`lhs <= rhs`).
+///
+/// `IntCmpOp::LessEqual` is not a primitive in the IR; the pcode-lift
+/// dispatch lowers it to `BoolNeg(IntLess(rhs, lhs))`.  This constructor
+/// produces the lowered shape directly so that
+/// `int_le(a, b)` matches the same IR `a` ≤ `b` produces.
+pub fn int_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::ctor::bool_::bool_not;
+    bool_not(cmp_pat(IntCmpOp::Less, rhs.into(), lhs.into()))
+}
+
+/// Matches a signed less-or-equal comparison (`(signed)lhs <= (signed)rhs`).
+///
+/// Like [`int_le`], lowered at construction to `BoolNeg(IntSless(rhs, lhs))`
+/// to match the canonical shape produced by pcode-lift.
+pub fn int_sle(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::ctor::bool_::bool_not;
+    bool_not(cmp_pat(IntCmpOp::Sless, rhs.into(), lhs.into()))
+}

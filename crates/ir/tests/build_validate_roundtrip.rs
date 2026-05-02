@@ -57,9 +57,7 @@ fn every_int_cmp_op_validates() {
     for op in [
         IntCmpOp::Equal,
         IntCmpOp::Less,
-        IntCmpOp::LessEqual,
         IntCmpOp::Sless,
-        IntCmpOp::SlessEqual,
         IntCmpOp::Carry,
         IntCmpOp::Scarry,
         IntCmpOp::Sborrow,

@@ -584,25 +584,21 @@ fn walk_control_for_if_bound_iter(
 /// the If's true output (true) or false output (false).  Comparison
 /// ops bound `idx` differently depending on which branch dominates:
 ///
-///   * `idx < N`   true  → `idx <= N - 1` → bound is `N` (count of values).
-///   * `idx <= N`  true  → `idx <= N`     → bound is `N + 1`.
-///   * `idx < N`   false → `idx >= N`     → no upper bound.
-///   * `idx <= N`  false → `idx > N`      → no upper bound.
+///   * `idx < N`             true → `idx <= N - 1` → bound is `N`.
+///   * `idx <= N` (lowered)  true → `idx <= N`     → bound is `N + 1`.
+///   * `idx < N`             false → `idx >= N`    → no upper bound.
+///   * `idx <= N` (lowered)  false → `idx > N`     → no upper bound.
+///
+/// `IntCmpOp::LessEqual` and `SlessEqual` are not primitives in this
+/// IR — pcode-lift lowers them at lift time to `BoolNeg(Less(N, idx))`
+/// (resp. `Sless`).  This walker therefore tries two shapes:
+///   1. `BoolNeg(IntLess(IntConst(N), idx))` → bound is `N + 1`.
+///   2. `IntCmp(idx, IntConst(N))` with strict-less op → bound is `N`.
 ///
 /// We only return Some on the true-side variants; the false side
 /// gives a *lower* bound which doesn't help here.  An over-cautious
 /// None is sound; the orchestrator may try again with a stronger
 /// classifier next iteration.
-///
-/// Shape detection uses the `pattern` crate's `int_cmp_any` builder
-/// to capture the comparison's operator and operands in a single
-/// match step.  `int_cmp_any` honours each op's commutativity:
-/// non-commutative ops (`Less`, `LessEqual`, `Sless`, `SlessEqual`)
-/// only bind when `idx` is on the LHS, which is exactly the
-/// orientation that proves an upper bound.  The previously
-/// hand-rolled "swapped" case checked both orderings and returned
-/// None for the swapped one — the pattern simply fails to match
-/// there, which is identical at the call site.
 ///
 /// NOTE — `IntCmpOp::Equal` is deliberately NOT handled here.  The
 /// taken-true arm of `idx == N` constrains `idx` to the single
@@ -612,7 +608,6 @@ fn walk_control_for_if_bound_iter(
 /// entries indexed `0..N-1` — read past the table end and fail
 /// resolution.  Falling through to the catch-all `None` surfaces
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
-/// Code-review H2.
 fn bound_from_if_condition(
     fg: &BuiltFunctionGraph,
     cond_out: NodeOutputId,
@@ -622,10 +617,34 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use pattern::{Capture, Matcher, any_int_const, int_cmp_any, var};
+    use pattern::{Capture, Matcher, any_int_const, bool_not, int_cmp_any, var};
     let graph = &fg.graph;
     let cmp_node = graph.get_node_from_output(cond_out);
 
+    // Shape 1 (lowered <=): BoolNeg(IntLess(IntConst(N), idx))  or its
+    // Sless analogue.  The original `IntLessEqual a, b` opcode lifts
+    // with operand-swap to `BoolNeg(Less(b, a))`; here `a` is `idx`
+    // and `b` is `IntConst(N)`, so after swap the `IntConst(N)` is on
+    // the LHS of the inner Less.  `int_cmp_any` is non-commutative for
+    // Less/Sless, so this orientation is the only one that matches.
+    {
+        let op_var = Capture::new();
+        let n_var = Capture::new();
+        let idx_var = Capture::new();
+        let pat = bool_not(int_cmp_any(op_var, any_int_const(n_var), var(idx_var)));
+        if let Some(m) = Matcher::new(fg).match_at(cmp_node, &pat) {
+            let inner = m.output(idx_var)?;
+            if same_value(graph, inner, idx_output) {
+                let op = m.get_int_cmp_op(op_var, fg)?;
+                if matches!(op, IntCmpOp::Less | IntCmpOp::Sless) {
+                    let n = u64::try_from(m.get_uint(n_var, fg)?).ok()?;
+                    return n.checked_add(1);
+                }
+            }
+        }
+    }
+
+    // Shape 2 (strict <):  IntCmp(idx, IntConst(N))  with Less/Sless.
     let op_var = Capture::new();
     let idx_var = Capture::new();
     let n_var = Capture::new();
@@ -648,8 +667,6 @@ fn bound_from_if_condition(
     match op {
         // idx < N (true) → bound = N.
         IntCmpOp::Less | IntCmpOp::Sless => Some(n),
-        // idx <= N (true) → bound = N + 1.
-        IntCmpOp::LessEqual | IntCmpOp::SlessEqual => n.checked_add(1),
         _ => None,
     }
 }

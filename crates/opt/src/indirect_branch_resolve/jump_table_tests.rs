@@ -670,15 +670,24 @@ fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
 
 #[test]
 fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
-    // idx <= 4 (taken-true) → bound = 5.
+    // `idx <= 4` (taken-true) → bound = 5.  pcode-lift lowers
+    // `IntLessEqual a, b` to `BoolNeg(IntLess(b, a))`, so the canonical
+    // shape of "idx <= 4" in this IR is `BoolNeg(IntLess(IntConst(4), idx))`.
+    // Build that shape directly here — the bound walker recognises it
+    // and returns `4 + 1 = 5`.
     let mut builder = FunctionBuilder::empty().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
     let idx = builder.build_int_const(0u64, NodeOutputType::U32).unwrap();
     let n = builder.build_int_const(4u64, NodeOutputType::U32).unwrap();
+    // BoolNeg(IntLess(n, idx)) — operand order is (n, idx) per the
+    // lift-time swap, mirroring `pcode_lift::handle_int_less_equal`.
+    let inner = builder
+        .build_int_cmp_operation(n, idx, IntCmpOp::Less, NodeOutputType::U32)
+        .unwrap();
     let cmp = builder
-        .build_int_cmp_operation(idx, n, IntCmpOp::LessEqual, NodeOutputType::U32)
+        .build_boolean_unary_operation(inner, ir::BoolUnaryOp::Neg)
         .unwrap();
     builder.build_indirect_branch(idx).unwrap();
     let g = builder.build().unwrap();

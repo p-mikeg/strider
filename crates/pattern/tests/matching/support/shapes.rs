@@ -46,6 +46,30 @@ pub fn int_cmp_5_3(op: IntCmpOp) -> BuiltFunctionGraph {
     t.ret_val(cast)
 }
 
+/// `return(5 <= 3)` built as the lowered shape `BoolNeg(IntLess(3, 5))`,
+/// matching the canonical form pcode-lift produces for `IntLessEqual`.
+pub fn int_le_lowered_5_3() -> BuiltFunctionGraph {
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
+    let lt = t.int_cmp(r, l, IntCmpOp::Less);
+    let neg = t.bool_un(lt, ir::BoolUnaryOp::Neg);
+    let cast = t.as_int(neg, NodeOutputType::U64);
+    t.ret_val(cast)
+}
+
+/// Signed analogue of [`int_le_lowered_5_3`]: `BoolNeg(IntSless(3, 5))`.
+pub fn int_sle_lowered_5_3() -> BuiltFunctionGraph {
+    let mut t = Tb::empty();
+    let l = t.u64(5);
+    let r = t.u64(3);
+    let lt = t.int_cmp(r, l, IntCmpOp::Sless);
+    let neg = t.bool_un(lt, ir::BoolUnaryOp::Neg);
+    let cast = t.as_int(neg, NodeOutputType::U64);
+    t.ret_val(cast)
+}
+
 pub fn bool_bin(l: bool, r: bool, op: BoolBinaryOp) -> BuiltFunctionGraph {
     let mut t = Tb::empty();
     let a = t.boolean(l);

@@ -306,6 +306,72 @@ fn lift_segment_op_recognised() {
     assert!(lifter.lift(&insn).unwrap());
 }
 
+// ── Lift-time canonicalisation shape checks ─────────────────────────────────
+//
+// `IntLessEqual` / `IntSlessEqual` are not primitives in this IR; they are
+// lowered to `BoolNeg(IntLess(b, a))` / `BoolNeg(IntSless(b, a))` at lift
+// time.  These tests assert the produced node shape so that any
+// regression (e.g. accidental round-trip back to a `LessEqual` variant
+// in some code path) fails immediately.
+
+use ir::BoolUnaryOp;
+use ir::IntCmpOp;
+use ir::node::NodeKind;
+
+/// Returns true if the graph contains at least one node of `target` kind.
+fn graph_has_kind(builder: &ir::FunctionBuilder, target: NodeKind) -> bool {
+    let body = builder.body();
+    body.graph.all_node_ids()
+        .any(|id| body.graph.node_kind(id) == &target)
+}
+
+#[test]
+fn lift_int_less_equal_lowers_to_boolneg_less() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntLessEqual,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(5, 4), const_vn(7, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    // Canonical shape: BoolUnaryOp::Neg over IntCmpOp::Less.
+    assert!(
+        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
+        "expected BoolUnaryOp::Neg in graph (the lowering wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Less)),
+        "expected IntCmpOp::Less in graph (the lowered cmp)"
+    );
+}
+
+#[test]
+fn lift_int_sless_equal_lowers_to_boolneg_sless() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntSlessEqual,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(5, 4), const_vn(7, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
+        "expected BoolUnaryOp::Neg in graph (the lowering wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
+        "expected IntCmpOp::Sless in graph (the lowered cmp)"
+    );
+}
+
 // ── Rejected opcodes (caller-handled control flow / store) ──────────────────
 
 #[test]

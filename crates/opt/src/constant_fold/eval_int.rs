@@ -156,9 +156,7 @@ pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
     Ok(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
-        IntCmpOp::LessEqual => l <= r,
         IntCmpOp::Sless => signed(l)? < signed(r)?,
-        IntCmpOp::SlessEqual => signed(l)? <= signed(r)?,
         IntCmpOp::Carry => {
             // Unsigned add overflow: l + r > type's max unsigned value.
             // For ty < U128 we can promote to u128 safely.  For U128, detect

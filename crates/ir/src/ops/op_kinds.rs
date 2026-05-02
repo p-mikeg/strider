@@ -32,17 +32,18 @@ pub enum IntCmpOp {
     Equal,
     /// Signed less-than: `(signed)l < (signed)r`.
     Sless,
-    /// Signed less-than-or-equal: `(signed)l <= (signed)r`.
-    SlessEqual,
     /// Unsigned less-than: `l < r`.  Also represents the unsigned borrow
     /// predicate `l - r < 0`: rsleigh's `IntLess` opcode is documented as
     /// "also indicates a borrow on unsigned subtraction" (see
     /// `rsleigh/src/ffi.rs` `IntLess = 15`), and an unsigned subtraction
     /// borrows iff the minuend is less than the subtrahend.  There is no
     /// separate `Borrow` variant.
+    ///
+    /// `LessEqual` and `SlessEqual` are not separate variants: the
+    /// pcode-lift dispatch lowers them at lift time to `BoolNeg(Less(b, a))`
+    /// and `BoolNeg(Sless(b, a))` respectively.  Patterns and passes see
+    /// the lowered shape directly.
     Less,
-    /// Unsigned less-than-or-equal: `l <= r`.
-    LessEqual,
     /// Unsigned carry: the addition `l + r` overflows the type's width.
     Carry,
     /// Signed carry (overflow): the addition `l + r` overflows the signed range.

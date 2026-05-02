@@ -3,9 +3,16 @@
 //! Covers `IntAdd`, `IntSub`, `IntMul`, `IntAnd`, `IntOr`, `IntXor`,
 //! `IntDiv`, `IntSdiv`, `IntRem`, `IntSrem`, `IntLeft`, `IntRight`,
 //! `IntSright`, `IntNeg`, `Int2Comp`, plus the comparison ops
-//! `IntEqual`, `IntLess`, `IntSless`, `IntLessEqual`, `IntSlessEqual`,
-//! `IntCarry`, `IntScarry`, `IntSborrow`, and `IntNotEqual` (lowered to
-//! `BoolNeg(IntEqual)`).
+//! `IntEqual`, `IntLess`, `IntSless`, `IntCarry`, `IntScarry`,
+//! `IntSborrow`, and three lowered-at-lift forms:
+//!
+//! - `IntNotEqual` → `BoolNeg(IntEqual)`
+//! - `IntLessEqual(a, b)` → `BoolNeg(IntLess(b, a))`
+//! - `IntSlessEqual(a, b)` → `BoolNeg(IntSless(b, a))`
+//!
+//! These three lowerings shrink `IntCmpOp` to its primitive predicates;
+//! patterns and passes see one canonical shape per predicate instead of
+//! redundant operand-swap-inverse pairs.
 //!
 //! Cast / slice / extract / popcount / lzcount / piece / insert / ptr_*
 //! handlers live in [`super::cast`] (they manipulate bit positions
@@ -85,5 +92,48 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .builder
             .build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
         self.write_vn(out_vn, neq)
+    }
+
+    /// Lowers `IntLessEqual(a, b)` to `BoolNeg(IntLess(b, a))`.
+    ///
+    /// Operand swap + boolean-negate: `a <= b` iff not(`b < a`).  Removes
+    /// the redundant `IntCmpOp::LessEqual` variant — patterns and passes
+    /// see one canonical shape (`Less` plus an optional `BoolNeg`) instead
+    /// of two.
+    pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let lt = self.builder.build_int_cmp_operation(
+            rhs,
+            lhs,
+            IntCmpOp::Less,
+            insn.inputs[0].size.try_into()?,
+        )?;
+        let le = self
+            .builder
+            .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
+        self.write_vn(out_vn, le)
+    }
+
+    /// Lowers `IntSlessEqual(a, b)` to `BoolNeg(IntSless(b, a))`.
+    ///
+    /// Signed analogue of [`Self::handle_int_less_equal`].  Same operand
+    /// swap, same `BoolNeg` wrap, but with `IntCmpOp::Sless` for signed
+    /// comparison.
+    pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let lt = self.builder.build_int_cmp_operation(
+            rhs,
+            lhs,
+            IntCmpOp::Sless,
+            insn.inputs[0].size.try_into()?,
+        )?;
+        let le = self
+            .builder
+            .build_boolean_unary_operation(lt, BoolUnaryOp::Neg)?;
+        self.write_vn(out_vn, le)
     }
 }
