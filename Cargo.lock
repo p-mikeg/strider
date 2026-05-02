@@ -1183,6 +1183,7 @@ dependencies = [
  "reader",
  "rsleigh",
  "target",
+ "thiserror",
 ]
 
 [[package]]

@@ -15,10 +15,11 @@ create_exception!(strider.errors, LiftError, StriderError);
 create_exception!(strider.errors, ReaderError, StriderError);
 create_exception!(strider.errors, PatternError, StriderError);
 create_exception!(strider.errors, RewriteError, StriderError);
+create_exception!(strider.errors, UnresolvedIndirectBranchError, StriderError);
 
-/// Convert an `anyhow::Error` into a generic `StriderError`. Use the
-/// boundary-specific `into_*_err` helpers below when you know which
-/// stage raised the error.
+/// Convert an `anyhow::Error` into the most specific `StriderError`
+/// subclass we can recover from its typed inner error.  Falls back to
+/// the generic `StriderError` when the inner error is opaque.
 ///
 /// Formatted with `{:?}` (Debug) so the anyhow Caused-by chain is in
 /// the exception message; under `RUST_BACKTRACE=1` the Rust backtrace
@@ -27,6 +28,9 @@ create_exception!(strider.errors, RewriteError, StriderError);
 /// error link.
 #[allow(dead_code)]
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
+    if e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some() {
+        return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
+    }
     StriderError::new_err(format!("{e:?}"))
 }
 
@@ -58,6 +62,10 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ReaderError", py.get_type_bound::<ReaderError>())?;
     m.add("PatternError", py.get_type_bound::<PatternError>())?;
     m.add("RewriteError", py.get_type_bound::<RewriteError>())?;
+    m.add(
+        "UnresolvedIndirectBranchError",
+        py.get_type_bound::<UnresolvedIndirectBranchError>(),
+    )?;
     parent.add_submodule(&m)?;
     parent.add("StriderError", py.get_type_bound::<StriderError>())?;
     // Allow `from strider import errors` and `from strider.errors import X`.

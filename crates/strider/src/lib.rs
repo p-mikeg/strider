@@ -33,11 +33,13 @@
 //!   the optimiser pipeline, and resolves indirect branches via the
 //!   tier-2 fixed-point loop
 
+mod errors;
 mod orchestrator;
 mod strider;
 pub mod indirect_resolve;
 pub mod rewrite;
 
+pub use errors::UnresolvedIndirectBranch;
 pub use orchestrator::{run, RunConfig};
 pub use rewrite::GraphRewriter;
 pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};

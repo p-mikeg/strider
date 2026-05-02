@@ -1,3 +1,5 @@
+use rustc_hash::FxHashSet;
+
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
@@ -17,9 +19,20 @@ mod tests;
 /// * The **live** control output (`ctrl_true` when `b=true`, `ctrl_false` when
 ///   `b=false`) is replaced with `ctrl_in` so the successor region receives
 ///   control directly without going through the `If`.
-/// * The **dead** control output is removed from the successor `ControlState`'s
-///   input list, and the corresponding position is also removed from every
-///   `VarPhi` node of that region.
+/// * When the dead-branch subgraph is self-contained (no data outputs flow
+///   to live consumers), the **dead** control output is removed from the
+///   successor `ControlState`'s input list, the corresponding position is
+///   removed from every `VarPhi` of that region, and the If's own inputs
+///   are detached so the outer fixed-point loop stops re-visiting it.
+/// * When the dead-branch subgraph escapes (e.g. a dead `Call`'s
+///   `mem_out` flows into the join's `MemPhi`), the dead branch is left
+///   wired untouched.  Detaching the If or stripping its `ControlState`
+///   predecessor would create zero-input zombies that the walker
+///   re-reaches through backward-data from the live consumers, breaking
+///   Layer A / Layer C invariants.  `RedundantPhis` is responsible for
+///   tearing the live ↔ dead data edges apart on subsequent iterations;
+///   a later DBE pass then sees a non-escaping subgraph and finishes
+///   the job.
 ///
 /// After this pass, dead `ControlState` nodes end up with zero control inputs
 /// and `VarPhi` nodes with a single value input; `RedundantPhis` then
@@ -54,63 +67,175 @@ fn try_eliminate_dead_branch(
         (ctrl_false, ctrl_true)
     };
 
-    // ── Step 1: collect dead-ctrl uses before any mutation ────────────────────
-    // Each use is (ControlState node, input_index_in_that_node).  Removals at
-    // different consumers don't interact (each `remove_node_input` only shifts
-    // its own consumer's later indices), and the `dead_idx < cs_len` guard in
-    // step 3 catches any per-consumer index that was already shifted by an
-    // earlier removal.  No sort needed.
+    // Snapshot the dead- and live-side state BEFORE any mutation so we can
+    // decide whether work is left to do this iteration.  Each `dead_uses`
+    // entry is `(consumer_node, input_index)`.
     let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
+    let live_uses_count = fg.graph.output_uses(live_ctrl).count();
 
-    // ── Step 2: replace live ctrl with ctrl_in (bypass the If) ───────────────
+    // Detaching the If's inputs (the old "Step 4") severs the only edge
+    // keeping the now-folded If attached to the live walk.  That's normally
+    // exactly what we want — the outer pipeline stops revisiting the If on
+    // every iteration.  But when the dead-branch subgraph has data outputs
+    // consumed by *live* nodes (e.g. a dead `Call`'s `mem_out` flowing into
+    // the join's `MemPhi`), backward-data from those live consumers walks
+    // back into the dead subgraph and reaches the now-zero-input If, which
+    // makes the validator's Layer A check fire `expected: 2, actual: 0`
+    // (see `dead_branch_with_non_control_state_dead_consumer`).
+    //
+    // To stay correct in both cases: forward-control walk the dead subgraph
+    // starting from each non-CS dead consumer, then check whether any data
+    // output of that subgraph escapes to a node *outside* it.  If yes, leave
+    // the If's inputs intact (`RedundantPhis` will pull the live ↔ dead data
+    // edges apart on subsequent iterations as joins collapse, then a later
+    // DBE iteration will be free to detach).  If no, the dead subgraph is
+    // self-contained and detaching is safe.
+    let dead_subgraph = collect_dead_subgraph(fg, &dead_uses);
+    let dead_subgraph_escapes = dead_subgraph_has_live_data_consumer(fg, &dead_subgraph);
+
+    // Idempotency:
+    //   * `live_uses_count == 0` ⇒ live side already rewired.
+    //   * Either there's no dead-side work to do (`dead_uses` empty or every
+    //     CS already stripped), or the dead subgraph escapes — in which
+    //     case we deliberately won't strip / detach this iteration so
+    //     re-visiting can't make further progress.
+    if live_uses_count == 0
+        && (dead_uses.is_empty() || dead_subgraph_escapes || dead_uses_all_zero_input(fg, &dead_uses))
+    {
+        return Ok(OptimizationResult::NoChange);
+    }
+
+    // ── Step 1: replace live ctrl with ctrl_in (bypass the If) ───────────────
     fg.graph.replace_all_uses(live_ctrl, ctrl_in)?;
 
-    // ── Step 3: remove dead ctrl inputs from successor ControlState(s) ───────
-    for (cs_node, dead_idx) in dead_uses {
-        if !matches!(*fg.graph.node_kind(cs_node), NodeKind::ControlState) {
-            continue; // Unexpected consumer kind; skip safely.
-        }
+    // The dead-side cleanup is **all-or-nothing** based on whether the dead
+    // subgraph escapes.  When it doesn't escape we strip every CS predecessor
+    // slot and detach the If; the resulting zero-input zombies are
+    // unreachable from the live walk, so the validator never sees them.
+    //
+    // When it *does* escape (the kernel-bug case: a dead `Call`'s `mem_out`
+    // flows into the join's `MemPhi`), we leave every dead `ControlState`'s
+    // input alone and leave the If attached.  Stripping would create
+    // zero-input `ControlState`s that the walker still reaches through
+    // backward-data from a live `MemPhi` → dead `Call` → dead phi token,
+    // tripping Layer C's `EmptyControlStatePredecessors` check.  Letting
+    // `RedundantPhis` collapse the live join's phis on subsequent iterations
+    // tears the live ↔ dead data edges apart; once they're gone a future
+    // DBE iteration sees a non-escaping subgraph and finishes the job.
+    if !dead_subgraph_escapes {
+        for (cs_node, dead_idx) in &dead_uses {
+            let cs_node = *cs_node;
+            let dead_idx = *dead_idx;
+            if !matches!(*fg.graph.node_kind(cs_node), NodeKind::ControlState) {
+                continue;
+            }
 
-        // ControlState outputs: [ctrl_out, phi_out].
-        let cs_outputs = fg.graph.node_outputs(cs_node);
-        if cs_outputs.len() < 2 {
-            continue;
-        }
-        let cs_phi_out = cs_outputs[1];
+            // ControlState outputs: [ctrl_out, phi_out].
+            let cs_outputs = fg.graph.node_outputs(cs_node);
+            if cs_outputs.len() < 2 {
+                continue;
+            }
+            let cs_phi_out = cs_outputs[1];
 
-        // Collect VarPhi nodes that consume the phi token before we mutate.
-        let phi_nodes: Vec<NodeId> = fg
-            .graph
-            .output_uses(cs_phi_out)
-            .map(|(phi, _)| phi)
-            .collect();
+            // Collect VarPhi nodes that consume the phi token before we mutate.
+            let phi_nodes: Vec<NodeId> = fg
+                .graph
+                .output_uses(cs_phi_out)
+                .map(|(phi, _)| phi)
+                .collect();
 
-        // Remove the dead variable-value input from each VarPhi.
-        // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
-        // So the variable value for predecessor at ControlState index `dead_idx`
-        // lives at VarPhi index `dead_idx + 1`.
-        let phi_input_idx = dead_idx + 1;
-        for phi_node in phi_nodes {
-            let phi_len = fg.graph.node_inputs(phi_node).len() as u32;
-            if phi_input_idx < phi_len {
-                fg.graph.remove_node_input(phi_node, phi_input_idx)?;
+            // Remove the dead variable-value input from each VarPhi.
+            // VarPhi inputs: [phi_token, val_from_pred0, val_from_pred1, …]
+            // So the variable value for predecessor at ControlState index
+            // `dead_idx` lives at VarPhi index `dead_idx + 1`.  Removals at
+            // different consumers don't interact (each `remove_node_input`
+            // only shifts its own later indices), and the
+            // `phi_input_idx < phi_len` / `dead_idx < cs_len` guards catch
+            // per-consumer indices already shifted by an earlier removal.
+            let phi_input_idx = dead_idx + 1;
+            for phi_node in phi_nodes {
+                let phi_len = fg.graph.node_inputs(phi_node).len() as u32;
+                if phi_input_idx < phi_len {
+                    fg.graph.remove_node_input(phi_node, phi_input_idx)?;
+                }
+            }
+
+            let cs_len = fg.graph.node_inputs(cs_node).len() as u32;
+            if dead_idx < cs_len {
+                fg.graph.remove_node_input(cs_node, dead_idx)?;
             }
         }
 
-        // Remove the dead ctrl input from the ControlState itself.
-        let cs_len = fg.graph.node_inputs(cs_node).len() as u32;
-        if dead_idx < cs_len {
-            fg.graph.remove_node_input(cs_node, dead_idx)?;
-        }
+        fg.graph.detach_node_inputs(node_id);
     }
 
-    // ── Step 4: detach the If's own inputs so the pre-order walker no longer
-    // reaches it via `ctrl_in`. Without this the fixed-point loop would spin
-    // forever: the If's outputs have no users but its inputs still tie it to
-    // the reachable subgraph, so the walker re-visits it on every iteration.
-    fg.graph.detach_node_inputs(node_id);
-
     Ok(OptimizationResult::Changed)
+}
+
+/// Returns `true` if every CS-typed dead consumer in `dead_uses` already
+/// has zero inputs — i.e. a previous DBE iteration already stripped them.
+/// Used by the idempotency check to avoid spinning the outer pipeline loop.
+fn dead_uses_all_zero_input(
+    fg: &BuiltFunctionGraph,
+    dead_uses: &[(NodeId, u32)],
+) -> bool {
+    dead_uses.iter().all(|(n, _)| {
+        !matches!(*fg.graph.node_kind(*n), NodeKind::ControlState)
+            || fg.graph.node_inputs(*n).is_empty()
+    })
+}
+
+/// Forward-control walk from each non-`ControlState` dead consumer to
+/// collect every node that lies in the dead subgraph downstream of the If.
+/// `ControlState`s mark merge points and are *not* recursed through — they
+/// are part of the "boundary" where dead and live control flow can rejoin.
+fn collect_dead_subgraph(
+    fg: &BuiltFunctionGraph,
+    dead_uses: &[(NodeId, u32)],
+) -> FxHashSet<NodeId> {
+    let mut subgraph = FxHashSet::default();
+    let mut worklist: Vec<NodeId> = dead_uses
+        .iter()
+        .filter(|(n, _)| !matches!(*fg.graph.node_kind(*n), NodeKind::ControlState))
+        .map(|(n, _)| *n)
+        .collect();
+    while let Some(node) = worklist.pop() {
+        if !subgraph.insert(node) {
+            continue;
+        }
+        for output in fg.graph.node_outputs(node) {
+            if !fg.graph.output_kind(output).is_control() {
+                continue;
+            }
+            for (consumer, _) in fg.graph.output_uses(output) {
+                if matches!(*fg.graph.node_kind(consumer), NodeKind::ControlState) {
+                    continue; // Boundary — don't walk past joins.
+                }
+                worklist.push(consumer);
+            }
+        }
+    }
+    subgraph
+}
+
+/// True iff some node in `subgraph` has a non-Control output consumed by a
+/// node *outside* `subgraph`.  When true, detaching the If would leave the
+/// dead subgraph reachable through backward-data from those live consumers
+/// and the still-attached If would fail Layer A's input-count check.
+fn dead_subgraph_has_live_data_consumer(
+    fg: &BuiltFunctionGraph,
+    subgraph: &FxHashSet<NodeId>,
+) -> bool {
+    subgraph.iter().any(|&node| {
+        fg.graph.node_outputs(node).into_iter().any(|out| {
+            if fg.graph.output_kind(out).is_control() {
+                return false;
+            }
+            fg.graph
+                .output_uses(out)
+                .any(|(consumer, _)| !subgraph.contains(&consumer))
+        })
+    })
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────

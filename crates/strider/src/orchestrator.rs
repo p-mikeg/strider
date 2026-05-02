@@ -47,6 +47,7 @@ use cfg::{Builder, Cfg, DecodeCache, OptionsBuilder, PcodeInsnAddr, ResolvedTarg
 use ir::node::{NodeId, NodeOutputId};
 use opt::ReadOnlyMemory;
 
+use crate::errors::UnresolvedIndirectBranch;
 use crate::indirect_resolve::{
     apply_link_register, apply_tail_call, classify_anchor_with_rom_and_sp,
 };
@@ -332,7 +333,7 @@ where
                     Some(*addr)
                 }
             }) {
-                bail!("indirect branch at {addr:?} could not be resolved at fixed point");
+                return Err(UnresolvedIndirectBranch { addr }.into());
             }
             return Ok(Decision::FixedPoint);
         }

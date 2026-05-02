@@ -239,6 +239,101 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     Ok(())
 }
 
+/// Regression: when an `If`'s dead control output is consumed *directly*
+/// by a non-`ControlState` node (e.g. a `CallOther` that lost its
+/// intermediate `ControlState` after `RedundantPhis` collapsed it), DBE
+/// must not detach the `If`'s inputs and leave it as a 0-input zombie
+/// reachable from the live graph via backward-data.
+///
+/// Shape under test:
+///
+///   entry ─┐
+///          ▼
+///         If(BoolConst(false))
+///         ├── ctrl_true (dead) ──────► CallOther.ctrl_in   ◄── via surgery
+///         └── ctrl_false (live) ─► CS_false ─► branch ─► join_CS ─► Return
+///                                                 ▲
+///                                  CallOther.ctrl_out (in true_r) wires here
+///
+/// Before the fix, DBE would:
+///   1. replace `ctrl_false` with `ctrl_in` (live rewire),
+///   2. skip the `CallOther` consumer of `ctrl_true` (Step 3 only handles
+///      `ControlState`),
+///   3. detach the `If`'s own inputs (Step 4),
+/// leaving the `If` with 0 inputs.  The walker then re-reached the `If`
+/// via `join_CS → CallOther → ctrl_true → If` (backward-data), so the
+/// validator complained `node N has 0 inputs, expected 2`.
+///
+/// The fix drops Step 4 and instead returns `NoChange` when no real work
+/// is left, keeping the `If`'s inputs intact and letting the dead-branch
+/// subgraph stay as a structurally-valid zombie until the join's
+/// `MemPhi` collapses through `RedundantPhis`.
+#[test]
+fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
+    let mut fg = {
+        let mut b = FunctionBuilder::empty()?;
+        let entry = b.create_region()?;
+        let true_r = b.create_region()?;
+        let false_r = b.create_region()?;
+        let join = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        b.set_region(entry);
+        let cond = b.build_boolean_const(false);
+        b.build_if(cond, true_r, false_r)?;
+
+        b.set_region(true_r);
+        let _ = b.build_call_other(0, &[], None)?;
+        b.build_branch(join)?;
+
+        b.set_region(false_r);
+        b.build_branch(join)?;
+
+        b.set_region(join);
+        b.build_return(None, &[])?;
+        b.build()?
+    };
+
+    // Surgery: rewire the CallOther's ctrl input from CS_true.ctrl_out to
+    // the If's dead_ctrl (= ctrl_true) directly, simulating the shape
+    // RedundantPhis produces when it collapses an intermediate
+    // single-predecessor ControlState.
+    let if_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let if_outputs = fg.graph.node_outputs(if_node);
+    let dead_ctrl = if_outputs[0]; // ctrl_true (cond=false → dead is true)
+
+    let call_other = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::CallOther { .. }))
+        .expect("CallOther node");
+
+    let call_ctrl_input_id = fg.graph.node_input_id_at(call_other, 0)?;
+    fg.graph.update_input(call_ctrl_input_id, dead_ctrl);
+
+    // Run DBE in isolation, then validate.  Before the fix DBE detached
+    // the If's inputs (Step 4) but left the non-CS dead consumer wired
+    // to `dead_ctrl`, so the validator's reachability walk visited the
+    // now-zero-input If via backward-data and reported
+    // `NodeInputCountMismatch { expected: 2, actual: 0 }`.
+    DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
+    ir::validate::validate(&fg.graph, fg.entry)
+        .map_err(|e| anyhow::anyhow!("post-DBE validation failed: {e:?}"))?;
+
+    // The If retains its [ctrl_in, cond] inputs; downstream cleanup
+    // (MemPhi/VarPhi collapse + detach_unreachable) is responsible for
+    // removing the dead-branch subgraph entirely, not DBE.
+    let if_inputs = fg.graph.node_inputs(if_node);
+    assert_eq!(
+        if_inputs.len(),
+        2,
+        "If must retain its [ctrl_in, cond] inputs"
+    );
+    Ok(())
+}
+
 /// A VarPhi at a 2-input join — when the dead branch is removed, the
 /// phi must lose exactly one input slot (the dead position).
 #[test]
