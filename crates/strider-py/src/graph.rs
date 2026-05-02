@@ -251,6 +251,77 @@ impl PyGraph {
         Ok(out)
     }
 
+    /// Run multiple patterns and intersect their matches on shared
+    /// `Capture` objects.  Returns one tuple per joined match — each
+    /// tuple holds one `Match` per input pattern (in input order),
+    /// where every `Capture` appearing in more than one pattern binds
+    /// to the same node (and value output, when applicable) across
+    /// every pattern in which it appears.
+    ///
+    /// Use case: `find K and shared such that store(<shared>+K, 0)
+    /// AND call(at=F).arg(0, <shared>) both match with the same
+    /// <shared> binding`.  Today an equivalent query requires
+    /// post-filtering the cross-product of two `find_all` calls in
+    /// Python; this routes it to the matcher in one pass with
+    /// shared-capture filtering done at the binding level.
+    ///
+    /// Edge cases:
+    ///
+    /// * Empty `pats` → empty list.
+    /// * Single pattern → equivalent to wrapping each `find_all` hit
+    ///   in a one-element tuple.
+    /// * Any pattern with zero matches → empty result.
+    ///
+    /// The matcher walk-through flags (`ignore_casts`,
+    /// `ignore_casts_mask`, `ignore_control_states`) apply uniformly
+    /// to every pattern, mirroring `find_all`.
+    #[pyo3(signature = (pats, ignore_casts=false, ignore_control_states=false, ignore_casts_mask=None))]
+    fn find_all_requirements(
+        slf: Py<Self>,
+        py: Python<'_>,
+        pats: Vec<crate::pattern::PatLike<'_>>,
+        ignore_casts: bool,
+        ignore_control_states: bool,
+        ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+    ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
+        if ignore_casts && ignore_casts_mask.is_some() {
+            return Err(crate::errors::into_pattern_err(anyhow::anyhow!(
+                "find_all_requirements: pass either ignore_casts=True or ignore_casts_mask=...; not both"
+            )));
+        }
+        let mut owned: Vec<pattern::Pat> = Vec::with_capacity(pats.len());
+        for p in pats {
+            owned.push(p.into_pat()?);
+        }
+        let pat_refs: Vec<&pattern::Pat> = owned.iter().collect();
+        let g_borrow = slf.borrow(py);
+        let graph_guard = g_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
+        let mut matcher = pattern::Matcher::new(&graph_guard);
+        if ignore_casts {
+            matcher = matcher.ignore_casts();
+        } else if let Some(m) = ignore_casts_mask {
+            matcher = matcher.ignore_casts_mask(m.inner);
+        }
+        if ignore_control_states {
+            matcher = matcher.ignore_control_states();
+        }
+        let raw = matcher.find_all_requirements(&pat_refs);
+        drop(graph_guard);
+        drop(g_borrow);
+        let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());
+        for tuple in raw {
+            let mut py_tuple: Vec<crate::matcher::PyMatch> = Vec::with_capacity(tuple.len());
+            for m in tuple {
+                py_tuple.push(crate::matcher::PyMatch {
+                    inner: m,
+                    graph: slf.clone_ref(py),
+                });
+            }
+            out.push(py_tuple);
+        }
+        Ok(out)
+    }
+
     /// Apply a single `find → replace` rewrite rule across the graph.
     /// Returns the number of times the rule fired.  Both `find` and
     /// `replace` accept `PatLike` (so e.g.

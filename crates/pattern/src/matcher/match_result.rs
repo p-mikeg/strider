@@ -16,6 +16,7 @@ use super::bindings::Bindings;
 /// Provides access to the captured variable bindings and convenience helpers
 /// for reading constant values and op-variant discriminants from each
 /// captured node.
+#[derive(Clone)]
 pub struct Match {
     pub(super) root: NodeId,
     pub(super) bindings: Bindings,

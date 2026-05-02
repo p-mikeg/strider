@@ -120,6 +120,14 @@ impl Bindings {
         self.get_binding(c).map(|b| b.node)
     }
 
+    /// Iterates over every `(Capture, Binding)` recorded by this match.
+    /// Used by [`crate::Matcher::find_all_requirements`] to compute cross-pattern
+    /// shared-capture agreement.  Order is the order bindings were
+    /// appended during matching (preorder of the pattern tree).
+    pub fn iter(&self) -> impl Iterator<Item = (Capture, Binding)> + '_ {
+        self.entries.iter().map(|(c, b)| (*c, *b))
+    }
+
     // ── Typed extractors ──────────────────────────────────────────────
     //
     // These read the constant value or op variant that the bound node

@@ -347,6 +347,82 @@ impl<'g> Matcher<'g> {
         results
     }
 
+    /// Run several patterns over the graph and return only the joined
+    /// matches where every [`Capture`] appearing in more than one
+    /// pattern binds to the same node (and value output, when
+    /// applicable) across every pattern in which it appears.
+    ///
+    /// Use case: a pattern set "A(K) ∧ B(K)" where A and B share a
+    /// capture that must point at the *same* IR node — e.g. find a
+    /// `K` such that both `store(<base>+K, 0)` and
+    /// `call(at=F).arg(0, <base>)` match with the same `<base>`
+    /// binding.  Each pattern is matched independently, then a
+    /// cross-product is filtered to those tuples whose shared
+    /// captures agree.
+    ///
+    /// # Returns
+    ///
+    /// Outer index — one entry per joined-match tuple.  Inner index —
+    /// one [`Match`] per input pattern, in input order.  Every inner
+    /// `Match` in a given tuple agrees with the others on every
+    /// shared capture's [`crate::matcher::bindings::Binding`].
+    ///
+    /// # Edge cases
+    ///
+    /// * Empty `pats` slice → empty outer Vec.
+    /// * Single pattern → equivalent to wrapping each
+    ///   [`Self::find_all`] hit in a one-element inner Vec (no join
+    ///   work, no shared-capture filter — every capture is local).
+    /// * Any pattern with zero matches makes the joined result
+    ///   empty — nothing to cross-product against.
+    ///
+    /// # Complexity
+    ///
+    /// O(N₁ × N₂ × … × N_M) worst case where N_i is the number of
+    /// matches for pattern i.  Each cross-product term incurs a
+    /// linear binding-overlap scan against the partial tuple.  For
+    /// typical patterns the shared-capture filter prunes the
+    /// cross-product aggressively, so real-world performance is
+    /// closer to O(N_max).
+    pub fn find_all_requirements(&self, pats: &[&Pat]) -> Vec<Vec<Match>> {
+        if pats.is_empty() {
+            return Vec::new();
+        }
+        let per_pat = self.find_all_multi(pats);
+        if per_pat.iter().any(|hits| hits.is_empty()) {
+            return Vec::new();
+        }
+
+        // Seed the accumulator with single-element tuples from the
+        // first pattern's hits.
+        let mut acc: Vec<Vec<Match>> = per_pat[0]
+            .iter()
+            .cloned()
+            .map(|m| vec![m])
+            .collect();
+
+        // Incrementally cross-product with each subsequent pattern's
+        // matches, filtering on shared-capture agreement against the
+        // accumulated prefix.
+        for next in per_pat.iter().skip(1) {
+            let mut new_acc: Vec<Vec<Match>> = Vec::new();
+            for prefix in &acc {
+                for m in next {
+                    if prefix_agrees(prefix, m) {
+                        let mut joined: Vec<Match> = prefix.clone();
+                        joined.push(m.clone());
+                        new_acc.push(joined);
+                    }
+                }
+            }
+            acc = new_acc;
+            if acc.is_empty() {
+                break;
+            }
+        }
+        acc
+    }
+
     /// Try to match `pat` against the subgraph rooted at `node`.  Returns the
     /// successful [`Match`] (with bindings) if the match succeeds, `None`
     /// otherwise.
@@ -540,4 +616,24 @@ impl<'g> Matcher<'g> {
 
         false
     }
+}
+
+/// True when every capture in `m`'s bindings that also appears in any
+/// previously-collected match in `prefix` binds to the same
+/// [`crate::matcher::bindings::Binding`].  Helper for
+/// [`Matcher::find_all_requirements`].
+///
+/// Captures local to `m` (not seen in `prefix`) impose no constraint —
+/// they are unique to this pattern and join-trivial.
+fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
+    for prev in prefix {
+        for (cap, prev_binding) in prev.bindings.iter() {
+            if let Some(m_binding) = m.bindings.get_binding(cap)
+                && prev_binding != m_binding
+            {
+                return false;
+            }
+        }
+    }
+    true
 }

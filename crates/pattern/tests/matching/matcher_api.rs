@@ -652,3 +652,141 @@ fn find_all_multi_mixed_concrete_and_wildcard() {
     assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add)));
     assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild)));
 }
+
+// ── find_all_requirements: shared-capture cross-pattern intersection ──────────────
+
+/// Empty pattern slice returns an empty result Vec.  Mirrors
+/// `find_all_multi_empty_input` for the requirements-join variant.
+#[test]
+fn find_all_requirements_empty_input() {
+    let g = shapes::add_consts(2, 3);
+    let m = Matcher::new(&g);
+    let results = m.find_all_requirements(&[]);
+    assert!(results.is_empty(), "empty pat slice → empty req result");
+}
+
+/// Single-pattern call degenerates to wrapping each `find_all` hit in
+/// a single-element inner Vec.  No cross-pattern join to perform.
+#[test]
+fn find_all_requirements_single_pattern_equivalent_to_find_all() {
+    let g = shapes::add_consts(2, 3);
+    let m = Matcher::new(&g);
+    let p: Pat = add(any(), any()).into();
+    let req = m.find_all_requirements(&[&p]);
+    let direct = m.find_all(&p);
+    assert_eq!(req.len(), direct.len());
+    for (mr, dr) in req.iter().zip(direct.iter()) {
+        assert_eq!(mr.len(), 1);
+        assert_eq!(mr[0].root(), dr.root());
+    }
+}
+
+/// If any input pattern has zero matches, the joined result is empty
+/// (no cross-product term can satisfy the join).
+#[test]
+fn find_all_requirements_no_matches_for_a_pattern_yields_empty() {
+    let g = shapes::add_consts(2, 3);
+    let m = Matcher::new(&g);
+    let p_add: Pat = add(any(), any()).into();
+    let p_call: Pat = call().into(); // no Call in this graph
+    let req = m.find_all_requirements(&[&p_add, &p_call]);
+    assert!(req.is_empty());
+}
+
+/// The headline shape: two patterns share a `Capture` and we only want
+/// joined matches where the shared capture binds to the same `NodeId`
+/// in both.
+///
+/// Synthetic graph (a, b are distinct IntConst bases):
+///
+/// ```text
+/// store(a + 8, 0)
+/// store(b + 16, 0)
+/// store(a + 24, 99)   ← only `a` has both a `_, 0` and a `_, 99` store
+/// ```
+///
+/// Query: `store(<shared> + K, 0)` ∧ `store(<shared> + _, 99)`.
+/// Joined result must be exactly one — the `a`-keyed pair where K = 8.
+#[test]
+fn find_all_requirements_intersects_on_shared_capture_node_id() {
+    let mut t = Tb::empty();
+    let a = t.u64(0xAAAA);
+    let b = t.u64(0xBBBB);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let off24 = t.u64(24);
+    let zero = t.u64(0);
+    let v99 = t.u64(99);
+    let addr_a8 = t.add(a, off8);
+    let addr_b16 = t.add(b, off16);
+    let addr_a24 = t.add(a, off24);
+    t.store_ram(addr_a8, zero);
+    t.store_ram(addr_b16, zero);
+    t.store_ram(addr_a24, v99);
+    let g = t.ret_nothing();
+
+    let mr = Matcher::new(&g);
+    let shared = Capture::new();
+    let k = Capture::new();
+    let p_zero: Pat = store()
+        .addr(add(var(shared), any_int_const(k)).ordered())
+        .data(int_const(0))
+        .into();
+    let p_99: Pat = store()
+        .addr(add(var(shared), any_int_const(Capture::new())).ordered())
+        .data(int_const(99))
+        .into();
+
+    let req = mr.find_all_requirements(&[&p_zero, &p_99]);
+    assert_eq!(
+        req.len(),
+        1,
+        "expected exactly one joined match where shared agrees; got {}",
+        req.len()
+    );
+    let inner = &req[0];
+    assert_eq!(inner.len(), 2, "two patterns ⇒ two matches per joined result");
+
+    // Shared capture must agree across both inner matches.
+    let s1 = inner[0].node(shared).expect("shared bound in pat[0]");
+    let s2 = inner[1].node(shared).expect("shared bound in pat[1]");
+    assert_eq!(s1, s2, "find_all_requirements must filter to shared-capture agreement");
+
+    // K from pat[0] must be 8 — the only `_,0` store whose base is `a`.
+    let k_val = inner[0].get_uint(k, &g).expect("K bound");
+    assert_eq!(k_val, 8);
+}
+
+/// When the shared-capture bindings disagree across patterns, the
+/// joined result is empty.  Two patterns each match exactly one site,
+/// but on different bases.
+#[test]
+fn find_all_requirements_disagreement_on_shared_capture_yields_empty() {
+    let mut t = Tb::empty();
+    let a = t.u64(0xAAAA);
+    let b = t.u64(0xBBBB);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let zero = t.u64(0);
+    let addr_a8 = t.add(a, off8);
+    let addr_b16 = t.add(b, off16);
+    t.store_ram(addr_a8, zero);
+    t.store_ram(addr_b16, zero);
+    let g = t.ret_nothing();
+
+    let mr = Matcher::new(&g);
+    let shared = Capture::new();
+    let p_8: Pat = store()
+        .addr(add(var(shared), int_const(8u64)).ordered())
+        .data(int_const(0))
+        .into();
+    let p_16: Pat = store()
+        .addr(add(var(shared), int_const(16u64)).ordered())
+        .data(int_const(0))
+        .into();
+    let req = mr.find_all_requirements(&[&p_8, &p_16]);
+    assert!(
+        req.is_empty(),
+        "shared capture binds to a vs b — no agreement, no result"
+    );
+}
