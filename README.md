@@ -44,7 +44,7 @@ dot   (visualization)
 | `opt` | IR optimization passes (see below) |
 | `pattern` | IR graph pattern matching with named captures |
 | `dot` | Renders CFG and IR graphs to `.dot` / `.html` for visualization |
-| `strider-py` *(planned)* | Python bindings — the primary user-facing query interface |
+| `strider-py` | Python bindings — the primary user-facing query interface (PyO3 + maturin, abi3-py39) |
 
 ---
 
@@ -59,6 +59,11 @@ The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeli
 | `RedundantPhis` | Eliminates `ControlPhi` and `MemPhi` nodes and `ControlState` nodes that have only one reachable predecessor. Detaches inputs of CFG-unreachable nodes. |
 | `DeadBranchElimination` | Removes `If` nodes whose condition is a compile-time boolean. Strips the dead control edge from successor nodes. Works together with `RedundantPhis`. |
 | `LoadReadOnly` | Resolves `Load` nodes with a constant address into constants by reading from a caller-supplied read-only memory region (e.g. `.rodata`, `.text`). |
+| `StackStoreDetect` | Converts `Store(InitialVar(SP) + K, …)` into a dedicated `StackStore { offset: K }` (or `StackStorePhi` at join points), with per-predecessor offsets in a side table. |
+| `StackLoadForward` | Forwards values from `StackStore`s to subsequent same-offset `Load`s, eliminating the round-trip through memory. |
+| `IndirectBranchResolve` | Producer-shape classifier for `BranchIndirect` placeholders — recognises link-register returns, tail calls, jump tables, and stack-array dispatch. |
+| `CallStackArgCollect` *(post-pass)* | Collects positional stack arguments at `Call` sites using the calling convention's stack-arg offsets. |
+| `FunctionArgDetect` *(post-pass)* | Canonicalises register- and stack-passed argument reads at the function boundary into `FunctionArg` nodes, so patterns can match on argument position. |
 
 ---
 
@@ -80,44 +85,94 @@ cargo clippy --workspace
 
 ---
 
-## Python API *(planned)*
+## Python API
 
-`strider-py` will be the primary interface. You write patterns in Python with named captures; strider evaluates them over the lifted IR and hands back the matched values.
+`strider-py` is the primary interface. You write patterns in Python with named captures; strider evaluates them over the lifted IR and hands back the matched values.
 
-Patterns can express any question about a function's behavior — memory accesses, call arguments, return values, branch conditions, anything representable in the IR:
+### Install (uv)
+
+```bash
+cd crates/strider-py
+uv sync --group dev          # creates .venv + installs dev deps
+uv run maturin develop       # builds the Rust extension
+uv run pytest                # runs the test suite
+```
+
+A pip-based legacy path is documented in [`crates/strider-py/README.md`](crates/strider-py/README.md). The wheel is `abi3` (Python 3.9+).
+
+### Quickstart
 
 ```python
 import strider
+from strider.pattern import Capture, var, add, load, call, int_const
 
-binary = strider.load("target_binary")
-func   = binary.analyze_function(0x401234)
-func.optimize()
+# 1. Load a binary into a MemoryMap.
+mem = strider.MemoryMap()
+mem.add_region_from_elf("fixtures/out/x86/memory.elf")
+mem.apply_elf_relocations("fixtures/out/x86/memory.elf")  # autoloads .got.plt etc.
 
-# Named captures bind to the matched sub-expressions.
-# Any part of the pattern can be captured.
-ptr    = strider.capture("ptr")
-offset = strider.capture("offset")
+# 2. Run the full pipeline (CFG → IR → optimize, including the
+#    indirect-branch fixed-point loop) in one call.
+result = strider.run(
+    arch=strider.SleighArch.x86(),
+    cc=strider.CallingConvention.x86_cdecl(),
+    mem=mem, rom=mem,
+    entry=mem.symbol("array_sum"),
+    allow_code_before_start_addr=True,
+)
 
-# "Find every load where the address is (something + a constant)"
-pat = strider.load(addr=strider.add(ptr, offset))
+# 3. Query the optimized graph.
+ptr, off = Capture(), Capture()
+for hit in result.graph.find_all(load(addr=add(var(ptr), var(off))), ignore_casts=True):
+    print(f"load at {hit.uint(ptr)} + {hit.uint(off):#x}")
 
-for match in func.find(pat):
-    print(f"load from {match['ptr']} + {match['offset']:#x}")
-
-# "What constant does this function pass as the first argument to malloc?"
-size = strider.capture("size")
-pat  = strider.call(addr=0x..., arg(0, size))
-
-for match in func.find(pat):
-    print(f"malloc({match['size']})")
-
-# "What value does the function return after a specific call?"
-retval = strider.capture("retval")
-pat    = strider.ret(preceded_by=strider.call(addr=0x...), ret_val=retval)
-
-for match in func.find(pat):
-    print(f"return value: {match['retval']}")
+# 4. Visualize.
+result.cfg.to_html("cfg.html")
+result.graph.to_html("graph.html")
 ```
+
+### Pattern features beyond plain `find_all`
+
+**Set-membership target queries** — match a call against any of N known callees in one pass:
+
+```python
+from strider.pattern import call, int_const_any_of
+
+# Either form below works:
+hits = g.find_all(call().at_any([0x1000, 0x2000, 0x3000]))
+hits = g.find_all(call().target(int_const_any_of([0x1000, 0x2000])))
+```
+
+**Multi-pattern joins on shared captures** — find the K such that two patterns simultaneously match with the same binding for a shared capture:
+
+```python
+from strider.pattern import Capture, add, any_int_const, call, load, initial_var_for, var
+
+# ni_vp-style field-offset recovery:
+#   vn_open(&nd, ...);
+#   script_vp = nd.ni_vp;     // load nd.ni_vp = Add(rbp, K1+K_field)
+rbp = sleigh.reg("RBP")  # or RSP for -fomit-frame-pointer builds
+k_call, k_load = Capture(), Capture()
+for tup in g.find_all_requirements([
+    call().target(int_const(VN_OPEN)).arg(0,
+        add(initial_var_for(rbp), any_int_const(k_call)).ordered()),
+    load().addr(add(initial_var_for(rbp), any_int_const(k_load)).ordered()),
+]):
+    field_offset = (tup[1].uint(k_load) - tup[0].uint(k_call)) & 0xFFFFFFFFFFFFFFFF
+    print(f"recovered field offset = {field_offset:#x}")
+```
+
+**Stack-offset recovery** — capture a `StackStore` and read its compile-time SP-relative offset:
+
+```python
+from strider.pattern import Capture, stack_store
+
+c = Capture()
+for hit in g.find_all(stack_store().offset_any([-8, -16, -24]).capture(c)):
+    print(f"matched stack store at offset {hit.stack_offset(c)}")
+```
+
+See [`crates/strider-py/README.md`](crates/strider-py/README.md) for the full Python surface and [`crates/strider-py/examples/python/`](crates/strider-py/examples/python/) for runnable end-to-end walkthroughs.
 
 ---
 
@@ -127,24 +182,26 @@ The `pattern` crate is the underlying engine.
 
 ### Capture variables
 
-`Var` binds a data-flow value (`NodeOutputId`). `NodeVar` binds a control-flow node (`NodeId`). Create one with `Var::new()` / `NodeVar::new()` and embed it in a pattern. The same variable may appear multiple times — the matcher enforces that all occurrences bind to the **same** output.
+`Capture` is the single capture type — bindings store both the matched `NodeId` and (for value-producing patterns) the matched `NodeOutputId`. Create one with `Capture::new()` and embed it in a pattern. The same capture may appear multiple times in a pattern — the matcher enforces that every occurrence binds to the **same** value.
 
 ```rust
-use pattern::{Var, var};
+use pattern::{Capture, var};
 
-let x = Var::new();
+let x = Capture::new();
 // var(x) matches any output and captures it.
-// If x appears twice, both must resolve to the same node output.
+// If x appears twice in one pattern, both occurrences must agree.
 ```
+
+For cross-pattern equality on a shared capture (e.g. "find the K such that pattern A(K) AND pattern B(K) match with the same `<base>` binding"), use [`Matcher::find_all_requirements`](crates/pattern/src/matcher/mod.rs) — it runs N patterns and returns only the joined tuples whose shared captures agree on `Binding` (node + value output).
 
 ### Pattern constructors
 
 Every free function (`add`, `load`, `call`, …) returns a builder value that converts to `Pat` via `.into()`. Builders compose freely: any function that accepts `impl Into<Pat>` accepts another builder directly.
 
 ```rust
-use pattern::{add, load, int_const, any, var, Var};
+use pattern::{add, load, int_const, any, var, Capture};
 
-let offset = Var::new();
+let offset = Capture::new();
 
 // load whose address is (anything + a constant)
 let pat: Pat = load().addr(add(any(), var(offset))).into();
@@ -165,92 +222,98 @@ let pat_ordered = add(int_const(5), any()).ordered().into();
 // Only matches if 5 is literally the left operand in the IR.
 ```
 
-### Capturing any output with `.capture(v)`
+### Capturing any output with `.capture(c)`
 
-Any pattern builder or `Pat` can have `.capture(v)` chained to it. After the structural match succeeds, the matched output is bound to `v`. This lets you capture the result of any subexpression — not just leaves.
+Any pattern builder or `Pat` can have `.capture(c)` chained to it. After the structural match succeeds, the matched value is bound to `c`. This lets you capture the result of any subexpression — not just leaves.
 
 ```rust
-use pattern::{Matcher, Var, var, add, any, load};
+use pattern::{Matcher, Capture, var, add, any, load};
 
-let add_out = Var::new();  // the output of the add node itself
-let addr_v  = Var::new();  // the load's address operand
+let add_out = Capture::new();  // the output of the add node itself
+let addr_c  = Capture::new();  // the load's address operand
 
 // Capture the entire add node's output:
 let pat = add(any(), any()).capture(add_out).into();
 
 // Capture a nested field (the load's address):
-let pat2 = load().addr(any().capture(addr_v)).into();
+let pat2 = load().addr(any().capture(addr_c)).into();
 
-// Equivalent shorthand for field capture — var(v) is any().capture(v):
-let pat3 = load().addr(var(addr_v)).into();
+// Equivalent shorthand for field capture — var(c) is any().capture(c):
+let pat3 = load().addr(var(addr_c)).into();
 ```
 
 ### Predicate guards with `.when(f)`
 
-Any pattern builder or `Pat` can have `.when(f)` chained. After the structural match succeeds, `f` is called with `(&BuiltFunctionGraph, NodeOutputId)`. The match fails if `f` returns `false`. This lets you add arbitrary constraints without writing a new `PatKind` variant.
+Any pattern builder or `Pat` can have `.when(f)` chained. After the structural match succeeds, `f` is called with `(&BuiltFunctionGraph, NodeOutputType, NodeOutputId)`. The match fails if `f` returns `false`. This lets you add arbitrary constraints without writing a new `PatKind` variant.
 
 ```rust
-use pattern::{Matcher, add, any, predicate};
-use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use pattern::{add, any, predicate};
+use ir::node::{NodeKind, NodeOutputType};
 
 // Match any add whose result is U64:
-let pat = add(any(), any()).when(|fg, out| {
-    fg.graph.output_kind(out) == NodeOutputKind::OutputType(NodeOutputType::U64)
-}).into();
+let pat = add(any(), any()).when(|_fg, ty, _out| ty == NodeOutputType::U64).into();
 
 // Match any IntConst node with value ≥ 0x1000:
-let pat2 = predicate(|fg, out| {
+let pat2 = predicate(|fg, _ty, out| {
     let node = fg.graph.get_node_from_output(out);
-    match fg.graph.node_kind(node) {
-        NodeKind::IntConst(v) => *v >= 0x1000,
-        _ => false,
-    }
+    matches!(fg.graph.node_kind(node), NodeKind::IntConst(v) if *v >= 0x1000)
 }).into();
-
-// Predicate as a sub-pattern — load whose address satisfies a custom check:
-let pat3 = load().addr(predicate(|fg, out| {
-    let node = fg.graph.get_node_from_output(out);
-    matches!(fg.graph.node_kind(node), NodeKind::IntConst(_))
-})).into();
 ```
 
 `predicate(f)` is shorthand for `any().when(f)` and can appear anywhere a `Pat` is accepted.
+
+### Set-membership constructors
+
+For "any of these N constants / addresses" queries, use the dedicated set-membership helpers:
+
+```rust
+use pattern::{call, int_const_any_of, stack_store};
+
+// Match a call to any of three known callees:
+let pat = call().at_any([0x1000u64, 0x2000, 0x3000]);
+
+// Match a stack-store at any of these field offsets:
+let pat = stack_store().offset_any([-8i64, -16, -24]);
+
+// Lower-level: an IntConst whose value is in a set:
+let pat = int_const_any_of([0x1000u64, 0xDEADBEEF]);
+```
+
+Empty sets vacuously fail (match nothing).
 
 ---
 
 ### Example: load from a computed address
 
 ```rust
-use pattern::{Matcher, Var, var, load, add, any};
+use pattern::{Matcher, Capture, var, load, add};
 
-let ptr    = Var::new();
-let offset = Var::new();
+let ptr    = Capture::new();
+let offset = Capture::new();
 
-// Match any load whose address is (anything + anything)
 let pat = load().addr(add(var(ptr), var(offset))).into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    if let Some(off) = m.get_int_const(offset, &graph) {
+    if let Some(off) = m.get_uint(offset, &graph) {
         println!("load at ptr + {off:#x}");
     }
-    println!("  base: {:?}", m.get(ptr));
 }
 ```
 
 ### Example: call argument — what size does this function pass to `malloc`?
 
 ```rust
-use pattern::{Matcher, Var, var, call};
+use pattern::{Matcher, Capture, var, call};
 
 const MALLOC: u64 = 0x401080;
 
-let size = Var::new();
+let size = Capture::new();
 let pat  = call().at(MALLOC).arg(0, var(size)).into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    if let Some(n) = m.get_int_const(size, &graph) {
+    if let Some(n) = m.get_uint(size, &graph) {
         println!("malloc({n})");
     }
 }
@@ -259,11 +322,11 @@ for m in matcher.find_all(&pat) {
 ### Example: return value after a specific call
 
 ```rust
-use pattern::{Matcher, Var, var, call, ret};
+use pattern::{Matcher, Capture, var, call, ret};
 
 const PARSE_FN: u64 = 0x402000;
 
-let retval = Var::new();
+let retval = Capture::new();
 let pat    = ret()
     .preceded_by(call().at(PARSE_FN))
     .ret_val(0, var(retval))
@@ -271,23 +334,23 @@ let pat    = ret()
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    println!("return value after parse_fn: {:?}", m.get(retval));
+    println!("return value after parse_fn: {:?}", m.output(retval));
 }
 ```
 
 ### Example: branch condition — find compares against a constant threshold
 
 ```rust
-use pattern::{Matcher, Var, var, if_node, int_lt, any};
+use pattern::{Matcher, Capture, var, if_node, int_lt, any};
 
-let threshold = Var::new();
+let threshold = Capture::new();
 let pat = if_node()
     .cond(int_lt(any(), var(threshold)))
     .into();
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    if let Some(t) = m.get_int_const(threshold, &graph) {
+    if let Some(t) = m.get_uint(threshold, &graph) {
         println!("branch: x < {t}");
     }
 }
@@ -298,13 +361,13 @@ for m in matcher.find_all(&pat) {
 This shows how patterns compose: a branch condition, a call inside one branch, and a specific memory access inside that call's argument — all in a single query.
 
 ```rust
-use pattern::{Matcher, Var, var, if_node, call, load, add, and, int_eq, int_const};
+use pattern::{Matcher, Capture, var, if_node, call, load, add, and, int_eq, int_const};
 
-let x      = Var::new(); // the value tested in the branch condition
-let offset = Var::new(); // the constant offset added to 0x1000
+let x      = Capture::new();
+let offset = Capture::new();
 
-let cond = int_eq(and(var(x), int_const(4)), int_const(0));
-let arg2 = load().addr(add(int_const(0x1000), var(offset)));
+let cond = int_eq(and(var(x), int_const(4u64)), int_const(0u64));
+let arg2 = load().addr(add(int_const(0x1000u64), var(offset)));
 
 let pat = if_node()
     .cond(cond)
@@ -313,9 +376,23 @@ let pat = if_node()
 
 let matcher = Matcher::new(&graph);
 for m in matcher.find_all(&pat) {
-    println!("branch variable:  {:?}", m.get(x));
-    if let Some(off) = m.get_int_const(offset, &graph) {
-        println!("load offset:      {off:#x}  →  address {:#x}", 0x1000u64 + off);
+    if let Some(off) = m.get_uint(offset, &graph) {
+        println!("load offset {off:#x} → address {:#x}", 0x1000u64 + off as u64);
+    }
+}
+```
+
+### Example: stack-offset recovery from a captured `StackStore`
+
+```rust
+use pattern::{Matcher, Capture, stack_store};
+
+let s = Capture::new();
+let pat = stack_store().offset_any([-8i64, -16, -24]).capture(s);
+let matcher = Matcher::new(&graph);
+for m in matcher.find_all(&pat.into()) {
+    if let Some(k) = m.stack_offset(s, &graph) {
+        println!("stack store at SP + {k}");
     }
 }
 ```
@@ -334,4 +411,9 @@ A single `find_all` call returns every site in the function where all constraint
 
 ## Status
 
-The IR lifter, optimizer, and pattern matcher are functional. The Python bindings (`strider-py`) are planned as the primary user-facing interface.
+The IR lifter, optimizer, pattern matcher, and Python bindings (`strider-py`) are all functional. The Python interface is the recommended way to use Strider; the Rust API stays available for embedding and for the `pattern` crate's authoring side. Recent additions:
+
+- **Pattern queries**: `find_all_requirements` (multi-pattern join on shared captures), `int_const_any_of` / `CallPat::at_any` / `StackStorePat::offset_any` (set-membership queries), `Match::stack_offset` / `stack_phi_offsets` (read offsets off captured stack-store nodes).
+- **Bounded lift**: `function_max_size` is now strictly enforced — `is_addr_tail_call` ignores `allow_code_before_start_addr` when a max-size is set, fall-through past the bound terminates as `TailCall`, and conditional branches whose successors leave the function collapse cleanly.
+- **ELF relocations**: `MemoryMap.apply_elf_relocations` autoloads any missing site sections (e.g. `.got.plt`) so dynamic-relocation application works without staging the section by hand first.
+- **uv install**: `uv sync --group dev` + `uv run maturin develop` + `uv run pytest` (PEP 735).
