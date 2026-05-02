@@ -125,3 +125,41 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
         "expected at least one Branch edge since the below-start target is followed"
     );
 }
+
+/// Regression: a function whose body has no explicit terminator within
+/// `fn_max_size` (e.g. ends with `call <noreturn>` followed by padding)
+/// must terminate the lifted region cleanly at the bound rather than
+/// fall-through-decoding into the next symbol.
+///
+/// The original bug: fall-through past `start + fn_max_size` would lift
+/// arbitrary OOB instructions.  When one of those happened to be a
+/// multi-pcode-op instruction (e.g. `lock cmpxchg` with intra-insn
+/// CONST branches), `decode_branch_target`'s CONST arm produced a
+/// `PcodeInsnAddr { machine_addr: <OOB>, insn_index: <nonzero> }`,
+/// which `is_branch_tail_call` rejected with
+/// "invalid tail call at opcode ...".
+///
+/// Fix: at the top of every `RegionBuilder::build()` iteration, if the
+/// (already-advanced) `cur_addr` is past `start + fn_max_size`, finish
+/// the region with `TailCall { target: cur_addr.machine_addr }`.
+#[test]
+fn fall_through_past_fn_max_size_terminates_as_tail_call() {
+    // 0x1000: `xor eax, eax` (2 bytes, ≥1 pcode insn — appends to the
+    //         region's `insns` list).
+    // 0x1002: `lock cmpxchg %r14, 0x58(%rbx)` (6 bytes) — multi-pcode-op
+    //         insn with intra-insn CONST branches; lifting it past the
+    //         bound was the exact crash shape from `dounmount`.
+    let mut bytes = vec![0x31u8, 0xc0];
+    bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
+    bytes.extend(std::iter::repeat_n(0x90u8, 16));
+    let opts = OptionsBuilder::new().set_function_max_size(2).build();
+    let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
+
+    // Entry region must terminate as TailCall { target: 0x1002 } — the
+    // first OOB byte after the bound.
+    assert_eq!(
+        cfg.graph[cfg.entry].terminator,
+        RegionTerminator::TailCall { target: 0x1002 },
+        "fall-through past fn_max_size must terminate as TailCall to the OOB byte"
+    );
+}

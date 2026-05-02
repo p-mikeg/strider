@@ -23,6 +23,37 @@ fn nocheck_below_start_with_allow_is_not_tail_call() {
     assert!(!rb.is_branch_tail_call_nocheck(addr(0x0800, 0)));
 }
 
+/// When `fn_max_size` is set the function's extent is known precisely
+/// as `[start, start + max)`.  Any backward jump below `start` then
+/// goes to a *different* function and must be classified as a tail
+/// call, regardless of the legacy `allow_code_before_start_addr`
+/// flag — that flag only allows reach-back into prelude/unwind in the
+/// *unbounded* case where we don't know the function's extent.
+#[test]
+fn nocheck_below_start_with_allow_and_fn_max_size_is_tail_call() {
+    let opts = OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .set_function_max_size(0x100)
+        .build();
+    let mut b = make_builder_opts(0x1000, opts);
+    let rb = make_region_builder(&mut b, addr(0x1000, 0));
+    assert!(
+        rb.is_branch_tail_call_nocheck(addr(0x0800, 0)),
+        "with fn_max_size set, backward jumps below start must be tail calls regardless of allow_code_before_start_addr"
+    );
+}
+
+/// Companion: `fn_max_size` set, `allow_code_before_start_addr` NOT
+/// set, backward target below `start`.  Must still classify as a tail
+/// call (the strict-lower-bound branch).
+#[test]
+fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
+    let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+    let mut b = make_builder_opts(0x1000, opts);
+    let rb = make_region_builder(&mut b, addr(0x1000, 0));
+    assert!(rb.is_branch_tail_call_nocheck(addr(0x0800, 0)));
+}
+
 #[test]
 fn nocheck_within_function_no_limit_is_not_tail_call() {
     let mut b = make_builder(0x1000);

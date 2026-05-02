@@ -522,6 +522,31 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             }
             // We're done exploring a single machine insn, continue to the next one
             cur_addr = next_pcode_addr(cur_addr, &lift_res)?;
+            // If fall-through crossed `start + fn_max_size`, terminate the
+            // region with a synthetic `TailCall { target: cur_addr }` rather
+            // than continuing to lift OOB instructions.  Lifting past the
+            // bound is what surfaced as `"invalid tail call at opcode ..."`
+            // when a multi-pcode-op insn (e.g. `lock cmpxchg`) past the
+            // bound returned a CONST-arm `PcodeInsnAddr` with non-zero
+            // `insn_index` and an OOB `machine_addr`.  `next_pcode_addr`
+            // only advances forward in machine address, so the upper-bound
+            // check is sufficient — `is_branch_tail_call_nocheck` happens
+            // to also check the lower bound, but `cur_addr.machine_addr >=
+            // self.start_addr.addr` always holds here.
+            //
+            // Empty-`insns` guard: if every machine instruction so far
+            // decoded to zero pcode ops (true NOPs on some Sleigh specs),
+            // the inner `for` loop never appended to `self.insns` and
+            // `add_region` would reject the empty region.  Skip the
+            // truncation in that degenerate case — the next iteration
+            // will keep lifting (the pre-existing zero-pcode-op gap is
+            // not introduced by this fix).
+            if !self.insns.is_empty() && self.is_branch_tail_call_nocheck(cur_addr) {
+                self.finish_current_region(RegionTerminator::TailCall {
+                    target: cur_addr.machine_addr.addr,
+                })?;
+                return Ok(());
+            }
         }
     }
 }

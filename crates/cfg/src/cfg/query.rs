@@ -15,8 +15,12 @@ use crate::Result;
 /// resolution).  Both layers must agree on the predicate.
 ///
 /// `allow_code_before_start_addr = true` disables the lower-bound check
-/// (relevant for binaries whose function bodies legitimately reach back
-/// into the prelude / unwind area).
+/// **only when `fn_max_size` is `None`** (relevant for binaries whose
+/// function bodies legitimately reach back into the prelude / unwind
+/// area, in the unbounded case).  When `fn_max_size` is set, the
+/// function's extent is known exactly as `[start_addr, start_addr +
+/// fn_max_size)`, so any `target < start_addr` lands in a *different*
+/// function and is classified as a tail call regardless of the flag.
 #[must_use]
 pub fn is_addr_tail_call(
     target: u64,
@@ -24,7 +28,8 @@ pub fn is_addr_tail_call(
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
 ) -> bool {
-    if target < start_addr && !allow_code_before_start_addr {
+    let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
+    if target < start_addr && lower_bound_strict {
         return true;
     }
     if let Some(fn_max_size) = fn_max_size {

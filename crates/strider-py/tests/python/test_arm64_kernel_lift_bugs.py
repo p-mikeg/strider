@@ -17,14 +17,17 @@ is missing.
    forward-walks the dead subgraph and skips the detach when any of
    its data outputs escape to live code.
 
-2. ``vmspace_exit`` lifted with ``function_max_size`` raises an
-   unresolved-indirect-branch error at fixed point.  This is a real
-   limitation of the analysis (the target depends on runtime state
-   the analyser cannot prove constant), and callers that scan many
-   functions usually want to log-and-skip rather than treat it as a
-   hard failure.  The fix wires a typed
-   ``strider.errors.UnresolvedIndirectBranchError`` (subclass of
-   ``StriderError``) so callers can catch this case selectively.
+2. ``vmspace_exit`` lifted with ``function_max_size`` previously
+   raised an unresolved-indirect-branch error.  The root cause turned
+   out to be the cfg builder following backward ``b`` instructions
+   into adjacent functions when ``allow_code_before_start_addr=True``
+   was combined with ``function_max_size``: the lifter would walk
+   into a *different* function whose body contained a genuinely
+   unresolvable indirect branch.  Once the cfg builder was taught
+   that ``function_max_size`` defines the function's exact extent
+   regardless of the legacy reach-back flag, the lift completes
+   cleanly.  The typed ``UnresolvedIndirectBranchError`` machinery
+   is still pinned here as a static type-hierarchy check.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ import pathlib
 import pytest
 
 import strider
-from strider.errors import StriderError, UnresolvedIndirectBranchError
+from strider.errors import StriderError, UnresolvedIndirectBranchError  # noqa: F401 — re-exported for typed catches
 
 
 KERNELS_ROOT = (
@@ -87,22 +90,24 @@ def test_vmspace_exitfree_bounded_lift_succeeds(version: str):
     assert result.graph.node_count() > 0
 
 
-# ── Bug 2: typed unresolved-indirect-branch error ─────────────────────────────
+# ── Bug 2: cfg-bound enforcement on backward jumps ────────────────────────────
 
 
 @pytest.mark.parametrize("version", ["11.1", "11.2", "11.3", "11.4"])
-def test_vmspace_exit_raises_typed_unresolved_indirect_branch(version: str):
-    """``vmspace_exit`` reaches a genuinely unresolvable indirect
-    branch on these kernels.  The error must surface as
-    ``UnresolvedIndirectBranchError`` (subclass of ``StriderError``)
-    so callers can catch it selectively."""
+def test_vmspace_exit_bounded_lift_does_not_walk_into_neighbour(version: str):
+    """``vmspace_exit`` must lift cleanly under ``function_max_size``.
+
+    Previously the cfg builder followed backward ``b`` instructions
+    below ``start_addr`` into adjacent functions (because
+    ``allow_code_before_start_addr=True`` disabled the lower-bound
+    check even when ``function_max_size`` was set), and eventually
+    surfaced an ``UnresolvedIndirectBranchError`` from a *different*
+    function's body.  Once ``is_addr_tail_call`` was taught that
+    ``fn_max_size`` defines the function's exact extent regardless
+    of the reach-back flag, the lift completes."""
     kernel = _kernel_path(version)
-    with pytest.raises(UnresolvedIndirectBranchError) as excinfo:
-        _bounded_lift(kernel, "vmspace_exit")
-    # And the typed exception must remain a StriderError subclass for
-    # callers that catch the umbrella type.
-    assert isinstance(excinfo.value, StriderError)
-    assert "could not be resolved at fixed point" in str(excinfo.value)
+    result = _bounded_lift(kernel, "vmspace_exit")
+    assert result.graph.node_count() > 0
 
 
 def test_unresolved_indirect_branch_error_is_strider_error_subclass():
