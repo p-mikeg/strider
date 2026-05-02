@@ -194,6 +194,72 @@ fn match_jump_table_shape_recognises_both_commutations() {
     assert_eq!(shape.stride, 4);
 }
 
+/// Builds `Load[ IntAdd( IntConst(base), Shl(idx, IntConst(shift)) ) ]`
+/// — the AArch64 / ARM `LDR Rn, [Rb, Ri, LSL #shift]` shape, where
+/// the effective stride is `1 << shift`.  `idx` is provided by the
+/// closure.
+fn build_jt_load_shl(
+    base: u64,
+    shift: u64,
+    commute_add: bool,
+    idx_provider: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
+) -> (BuiltFunctionGraph, NodeOutputId) {
+    build_with_anchor(|fb| {
+        let idx = idx_provider(fb);
+        let shift_c = fb.build_int_const(shift, NodeOutputType::U32).unwrap();
+        let scaled = fb
+            .build_int_binary_operation(idx, shift_c, IntBinaryOp::ShiftLeft, NodeOutputType::U32)
+            .expect("shl");
+        let base_c = fb.build_int_const(base, NodeOutputType::U32).unwrap();
+        let addr = if commute_add {
+            fb.build_int_binary_operation(scaled, base_c, IntBinaryOp::Add, NodeOutputType::U32)
+                .expect("add")
+        } else {
+            fb.build_int_binary_operation(base_c, scaled, IntBinaryOp::Add, NodeOutputType::U32)
+                .expect("add")
+        };
+        fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32)
+            .expect("load")
+    })
+}
+
+#[test]
+fn match_jump_table_shape_recognises_shl_form() {
+    // AArch64 `ldr xN, [base, idx, lsl #2]` shape — table of 4-byte
+    // entries.  `Shl(idx, 2)` is arithmetically equal to
+    // `Mul(idx, 4)` but lifts as a distinct IR op.
+    let (g, anchor) = build_jt_load_shl(0x4000, 2, false, build_non_const_idx);
+    let shape = match_jump_table_shape(&g, anchor)
+        .expect("Shl-scaled table must match");
+    assert_eq!(shape.base, 0x4000);
+    assert_eq!(shape.stride, 4); // 1 << 2
+    assert_eq!(shape.entry_size, 4);
+}
+
+#[test]
+fn match_jump_table_shape_recognises_shl_form_commuted_add() {
+    // `Shl` itself is non-commutative, but the surrounding `Add` is
+    // — so we must still match `(idx<<shift) + base` as well as
+    // `base + (idx<<shift)`.
+    let (g, anchor) = build_jt_load_shl(0x5000, 3, true, build_non_const_idx);
+    let shape = match_jump_table_shape(&g, anchor)
+        .expect("Shl-scaled table with commuted add must match");
+    assert_eq!(shape.base, 0x5000);
+    assert_eq!(shape.stride, 8); // 1 << 3 — AArch64 jump table of 8-byte pointers
+}
+
+#[test]
+fn match_jump_table_shape_rejects_shl_with_oversize_shift() {
+    // `Shl(idx, 64)` would compute `1u64 << 64`, which is UB / would
+    // overflow the implied stride.  Reject — real jump tables top
+    // out at shift = 3.
+    let (g, anchor) = build_jt_load_shl(0x6000, 64, false, build_non_const_idx);
+    assert!(
+        match_jump_table_shape(&g, anchor).is_none(),
+        "shift >= 64 must reject; otherwise stride computation overflows"
+    );
+}
+
 #[test]
 fn match_jump_table_shape_rejects_non_load_producer() {
     // Anchor is a raw IntConst, not a Load.  Reject.

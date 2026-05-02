@@ -2,9 +2,11 @@
 //!
 //! Recognises the canonical jump-table dispatch
 //! shape — `Load(IntAdd(IntConst(base), IntMul(idx, IntConst(stride))))`
-//! and its commutative variants — proves an upper bound `N` on the
-//! index `idx`, reads the `N` table entries from a caller-supplied
-//! [`ReadOnlyMemory`], and returns
+//! and its commutative variants, plus the AArch64-style scaled-index
+//! form `Load(IntAdd(IntConst(base), Shl(idx, IntConst(shift))))`
+//! (equivalent to `stride = 1 << shift`) — proves an upper bound `N`
+//! on the index `idx`, reads the `N` table entries from a
+//! caller-supplied [`ReadOnlyMemory`], and returns
 //! [`ResolvedTargets::Multiple([table[0], …, table[N-1]])`].
 //!
 //! ## Soundness
@@ -133,19 +135,43 @@ struct JumpTableShape {
 /// Recognises the canonical jump-table address shape on the producer
 /// of `anchor_output`.
 ///
-/// Accepted shapes (commutativity of `+` and `*` is honoured — gcc
-/// and clang emit either operand order depending on optimisation
-/// level + register allocator decisions):
+/// Accepted shapes:
 ///
+/// **Multiplicative (gcc / clang on x86, scale via `lea`'s SIB byte;
+/// commutativity of `+` and `*` is honoured):**
 ///   * `Load[ IntAdd( IntConst(base), IntMul(idx,        IntConst(stride)) ) ]`
 ///   * `Load[ IntAdd( IntConst(base), IntMul(IntConst(stride), idx       ) ) ]`
 ///   * `Load[ IntAdd( IntMul(idx,        IntConst(stride)), IntConst(base) ) ]`
 ///   * `Load[ IntAdd( IntMul(IntConst(stride), idx       ), IntConst(base) ) ]`
 ///
+/// **Shift-scaled (AArch64 `LDR Xn, [Xb, Xi, LSL #N]`, ARM
+/// `LDR Rn, [Rb, Ri, LSL #N]`; `Shl` is non-commutative so only `+`
+/// is auto-commuted):**
+///   * `Load[ IntAdd( IntConst(base), Shl(idx, IntConst(shift)) ) ]`
+///   * `Load[ IntAdd( Shl(idx, IntConst(shift)), IntConst(base) ) ]`
+///
+/// where the effective stride is `1 << shift`.  `shift` must be in
+/// `0..64` so the implied stride fits in `u64`; the sane real-world
+/// values are `0..=3` (entry sizes 1/2/4/8 bytes).
+///
 /// Every other shape — including degenerate `Load[IntConst(addr)]`
 /// (a simple global read; the `IntConst` arm in `classify.rs` would
 /// handle that one if it were a dispatch target) — returns None and
 /// defers to whatever later arms exist.
+///
+/// ## Bound caveat
+///
+/// Matching the shape is only half the work — the classifier still
+/// needs an upper bound `N` on `idx`.  AArch64 `cmp + b.hi` lifts to a
+/// flag-based boolean expression (`!Z & C`) rather than a direct
+/// `IntCmpOp::Less(idx, N)`, so [`bound_via_predecessor_if`] currently
+/// can't recover the bound for that pattern.  The shape match still
+/// fires, but resolution falls through to
+/// [`crate::error::Error`] / `UnresolvedIndirectBranch` until the
+/// bound walker grows flag-based-cmp support.  Tables with a bound
+/// the analyser CAN see (an explicit `idx & MASK` AND-mask, an x86
+/// `cmp + jb`/`ja` that lifts to `Less`/`LessEqual` directly, or a
+/// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
@@ -179,27 +205,58 @@ fn match_jump_table_shape(
     // necessarily the *other* operand of the multiplication — the
     // same disambiguation the prior `extract_base_and_mul` performed
     // by trying `int_const_val` on each `mul` operand in turn.
-    use pattern::{Capture, Matcher, add, any_int_const, load, mul, var};
+    use pattern::{Capture, Matcher, add, any_int_const, load, mul, shl, var};
     let base_var = Capture::new();
     let stride_var = Capture::new();
     let idx_var = Capture::new();
-    let pat = load().addr(add(
+
+    // 1) Multiplicative form (x86 / `Mul`-based scaling).
+    let mul_pat = load().addr(add(
         any_int_const(base_var),
         mul(var(idx_var), any_int_const(stride_var)),
     ));
-    let m = Matcher::new(fg).match_at(load_node, &pat.into())?;
+    if let Some(m) = Matcher::new(fg).match_at(load_node, &mul_pat.into()) {
+        // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior
+        // code returned `u64` for both `base` and `stride` via
+        // `int_const_val`, which itself truncates to `u64`.  We mirror
+        // the truncation here.  Real jump-table bases / strides fit in
+        // `u64` on every supported arch.
+        #[allow(clippy::cast_possible_truncation)]
+        let base = m.get_uint(base_var, fg)? as u64;
+        #[allow(clippy::cast_possible_truncation)]
+        let stride = m.get_uint(stride_var, fg)? as u64;
+        let idx_output = m.output(idx_var)?;
+        return Some(JumpTableShape {
+            base,
+            stride,
+            idx_output,
+            entry_size,
+        });
+    }
 
-    // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior code
-    // returned `u64` for both `base` and `stride` via `int_const_val`,
-    // which itself truncates to `u64`.  We mirror the truncation here.
-    // Real jump-table bases / strides fit in `u64` on every supported
-    // arch.
+    // 2) Shift-scaled form (AArch64 / ARM `LSL #N` addressing mode).
+    // `shl` is *not* commutative — the shift amount can only sit on the
+    // right-hand side — so we don't get the auto-commutativity that
+    // `mul` provides; the `add` wrapping each form is still commuted
+    // automatically, which gives us the two `(base, idx<<shift)` /
+    // `(idx<<shift, base)` orderings for free.
+    let shl_pat = load().addr(add(
+        any_int_const(base_var),
+        shl(var(idx_var), any_int_const(stride_var)),
+    ));
+    let m = Matcher::new(fg).match_at(load_node, &shl_pat.into())?;
     #[allow(clippy::cast_possible_truncation)]
     let base = m.get_uint(base_var, fg)? as u64;
-    #[allow(clippy::cast_possible_truncation)]
-    let stride = m.get_uint(stride_var, fg)? as u64;
+    let shift = m.get_uint(stride_var, fg)?;
+    // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
+    // would overflow / be UB in Rust.  Real jump-table entries are at
+    // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
+    // mis-classification rather than a valid table.
+    if shift >= 64 {
+        return None;
+    }
+    let stride = 1u64 << shift;
     let idx_output = m.output(idx_var)?;
-
     Some(JumpTableShape {
         base,
         stride,
