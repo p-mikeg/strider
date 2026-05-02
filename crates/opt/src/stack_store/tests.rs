@@ -840,3 +840,310 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     }
     Ok(())
 }
+
+// ── Bug #2026-05-02: chain order ≠ slot order ───────────────────────────────
+//
+// On i386 cdecl, gcc/clang -O2 routinely emits stack-arg pushes in source
+// order (arg0 first, arg1 second, …), but the IR memory chain reflects
+// program order — the *last* arg stored shows up as the most-recent
+// `StackStore` on the chain.  The original walker required successive
+// stores to land at `anchor + stack_arg_offsets[args.len()]`, which only
+// ever matches when the compiler happens to push args in slot-descending
+// order.  These tests pin the corrected behaviour: collection succeeds
+// when the chain delivers args in *any* order, as long as every chain
+// store's offset belongs to the convention's stack-arg-offset set.
+
+/// i386 `free(arg0, arg1)` shape — the original repro from
+/// `exec_free_args` in the FreeBSD i386 10.0 kernel.  Args are stored at
+/// `(%esp)` (= sp+0) and `0x4(%esp)` (= sp+4) in program order, then the
+/// `call` instruction pushes the return address at sp-4.  Memory chain
+/// backward from the Call: ret-addr push (-4) → arg1 push (+4) → arg0
+/// push (0).  The walker must collect both args even though arg1 is the
+/// most-recent stack store on the chain.
+#[test]
+fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+        // arg0 = 11 stored at sp + 0  (cdecl: outgoing-args region is at the
+        // bottom of the frame, written without first decrementing SP).
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
+
+        // arg1 = 22 stored at sp + 4.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sp_plus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
+
+        // Implicit `call` ret-addr push at sp - 4.
+        let sp_after_call_push =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_after_call_push)?;
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
+    pipeline.add_post_pass(CallStackArgCollect::new(
+        vec![4, 8, 12, 16, 20, 24, 28, 32],
+        sp,
+    ));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    assert_eq!(
+        inputs.len(),
+        5,
+        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+    );
+    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "arg0 should be 11, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(22)),
+        "arg1 should be 22, got {arg1_kind:?}"
+    );
+    Ok(())
+}
+
+/// i386 `kmap_free_wakeup(arg0, arg1, arg2)` shape — the second repro
+/// from the same function.  Compiler emits stores in arbitrary order:
+/// arg1 first, arg0 second, arg2 third.  Memory chain backward from the
+/// Call: ret-addr push (-4) → arg2 (+8) → arg0 (0) → arg1 (+4).  No two
+/// successive chain stores are at adjacent slots, so the original
+/// in-order walker bailed with `args = []`.  After the fix all three
+/// must land in the right slots.
+#[test]
+fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+
+        // arg1 = 22 at sp + 4.
+        let sp_plus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
+
+        // arg0 = 11 at sp + 0.
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
+
+        // arg2 = 33 at sp + 8.
+        let sp_plus_8 =
+            b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let arg2 = b.build_int_const(33u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_8, arg2, rsleigh::VnSpace::RAM)?;
+
+        // Implicit `call` ret-addr push at sp - 4.
+        let sp_after_call_push =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_after_call_push)?;
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add_post_pass(CallStackArgCollect::new(
+        vec![4, 8, 12, 16, 20, 24, 28, 32],
+        sp,
+    ));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    assert_eq!(
+        inputs.len(),
+        6,
+        "expected ctrl+mem+target+3 stack args; got {inputs:?}"
+    );
+    for (slot_idx, expected) in [11u128, 22, 33].iter().enumerate() {
+        let kind = *fg.graph.kind_of_output(inputs[3 + slot_idx]);
+        assert!(
+            matches!(kind, NodeKind::IntConst(v) if v == *expected),
+            "arg{slot_idx} should be {expected}, got {kind:?}"
+        );
+    }
+    Ok(())
+}
+
+/// When a single arg slot is written twice on the chain (e.g. the
+/// program zeroed the slot earlier and then overwrote it with the real
+/// arg right before the call), the value seen by the callee is the
+/// *most recent* one.  Walking backward, the first sighting of a slot
+/// is the most recent; later sightings of the same slot are stale and
+/// must be ignored.
+#[test]
+fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+
+        // Stale arg0 = 0xBAD at sp + 0 (older write).
+        let stale = b.build_int_const(0xBADu64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, stale, rsleigh::VnSpace::RAM)?;
+
+        // Real arg1 = 22 at sp + 4.
+        let sp_plus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
+
+        // Real arg0 = 11 at sp + 0 — overwrites the stale value.
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Implicit `call` ret-addr push.
+        let sp_after_call_push =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_after_call_push)?;
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    pipeline.add_post_pass(CallStackArgCollect::new(
+        vec![4, 8, 12, 16, 20, 24, 28, 32],
+        sp,
+    ));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    assert_eq!(
+        inputs.len(),
+        5,
+        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+    );
+    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
+    );
+    Ok(())
+}
+
+/// A `StackStore` whose offset is *outside* the convention's stack-arg
+/// window must terminate the walk — exactly the safety property the
+/// original in-order rule provided, now expressed as set-membership.
+///
+/// Layout (chain-order, latest first): `ret-addr@-12 → arg0@-8 →
+/// arg1@-4 → local@-16`.  The OOW local at -16 (relative offset -4
+/// from the anchor at -12, NOT in the slot table {4, 8}) must abort
+/// collection so the local's value never leaks into a subsequent (yet
+/// to be added) arg slot if the convention table grows.
+#[test]
+fn out_of_window_stack_store_terminates_walk() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let sixteen = b.build_int_const(16u64, NodeOutputType::U32)?;
+
+        // Local at sp - 16 (above the outgoing-args region — offset -16 is
+        // NOT in the convention's stack-arg slot set).
+        let sp_minus_16 =
+            b.build_int_binary_operation(sp_v0, sixteen, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let local = b.build_int_const(0xDEADu64, NodeOutputType::U32)?;
+        b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
+
+        // arg1 = 22 at sp - 4.
+        let sp_minus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_minus_4, arg1, rsleigh::VnSpace::RAM)?;
+
+        // arg0 = 11 at sp - 8.
+        let eight = b.build_int_const(8u64, NodeOutputType::U32)?;
+        let sp_minus_8 =
+            b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        let arg0 = b.build_int_const(11u64, NodeOutputType::U32)?;
+        b.build_store(sp_minus_8, arg0, rsleigh::VnSpace::RAM)?;
+
+        // Implicit `call` ret-addr push at sp - 12.
+        let twelve = b.build_int_const(12u64, NodeOutputType::U32)?;
+        let sp_minus_12 =
+            b.build_int_binary_operation(sp_v0, twelve, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_minus_12)?;
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let collected: Vec<u128> = inputs[3..]
+        .iter()
+        .filter_map(|&out| {
+            if let NodeKind::IntConst(v) = *fg.graph.kind_of_output(out) {
+                Some(v)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        !collected.contains(&0xDEAD_u128),
+        "OOW local 0xDEAD must not be collected as an arg; got {collected:?}"
+    );
+    // Both real args must still be collected — OOW termination only
+    // bounds the upstream walk, not the args already accumulated.
+    assert_eq!(
+        inputs.len(),
+        5,
+        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+    );
+    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(11)),
+        "arg0 should be 11, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(22)),
+        "arg1 should be 22, got {arg1_kind:?}"
+    );
+    Ok(())
+}
