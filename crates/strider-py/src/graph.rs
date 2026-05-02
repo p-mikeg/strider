@@ -102,6 +102,63 @@ impl PyGraph {
         Ok(graph.all_node_ids().count())
     }
 
+    /// Returns the number of CFG loop headers — `ControlState` nodes
+    /// reachable from entry that have at least one back-edge predecessor
+    /// (a predecessor itself reachable from the `ControlState` via
+    /// forward control flow).
+    ///
+    /// This is structurally robust under optimization: a loop with a
+    /// loop-invariant tracked variable that `RedundantPhis` collapses
+    /// (so no `VarPhi` remains at the header) is still counted, because
+    /// the back-edge in the control-flow graph is unaffected.  Use this
+    /// instead of counting `pat.phi()` matches when a test wants to
+    /// assert "the lifter recognised a loop here".
+    fn count_loop_headers(&self) -> PyResult<usize> {
+        use std::collections::HashSet;
+        use ir::node::{NodeId, NodeKind};
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let reachable: HashSet<NodeId> = graph.preorder().collect();
+        let mut count = 0usize;
+        for n in graph.all_node_ids() {
+            if !reachable.contains(&n) {
+                continue;
+            }
+            if !matches!(graph.graph.node_kind(n), NodeKind::ControlState) {
+                continue;
+            }
+            let preds: Vec<_> = graph.graph.node_inputs(n).into_iter().collect();
+            let has_back_edge = preds.iter().any(|&pred_out| {
+                let pred = graph.graph.get_node_from_output(pred_out);
+                let mut seen: HashSet<NodeId> = HashSet::new();
+                let mut stack = vec![pred];
+                while let Some(cur) = stack.pop() {
+                    if !seen.insert(cur) {
+                        continue;
+                    }
+                    for out in graph.graph.node_outputs(cur) {
+                        if !graph.graph.output_kind(out).is_control() {
+                            continue;
+                        }
+                        for (consumer, _) in graph.graph.output_uses(out) {
+                            if consumer == n {
+                                return true;
+                            }
+                            stack.push(consumer);
+                        }
+                    }
+                }
+                false
+            });
+            if has_back_edge {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
     /// the pipeline (subsequent calls to the same pipeline see an
     /// empty pass list); rebuild it from `OptimizerPipeline.default()`

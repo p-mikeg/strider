@@ -202,9 +202,10 @@ def count_stores(g) -> int:
 
 
 def count_loops(g) -> int:
-    # Phi node count — the Rust suite uses VarPhi as a loop-presence
-    # proxy.
-    return count_pat(g, pat.phi())
+    # Counts CFG loop headers (ControlStates with a back-edge predecessor).
+    # Robust to RedundantPhis collapsing loop-invariant tracked variables —
+    # a real loop with no surviving VarPhi at its header still counts.
+    return g.count_loop_headers()
 
 
 def count_int_consts(g) -> int:

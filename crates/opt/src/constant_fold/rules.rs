@@ -376,10 +376,11 @@ pub(super) fn apply_identity_rules(
 
 /// Builds the rule vec for [`apply_const_eval_rules`].
 fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
+    use ir::node::NodeOutputType;
     use pattern::{
         BoxedRule, Capture, any_bool_const, any_int_const, bool_const_with, boxed_rule,
         cast_to_bool, cast_to_int, int_binary_any, int_cmp_any, int_const_with, int_unary_any,
-        lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
+        lzcount, popcount, rewrite_rule, sign_extend, truncate, var, zero_extend,
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -543,6 +544,24 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
                 cast_to_int(any_bool_const(b)),
                 int_const_with!([b: bool] => u128::from(b)),
             ))
+        },
+        // 11. CastToBool(CastToInt(b)) => b   when `b` is Bool.
+        //
+        // The Bool→Int cast emits {0, 1}; the Int→Bool cast maps non-zero
+        // → true, zero → false; so the round-trip is identity over the
+        // {0, 1} subset that `CastToInt(Bool)` ever produces.  The
+        // `when_match` guard pins the captured operand to be Bool-typed
+        // — without it the rule would also fire on
+        // `CastToBool(CastToInt(int_x))`, which is **not** identity:
+        // `int_x = 5 → 5 → true → 1` loses information.
+        {
+            let x = Capture::new();
+            let pat = cast_to_bool(cast_to_int(var(x))).when_match(move |fg, _ty, b| {
+                b.get(x)
+                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    == Some(NodeOutputType::Bool)
+            });
+            boxed_rule(rewrite_rule(pat, var(x)))
         },
     ];
     rules

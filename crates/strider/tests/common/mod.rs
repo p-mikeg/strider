@@ -305,7 +305,58 @@ pub fn count_return_paths(g: &ir::BuiltFunctionGraph) -> usize {
     }
     total
 }
-pub fn count_loops (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::VarPhi(_))) }
+/// Counts loop headers in the lifted CFG.
+///
+/// A "loop header" here is a `ControlState` whose predecessor set contains
+/// at least one back-edge — a predecessor that is itself reachable from
+/// the `ControlState` via forward control flow.  This is independent of
+/// any `VarPhi` count, which can drop to zero when *every* tracked
+/// variable is loop-invariant (e.g. a register that's read in the loop
+/// header but never modified by the body — `RedundantPhis`'s self-ref
+/// rule then collapses the phi to the entry value).
+pub fn count_loops(g: &ir::BuiltFunctionGraph) -> usize {
+    use std::collections::HashSet;
+    let mut count = 0;
+    let reachable: HashSet<_> = g.preorder().collect();
+    for n in g.all_node_ids() {
+        if !reachable.contains(&n) {
+            continue;
+        }
+        if !matches!(g.graph.node_kind(n), NodeKind::ControlState) {
+            continue;
+        }
+        // Back-edge detection: from each predecessor, walk forward
+        // through Control outputs.  If we land back on `n`, that
+        // predecessor closes a loop.
+        let preds: Vec<_> = g.graph.node_inputs(n).into_iter().collect();
+        let has_back_edge = preds.iter().any(|&pred_out| {
+            let pred = g.graph.get_node_from_output(pred_out);
+            let mut seen: HashSet<_> = HashSet::new();
+            let mut stack = vec![pred];
+            while let Some(cur) = stack.pop() {
+                if !seen.insert(cur) {
+                    continue;
+                }
+                for out in g.graph.node_outputs(cur) {
+                    if !g.graph.output_kind(out).is_control() {
+                        continue;
+                    }
+                    for (consumer, _) in g.graph.output_uses(out) {
+                        if consumer == n {
+                            return true;
+                        }
+                        stack.push(consumer);
+                    }
+                }
+            }
+            false
+        });
+        if has_back_edge {
+            count += 1;
+        }
+    }
+    count
+}
 pub fn count_loads (g: &ir::BuiltFunctionGraph) -> usize { count_kind(g, |k| matches!(k, NodeKind::Load(_))) }
 pub fn count_stores(g: &ir::BuiltFunctionGraph) -> usize {
     // Both raw Store and StackStore count as "writes to memory" from the user's POV.

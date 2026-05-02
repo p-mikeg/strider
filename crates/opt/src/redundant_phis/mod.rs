@@ -54,16 +54,29 @@ fn remove_phis(
             let phi_token = inputs[0];
             let control_state_id = function.graph.output_definition(phi_token).0;
             let ctrl_inputs = function.graph.node_inputs(control_state_id);
+            let phi_self_output = function.graph.node_outputs_exact::<1>(node_id)?[0];
 
             // Single pass: gather both the deduplicated reachable ctrl edges
             // and their corresponding values (inputs[j + 1]) for live
-            // predecessors only.
+            // predecessors only.  Self-referential value inputs (where the
+            // phi reads its OWN output, the canonical loop back-edge shape
+            // for a variable not modified inside the loop) are filtered
+            // out of `live_values` — Braun's trivial-phi rule.  This lets
+            // the "all distinct values are the same" arm below collapse
+            // `phi(v, phi)` to `v`, where the prior code saw two distinct
+            // operands and refused to simplify.  The corresponding
+            // `reachable_ctrl` entry is still recorded so the
+            // single-ctrl arm above doesn't fire for what is logically a
+            // multi-edge join.
             let mut reachable_ctrl: FxHashSet<NodeOutputId> = FxHashSet::default();
             let mut live_values: FxHashSet<NodeOutputId> = FxHashSet::default();
             for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
                 if reachable.contains(function.graph.output_definition(ctrl_in).0) {
                     reachable_ctrl.insert(ctrl_in);
-                    live_values.insert(inputs[j + 1]);
+                    let value = inputs[j + 1];
+                    if value != phi_self_output {
+                        live_values.insert(value);
+                    }
                 }
             }
 

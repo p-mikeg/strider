@@ -610,6 +610,61 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     Ok(())
 }
 
+/// `CastToBool(CastToInt(b))` where `b` is `Bool` must collapse to `b`.
+/// The Bool→Int cast emits 0 or 1; the Int→Bool cast maps non-zero→true,
+/// zero→false; so the round-trip is identity over the {0,1} subset that
+/// CastToInt(Bool) ever produces.
+///
+/// Surfaces in real lifts as `CastToBool(CastToInt(BoolBinaryOp(…)))` —
+/// observed in arm64 kernel `cmp w8, #5; b.hi …` flag-based If conds.
+/// The diagnostic dump on `__mtx_assert` showed exactly this shape.
+///
+/// ## Soundness
+///
+/// Only the `Bool → Int → Bool` direction folds.  The reverse
+/// (`Int → Bool → Int`, equivalently `CastToInt(CastToBool(x))` for
+/// integer `x`) is **not** an identity — for `x = 5` the round-trip
+/// yields `1`, losing the original value.  That fold is gated by
+/// KnownBits proving `x ∈ {0, 1}` (see the `BAnd_with_one_proof` style
+/// rules); we don't include the reverse direction here.
+#[test]
+fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // Non-const Bool: cast a non-const integer (a Load) to Bool.
+        // The Load must be reachable so its CastToBool survives the
+        // round-trip's collapse.  ConstantFold can't reduce the Load,
+        // so the inner Bool is genuinely non-constant.
+        let addr = b.build_int_const(0x1000u64, NodeOutputType::U64).unwrap();
+        let load = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        let inner_bool = b.convert_to_bool_if_needed(load)?;
+        // Round-trip: Bool → Int → Bool — the rule under test.
+        let int_form = b.convert_to_int_if_needed(inner_bool, NodeOutputType::U32)?;
+        let outer_bool = b.convert_to_bool_if_needed(int_form)?;
+        // Return needs an integer value; cast back once at the very end.
+        b.convert_to_int_if_needed(outer_bool, NodeOutputType::U64)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    // No reachable `CastToBool` may have a `CastToInt` immediately
+    // upstream — if any survives, the round-trip rule didn't fire.
+    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    for n in fg.all_node_ids().filter(|n| reachable.contains(n)) {
+        if !matches!(fg.graph.node_kind(n), NodeKind::CastToBool) {
+            continue;
+        }
+        let inputs = fg.graph.node_inputs(n);
+        let producer = fg.graph.output_definition(inputs[0]).0;
+        assert!(
+            !matches!(fg.graph.node_kind(producer), NodeKind::CastToInt),
+            "CastToBool(CastToInt(...)) round-trip must be folded; \
+             survived at {n:?}"
+        );
+    }
+    Ok(())
+}
+
 /// `Truncate_<W>(Or(any, And(high_mask, _)))` → `Truncate_<W>(any)` —
 /// the high-mask half contributes nothing to the lower W bits, so
 /// dropping it doesn't change the truncated value.  This is the x86

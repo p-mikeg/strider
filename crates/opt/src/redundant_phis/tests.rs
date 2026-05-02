@@ -215,3 +215,94 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     );
     Ok(())
 }
+
+/// Loop-style self-referential `VarPhi`: one operand is the entry value, the
+/// other is the phi's own output (the back-edge of an unsimplified loop where
+/// the variable is never modified inside the body).  Braun-style trivial-phi
+/// detection must skip the self-reference and collapse the phi to the entry
+/// value.
+///
+/// **Surfaces in real lifts:** `getnanouptime`'s seqlock retry loop reads
+/// the function-arg pointer at the loop header and never mutates it inside
+/// the body; the IR's loop-header `VarPhi` has [arg0_from_entry,
+/// phi_self_from_loop_back] as its two value inputs.  Without this
+/// reduction, `FunctionArgDetect` can't recognise the value as the
+/// canonical `FunctionArg(0)`.
+#[test]
+fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
+    use ir::test_utils::reg_vn;
+    let var = reg_vn(0x1000, 8);
+    let mut b = FunctionBuilder::new_raw(vec![var], &[var], &[], &[], None, 0)?;
+    let entry = b.create_region()?;
+    let join = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    // entry: branch to join.
+    b.set_region(entry);
+    b.build_branch(join)?;
+
+    // join: read `var` (creates a single-input VarPhi at this region's
+    // CS), then return.
+    b.set_region(join);
+    let read_back = b.read_variable(&var)?;
+    b.build_return(Some(read_back), &[])?;
+    let mut fg = b.build()?;
+
+    // Locate the VarPhi(var) at `join` and its owning CS.
+    let phi_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(v) if *v == var))
+        .expect("VarPhi(var) at join");
+    let phi_inputs_pre = fg.graph.node_inputs(phi_node);
+    let phi_token = phi_inputs_pre[0];
+    let initial_value = phi_inputs_pre[1];
+    let cs_node = fg.graph.output_definition(phi_token).0;
+
+    // Surgery: append a second, *distinct* control predecessor to the
+    // join CS — the join's own ctrl_out, modelling a direct self-loop
+    // back-edge (the simplest loop shape that gets us two distinct
+    // reachable predecessors so the existing
+    // "all-data-inputs-identical" rule cannot fire by collapsing the
+    // ctrl-set first).  Then append a matching second value to *every*
+    // phi owned by that CS — the VarPhi gets its own output (the
+    // loop-back self-ref the test exercises), and any MemPhi gets
+    // *its* own output (so the graph keeps the per-predecessor arity
+    // invariant `remove_phis` relies on).
+    let cs_outputs = fg.graph.node_outputs(cs_node);
+    let cs_ctrl_out = cs_outputs[0];
+    let cs_phi_out = cs_outputs[1];
+    fg.graph.add_node_input(cs_node, cs_ctrl_out)?;
+
+    let phi_consumers: Vec<ir::node::NodeId> = fg
+        .graph
+        .output_uses(cs_phi_out)
+        .map(|(n, _)| n)
+        .collect();
+    for phi in phi_consumers {
+        let self_out = fg.graph.node_outputs_exact::<1>(phi)?[0];
+        fg.graph.add_node_input(phi, self_out)?;
+    }
+    assert_eq!(
+        fg.graph.node_inputs(phi_node).len(),
+        3,
+        "VarPhi must have [token, initial, self-ref] = 3 inputs after surgery"
+    );
+
+    // Run the pass under test.
+    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+
+    // After collapse, the Return's value input must reference the
+    // initial entry value, *not* the phi's output.  `replace_all_uses`
+    // on the phi's output rewires the Return to consume `initial_value`
+    // directly.
+    let return_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .expect("Return");
+    let ret_val = fg.graph.node_inputs(return_node)[2];
+    assert_eq!(
+        ret_val, initial_value,
+        "Return's value must be rewired to the phi's only non-self-referential operand"
+    );
+    Ok(())
+}
