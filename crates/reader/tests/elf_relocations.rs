@@ -114,6 +114,34 @@ fn apply_elf_relocations_no_op_on_pre_resolved_binary() {
 }
 
 #[test]
+fn apply_elf_relocations_autoload_pulls_in_missing_site_sections() {
+    // Reproduces the i386 kernel scenario at the Rust level: load only
+    // code-and-readonly (so `.data.rel.ro` is excluded), then call the
+    // autoload variant.  It must lazily pull the missing section so
+    // every relocation lands and `skipped_no_region` is zero.
+    let path = fixture_path("x64", "elf_relocs");
+    if !path.exists() {
+        return;
+    }
+    let obj = reader::load_elf(&path).expect("load_elf");
+    let mut regions =
+        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let regions_before = regions.len();
+
+    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
+        .expect("autoload apply");
+
+    assert!(stats.seen > 0, "fixture should have at least one reloc; stats = {stats:?}");
+    assert_eq!(stats.skipped_no_region, 0, "autoload must cover every site; stats = {stats:?}");
+    assert_eq!(stats.applied, stats.seen, "every reloc should land; stats = {stats:?}");
+    assert!(regions.len() > regions_before, "autoload must have added at least one region");
+
+    let table_addr = sym_addr(&obj, "dispatch_table");
+    let helper_a = sym_addr(&obj, "helper_a");
+    assert_eq!(read_u64_le(&regions, table_addr), Some(helper_a));
+}
+
+#[test]
 fn apply_elf_relocations_idempotent() {
     // Running the applier twice produces the same regions as running
     // it once.  Each relocation is a deterministic write; re-applying

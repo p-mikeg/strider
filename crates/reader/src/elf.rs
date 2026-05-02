@@ -640,6 +640,93 @@ pub fn apply_elf_relocations(
     Ok(stats)
 }
 
+/// Like [`apply_elf_relocations`], but pre-walks the dynamic
+/// relocation table and lazily extends `regions` with any
+/// `SHF_ALLOC` file-backed section from `obj` that contains a
+/// relocation site not yet covered by an existing region.  Then
+/// delegates to the pure [`apply_elf_relocations`].
+///
+/// Use this when the caller has already loaded a curated subset
+/// of the ELF (e.g. only code+rodata) but wants relocation
+/// application to "just work" without needing to know upfront
+/// which writable sections (`.got.plt`, `.data.rel.ro`, …) the
+/// dynamic relocs target.  Avoids the silent-failure mode of
+/// the pure variant where every relocation is counted as
+/// `skipped_no_region` because the caller didn't pre-load the
+/// right sections.
+///
+/// Sections are added in iteration order of `obj.sections()`,
+/// each appended once even when multiple relocs target the same
+/// section.  An ELF section that has no file-backed bytes
+/// (`SHT_NOBITS`, e.g. `.bss`) is *not* added — there's nothing
+/// to patch — and the corresponding relocs still increment
+/// `skipped_no_region` from inside the inner call.
+///
+/// # Errors
+///
+/// Same as [`apply_elf_relocations`].  The lazy-load step itself
+/// only fails on a malformed ELF (a section whose `data()` can't
+/// be read or whose `address() + len()` overflows `u64`).
+pub fn apply_elf_relocations_autoload(
+    regions: &mut Vec<MemRegion>,
+    obj: &object::File<'_>,
+) -> Result<RelocationStats> {
+    let Some(dyn_relocs) = obj.dynamic_relocations() else {
+        return Ok(RelocationStats::default());
+    };
+
+    // Pass 1 — collect site addresses not yet covered, look up
+    // their owning section, and stage one MemRegion per unique
+    // missing section.  We never mutate `regions` here so an
+    // error mid-pass leaves it untouched.
+    let mut staged: Vec<MemRegion> = Vec::new();
+    for (site_addr, _reloc) in dyn_relocs {
+        let already_covered = regions
+            .iter()
+            .chain(staged.iter())
+            .any(|r| r.contains(site_addr));
+        if already_covered {
+            continue;
+        }
+        let Some(sec) = find_loadable_section_containing(obj, site_addr) else {
+            continue;
+        };
+        let data = sec.data().context("failed to parse ELF")?;
+        if data.is_empty() {
+            continue;
+        }
+        staged.push(MemRegion::new(sec.address(), data.to_vec())?);
+    }
+
+    regions.extend(staged);
+    apply_elf_relocations(regions, obj)
+}
+
+/// Returns the first section in `obj` that contains `addr` and is
+/// safe to materialise as a `MemRegion`: `SHF_ALLOC` set, file-
+/// backed (i.e. *not* `SHT_NOBITS`).  Returns `None` when no
+/// section matches — caller treats that as "leave the reloc as
+/// skipped_no_region".
+fn find_loadable_section_containing<'data, 'a>(
+    obj: &'a object::File<'data>,
+    addr: u64,
+) -> Option<object::read::Section<'data, 'a>> {
+    obj.sections().find(|sec| {
+        let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
+            return false;
+        };
+        if sh_flags & u64::from(object::elf::SHF_ALLOC) == 0 {
+            return false;
+        }
+        if sec.data().map(|d| d.is_empty()).unwrap_or(true) {
+            return false;
+        }
+        let lo = sec.address();
+        let hi = lo.saturating_add(sec.size());
+        addr >= lo && addr < hi
+    })
+}
+
 /// Increment `stats.skipped_unsupported_kind` and record the raw
 /// ELF `r_type` of `reloc` (deduped, sorted) onto
 /// `stats.unsupported_r_types` so callers can self-diagnose which
