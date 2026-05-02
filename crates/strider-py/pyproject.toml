@@ -13,6 +13,29 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 
+# Dev / test dependencies, installable via `uv sync --group dev`
+# (PEP 735).  Kept separate from `[project.optional-dependencies]` so
+# end-users who `pip install strider` don't inherit the test-only deps.
+#
+# `maturin` is included so `uv run maturin develop` works without a
+# system-wide install.  `patchelf` is included so the rpath warning on
+# Linux goes away.
+[dependency-groups]
+dev = [
+    "maturin>=1.5,<2.0",
+    "patchelf>=0.17 ; sys_platform == 'linux'",
+    "pytest>=7",
+    "pyelftools>=0.30",
+    "ipython",
+]
+
+# pytest discovery — `uv run pytest` (or plain `pytest`) finds the
+# integration suite without arguments.  Excludes Rust target dirs and
+# the `.venv` from the rootdir scan.
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+norecursedirs = [".git", ".venv", "target", "__pycache__"]
+
 [tool.maturin]
 manifest-path = "Cargo.toml"
 features = ["pyo3/extension-module"]

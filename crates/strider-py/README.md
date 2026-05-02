@@ -13,31 +13,45 @@ queries.  This crate is the Python entry point.
 
 ## Build (development)
 
+The recommended workflow uses [`uv`](https://docs.astral.sh/uv/).
 From this directory:
 
-    pip install maturin patchelf
-    # pyelftools is only needed if you want to use it directly; the
-    # examples and tests use MemoryMap.symbol(...) instead.
-    pip install pyelftools  # optional
-    maturin develop
+    uv sync --group dev          # creates .venv and installs dev deps
+    uv run maturin develop       # builds the Rust extension into .venv
+    uv run pytest                # runs the test suite
 
-Then run the test suite:
-
-    pytest tests/python/
+That's it.  `uv sync` reads `[dependency-groups].dev` from
+`pyproject.toml` (PEP 735), `uv run` activates `.venv` automatically,
+and the `[tool.pytest.ini_options]` block points discovery at
+`tests/python/`.
 
 The integration tests need fixtures built once via:
 
-    cd ../../fixtures && make
+    (cd ../../fixtures && make)
+
+For release builds:
+
+    uv run maturin develop --release
+
+### Without `uv` (legacy pip flow)
+
+    python -m venv .venv
+    source .venv/bin/activate
+    pip install -e ".[dev]"   # if you also added the optional extra
+    # or directly:
+    pip install maturin pytest pyelftools
+    maturin develop
+    pytest
 
 ## Building a release wheel
 
-    maturin build --release
+    uv run maturin build --release
 
 The wheel is written under
 `/path/to/workspace/target/wheels/strider-0.1.0-cp39-abi3-<platform>.whl`.
 The wheel is `abi3` (Python 3.9+) so a single artifact works for every
 CPython 3.9+ version.  No CI / PyPI upload is configured; install via
-`pip install /path/to/wheel.whl` directly.
+`uv pip install /path/to/wheel.whl` directly.
 
 ## Quick example
 
