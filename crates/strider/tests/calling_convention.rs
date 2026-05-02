@@ -200,14 +200,6 @@ fn forward_8_assertions(g: &ir::BuiltFunctionGraph) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 5. forward_16 — every arch spills SOME args to the stack.
-//
-// The strict 0..16 existence check fails universally because the
-// optimiser interleaves volatile global writes between the stack-arg
-// pushes, breaking `CallStackArgCollect`'s memory-chain walk (which
-// requires contiguous `StackStore`s anchoring at `stack_arg_offsets[0]`).
-// We assert only that the analyser recovered ≥4 FunctionArg indices
-// out of 16, plus that some call-site arg slot threads through to its
-// FunctionArg.
 // ─────────────────────────────────────────────────────────────────────────────
 
 per_arch_test!(
@@ -217,7 +209,18 @@ per_arch_test!(
 );
 
 fn forward_16_assertions(g: &ir::BuiltFunctionGraph) {
-    assert_function_args_present(g, 16, 4, "forward_16");
+    // Floor at 8: the lowest-arity register sets (mips o32, arm aapcs)
+    // pass 4–8 args in registers and spill the rest, and `FunctionArgDetect`
+    // currently surfaces the register-passed callee reads but doesn't
+    // canonicalise high-slot stack-arg reads on every arch.  Reaching the
+    // strict 16/16 floor would need callee-side stack-arg recognition
+    // beyond `CallStackArgCollect`'s caller-side reach — out of scope
+    // for this assertion.  The previous floor of 4 was set when
+    // interleaved volatile global writes broke `CallStackArgCollect`'s
+    // memory-chain walk; both that bug (volatile-global passthrough)
+    // and the chain-order-monotonicity bug (slot-by-offset matching)
+    // are now fixed, so the 8/16 floor holds on every arch.
+    assert_function_args_present(g, 16, 8, "forward_16");
     assert_some_call_arg_threads_through(g, 16, "forward_16");
 }
 

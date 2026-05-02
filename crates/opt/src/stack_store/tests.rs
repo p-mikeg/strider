@@ -484,18 +484,14 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     Ok(())
 }
 
-/// Only slot 1 is populated (slot 0 is missing) — the pass must skip
-/// this call entirely rather than mis-assign the gap.
+/// One store at the anchor offset (= slot 0 under an AArch64-style table
+/// `[0, 4]`) — the dense prefix is `[arg]`, so exactly one positional
+/// arg gets appended.  Pins the "single arg collected when higher slots
+/// missing" path.
 #[test]
-fn missing_slot_zero_skips_collection() -> Result<()> {
+fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let sp = sp_vn();
     let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
-        // Only one push, at sp - 4.  If the convention expects [0, 4, 8, …]
-        // then chain_anchor_offset = -4 and slot_0 would be at -4.  But if we
-        // designed a convention where stack_arg_offsets[0] != 0 we'd
-        // effectively simulate a missing slot.  Here we instead use an
-        // offset table that expects slot_0 = -4 and slot_1 = 0.  Since
-        // there is no store at offset 0, collection must stop after slot_0.
         let four = b.build_int_const(4u64, NodeOutputType::U32)?;
         let sp_v1 =
             b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
@@ -520,6 +516,62 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + stack_arg_0 — only the one we have.
     assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
+    Ok(())
+}
+
+/// Slot 1 is filled but slot 0 is empty — `dense_prefix` truncates at
+/// the first `None`, so zero args are appended.  Pattern queries doing
+/// `arg(0)` would otherwise mis-bind to a hole; the truncation makes
+/// the missing slot visible as "no args" rather than "args starting at
+/// slot 1."
+///
+/// To produce a chain where slot 0 is missing, use a cdecl-style table
+/// `[4, 8]` and a chain where the anchor (rel=0, OOW, `is_first_store`
+/// exception) is followed by a single store at rel=8 (slot 1) and no
+/// store at rel=4 (slot 0).
+#[test]
+fn missing_slot_zero_skips_collection() -> Result<()> {
+    let sp = sp_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_v0| {
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+
+        // arg1 at sp + 4 (rel = +4 from sp_v0; will be rel = 8 from
+        // anchor at sp - 4 below).
+        let sp_plus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::U32)?;
+        let arg1 = b.build_int_const(22u64, NodeOutputType::U32)?;
+        b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
+
+        // Implicit `call` ret-addr push at sp - 4 — chain anchor.
+        let sp_minus_4 =
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Sub, NodeOutputType::U32)?;
+        b.write_variable(&sp, sp_minus_4)?;
+        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;
+        b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
+
+        let target = b.build_int_const(0x1000u64, NodeOutputType::U32)?;
+        b.build_call(target)?;
+        b.build_return(None, &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add(RedundantPhis);
+    pipeline.add(StackStoreDetect::new(sp));
+    // x86 cdecl-style: ret addr at offset 0, args at +4 and +8.
+    pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let call_id = find_call(&fg)?;
+    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    // ctrl + memory + target only — slot 1 was filled but slot 0's hole
+    // truncates the dense prefix to empty, so no args appended.
+    assert_eq!(
+        inputs.len(),
+        3,
+        "missing slot 0 must drop the slot-1 fill from the appended args; got {inputs:?}"
+    );
     Ok(())
 }
 
