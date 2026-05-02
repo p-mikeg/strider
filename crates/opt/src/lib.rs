@@ -39,6 +39,7 @@ mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
 mod function_args;
+mod if_cond_inversion;
 pub mod indirect_branch_resolve;
 mod known_bits;
 mod load_readonly;
@@ -52,6 +53,7 @@ pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use function_args::FunctionArgDetect;
+pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
     AnchorAddr, AnchorCallingContext, IndirectBranchResolve, ResolvedTargets,
     apply_link_register, apply_tail_call, classify_anchor, classify_anchor_with_rom,
@@ -102,6 +104,13 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     p.add(ConstantFold);
     // KnownBits: bit-level annotation, recomputes per-iteration.
     p.add(KnownBits);
+    // IfCondInversion: canonicalises `If(BoolNeg(C))` into `If(C)` with
+    // branches swapped.  Runs after ConstantFold so the
+    // `BoolNeg(BoolNeg(x)) → x` rule has collapsed double negations
+    // first, and so any `BoolConst`-cond `If` has already had its cond
+    // simplified (we don't want to swap branches under a `BoolConst`,
+    // because `DeadBranchElimination` would then strip the wrong arm).
+    p.add(IfCondInversion);
     p
 }
 
@@ -162,6 +171,7 @@ pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);
     p.add(KnownBits);
+    p.add(IfCondInversion);
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
     p.add(CallOtherElide);

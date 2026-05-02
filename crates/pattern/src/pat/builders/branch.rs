@@ -1,29 +1,23 @@
 //! `IfPat` — matches `If` nodes with optional constraints on the condition
 //! input and the single consumers of the true/false control outputs.
 //!
-//! When the pattern has a `cond` constraint, the matcher tries TWO layouts:
-//! 1. **Direct**: cond matches input 1; true_branch matches consumer of output 0;
-//!    false_branch matches consumer of output 1.
-//! 2. **Swapped**: input 1 is `BoolUnaryOp::Neg(inner)`, inner matches cond;
-//!    true_branch matches consumer of output 1; false_branch matches consumer
-//!    of output 0.
+//! Match layout (single, direct):
+//!  - cond matches input 1;
+//!  - true_branch matches consumer of output 0;
+//!  - false_branch matches consumer of output 1.
 //!
-//! This handles compiler-inverted if-then-else: `if (c) A else B` and
-//! `if (!c) B else A` are logically equivalent and must both match the
-//! source-level pattern `if_node().cond(c).true_branch(A).false_branch(B)`.
-//!
-//! Without a `cond` constraint, no swap is attempted — there is no
-//! condition to negate.
-//!
-//! There is currently no `.ordered()` opt-out: once `.cond(p)` is set,
-//! the swap is unconditional.  A future opt-out could be added if a
-//! caller needs strict (direct-only) matching.
-//!
-//! Use [`crate::pat::IntoPat::capture`] to bind the matched If node id.
+//! The compiler-inverted layout (`If(BoolNeg(C)){B}{A}` for source-level
+//! `if (c) A else B`) is handled upstream of pattern matching by the
+//! [`opt::IfCondInversion`] canonicalisation pass: it eagerly rewrites
+//! every `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and collapses double
+//! negations via the existing `BoolNeg(BoolNeg(x)) → x` ConstantFold rule
+//! that runs first).  By the time `Matcher` walks the graph, every `If`
+//! is in canonical direct layout, and the symmetric two-layout matching
+//! that lived here is unnecessary.  Use [`crate::pat::IntoPat::capture`]
+//! to bind the matched If node id.
 
 use std::sync::Arc;
 
-use ir::BoolUnaryOp;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::matcher::Bindings;
@@ -42,33 +36,28 @@ impl IfPat {
     pub(crate) fn new() -> Self {
         Self { cond: None, true_branch: None, false_branch: None }
     }
-    /// Constrain the branch condition.  When set, the matcher also tries
-    /// the compiler-inverted layout — see module-level docs.
+    /// Constrain the branch condition.  Matched directly against the
+    /// `If`'s cond input; the [`opt::IfCondInversion`] pass guarantees
+    /// every `If` is in canonical direct layout before patterns run.
     pub fn cond(mut self, p: impl Into<Pat>) -> Self {
         self.cond = Some(p.into());
         self
     }
     /// Match `p` against the single consumer of the If's true-branch
-    /// output.  When `cond` is also set, the matcher also tries the
-    /// inverted layout: `p` is tried against the consumer of the
-    /// **false**-branch output when the If's cond input is `Not(<cond>)`.
-    /// In that case `p` matches one or the other of the two consumers,
-    /// not both.
+    /// output (output 0).
     pub fn true_branch(mut self, p: impl Into<Pat>) -> Self {
         self.true_branch = Some(p.into());
         self
     }
     /// Match `p` against the single consumer of the If's false-branch
-    /// output.  Symmetric to `true_branch`: under the inverted layout,
-    /// `p` is tried against the consumer of the **true**-branch output.
+    /// output (output 1).
     pub fn false_branch(mut self, p: impl Into<Pat>) -> Self {
         self.false_branch = Some(p.into());
         self
     }
 }
 
-/// Custom `Pattern` impl for `IfPat`: tries direct and (if cond is set)
-/// swapped layouts.
+/// Direct-layout-only `Pattern` impl for `IfPat`.
 struct IfPattern {
     cond: Option<Pat>,
     true_branch: Option<Pat>,
@@ -95,76 +84,40 @@ impl Pattern for IfPattern {
 }
 
 impl IfPattern {
-    /// Common entry: verifies `node` is an `If`, then tries the direct
-    /// layout and (if a cond is set) the swapped layout.  Restores
-    /// bindings between attempts so a failed sibling can't leak partial
-    /// state into the surviving match.
+    /// Verifies `node` is an `If` and applies the cond / true_branch /
+    /// false_branch constraints in canonical direct layout.
     fn try_match_at(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
         if !matches!(ctx.graph.graph.node_kind(node), NodeKind::If) {
             return false;
         }
         let mark = b.mark();
-        if self.try_layout(ctx, node, b, /*swapped=*/ false) {
-            return true;
-        }
-        b.restore(mark);
-        // Swap only when cond is constrained — without a cond, "swap" has
-        // no semantic basis and the conservative direct-only match wins.
-        if self.cond.is_none() {
-            return false;
-        }
-        if self.try_layout(ctx, node, b, /*swapped=*/ true) {
+        if self.try_layout(ctx, node, b) {
             return true;
         }
         b.restore(mark);
         false
     }
 
-    fn try_layout(
-        &self,
-        ctx: &MatchCtx,
-        if_node: NodeId,
-        b: &mut Bindings,
-        swapped: bool,
-    ) -> bool {
+    fn try_layout(&self, ctx: &MatchCtx, if_node: NodeId, b: &mut Bindings) -> bool {
         // 1. Cond.  Input 1 of the If (input 0 is the Control predecessor).
         if let Some(cond_pat) = &self.cond {
             let inputs = ctx.graph.graph.node_inputs(if_node);
             let Some(cond_in) = inputs.into_iter().nth(1) else {
                 return false;
             };
-            if swapped {
-                // Require cond_in to be Neg(<x>); match cond_pat against <x>.
-                let cond_node = ctx.graph.graph.get_node_from_output(cond_in);
-                if !matches!(
-                    ctx.graph.graph.node_kind(cond_node),
-                    NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)
-                ) {
-                    return false;
-                }
-                let inner_inputs = ctx.graph.graph.node_inputs(cond_node);
-                let Some(inner) = inner_inputs.into_iter().next() else {
-                    return false;
-                };
-                if !ctx.matcher.match_output_with_walk_through(inner, cond_pat, b) {
-                    return false;
-                }
-            } else if !ctx.matcher.match_output_with_walk_through(cond_in, cond_pat, b) {
+            if !ctx.matcher.match_output_with_walk_through(cond_in, cond_pat, b) {
                 return false;
             }
         }
 
-        // 2. True / false branch consumers.  Under swap, output 1 carries
-        //    the source-level "true" semantics and output 0 the "false".
-        let (true_out_idx, false_out_idx) = if swapped { (1, 0) } else { (0, 1) };
-
+        // 2. True / false branch consumers.
         if let Some(tp) = self.true_branch.as_ref()
-            && !match_branch_consumer(ctx, if_node, true_out_idx, tp, b)
+            && !match_branch_consumer(ctx, if_node, 0, tp, b)
         {
             return false;
         }
         if let Some(fp) = self.false_branch.as_ref()
-            && !match_branch_consumer(ctx, if_node, false_out_idx, fp, b)
+            && !match_branch_consumer(ctx, if_node, 1, fp, b)
         {
             return false;
         }
