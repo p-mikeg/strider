@@ -124,19 +124,61 @@ def test_apply_elf_relocations_method_returns_stats():
     assert stats.skipped_no_region == 0
 
 
-def test_apply_elf_relocations_reports_skipped_no_region():
+def test_apply_elf_relocations_autoloads_missing_site_sections():
     """When the load step omits `.data.rel.ro` (default behaviour),
-    the standalone applier counts the relocs as `skipped_no_region`
-    rather than silently dropping them."""
+    the standalone applier now lazily pulls the section in from the
+    same ELF rather than silently reporting `skipped_no_region`.
+
+    This is the strider-py-side guarantee for the i386-kernel bug
+    (see `crates/reader/src/elf.rs::apply_elf_relocations_autoload`):
+    `add_region_from_elf(path)` followed by
+    `apply_elf_relocations(path)` produces the same patched-region
+    state as the bundled `add_region_from_elf(path,
+    apply_relocations=True)` call.
+    """
     elf = X64_RELOCS()
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))  # default: no `.data.rel.ro`
+    table_addr = mem.symbol("dispatch_table")
+    # Pre-condition: dispatch_table is unmapped before the apply call.
+    assert mem.read(table_addr, 8) is None
+
     stats = mem.apply_elf_relocations(str(elf))
-    # Sites in `.data.rel.ro` aren't in any region → skipped_no_region.
-    assert stats.skipped_no_region >= 4, (
-        f"expected ≥4 dispatch_table sites skipped: {stats!r}"
+
+    # Autoload kicks in: every reloc lands.
+    assert stats.seen > 0, f"fixture should expose dynamic relocs: {stats!r}"
+    assert stats.skipped_no_region == 0, (
+        f"autoload should leave nothing skipped_no_region: {stats!r}"
     )
-    assert stats.applied == 0
+    assert stats.applied == stats.seen, (
+        f"every reloc should be applied after autoload: {stats!r}"
+    )
+    # And the autoloaded section is now readable through the MemoryMap.
+    helper_a = mem.symbol("helper_a")
+    assert _read_u64_le(mem, table_addr) == helper_a
+
+
+def test_split_call_path_matches_bundled_after_autoload():
+    """Autoload makes `add_region_from_elf(path)` +
+    `apply_elf_relocations(path)` observationally equivalent to
+    the bundled `add_region_from_elf(path, apply_relocations=True)`
+    for every dispatch_table slot.  Pins the "no footgun" property
+    for users who don't know about the bundled flag."""
+    elf = X64_RELOCS()
+
+    bundled = strider.MemoryMap()
+    bundled.add_region_from_elf(str(elf), apply_relocations=True)
+
+    split = strider.MemoryMap()
+    split.add_region_from_elf(str(elf))
+    split.apply_elf_relocations(str(elf))
+
+    table_addr = bundled.symbol("dispatch_table")
+    for slot in range(4):
+        addr = table_addr + 8 * slot
+        bv = _read_u64_le(bundled, addr)
+        sv = _read_u64_le(split, addr)
+        assert bv == sv, f"slot {slot} differs: bundled={bv:#x} split={sv:#x}"
 
 
 def test_relocation_stats_repr_round_trips():
@@ -177,8 +219,9 @@ def test_unsupported_r_types_field_exists_on_default_load():
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))
     stats = mem.apply_elf_relocations(str(elf))
-    # Default load doesn't include `.data.rel.ro`, so every reloc is
-    # skipped_no_region — but it's not unsupported_kind, so the
-    # diagnostic list stays empty.  The point of this test is to pin
-    # the accessor itself, not the contents.
+    # apply_elf_relocations autoloads `.data.rel.ro` so
+    # `skipped_no_region == 0` and every reloc is applied.  None of
+    # the reloc kinds in this fixture are unsupported, so the
+    # diagnostic list stays empty regardless.  The point of this
+    # test is to pin the accessor itself, not the contents.
     assert isinstance(stats.unsupported_r_types, list)

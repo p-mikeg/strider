@@ -240,31 +240,38 @@ impl PyMemoryMap {
     /// Apply the ELF at `path`'s dynamic relocations to the regions
     /// already loaded into this MemoryMap.  Returns the
     /// `RelocationStats` breakdown so callers can sanity-check the
-    /// outcome (e.g. a binary that reports `applied == 0` but
-    /// `seen > 0` is signalling its relocation kinds aren't ones the
-    /// applier models — see `crates/reader/src/elf.rs::apply_elf_relocations`
-    /// for the supported set).
+    /// outcome.
     ///
-    /// This is the unbundled form of
-    /// `add_region_from_elf(path, apply_relocations=True)`: the load
-    /// step already happened (perhaps via a different ELF, raw
-    /// `add_region`, or a callback `MemReader`), and the user just
-    /// wants to overlay relocations from the supplied ELF onto the
-    /// existing regions.  Use `add_region_from_elf(path,
-    /// apply_relocations=True)` when the same ELF supplies both the
-    /// regions and the relocations — that path also widens section
-    /// coverage to include `.data.rel.ro`.
+    /// **Auto-loads missing site sections.**  When a relocation
+    /// site falls outside every region currently in the MemoryMap,
+    /// the supplied ELF's containing section is appended on the
+    /// fly and the relocation is then applied to it.  This is what
+    /// makes the common pattern
+    ///
+    /// ```python
+    /// mem.add_region_from_elf(path)              # code + rodata
+    /// mem.apply_elf_relocations(path)            # autoloads .got.plt etc.
+    /// ```
+    ///
+    /// produce the same patched-region set as the bundled
+    /// `add_region_from_elf(path, apply_relocations=True)` form,
+    /// instead of silently reporting `applied = 0` with every
+    /// reloc counted under `skipped_no_region`.  See
+    /// `crates/reader/src/elf.rs::apply_elf_relocations_autoload`
+    /// for the lazy-load contract (file-backed `SHF_ALLOC`
+    /// sections only — `SHT_NOBITS` like `.bss` is never
+    /// autoloaded).
     fn apply_elf_relocations(&self, path: &str) -> PyResult<PyRelocationStats> {
         let obj = reader::load_elf(path).map_err(into_reader_err)?;
         let mut regions = self
             .inner
             .write()
             .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap regions lock poisoned")))?;
-        let stats = reader::elf::apply_elf_relocations(&mut regions, &obj)
+        let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj)
             .map_err(into_reader_err)?;
-        // Invalidate the lookup table — we just rewrote the region
-        // bytes in place, so any cached lookup that held the old
-        // contents must be rebuilt before the next read.
+        // Invalidate the lookup table — both the autoload step
+        // (which appends new regions) and the in-place patches
+        // require a rebuild before the next read.
         let mut slot = self
             .table
             .write()
