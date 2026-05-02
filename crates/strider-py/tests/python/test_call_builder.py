@@ -107,6 +107,47 @@ def test_call_at_address_matches_known_target():
     assert len(hits) >= 1, f"expected ≥1 Call to {f_addr:#x}; got {len(hits)}"
 
 
+def test_call_at_any_matches_when_target_in_set():
+    # `.at_any([...])` fires if the call target equals any address in
+    # the list — natural for queries that look for "any of these
+    # known callees" (e.g. multiple lock-acquire helpers).
+    elf = fixture_path("x86", "switch")
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf))
+    f_addr = mem.symbol("f")
+    g = _switch_graph()
+
+    # Set contains f's actual address among unrelated noise → must fire.
+    hits = g.find_all(call().at_any([0xDEAD_BEEF, f_addr, 0xCAFE_BABE]))
+    assert len(hits) >= 1, (
+        f"expected ≥1 Call when {f_addr:#x} is in the target set; got {len(hits)}"
+    )
+
+    # Set without f's address → no match.
+    hits_none = g.find_all(call().at_any([0xDEAD_BEEF, 0xCAFE_BABE]))
+    assert len(hits_none) == 0
+
+
+def test_call_at_any_empty_set_matches_nothing():
+    # An empty target set is vacuously false — pin the contract so
+    # callers don't accidentally fall through to "match anything".
+    g = _switch_graph()
+    hits = g.find_all(call().at_any([]))
+    assert len(hits) == 0
+
+
+def test_int_const_any_of_standalone():
+    # The underlying primitive — usable independently of CallPat.
+    from strider.pattern import int_const_any_of
+    elf = fixture_path("x86", "switch")
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(elf))
+    f_addr = mem.symbol("f")
+    g = _switch_graph()
+    hits = g.find_all(call().target(int_const_any_of([f_addr, 0xDEAD_BEEF])))
+    assert len(hits) >= 1
+
+
 def test_call_arg0_constraint_filters_out_non_matches():
     # `f` is called with `value->a` as arg 0 — a `Load` value (after
     # the destructive optimiser pipeline runs, the surrounding casts

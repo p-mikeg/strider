@@ -7,7 +7,7 @@
 use ir::node::NodeKind;
 
 use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, OutputsSpec};
-use crate::pat::{Pat, int_const};
+use crate::pat::{Pat, int_const, int_const_any_of};
 
 // ── CallPat ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +48,19 @@ impl CallPat {
     #[must_use]
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(addr))
+    }
+    /// Constrain the call target to any address in `addrs`.
+    /// Set-membership variant of [`Self::at`] — useful when the same
+    /// query should fire on multiple known callees (e.g. all
+    /// lock-acquire helpers in a kernel binary).  An empty `addrs`
+    /// vacuously fails, matching nothing.  Equivalent to
+    /// `target(int_const_any_of(addrs))`.
+    #[must_use]
+    pub fn at_any<I>(self, addrs: I) -> Self
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        self.target(int_const_any_of(addrs))
     }
 }
 

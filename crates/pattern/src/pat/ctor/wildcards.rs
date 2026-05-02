@@ -77,6 +77,56 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
     .into_pat()
 }
 
+/// Matches an `IntConst` whose stored value (masked to the node's
+/// declared width) equals any value in `values` (also masked to the
+/// same width).  Set-membership variant of [`int_const`] — useful when
+/// querying a call site whose target may be one of several known
+/// addresses, e.g. multiple lock-acquire helpers in a kernel binary:
+///
+/// ```rust
+/// # use pattern::{call, int_const_any_of};
+/// let pat = call().target(int_const_any_of([
+///     0xffff_8000_0010_0000u64,  // __mtx_lock
+///     0xffff_8000_0010_0040u64,  // __mtx_lock_sleep
+///     0xffff_8000_0010_0080u64,  // __mtx_lock_spin
+/// ]));
+/// # let _ = pat;
+/// ```
+///
+/// An empty `values` set vacuously fails — every membership test is
+/// false.  Match-only — has no build-side semantics, so it returns
+/// `NotBuildable` from a rewrite-rule RHS context.
+#[must_use]
+pub fn int_const_any_of<I, V>(values: I) -> Pat
+where
+    I: IntoIterator<Item = V>,
+    V: Into<i128>,
+{
+    let values_unsigned: Vec<u128> = values.into_iter().map(|v| v.into() as u128).collect();
+    NodePat::matcher(
+        KindSpec::variant(&NodeKind::IntConst(0u128)),
+        InputsSpec::None,
+    )
+    .with_post_match(Arc::new(move |ctx, node, _b| {
+        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+            return false;
+        };
+        let ty = ctx
+            .graph
+            .graph
+            .node_outputs(node)
+            .into_iter()
+            .find_map(|out| ctx.graph.graph.output_kind(out).as_value());
+        let Some(ty) = ty else { return false; };
+        let mask = ty.bit_mask_u128();
+        let stored_masked = stored & mask;
+        values_unsigned
+            .iter()
+            .any(|&v| stored_masked == (v & mask))
+    }))
+    .into_pat()
+}
+
 /// Matches an `IntConst` whose stored value, interpreted as a signed
 /// integer at *some* natural width ≤ the node's output width, equals
 /// `v`.  Strictly more permissive than [`int_const`]: also matches

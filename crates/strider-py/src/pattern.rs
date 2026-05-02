@@ -491,6 +491,22 @@ pub fn signed_int_const(value: i128) -> PyPat {
     PyPat::from_pat(pattern::signed_int_const(value))
 }
 
+/// Match an `IntConst` whose stored value (masked to its declared
+/// width) equals any value in `values` (also masked to the same
+/// width).  Set-membership variant of `int_const` — useful when the
+/// same query should fire on multiple known constants, e.g. several
+/// candidate call targets when querying with
+/// `call().target(int_const_any_of([...]))`.
+///
+/// An empty `values` list vacuously fails (matches nothing).
+///
+/// Match-only — no build-side semantics, so this pattern cannot
+/// appear on the RHS of a rewrite rule.
+#[pyfunction]
+pub fn int_const_any_of(values: Vec<i128>) -> PyPat {
+    PyPat::from_pat(pattern::int_const_any_of(values))
+}
+
 #[pyfunction]
 pub fn bool_const(value: bool) -> PyPat {
     PyPat::from_pat(pattern::bool_const(value))
@@ -1221,6 +1237,17 @@ impl PyCallPat {
         slf.borrow(py).target.replace(Some(pattern::int_const(addr)));
         slf
     }
+    /// Constrain the call target to any address in `addrs`.
+    /// Set-membership variant of `at` — fires when the call's target
+    /// matches any address in the list.  Equivalent to
+    /// `target(int_const_any_of(addrs))`.  An empty list vacuously
+    /// fails (matches nothing).
+    fn at_any(slf: Py<Self>, py: Python<'_>, addrs: Vec<u64>) -> Py<Self> {
+        slf.borrow(py)
+            .target
+            .replace(Some(pattern::int_const_any_of(addrs)));
+        slf
+    }
     /// Constrain the call target with an arbitrary pattern (e.g.
     /// `function_arg(0)` or a captured value reference).
     fn target(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
@@ -1783,6 +1810,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(var);
     add_fn!(int_const);
     add_fn!(signed_int_const);
+    add_fn!(int_const_any_of);
     add_fn!(bool_const);
     add_fn!(float_const);
     add_fn!(any_int_const);

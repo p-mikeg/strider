@@ -31,6 +31,39 @@ fn call_target_with_pattern() {
 }
 
 #[test]
+fn call_at_any_matches_when_target_is_in_set() {
+    let g = shapes::call_at(0x1234);
+    // Set contains the call's target → match.
+    a::matches(&g, call().at_any([0x1000u64, 0x1234, 0x9999]), 1);
+}
+
+#[test]
+fn call_at_any_skips_when_target_is_not_in_set() {
+    let g = shapes::call_at(0x1234);
+    // Set does not contain the call's target → no match.
+    a::none(&g, call().at_any([0x1000u64, 0x9999]));
+}
+
+#[test]
+fn call_at_any_empty_set_never_matches() {
+    let g = shapes::call_at(0x1234);
+    // An empty target set is vacuously false — every IntConst lookup
+    // fails the membership test.  Pinning this contract so empty-set
+    // callers do not accidentally fall through to "match anything".
+    a::none(&g, call().at_any(std::iter::empty::<u64>()));
+}
+
+#[test]
+fn int_const_any_of_matches_set_membership() {
+    // Direct test of the underlying primitive — independent of CallPat.
+    let g = shapes::call_at(0x1234);
+    // The call site stores the target as IntConst(0x1234); query via
+    // the standalone any-of ctor.
+    a::matches(&g, call().target(int_const_any_of([0x1234u64, 0xDEADBEEF])), 1);
+    a::none(&g, call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])));
+}
+
+#[test]
 fn call_captures_node() {
     let g = shapes::call_at(0x1234);
     let n = Capture::new();
