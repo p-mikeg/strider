@@ -278,17 +278,20 @@ impl Strider {
                 .graph
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
-            // Regions whose terminator is `UnresolvedIndirectBranch`
-            // need their final `BranchIndirect` insn lifted via the
-            // placeholder path; regions whose terminator is `Switch`
-            // need the If-ladder path.  Both detect the special case
-            // before the per-instruction loop, skip the BranchIndirect
-            // inside the loop, and lift it via the dedicated handler
-            // post-loop.
+            // Regions with non-trivial terminators have their
+            // terminator p-code insn skipped inside the per-insn loop
+            // and lifted via a dedicated handler post-loop:
+            //   * `UnresolvedIndirectBranch` skips `BranchIndirect`,
+            //     lifts via the placeholder path.
+            //   * `Switch` skips `BranchIndirect`, lifts as an
+            //     If-ladder.
+            //   * `TailCall` skips `Branch`, lifts as
+            //     `Call(IntConst(target)) + Return`.
             let special_terminator = SpecialTerm::from_terminator(&region.terminator);
             for wrapped_insn in &region.insns {
-                if special_terminator.is_some()
-                    && wrapped_insn.insn.opcode == rsleigh::Opcode::BranchIndirect
+                if special_terminator
+                    .as_ref()
+                    .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
                 {
                     continue;
                 }
@@ -311,6 +314,9 @@ impl Strider {
                         target_value,
                         &ir_region_of,
                     )?;
+                }
+                Some(SpecialTerm::TailCall(target)) => {
+                    ir_strider.handle_tail_call(target)?;
                 }
                 None => {}
             }
@@ -398,15 +404,22 @@ impl Strider {
 }
 
 /// Per-region special-terminator marker the per-instruction loop uses
-/// to skip the BranchIndirect insn so the post-loop dispatch can lift
-/// it via the placeholder / If-ladder path.
+/// to skip the terminator p-code insn so the post-loop dispatch can
+/// lift it via a dedicated handler.
 enum SpecialTerm {
     /// Tier-2 placeholder: lifts to `Return(target_value)` and pushes
-    /// the (addr, target_value) pair onto `unresolved_branches`.
+    /// the (addr, target_value) pair onto `unresolved_branches`.  Skip
+    /// the trailing `BranchIndirect`.
     Unresolved(rsleigh::Vn, cfg::PcodeInsnAddr),
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
-    /// against `targets`.
+    /// against `targets`.  Skip the trailing `BranchIndirect`.
     Switch(rsleigh::Vn, Vec<u64>, Option<ir::Value>),
+    /// Direct branch to an out-of-function target (`fn_max_size`
+    /// bound exceeded, or sub-`start_addr` with
+    /// `allow_code_before_start_addr=false`).  Lifts to
+    /// `Call(IntConst(target)) + Return`.  Skip the trailing
+    /// `Branch`.
+    TailCall(u64),
 }
 
 impl SpecialTerm {
@@ -424,7 +437,21 @@ impl SpecialTerm {
                 targets.clone(),
                 *target_value,
             )),
+            cfg::RegionTerminator::TailCall { target } => Some(SpecialTerm::TailCall(*target)),
             _ => None,
+        }
+    }
+
+    /// Returns true when the per-region per-insn loop should skip
+    /// `opcode` because the post-loop dispatcher will lift it via a
+    /// dedicated handler.  `Unresolved`/`Switch` skip `BranchIndirect`;
+    /// `TailCall` skips the direct `Branch`.
+    fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
+        match self {
+            SpecialTerm::Unresolved(..) | SpecialTerm::Switch(..) => {
+                opcode == rsleigh::Opcode::BranchIndirect
+            }
+            SpecialTerm::TailCall(..) => opcode == rsleigh::Opcode::Branch,
         }
     }
 }

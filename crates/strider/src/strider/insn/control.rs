@@ -237,6 +237,31 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         Ok(())
     }
 
+    /// Lifts a region whose CFG terminator is
+    /// [`cfg::RegionTerminator::TailCall`] as
+    /// `Call(IntConst(target)) + Return`.  The per-region loop
+    /// SKIPS the trailing `Opcode::Branch` insn (see
+    /// `pipeline.rs::SpecialTerm::skips_opcode`); this method is the
+    /// post-loop handler that emits the `Call + Return` pair.
+    ///
+    /// This is the lowering the
+    /// [`cfg::RegionTerminator::TailCall`] doc-comment promises: a
+    /// direct branch out of the function range is semantically a
+    /// tail call, so the IR carries the explicit Call (with the
+    /// resolved constant target) and a Return that hands the
+    /// caller's frame back.
+    pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
+        let default_code_space = self.cfg.sleigh.default_code_space();
+        let space_info = self.cfg.sleigh.space_info(default_code_space);
+        let call_address = self
+            .builder
+            .build_int_const(target, space_info.addr_size().try_into()?)?;
+        self.builder.build_call(call_address)?;
+        let ret_regs = self.builder.ret_val_vars().to_vec();
+        self.builder.build_return(None, &ret_regs)?;
+        Ok(())
+    }
+
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Indirect call: target is a register/memory value holding the address.
         let call_address = self.read_vn(&insn.inputs[0])?;
