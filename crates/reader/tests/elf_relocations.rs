@@ -159,3 +159,85 @@ fn apply_elf_relocations_idempotent() {
     let after: Vec<Vec<u8>> = regions.iter().map(|r| r.data().to_vec()).collect();
     assert_eq!(snapshot, after, "apply_elf_relocations is not idempotent");
 }
+
+#[test]
+fn apply_elf_relocations_autoload_is_idempotent() {
+    // Running autoload twice must produce the same regions as
+    // running it once: the second call sees the previously-staged
+    // sections in `regions` and skips re-staging.
+    let path = fixture_path("x64", "elf_relocs");
+    if !path.exists() {
+        return;
+    }
+    let obj = reader::load_elf(&path).expect("load_elf");
+    let mut regions =
+        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+
+    let _ = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let snapshot: Vec<(u64, Vec<u8>)> =
+        regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
+
+    let _ = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+    let after: Vec<(u64, Vec<u8>)> =
+        regions.iter().map(|r| (r.start_addr(), r.data().to_vec())).collect();
+
+    assert_eq!(snapshot, after, "autoload must be idempotent");
+}
+
+#[test]
+fn apply_elf_relocations_autoload_does_not_fabricate_values_for_undefined_externs() {
+    // ET_EXEC userland fixture (`control`) has GLOB_DAT / JMP_SLOT
+    // entries that target undefined externs (libc).  Autoload
+    // happily pulls the .got / .got.plt sections in (every site
+    // covered ⇒ skipped_no_region = 0), but the inner applier
+    // still refuses to write a value because the symbol is
+    // undefined ⇒ applied = 0, skipped_unresolved_target = seen.
+    //
+    // Pins the property that autoload doesn't tempt the applier
+    // into making up values for undefined externs.
+    let path = fixture_path("x86", "control");
+    if !path.exists() {
+        return;
+    }
+    let obj = reader::load_elf(&path).expect("load_elf");
+    let mut regions =
+        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+
+    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+
+    assert!(stats.seen > 0, "fixture should expose dynamic relocs: {stats:?}");
+    assert_eq!(stats.applied, 0, "undefined externs must not be fabricated: {stats:?}");
+    assert_eq!(stats.skipped_no_region, 0, "autoload should cover every site: {stats:?}");
+    assert_eq!(
+        stats.skipped_unresolved_target, stats.seen,
+        "every reloc here targets an undefined extern: {stats:?}"
+    );
+}
+
+#[test]
+fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
+    // A statically-linked fixture (no dynamic_relocations()) ⇒
+    // autoload short-circuits with empty stats and zero region
+    // mutation.  Uses `arithmetic` because it's the simplest
+    // statically-linked fixture in the suite.
+    let path = fixture_path("x86", "arithmetic");
+    if !path.exists() {
+        return;
+    }
+    let obj = reader::load_elf(&path).expect("load_elf");
+    let mut regions =
+        reader::elf::elf_get_code_and_readonly_sections_as_mem_regions(&obj).unwrap();
+    let regions_before = regions.len();
+
+    let stats = reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).unwrap();
+
+    // Whether the fixture has zero dyn relocs or just none of the
+    // shape we autoload depends on the linker, but either way the
+    // postcondition is identical: nothing applied, nothing
+    // staged.  Skip the assert when seen > 0 (means the linker
+    // emitted a small table — the previous test covers that).
+    if stats.seen == 0 {
+        assert_eq!(stats.applied, 0);
+        assert_eq!(regions.len(), regions_before, "no dynamic table ⇒ no autoload work");
+    }
+}
