@@ -219,8 +219,9 @@ def test_unsupported_r_types_field_exists_on_default_load():
     mem = strider.MemoryMap()
     mem.add_region_from_elf(str(elf))
     stats = mem.apply_elf_relocations(str(elf))
-    # Default load doesn't include `.data.rel.ro`, so every reloc is
-    # skipped_no_region — but it's not unsupported_kind, so the
-    # diagnostic list stays empty.  The point of this test is to pin
-    # the accessor itself, not the contents.
+    # apply_elf_relocations autoloads `.data.rel.ro` so
+    # `skipped_no_region == 0` and every reloc is applied.  None of
+    # the reloc kinds in this fixture are unsupported, so the
+    # diagnostic list stays empty regardless.  The point of this
+    # test is to pin the accessor itself, not the contents.
     assert isinstance(stats.unsupported_r_types, list)

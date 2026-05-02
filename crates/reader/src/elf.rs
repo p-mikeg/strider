@@ -662,6 +662,15 @@ pub fn apply_elf_relocations(
 /// to patch — and the corresponding relocs still increment
 /// `skipped_no_region` from inside the inner call.
 ///
+/// The dedup check is per-site (does any region cover this exact
+/// `site_addr`), not per-section.  On a well-formed ELF every
+/// `SHF_ALLOC` section has a disjoint address range, so two
+/// missing sites in the same section get unified to one staged
+/// `MemRegion`.  On a malformed/synthesised ELF where two
+/// `SHF_ALLOC` sections overlap, both can end up staged for two
+/// different sites — `MemRegionsLookupTable`'s "last one
+/// inserted wins" rule resolves the subsequent reads.
+///
 /// # Errors
 ///
 /// Same as [`apply_elf_relocations`].  The lazy-load step itself
