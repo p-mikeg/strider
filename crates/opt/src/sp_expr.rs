@@ -205,10 +205,22 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
         let signed = g.output_kind(out).as_value()?.get_signed_int(u128::from(c))?;
         return i64::try_from(signed).ok();
     }
-    // Peephole: Neg(IntConst(K)) → -K.  The lifter produces this shape for
+    // Peephole: Neg(IntConst(K)) → wrapping-negate K modulo the inner
+    // type's width, then sign-extend.  The lifter produces this shape for
     // every `IntSub _, IntConst(K)`; intermediate fixed-point iterations
     // may inspect the graph before `ConstantFold` collapses the
     // `Neg(IntConst)` to a single negative `IntConst`.
+    //
+    // Use modular `wrapping_neg` (matching `ConstantFold`'s
+    // `IntUnaryOp::Neg` evaluator at `constant_fold/rules.rs:413`) rather
+    // than `checked_neg` on the sign-extended value.  Without modular
+    // negation we would silently disagree with `ConstantFold` on the
+    // type-minimum input (e.g. `0x80000000_U32`): `checked_neg` on the
+    // sign-extended `-2^31` yields `+2^31`, while the IR's actual
+    // semantics (modular two's-complement) yield `0x80000000_U32` which
+    // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
+    // same SP-relative subtraction would then return different offsets
+    // and `StackStoreDetect` could classify the same store inconsistently.
     let node = g.get_node_from_output(out);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg)) {
         let inputs = g.node_inputs(node);
@@ -216,9 +228,10 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
             let inner = inputs[0];
             let k = g.int_const_val(inner)?;
             let inner_ty = g.output_kind(inner).as_value()?;
-            let signed = inner_ty.get_signed_int(u128::from(k))?;
-            let neg = signed.checked_neg()?;
-            return i64::try_from(neg).ok();
+            let neg_raw = u128::from(k).wrapping_neg();
+            let neg_masked = inner_ty.get_unsigned_int(neg_raw)?;
+            let signed = inner_ty.get_signed_int(neg_masked)?;
+            return i64::try_from(signed).ok();
         }
     }
     None
@@ -439,6 +452,43 @@ mod tests {
         b.build_return(Some(v), &[])?;
         let fg = b.build()?;
         assert_eq!(int_const_signed(&fg.graph, v), Some(-4));
+        Ok(())
+    }
+
+    #[test]
+    fn int_const_signed_neg_of_min_uses_modular_negation() -> crate::Result<()> {
+        // `Neg(IntConst(0x8000_0000_U32))` must agree with the IR's modular
+        // semantics: in two's-complement at U32, `-(-2^31) = -2^31`.  The
+        // peephole here must NOT return `+2^31` (which is what
+        // `checked_neg(-2^31i128)` produces) — that would silently disagree
+        // with `ConstantFold::IntUnaryOp::Neg`'s `wrapping_neg` evaluator
+        // and `StackStoreDetect` could classify the same store inconsistently
+        // depending on whether the inner Neg had been folded yet.
+        let mut b = FunctionBuilder::empty()?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let inner = b.build_int_const(0x8000_0000u64, NodeOutputType::U32)?;
+        let neg = b.build_int_unary_operation(inner, ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
+        b.build_return(Some(neg), &[])?;
+        let fg = b.build()?;
+        // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
+        assert_eq!(int_const_signed(&fg.graph, neg), Some(i32::MIN.into()));
+        Ok(())
+    }
+
+    #[test]
+    fn int_const_signed_neg_of_positive_const() -> crate::Result<()> {
+        // Sanity: `Neg(IntConst(7_U32))` peeps through to `-7`.
+        let mut b = FunctionBuilder::empty()?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let inner = b.build_int_const(7u64, NodeOutputType::U32)?;
+        let neg = b.build_int_unary_operation(inner, ir::IntUnaryOp::Neg, NodeOutputType::U32)?;
+        b.build_return(Some(neg), &[])?;
+        let fg = b.build()?;
+        assert_eq!(int_const_signed(&fg.graph, neg), Some(-7));
         Ok(())
     }
 

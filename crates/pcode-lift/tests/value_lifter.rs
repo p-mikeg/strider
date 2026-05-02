@@ -373,11 +373,65 @@ fn lift_int_sub_lowers_to_add_neg() {
     );
 }
 
-/// Two `IntSub` lifts of structurally-identical operands must dedupe via the
-/// IR's node cache: the canonical lowered shape `Add(a, Neg(b))` is built
+/// Two `IntSub` lifts with VARIABLE operands must dedupe via the IR's
+/// node cache: the canonical lowered shape `Add(a, Neg(b))` is built
 /// from cacheable node kinds, so the second lift reuses both the inner
-/// `Neg(b)` node and the outer `Add` node.  Regression guard against the
-/// lowering accidentally synthesising fresh non-cacheable nodes.
+/// `Neg(b)` node and the outer `Add` node.  Variable operands are the
+/// strict case — constant-operand lifts dedupe trivially because the
+/// `IntConst` keys match — so this test reads a register varnode for
+/// both inputs.  Regression guard against the lowering accidentally
+/// synthesising fresh non-cacheable nodes.
+#[test]
+fn lift_int_sub_caches_lowered_shape_variable_operands() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let count = |b: &ir::FunctionBuilder, target: NodeKind| -> usize {
+        b.body()
+            .graph
+            .all_node_ids()
+            .filter(|&id| b.body().graph.node_kind(id) == &target)
+            .count()
+    };
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        // IntSub reg(0), reg(4)  →  reg(8).  Variable inputs.
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(reg(8)),
+            inputs: vec![reg(0), reg(4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let adds_after_first = count(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
+    let negs_after_first = count(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    assert_eq!(adds_after_first, 1, "first IntSub lift must produce exactly one Add");
+    assert_eq!(negs_after_first, 1, "first IntSub lift must produce exactly one Neg");
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        // Same inputs (reg(0), reg(4)), DIFFERENT output reg.  Cache must
+        // dedupe the inner Neg(reg(4)) and outer Add(reg(0), Neg(reg(4))).
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(reg(0)),
+            inputs: vec![reg(0), reg(4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let adds_after_second = count(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
+    let negs_after_second = count(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    assert_eq!(
+        adds_after_second, adds_after_first,
+        "second IntSub lift with same operands must dedup the Add via the node cache"
+    );
+    assert_eq!(
+        negs_after_second, negs_after_first,
+        "second IntSub lift with same operands must dedup the Neg via the node cache"
+    );
+}
+
+/// Companion to the variable-operand cache test: two const-operand lifts
+/// must also dedupe.  Cheaper to detect cache-bypass regressions on the
+/// happy path before they cause graph bloat in real binaries.
 #[test]
 fn lift_int_sub_caches_lowered_shape() {
     let sleigh = make_sleigh();

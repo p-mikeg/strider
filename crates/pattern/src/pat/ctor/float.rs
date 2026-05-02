@@ -64,8 +64,11 @@ decl_pat_unary_ops!(float_unary, FloatUnaryOp, Pat, [
 
 /// Matches a float comparison node with the given `op`.
 ///
-/// For commutative ops (`Equal`, `NotEqual`), both operand orderings are
-/// tried automatically.
+/// `Equal` is commutative under IEEE 754 (yields the same result regardless
+/// of operand order, including for NaN inputs); both operand orderings are
+/// tried automatically.  `Less` is directional — the matcher only tries the
+/// stated order.  `NotEqual` and `LessEqual` are not primitives in this IR
+/// (lifter lowers them at lift time); use `float_ne` / `float_le` for those.
 pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
     cmp_pat(op, lhs.into(), rhs.into())
 }
