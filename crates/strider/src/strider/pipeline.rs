@@ -241,6 +241,14 @@ impl Strider {
     /// any instruction in `cfg` references — under-tracking would
     /// drop pcode reads.  Over-tracking is safe but allocates one
     /// extra `InitialVar` per superfluous vn.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from `IrStrider::new` (variable-table init,
+    /// CC build), `FunctionBuilder::build_entry`, the per-region IR
+    /// translation (`pcode-lift` value-producer failures, control-op
+    /// routing, calling-convention plumbing), and final
+    /// `FunctionBuilder::build`'s `ir::validate::validate` pass.
     pub fn analyze_cfg_with_vns<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,

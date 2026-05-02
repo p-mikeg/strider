@@ -260,9 +260,9 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 ///   2. skip the `CallOther` consumer of `ctrl_true` (Step 3 only handles
 ///      `ControlState`),
 ///   3. detach the `If`'s own inputs (Step 4),
-/// leaving the `If` with 0 inputs.  The walker then re-reached the `If`
-/// via `join_CS → CallOther → ctrl_true → If` (backward-data), so the
-/// validator complained `node N has 0 inputs, expected 2`.
+///      leaving the `If` with 0 inputs.  The walker then re-reached the
+///      `If` via `join_CS → CallOther → ctrl_true → If` (backward-data),
+///      so the validator complained `node N has 0 inputs, expected 2`.
 ///
 /// The fix drops Step 4 and instead returns `NoChange` when no real work
 /// is left, keeping the `If`'s inputs intact and letting the dead-branch

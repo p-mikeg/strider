@@ -397,24 +397,34 @@ impl<'g> Matcher<'g> {
     /// — both the call's arg and the load's address reference the
     /// same dedup'd `InitialVar` node, and the join is trivial:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # use pattern::{Capture, Matcher, Pat};
+    /// # use pattern::{call, load, add, int_const, any_int_const, initial_var_for};
+    /// # fn example(
+    /// #     matcher: &Matcher<'_>,
+    /// #     graph: &ir::BuiltFunctionGraph,
+    /// #     rbp: rsleigh::Vn,
+    /// #     vn_open_addr: u64,
+    /// # ) -> Option<()> {
     /// let k_call = Capture::new();         // K1 — &nd offset from frame base
     /// let k_load = Capture::new();         // K2 — nd.ni_vp offset from frame base
-    /// let pats = [
+    /// let pats: [Pat; 2] = [
     ///     // call(at=vn_open).arg(0, lea rbp+K1)
-    ///     call().target(int_const(VN_OPEN_ADDR))
+    ///     call().target(int_const(vn_open_addr))
     ///         .arg(0, add(initial_var_for(rbp), any_int_const(k_call)).ordered())
-    ///         .into_pat(),
+    ///         .into(),
     ///     // load at rbp+K2
     ///     load().addr(add(initial_var_for(rbp), any_int_const(k_load)).ordered())
-    ///         .into_pat(),
+    ///         .into(),
     /// ];
     /// let pat_refs: Vec<&Pat> = pats.iter().collect();
     /// for tup in matcher.find_all_requirements(&pat_refs) {
-    ///     let k1 = tup[0].get_uint(k_call, &graph)?;
-    ///     let k2 = tup[1].get_uint(k_load, &graph)?;
-    ///     let ni_vp_offset = (k2 as i64) - (k1 as i64); // recovered field offset
+    ///     let k1 = tup[0].get_uint(k_call, graph)?;
+    ///     let k2 = tup[1].get_uint(k_load, graph)?;
+    ///     let _ni_vp_offset = (k2 as i64) - (k1 as i64); // recovered field offset
     /// }
+    /// # Some(())
+    /// # }
     /// ```
     ///
     /// If the load on the same stack slot was earlier rewritten by

@@ -601,7 +601,7 @@ fn find_all_multi_matches_sequential_find_all() {
     let m = Matcher::new(&g);
 
     let p_add: Pat = add(any(), any()).into();
-    let p_const: Pat = any_int_const(Capture::new()).into();
+    let p_const: Pat = any_int_const(Capture::new());
     let p_load: Pat = load().into();
 
     let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]);

@@ -5,14 +5,18 @@
 //! error as opaque), the typed error structs in this module can be
 //! recovered via [`anyhow::Error::downcast_ref`]:
 //!
-//! ```ignore
+//! ```no_run
+//! # fn example<R: rsleigh::MemReader>(
+//! #     config: strider::RunConfig<'_, R>,
+//! # ) -> Result<ir::BuiltFunctionGraph, anyhow::Error> {
 //! match strider::run(config) {
-//!     Ok(graph) => …,
+//!     Ok(graph) => Ok(graph),
 //!     Err(e) => match e.downcast_ref::<strider::UnresolvedIndirectBranch>() {
-//!         Some(_) => /* selectively skip / log */,
-//!         None    => return Err(e),
+//!         Some(_) => Err(e), // selectively skip / log
+//!         None    => Err(e),
 //!     },
 //! }
+//! # }
 //! ```
 //!
 //! The Python wrapper turns each typed error into a corresponding

@@ -12,9 +12,21 @@
 // 0.23+ we silence the lint at the crate root rather than sprinkling
 // `#[allow(...)]` on every #[pymethods] impl.  The same release also
 // stops emitting the legacy `gil-refs` feature gate, which fires the
-// `unexpected_cfgs` lint here for the same reason.
+// `unexpected_cfgs` lint here for the same reason.  Likewise PyO3 0.22's
+// macros expand `?` over `PyResult<_>` into an `Into::<PyErr>::into(err)`
+// call on a value that is already `PyErr`, which `clippy::useless_conversion`
+// flags ~109 times across the binding modules; same upstream-fixed-in-0.23
+// story, same crate-root suppression.
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(unexpected_cfgs)]
+#![allow(clippy::useless_conversion)]
+// `#[pymethods]` requires `&self` / `&mut self` receivers — methods exposed
+// to Python are called through a `Py<>` wrapper that can't move out.  The
+// `into_pat` finaliser on every pattern builder must therefore take `&self`,
+// even though the Rust convention `into_*` implies `self` by value.  The
+// name is the Python-facing API contract; suppress the lint at the crate
+// root rather than rename to `to_pat` and break every doc/example.
+#![allow(clippy::wrong_self_convention)]
 
 use pyo3::prelude::*;
 

@@ -618,11 +618,11 @@ impl CallingConvention {
     /// Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).  Args
     /// in `r0..r6`; syscall number in `r7`; return in `r0`.  Same on
     /// Thumb.  `callee_saved_regs` strips `r4..r7` (consumed as args
-    /// + syscall number) from the AAPCS callee-saved set; `r8..r11`
-    /// and `lr` remain — the kernel preserves them across the trap.
-    /// Disjointness between `arg_passing_regs`, the syscall-number
-    /// register, and `callee_saved_regs` is an architectural
-    /// invariant of `BuiltCallingConvention`.
+    /// plus the syscall number) from the AAPCS callee-saved set;
+    /// `r8..r11` and `lr` remain — the kernel preserves them across
+    /// the trap.  Disjointness between `arg_passing_regs`, the
+    /// syscall-number register, and `callee_saved_regs` is an
+    /// architectural invariant of `BuiltCallingConvention`.
     #[must_use]
     pub fn arm_linux_syscall() -> CallingConvention {
         let mut cc = Self::arm_aapcs();

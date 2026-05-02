@@ -190,7 +190,7 @@ impl From<StackStorePat> for Pat {
                     return false;
                 }
                 if let Some(set) = &offset_any
-                    && !set.iter().any(|o| *o == *actual_offset)
+                    && !set.contains(actual_offset)
                 {
                     return false;
                 }

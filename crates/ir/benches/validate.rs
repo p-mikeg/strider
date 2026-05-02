@@ -57,7 +57,7 @@ fn build_high_fanin(n: usize) -> (Graph, ir::node::NodeId) {
     let entry = g.create_node(
         NodeKind::Entry,
         [],
-        std::iter::repeat(NodeOutputKind::Control).take(n).collect::<Vec<_>>(),
+        std::iter::repeat_n(NodeOutputKind::Control, n).collect::<Vec<_>>(),
     );
     let _mem = g.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
     let entry_outs: Vec<_> = g.node_outputs(entry).into_iter().collect();

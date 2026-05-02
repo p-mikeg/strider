@@ -333,10 +333,10 @@ pub fn find_placeholder_return_for_anchor(
         if !matches!(graph.node_kind(consumer), NodeKind::IndirectBranch) {
             continue;
         }
-        if let Ok([_, _, val]) = graph.node_inputs_exact::<3>(consumer) {
-            if val == anchor_output {
-                return Some(consumer);
-            }
+        if let Ok([_, _, val]) = graph.node_inputs_exact::<3>(consumer)
+            && val == anchor_output
+        {
+            return Some(consumer);
         }
     }
     None

@@ -82,10 +82,9 @@ impl Arch {
     }
     pub fn sleigh(self) -> strider::SleighArch {
         match self {
-            Arch::X86 => strider::SleighArch::x86(),
             // x86_kernel uses the same Sleigh spec as x86 — only the
             // calling convention differs.
-            Arch::X86Kernel => strider::SleighArch::x86(),
+            Arch::X86 | Arch::X86Kernel => strider::SleighArch::x86(),
             Arch::X64 => strider::SleighArch::x86_64(),
             Arch::Aarch64 => strider::SleighArch::aarch64(),
             Arch::Aarch64Be => strider::SleighArch::aarch64be(),

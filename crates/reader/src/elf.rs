@@ -581,10 +581,9 @@ pub fn apply_elf_relocations(
                     continue;
                 }
             },
-            RelocationTarget::Absolute => {
-                record_unsupported(&reloc, &mut stats);
-                continue;
-            }
+            // `Absolute` (sentinel for immediate-value relocations
+            // with no symbol/section) and any future variants get
+            // bucketed as unsupported.
             _ => {
                 record_unsupported(&reloc, &mut stats);
                 continue;
@@ -743,10 +742,10 @@ fn find_loadable_section_containing<'data, 'a>(
 /// reloc isn't ELF-flavoured.
 fn record_unsupported(reloc: &object::Relocation, stats: &mut RelocationStats) {
     stats.skipped_unsupported_kind += 1;
-    if let RelocationFlags::Elf { r_type } = reloc.flags() {
-        if let Err(idx) = stats.unsupported_r_types.binary_search(&r_type) {
-            stats.unsupported_r_types.insert(idx, r_type);
-        }
+    if let RelocationFlags::Elf { r_type } = reloc.flags()
+        && let Err(idx) = stats.unsupported_r_types.binary_search(&r_type)
+    {
+        stats.unsupported_r_types.insert(idx, r_type);
     }
 }
 
