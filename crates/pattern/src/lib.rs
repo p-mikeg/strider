@@ -176,7 +176,7 @@ pub use pat::{any, predicate, var};
 pub use pat::{
     add, and, div, int_binary, int_binary_any, int_carry, int_cmp, int_cmp_any,
     int_eq, int_le, int_lt, int_sborrow, int_scarry, int_sle, int_slt,
-    int_unary, int_unary_any, lzcount, mul, neg, not, or, popcount,
+    bit_not, int_unary, int_unary_any, lzcount, mul, neg, or, popcount,
     rem, sdiv, shl, shr, srem, sshr, sub, xor,
 };
 

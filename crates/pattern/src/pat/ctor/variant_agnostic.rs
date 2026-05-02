@@ -156,7 +156,7 @@ impl_variant_any!(
 );
 
 impl_variant_any!(
-    unary, int_unary_any, IntUnaryOp, ir::IntUnaryOp::Neg,
+    unary, int_unary_any, IntUnaryOp, ir::IntUnaryOp::BitNot,
     BuildTy::InheritRoot, "int_unary_any",
     "Matches **any** integer unary operation and binds the matched node to `c`.\n\nRecover the op via `Match::get_int_unary_op(c, &graph)`."
 );

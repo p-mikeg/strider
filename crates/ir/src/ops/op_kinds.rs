@@ -83,12 +83,22 @@ pub enum IntBinaryOp {
 }
 
 /// Unary arithmetic and bitwise operations on integer values.
+///
+/// **Naming note:** rsleigh's Sleigh-derived opcode names use the opposite
+/// convention from conventional Rust nomenclature.  Sleigh's `IntNeg`
+/// opcode is *bitwise* complement (`~x`); Sleigh's `Int2Comp` is
+/// two's-complement negation (`-x`).  The IR variant names follow the
+/// conventional meaning, not Sleigh's: `BitNot` is `~x` and `Neg` is
+/// `-x`.  See [`crate::pcode_lift`] dispatch site for the rsleigh →
+/// IR mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntUnaryOp {
-    /// Two's-complement negation: `-x`.
+    /// Bitwise complement: `~x` (every bit flipped).  Lifted from
+    /// rsleigh's `IntNeg` opcode despite the name mismatch.
+    BitNot,
+    /// Two's-complement negation: `-x` (`!x + 1`).  Lifted from rsleigh's
+    /// `Int2Comp` opcode.
     Neg,
-    /// Bitwise complement: `~x`.
-    Not,
 }
 
 /// Binary arithmetic operations on floating-point values.

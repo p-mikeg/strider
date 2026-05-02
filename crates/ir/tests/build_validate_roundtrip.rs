@@ -38,7 +38,7 @@ fn every_int_binary_op_validates() {
 
 #[test]
 fn every_int_unary_op_validates() {
-    for op in [IntUnaryOp::Neg, IntUnaryOp::Not] {
+    for op in [IntUnaryOp::BitNot, IntUnaryOp::Neg] {
         let mut b = FunctionBuilder::empty().unwrap();
         let r = b.create_region().unwrap();
         b.set_entry_region(r).unwrap();

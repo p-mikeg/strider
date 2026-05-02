@@ -102,10 +102,9 @@ fn has_xor(g: &ir::BuiltFunctionGraph) {
     assert!(count_int_binop(g, IntBinaryOp::Xor) >= 1, "expected ≥1 Xor");
 }
 
-// Bitwise complement (~a).  Sleigh opcode IntNeg (bitwise negate) maps to
-// IntUnaryOp::Neg in our IR — the name is counter-intuitive but correct.
+// Bitwise complement (~a).  Sleigh's `IntNeg` opcode lifts to `IntUnaryOp::BitNot`.
 fn has_not(g: &ir::BuiltFunctionGraph) {
-    assert!(count_int_unop(g, IntUnaryOp::Neg) >= 1, "expected ≥1 Neg (bitwise NOT in IR terms)");
+    assert!(count_int_unop(g, IntUnaryOp::BitNot) >= 1, "expected ≥1 BitNot (bitwise complement)");
 }
 
 fn has_shl(g: &ir::BuiltFunctionGraph) {
@@ -118,12 +117,12 @@ fn has_ashr(g: &ir::BuiltFunctionGraph) {
     assert!(count_int_binop(g, IntBinaryOp::SShiftRight) >= 1, "expected ≥1 SShiftRight");
 }
 
-// Arithmetic negation (-a).  Sleigh opcode Int2Comp (two's complement) maps
-// to IntUnaryOp::Not in our IR.  ARM and MIPS synthesise it as 0 - a, so
-// those archs produce IntBinaryOp::Sub instead.
+// Arithmetic negation (-a).  Sleigh's `Int2Comp` opcode lifts to `IntUnaryOp::Neg`.
+// ARM and MIPS synthesise it as 0 - a, so those archs produce `IntBinaryOp::Sub`
+// instead.
 fn has_neg(g: &ir::BuiltFunctionGraph) {
     assert!(
-        count_int_unop(g, IntUnaryOp::Not) >= 1 || count_int_binop(g, IntBinaryOp::Sub) >= 1,
-        "expected ≥1 Not (two's-complement negate) or Sub (0-a synthesis) for negate"
+        count_int_unop(g, IntUnaryOp::Neg) >= 1 || count_int_binop(g, IntBinaryOp::Sub) >= 1,
+        "expected ≥1 Neg (two's-complement) or Sub (0-a synthesis) for negate"
     );
 }

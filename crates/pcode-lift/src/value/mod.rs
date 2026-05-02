@@ -51,8 +51,12 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
         Opcode::IntSext => {
             lifter.process_extend(insn, ExtendOp::SignExtend)?;
         }
-        Opcode::Int2Comp => lifter.process_int_unary_op(insn, IntUnaryOp::Not)?,
-        Opcode::IntNeg => lifter.process_int_unary_op(insn, IntUnaryOp::Neg)?,
+        // rsleigh's `Int2Comp` opcode is two's-complement negate (`-x`) → IR's `IntUnaryOp::Neg`.
+        // rsleigh's `IntNeg` opcode is bitwise complement (`~x`) → IR's `IntUnaryOp::BitNot`.
+        // The Sleigh nomenclature for these is reversed from conventional usage:
+        // see `IntUnaryOp` doc-comment for the full naming-convention note.
+        Opcode::Int2Comp => lifter.process_int_unary_op(insn, IntUnaryOp::Neg)?,
+        Opcode::IntNeg => lifter.process_int_unary_op(insn, IntUnaryOp::BitNot)?,
         Opcode::IntAdd => lifter.process_int_binary_op(insn, IntBinaryOp::Add)?,
         Opcode::IntAnd => lifter.process_int_binary_op(insn, IntBinaryOp::And)?,
         Opcode::IntXor => lifter.process_int_binary_op(insn, IntBinaryOp::Xor)?,

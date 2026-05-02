@@ -251,8 +251,8 @@ fn int_binary_op_name(op: ir::IntBinaryOp) -> String {
 fn int_unary_op_name(op: ir::IntUnaryOp) -> String {
     use ir::IntUnaryOp::*;
     match op {
+        BitNot => "BitNot",
         Neg => "Neg",
-        Not => "Not",
     }
     .to_string()
 }

@@ -1710,50 +1710,48 @@ fn eval_int_cmp_carry_unmasked_u8() {
     );
 }
 
-// ── IntUnaryOp::Neg/Not constant-fold semantics ──────────────────────
+// ── IntUnaryOp::{BitNot, Neg} constant-fold semantics ──────────────────
 //
-// The IR's enum variants follow Sleigh's counter-intuitive opcode
-// naming, which the analyzer dispatch table propagates:
-//   * `IntUnaryOp::Neg` is BITWISE NOT (Sleigh `IntNeg`).
-//   * `IntUnaryOp::Not` is TWO'S COMPLEMENT (Sleigh `Int2Comp`).
-//
-// The two semantics must NOT be swapped: the MVN-based ARM
-// `if_returns_const` lowering produces `IntUnaryOp::Neg(IntConst(49))`
+// `BitNot` is bitwise complement (`~x`); `Neg` is two's-complement
+// negation (`-x`).  Note that rsleigh's opcode `IntNeg` lifts to
+// `IntUnaryOp::BitNot` (rsleigh's name comes from the older Sleigh
+// convention where `IntNeg` is bit-flip).  The MVN-based ARM
+// `if_returns_const` lowering produces `IntUnaryOp::BitNot(IntConst(49))`
 // which must fold to `~49 = -50`, not to `wrapping_neg(49) = -49`.
 
 use ir::IntUnaryOp;
 
-/// `IntUnaryOp::Neg` of `IntConst(49)` at U32 must fold to `~49`
+/// `IntUnaryOp::BitNot` of `IntConst(49)` at U32 must fold to `~49`
 /// (= 0xFFFF_FFCE = 4_294_967_246) — bitwise NOT, NOT two's complement.
 #[test]
 fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(49u64, NodeOutputType::U32).unwrap();
+        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U32)
+    })?;
+    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0xFFFF_FFCE),
+        "IntUnaryOp::BitNot(49) must fold to bitwise NOT (=~49=0xFFFFFFCE), \
+         not two's complement (=0xFFFFFFCF=-49)"
+    );
+    Ok(())
+}
+
+/// `IntUnaryOp::Neg` of `IntConst(50)` at U32 must fold to `-50`
+/// (= 0xFFFF_FFCE = 4_294_967_246) — two's complement, NOT bitwise NOT.
+#[test]
+fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(50u64, NodeOutputType::U32).unwrap();
         b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
         return_kind(&fg)?,
         NodeKind::IntConst(0xFFFF_FFCE),
-        "IntUnaryOp::Neg(49) must fold to bitwise NOT (=~49=0xFFFFFFCE), \
-         not two's complement (=0xFFFFFFCF=-49)"
-    );
-    Ok(())
-}
-
-/// `IntUnaryOp::Not` of `IntConst(50)` at U32 must fold to `-50`
-/// (= 0xFFFF_FFCE = 4_294_967_246) — two's complement, NOT bitwise NOT.
-#[test]
-fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c = b.build_int_const(50u64, NodeOutputType::U32).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U32)
-    })?;
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(
-        return_kind(&fg)?,
-        NodeKind::IntConst(0xFFFF_FFCE),
-        "IntUnaryOp::Not(50) must fold to two's complement (=-50=0xFFFFFFCE), \
+        "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
          not bitwise NOT (=~50=0xFFFFFFCD)"
     );
     Ok(())
@@ -1768,7 +1766,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
 fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0xAAu64, NodeOutputType::U8).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U8)
+        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U8)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(
@@ -1785,7 +1783,7 @@ fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
 fn fold_int_unary_not_zero_is_zero() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::Not, NodeOutputType::U64)
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
@@ -1799,7 +1797,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, NodeOutputType::U32).unwrap();
-        b.build_int_unary_operation(c, IntUnaryOp::Neg, NodeOutputType::U32)
+        b.build_int_unary_operation(c, IntUnaryOp::BitNot, NodeOutputType::U32)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     assert_eq!(

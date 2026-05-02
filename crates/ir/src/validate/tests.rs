@@ -21,7 +21,7 @@ fn layer_a_wrong_input_kind_on_int_unary_op() {
     // IntUnaryOp expects an OutputType input, but we feed it a Control output.
     let control_out = graph.node_outputs(entry).into_iter().next().unwrap();
     let _bad = graph.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [control_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
@@ -70,7 +70,7 @@ fn layer_b_input_missing_from_use_list() {
     let c_out = graph.node_outputs(c).into_iter().next().unwrap();
 
     let _neg = graph.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
@@ -114,7 +114,7 @@ fn layer_b_stale_input_in_use_list() {
     let b_out = graph.node_outputs(b).into_iter().next().unwrap();
 
     let neg = graph.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [a_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );

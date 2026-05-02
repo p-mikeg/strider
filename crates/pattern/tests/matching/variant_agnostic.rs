@@ -69,7 +69,7 @@ fn int_binary_any_retries_swap_only_for_commutative() {
 
 #[test]
 fn int_unary_any_captures_variant() {
-    for op in [IntUnaryOp::Neg, IntUnaryOp::Not] {
+    for op in [IntUnaryOp::BitNot, IntUnaryOp::Neg] {
         let mut t = Tb::empty();
         let v = t.u64(42);
         let v = t.int_un(v, op);

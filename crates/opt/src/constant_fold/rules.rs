@@ -288,7 +288,7 @@ pub(super) fn apply_bitcast_extend_rules(
 /// Builds the rule vec for [`apply_identity_rules`].
 fn build_identity_rules() -> Vec<pattern::BoxedRule> {
     use pattern::{
-        BoxedRule, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, neg, or,
+        BoxedRule, Pat, Capture, add, and, any_int_const, bit_not, boxed_rule, int_const, mul, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -306,7 +306,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         boxed_rule(rewrite_rule(pat, var(x)))
     };
     // x ^ all_ones → ~x  (commutative).  Clang lowers `~a` to `xor a, -1`
-    // on PPC at -O0 (gcc emits the `nor` instruction → IntUnaryOp::Neg);
+    // on PPC at -O0 (gcc emits the `nor` instruction → IntUnaryOp::BitNot);
     // canonicalize so downstream consumers see one shape regardless of
     // compiler choice.
     let xor_all_ones_rule = {
@@ -316,7 +316,7 @@ fn build_identity_rules() -> Vec<pattern::BoxedRule> {
         let pat = pat.when_match(move |fg, ty, b| {
             b.get_uint(c, fg) == ty.get_unsigned_int(u128::MAX)
         });
-        boxed_rule(rewrite_rule(pat, neg(var(x))))
+        boxed_rule(rewrite_rule(pat, bit_not(var(x))))
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -408,14 +408,9 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             boxed_rule(rewrite_rule(
                 int_unary_any(op, any_int_const(v)),
                 int_const_with!([op: int_unary_op, v: uint, ty] => {
-                    // The IR's enum names follow Sleigh's counter-intuitive
-                    // convention (see arithmetic.rs comments and analyzer
-                    // insn dispatch):
-                    //   `IntUnaryOp::Neg` is BITWISE NOT (Sleigh `IntNeg`).
-                    //   `IntUnaryOp::Not` is TWO'S COMPLEMENT (Sleigh `Int2Comp`).
                     let raw = match op {
-                        IntUnaryOp::Neg => !v,
-                        IntUnaryOp::Not => v.wrapping_neg(),
+                        IntUnaryOp::BitNot => !v,
+                        IntUnaryOp::Neg => v.wrapping_neg(),
                     };
                     ty.get_unsigned_int(raw).ok_or_else(pattern::skip)?
                 }),

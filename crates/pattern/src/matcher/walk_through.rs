@@ -103,7 +103,7 @@ mod tests {
             NodeKind::IntConst(0),
             NodeKind::IntBinaryOp(ir::IntBinaryOp::Add),
             NodeKind::IntBinaryOp(ir::IntBinaryOp::Mul),
-            NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg),
+            NodeKind::IntUnaryOp(ir::IntUnaryOp::BitNot),
             NodeKind::BoolConst(true),
             NodeKind::FloatBinaryOp(ir::FloatBinaryOp::Add),
             NodeKind::FloatToFloat,

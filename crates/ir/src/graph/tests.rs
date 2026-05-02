@@ -913,12 +913,12 @@ fn update_input_self_redirect_preserves_use_list_order() {
     let cval = graph.node_outputs(c).into_iter().next().unwrap();
     // Two consumers of cval to give the use-list real ordering.
     let _a = graph.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [cval],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
     let b = graph.create_node(
-        NodeKind::IntUnaryOp(IntUnaryOp::Not),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [cval],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );

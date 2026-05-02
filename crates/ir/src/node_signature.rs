@@ -698,7 +698,7 @@ mod tests {
             NodeKind::StackStore { space, offset: 0 },
             NodeKind::StackStorePhi { space },
             NodeKind::IntConst(0),
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+            NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),
             NodeKind::Truncate,

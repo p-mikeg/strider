@@ -72,15 +72,15 @@ fn wrong_op_rejects() {
 // ── Integer unary ops ─────────────────────────────────────────────────────────
 
 #[test]
-fn neg_matches() {
-    let g = shapes::int_un(5, IntUnaryOp::Neg);
-    a::matches(&g, neg(int_const(5)), 1);
+fn bit_not_matches() {
+    let g = shapes::int_un(5, IntUnaryOp::BitNot);
+    a::matches(&g, bit_not(int_const(5)), 1);
 }
 
 #[test]
-fn not_matches() {
-    let g = shapes::int_un(5, IntUnaryOp::Not);
-    a::matches(&g, not(int_const(5)), 1);
+fn neg_matches() {
+    let g = shapes::int_un(5, IntUnaryOp::Neg);
+    a::matches(&g, neg(int_const(5)), 1);
 }
 
 #[test]
@@ -102,15 +102,15 @@ fn lzcount_matches() {
 }
 
 #[test]
-fn neg_wrong_operand_rejects() {
-    let g = shapes::int_un(5, IntUnaryOp::Neg);
-    a::none(&g, neg(int_const(99)));
+fn bit_not_wrong_operand_rejects() {
+    let g = shapes::int_un(5, IntUnaryOp::BitNot);
+    a::none(&g, bit_not(int_const(99)));
 }
 
 #[test]
 fn unary_wrong_op_rejects() {
-    let g = shapes::int_un(5, IntUnaryOp::Neg);
-    a::none(&g, not(int_const(5)));
+    let g = shapes::int_un(5, IntUnaryOp::BitNot);
+    a::none(&g, neg(int_const(5)));
 }
 
 // ── Integer comparisons ───────────────────────────────────────────────────────

@@ -161,7 +161,7 @@ impl Tb {
             .expect("int_binary_operation")
     }
     pub fn neg(&mut self, v: NodeOutputId) -> NodeOutputId {
-        self.int_un(v, IntUnaryOp::Neg)
+        self.int_un(v, IntUnaryOp::BitNot)
     }
     pub fn int_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
         self.fb

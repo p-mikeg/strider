@@ -794,13 +794,10 @@ macro_rules! int_unop {
     };
 }
 
+// `pattern.neg(x)` matches two's-complement negation (`-x`).
 int_unop!(neg);
-// `not` is a Python keyword; expose as `not_`.
-#[pyfunction(name = "not_")]
-pub fn not_(operand: PatLike<'_>) -> PyResult<PyPat> {
-    let op = operand.into_pat()?;
-    Ok(PyPat::from_pat(pattern::not(op)))
-}
+// `pattern.bit_not(x)` matches bitwise complement (`~x`).
+int_unop!(bit_not);
 
 // ── Bool binary ops ──────────────────────────────────────────────────────
 
@@ -1859,7 +1856,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(int_sborrow);
     // int unary
     add_fn!(neg);
-    add_fn!(not_);
+    add_fn!(bit_not);
     // bool
     add_fn!(bool_and);
     add_fn!(bool_or);

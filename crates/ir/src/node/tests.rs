@@ -182,7 +182,7 @@ fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(0).is_cacheable());
     assert!(NodeKind::BoolConst(false).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
+    assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::BitNot).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
 }
 

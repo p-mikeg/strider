@@ -54,10 +54,10 @@ pub fn int_unary(op: IntUnaryOp, operand: impl Into<Pat>) -> Pat {
 }
 
 decl_pat_unary_ops!(int_unary, IntUnaryOp, Pat, [
-    /// Matches an integer negation node (`-operand`).
+    /// Matches a two's-complement negation node (`-operand`).
     (neg, Neg),
     /// Matches a bitwise complement node (`~operand`).
-    (not, Not),
+    (bit_not, BitNot),
 ]);
 
 // ── Integer comparisons (→ Bool) ──────────────────────────────────────────────
