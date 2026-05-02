@@ -10,28 +10,68 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExprMemo, decompose_sp};
 
 /// Walks memory backward from `mem`, collecting `StackStore` data outputs as
-/// positional call arguments *as long as each successive store in chain order
-/// lands at the next expected arg slot*.
+/// positional call arguments by matching each store's offset against the
+/// convention's slot table.
 ///
-/// Returning data in chain-order contiguity is the key defense against
-/// misidentifying **stack locals** as call arguments.  A typical cdecl
-/// prologue writes a local buffer (e.g. `char buf[16] = {0}`) at the same
-/// offsets that later become arg slots in an unrelated call; those buffer-
-/// init stores appear on the memory chain but chronologically *before* the
-/// arg pushes, so the chain walker sees them only *after* walking past the
-/// real pushes.  Requiring chain-order contiguity — each next store must be
-/// at `chain_anchor_offset + stack_arg_offsets[next_arg]` — makes us stop at
-/// the first such interloper instead of greedily scooping them up as args.
+/// Two safety rules govern collection:
+///
+/// **Set membership.** Each chain `StackStore`'s `offset - anchor` must be
+/// in the convention's `stack_arg_offsets` set.  An offset outside the set
+/// terminates the walk — that's the local/saved-register guard.  This rule
+/// assumes a frame's local-variable region and its outgoing-args region
+/// occupy *disjoint* relative offsets from the anchor: in standard x86
+/// cdecl, AAPCS, MIPS, etc., locals live at higher absolute SP-relative
+/// offsets than the outgoing-args window, so the relative offsets land
+/// outside `stack_arg_offsets`.  A pathological convention table that
+/// includes offsets coinciding with the local region would break this
+/// guarantee — none of the built-in `target::CallingConvention` presets do.
+///
+/// **Prefix monotonicity.** Once a contiguous slot prefix `[0..=k]` has
+/// formed, any further fill must land in `[0, k+1]`.  A new fill at slot
+/// `> k+1` would require all of `(k+1)..slot` to be supplied by later
+/// upstream stores; in real cdecl frames the prologue's local-init writes
+/// translate to slots well above the actual arg-region top, so this rule
+/// fires the moment the walker crosses out of the args-push window into
+/// frame locals.  Until slot 0 is filled `prefix_top == -1` and this rule
+/// is dormant — set membership is the only active guard in that window.
+///
+/// Together the two rules accept arg pushes in any program order — the
+/// constraint earlier code mistakenly conflated with safety — while still
+/// rejecting stale interleaved local-init writes.  Most-recent-wins for
+/// repeated-slot writes falls out naturally: the first sighting on the
+/// backward walk fills the slot; later sightings find the slot already
+/// occupied and are skipped.
+///
+/// Earlier revisions enforced *chain-order monotonicity* (each next store
+/// had to land at `anchor + stack_arg_offsets[args.len()]`).  That assumed
+/// the compiler emitted arg pushes in slot-ascending order, which is false
+/// on x86 cdecl with gcc/clang — both routinely store arg0 then arg1 in
+/// program order, so arg1 ends up at the chain head and the in-order check
+/// rejected every arg.  See the regression `cdecl_args_pushed_in_program_
+/// order_collected` in this module's tests for the original repro from
+/// the FreeBSD i386 10.0 `exec_free_args` function.
 ///
 /// The first store on the chain anchors `chain_anchor_offset` (the byte
-/// offset of that first store, used as the relative origin for subsequent
-/// arg-slot expectations).  Whether the anchor store is *itself* the first
-/// arg depends on the architecture:
-///   * On x86 / x86-64 the `call` instruction pushes a return address, so
-///     the most-recent store is the ret-addr push (not an arg) and
-///     `stack_arg_offsets[0]` is `+4` / `+8`.
-///   * On AArch64 / ARM (link-register calls) there is no implicit push and
-///     the most-recent store *is* arg 0, so `stack_arg_offsets[0] == 0`.
+/// offset of that first store, used as the relative origin for slot
+/// lookups).  Whether the anchor store is *itself* the first arg depends
+/// on which calling pattern the compiler emitted:
+///   * x86 / x86-64 `push arg`-style (older gcc, hand-written asm) — each
+///     `push` decrements SP and stores; the chain head is the most-recent
+///     `push`, anchor `rel == 0` matches `stack_arg_offsets[0] == 0` (when
+///     the convention is configured for push-style; not the default cdecl
+///     preset), filling the anchor as slot 0 immediately.
+///   * x86 / x86-64 `mov [esp+K]`-style (gcc/clang -O2 default for cdecl
+///     and SysV) — args are stored at fixed positive offsets from the
+///     post-prologue SP, then the `call` instruction's implicit ret-addr
+///     push lands at SP-4 (or SP-8) and Sleigh lifts that push as a
+///     `Store`/`StackStore` node feeding the Call's memory input.  The
+///     ret-addr push is the chain head, anchor `rel == 0` is not in
+///     `stack_arg_offsets` (which starts at +4 / +8), and the
+///     `is_first_store` exception lets the walker skip the OOW
+///     termination and continue to the real args upstream.
+///   * AArch64 / ARM (link-register calls) — no implicit push, the most-
+///     recent store is arg 0, `stack_arg_offsets[0] == 0`, anchor fills
+///     slot 0 immediately.
 ///
 /// Only merges stores that share the same SP base output: offsets mean
 /// different absolute addresses across different SP versions, so mixing them
@@ -47,6 +87,11 @@ use crate::sp_expr::{SpExprMemo, decompose_sp};
 /// `-O2`) interleaved between the actual stack-arg pushes.  Any SP-rooted
 /// `Store` (whether in-arg-range or not) and any `StackStorePhi` is treated
 /// conservatively as chain-terminating.
+///
+/// Returns the *dense prefix* of filled slots: indices `0..k` where every
+/// slot in that range got a value, stopping at the first hole.  Patterns
+/// querying `arg(i)` rely on positional continuity, so a missing slot 0
+/// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
     fg: &BuiltFunctionGraph,
     mem: NodeOutputId,
@@ -61,7 +106,9 @@ fn collect_stack_args_in_chain_order(
     let mut anchor_base: Option<NodeOutputId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut chain_anchor_offset: Option<i64> = None;
-    let mut args: Vec<NodeOutputId> = Vec::new();
+    let mut slots: Vec<Option<NodeOutputId>> = vec![None; stack_arg_offsets.len()];
+    // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
+    let mut prefix_top: i32 = -1;
     loop {
         let node = fg.graph.get_node_from_output(cur);
         let (offset, space, base, data, prev_mem) = match *fg.graph.node_kind(node) {
@@ -83,7 +130,7 @@ fn collect_stack_args_in_chain_order(
                 // Store inputs: [memory, addr, data].  Skip if shape is
                 // unexpected (defensive).
                 if inputs.len() != 3 {
-                    return args;
+                    return dense_prefix(slots);
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
@@ -94,55 +141,86 @@ fn collect_stack_args_in_chain_order(
                         cur = prev;
                         continue;
                     }
-                    Some(_) => return args,
+                    Some(_) => return dense_prefix(slots),
                 }
             }
             // `StackStorePhi` (ambiguous offsets), `MemPhi` (control-flow
             // join), or anything else (entry memory, an earlier `Call`,
             // `PostCallMemState`, …) terminates the chain.
-            _ => return args,
+            _ => return dense_prefix(slots),
         };
         match anchor_base {
             None => anchor_base = Some(base),
             Some(b) if b == base => {}
             // Base changed mid-chain: stop rather than merge offsets
             // relative to different SP versions.
-            _ => return args,
+            _ => return dense_prefix(slots),
         }
         match anchor_space {
             None => anchor_space = Some(space),
             Some(s) if s == space => {}
             // Space changed mid-chain: stop rather than mix args from
             // different SP-relative spaces.
-            _ => return args,
+            _ => return dense_prefix(slots),
         }
-        match chain_anchor_offset {
-            None => {
-                chain_anchor_offset = Some(offset);
-                // On architectures where `stack_arg_offsets[0] == 0` the
-                // first store on the chain is itself arg 0 (e.g. AArch64).
-                if stack_arg_offsets[0] == 0 {
-                    args.push(data);
-                    if args.len() >= stack_arg_offsets.len() {
-                        return args;
-                    }
+        let is_first_store = chain_anchor_offset.is_none();
+        let anchor = *chain_anchor_offset.get_or_insert(offset);
+        let rel = offset - anchor;
+        match stack_arg_offsets.iter().position(|&o| o == rel) {
+            Some(slot) if slots[slot].is_none() => {
+                // Prefix-monotonicity check: once a `[0..=prefix_top]`
+                // contiguous prefix exists, any new fill must land in
+                // `[0, prefix_top + 1]`.  A jump beyond means we've
+                // walked out of the args-push window and into frame
+                // locals (or into args of an earlier, unrelated call —
+                // which would normally be cut off by an intervening
+                // chain-terminator, but defensive here).
+                if prefix_top >= 0 && (slot as i32) > prefix_top + 1 {
+                    return dense_prefix(slots);
+                }
+                slots[slot] = Some(data);
+                // Extend `prefix_top` as far as the contiguous prefix
+                // now reaches.
+                let mut k = (prefix_top + 1) as usize;
+                while k < slots.len() && slots[k].is_some() {
+                    k += 1;
+                }
+                prefix_top = k as i32 - 1;
+                if (prefix_top + 1) as usize == slots.len() {
+                    return dense_prefix(slots);
                 }
             }
-            Some(anchor) => {
-                let expected = anchor + stack_arg_offsets[args.len()];
-                if offset != expected {
-                    // First out-of-pattern store: chain order broken, we
-                    // have walked past the real args into frame locals.
-                    return args;
-                }
-                args.push(data);
-                if args.len() >= stack_arg_offsets.len() {
-                    return args;
-                }
-            }
+            // Slot already filled by a more recent (closer to Call) write.
+            // The newer write is what the callee sees; the older one is
+            // stale and ignored.  Keep walking — there may be more args
+            // at other slots upstream.
+            Some(_) => {}
+            // Offset is not a stack-arg slot under this convention.  On
+            // architectures whose anchor is itself a non-arg push (x86
+            // ret-addr push), the FIRST store legitimately has rel=0
+            // outside the table — record the anchor and continue.  Any
+            // later out-of-set offset is the local/interloper guard
+            // firing.
+            None if is_first_store => {}
+            None => return dense_prefix(slots),
         }
         cur = prev_mem;
     }
+}
+
+/// Returns the longest dense prefix of `slots` (indices `0..k` where
+/// every entry is `Some(_)`, stopping at the first `None`).  Patterns
+/// querying `arg(i)` rely on positional continuity, so a missing slot 0
+/// suppresses every later slot too.
+fn dense_prefix(slots: Vec<Option<NodeOutputId>>) -> Vec<NodeOutputId> {
+    let mut out = Vec::with_capacity(slots.len());
+    for s in slots {
+        match s {
+            Some(v) => out.push(v),
+            None => break,
+        }
+    }
+    out
 }
 
 /// Collects stack-passed arguments for one Call node.  Walks the memory chain
