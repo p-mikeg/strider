@@ -891,11 +891,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     let sp = sp64_vn();
     let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
         let twentyfour = b.build_int_const(24u64, NodeOutputType::U64)?;
-        let addr = b.build_int_binary_operation(
-            sp_val,
-            twentyfour,
-            IntBinaryOp::Sub,
-            NodeOutputType::U64,
+        let addr = b.build_int_sub(sp_val, twentyfour, NodeOutputType::U64,
         )?;
         let stored = b.build_int_const(0xCAFEu64, NodeOutputType::U64)?;
         b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;

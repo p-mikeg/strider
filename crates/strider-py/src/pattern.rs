@@ -1551,10 +1551,12 @@ fn parse_bool_binary_op(name: &str) -> PyResult<ir::BoolBinaryOp> {
 }
 
 fn parse_float_binary_op(name: &str) -> PyResult<ir::FloatBinaryOp> {
+    // `Sub` is deliberately absent: `FloatBinaryOp::Sub` is not a primitive.
+    // Python callers wanting `a - b` should use `pattern.float_sub(a, b)`,
+    // which constructs the lowered `FloatAdd(a, FloatUnaryOp::Neg(b))` shape.
     use ir::FloatBinaryOp::*;
     Ok(match name {
         "Add" | "add" => Add,
-        "Sub" | "sub" => Sub,
         "Mul" | "mul" => Mul,
         "Div" | "div" => Div,
         other => {

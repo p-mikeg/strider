@@ -106,12 +106,15 @@ pub enum IntUnaryOp {
 }
 
 /// Binary arithmetic operations on floating-point values.
+///
+/// `Sub` is not a primitive: pcode-lift lowers `FloatSub(a, b)` at lift
+/// time to `FloatAdd(a, FloatUnaryOp::Neg(b))`.  IEEE 754 guarantees the
+/// bit-pattern result matches `FloatSub` exactly (negation flips the sign
+/// bit on all values, including NaN/inf).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatBinaryOp {
     /// Floating-point addition: `l + r`.
     Add,
-    /// Floating-point subtraction: `l - r`.
-    Sub,
     /// Floating-point multiplication: `l * r`.
     Mul,
     /// Floating-point division: `l / r`.
@@ -136,14 +139,19 @@ pub enum FloatUnaryOp {
 }
 
 /// Comparison operations that produce a `Bool` from two floating-point operands.
+///
+/// `NotEqual` and `LessEqual` are not primitives: pcode-lift lowers them
+/// at lift time:
+///
+/// - `FloatNotEqual(a, b)` → `BoolNeg(FloatEqual(a, b))` (sound under
+///   IEEE 754: `Equal` is false on NaN, so `!Equal` is true).
+/// - `FloatLessEqual(a, b)` → `Or(FloatLess(a, b), FloatEqual(a, b))`
+///   (NaN-aware: cannot use `BoolNeg(Less(b, a))` because that would
+///   return true for NaN, while IEEE `<=` returns false).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatCmpOp {
     /// IEEE 754 equality: `l == r` (false if either is NaN).
     Equal,
-    /// IEEE 754 inequality: `l != r` (true if either is NaN).
-    NotEqual,
     /// IEEE 754 less-than: `l < r` (false if either is NaN).
     Less,
-    /// IEEE 754 less-than-or-equal: `l <= r` (false if either is NaN).
-    LessEqual,
 }

@@ -1504,11 +1504,15 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
 /// `inf - inf` is NaN per IEEE 754.
 #[test]
 fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
+    // `inf - inf` lowered to `Add(inf, Neg(inf))`.  Both `Neg(inf)` and
+    // the resulting `Add(inf, -inf)` are constant-foldable: `Neg(inf) = -inf`
+    // (sign-bit flip), then `inf + (-inf)` is NaN per IEEE 754.
     let inf = f64::INFINITY.to_bits();
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(inf, NodeOutputType::F64);
         let bb = b.build_float_const(inf, NodeOutputType::F64);
-        b.build_float_binary_op(a, bb, FloatBinaryOp::Sub, NodeOutputType::F64)
+        let neg_b = b.build_float_unary_op(bb, FloatUnaryOp::Neg, NodeOutputType::F64)?;
+        b.build_float_binary_op(a, neg_b, FloatBinaryOp::Add, NodeOutputType::F64)
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;

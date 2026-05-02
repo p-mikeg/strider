@@ -122,7 +122,6 @@ fn float_ops_validate() {
     let two = b.build_float_const(0x4000_0000_0000_0000, NodeOutputType::F64);
     for op in [
         FloatBinaryOp::Add,
-        FloatBinaryOp::Sub,
         FloatBinaryOp::Mul,
         FloatBinaryOp::Div,
     ] {
@@ -142,9 +141,7 @@ fn float_ops_validate() {
     }
     for op in [
         FloatCmpOp::Equal,
-        FloatCmpOp::NotEqual,
         FloatCmpOp::Less,
-        FloatCmpOp::LessEqual,
     ] {
         let _ = b.build_float_cmp_op(one, two, op).unwrap();
     }

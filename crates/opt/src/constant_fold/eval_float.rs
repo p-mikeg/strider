@@ -12,7 +12,6 @@ macro_rules! eval_binary {
         let r = <$ty>::from_bits($bits_r as _);
         let result: $ty = match $op {
             FloatBinaryOp::Add => l + r,
-            FloatBinaryOp::Sub => l - r,
             FloatBinaryOp::Mul => l * r,
             FloatBinaryOp::Div => l / r,
         };
@@ -26,9 +25,7 @@ macro_rules! eval_cmp {
         let r = <$ty>::from_bits($bits_r as _);
         match $op {
             FloatCmpOp::Equal => l == r,
-            FloatCmpOp::NotEqual => l != r,
             FloatCmpOp::Less => l < r,
-            FloatCmpOp::LessEqual => l <= r,
         }
     }};
 }
@@ -107,7 +104,6 @@ mod tests {
         let zero = 0u64;
         for op in [
             FloatBinaryOp::Add,
-            FloatBinaryOp::Sub,
             FloatBinaryOp::Mul,
             FloatBinaryOp::Div,
         ] {
@@ -120,9 +116,7 @@ mod tests {
         let zero = 0u64;
         for op in [
             FloatCmpOp::Equal,
-            FloatCmpOp::NotEqual,
             FloatCmpOp::Less,
-            FloatCmpOp::LessEqual,
         ] {
             assert_eq!(eval_float_cmp(op, zero, zero, NodeOutputType::F80), None);
         }

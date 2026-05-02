@@ -716,11 +716,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
         let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, NodeOutputType::U64)?;
-        let addr = b.build_int_binary_operation(
-            sp_val,
-            neg_four,
-            IntBinaryOp::Sub,
-            NodeOutputType::U64,
+        let addr = b.build_int_sub(sp_val, neg_four, NodeOutputType::U64,
         )?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.build_return(Some(loaded), &[])?;

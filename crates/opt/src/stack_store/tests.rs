@@ -293,11 +293,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
 
         // sub esp, 16 → reserve buf.
-        let sp_after_sub = b.build_int_binary_operation(
-            sp_after_push_ebx,
-            sixteen,
-            IntBinaryOp::Sub,
-            NodeOutputType::U32,
+        let sp_after_sub = b.build_int_sub(sp_after_push_ebx, sixteen, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_after_sub)?;
 
@@ -315,33 +311,21 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
         }
 
         // push arg1 = 1 → [sp - 24].
-        let sp_push_arg1 = b.build_int_binary_operation(
-            sp_after_sub,
-            four,
-            IntBinaryOp::Sub,
-            NodeOutputType::U32,
+        let sp_push_arg1 = b.build_int_sub(sp_after_sub, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_push_arg1)?;
         let arg1 = b.build_int_const(1u64, NodeOutputType::U32)?;
         b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 = 42 → [sp - 28].
-        let sp_push_arg0 = b.build_int_binary_operation(
-            sp_push_arg1,
-            four,
-            IntBinaryOp::Sub,
-            NodeOutputType::U32,
+        let sp_push_arg0 = b.build_int_sub(sp_push_arg1, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_push_arg0)?;
         let arg0 = b.build_int_const(42u64, NodeOutputType::U32)?;
         b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
 
         // implicit call ret-addr push at [sp - 32] — mimics x86 `call`.
-        let sp_call = b.build_int_binary_operation(
-            sp_push_arg0,
-            four,
-            IntBinaryOp::Sub,
-            NodeOutputType::U32,
+        let sp_call = b.build_int_sub(sp_push_arg0, four, NodeOutputType::U32,
         )?;
         b.write_variable(&sp, sp_call)?;
         let retaddr = b.build_int_const(0x1234u64, NodeOutputType::U32)?;

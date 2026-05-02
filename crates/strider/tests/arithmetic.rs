@@ -46,8 +46,15 @@ per_arch_test!("arithmetic", "negate",  has_neg);
 fn has_add(g: &ir::BuiltFunctionGraph) {
     assert!(count_int_binop(g, IntBinaryOp::Add) >= 1, "expected ≥1 Add");
 }
+// `IntBinaryOp::Sub` is no longer a primitive: pcode-lift lowers `IntSub`
+// to `Add(_, Neg(_))` at lift time.  An honest "has subtraction" check
+// looks for the `IntUnaryOp::Neg` produced by the lowering — every real
+// subtraction in the binary contributes at least one Neg.
 fn has_sub(g: &ir::BuiltFunctionGraph) {
-    assert!(count_int_binop(g, IntBinaryOp::Sub) >= 1, "expected ≥1 Sub");
+    assert!(
+        count_int_unop(g, IntUnaryOp::Neg) >= 1,
+        "expected ≥1 IntUnaryOp::Neg (the lowered Sub form)"
+    );
 }
 fn has_mul(g: &ir::BuiltFunctionGraph) {
     assert!(count_int_binop(g, IntBinaryOp::Mul) >= 1, "expected ≥1 Mul");
@@ -118,11 +125,13 @@ fn has_ashr(g: &ir::BuiltFunctionGraph) {
 }
 
 // Arithmetic negation (-a).  Sleigh's `Int2Comp` opcode lifts to `IntUnaryOp::Neg`.
-// ARM and MIPS synthesise it as 0 - a, so those archs produce `IntBinaryOp::Sub`
-// instead.
+// ARM and MIPS synthesise it as `0 - a`, which lifts via the new lowering
+// to `Add(0, Neg(a))` and collapses to `Neg(a)` via the `x + 0 → x` identity
+// rule.  Either path produces an `IntUnaryOp::Neg`, so a single check
+// covers both arches.
 fn has_neg(g: &ir::BuiltFunctionGraph) {
     assert!(
-        count_int_unop(g, IntUnaryOp::Neg) >= 1 || count_int_binop(g, IntBinaryOp::Sub) >= 1,
-        "expected ≥1 Neg (two's-complement) or Sub (0-a synthesis) for negate"
+        count_int_unop(g, IntUnaryOp::Neg) >= 1,
+        "expected ≥1 Neg (two's-complement; ARM/MIPS 0-a synthesis collapses to the same shape)"
     );
 }

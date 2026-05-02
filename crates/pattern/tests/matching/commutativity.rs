@@ -134,12 +134,26 @@ fn float_add_and_mul_commute() {
 
 #[test]
 fn float_sub_and_div_do_not_commute() {
-    let g_sub = shapes::float_bin(5.0, 2.0, FloatBinaryOp::Sub);
-    let g_div = shapes::float_bin(10.0, 4.0, FloatBinaryOp::Div);
+    // `FloatBinaryOp::Sub` is no longer a primitive — `pattern::float_sub`
+    // is an ergonomic alias that constructs the lowered shape
+    // `FloatAdd(a, FloatUnaryOp::Neg(b))`.  Build the lowered shape via
+    // a fresh Tb (no `shapes::float_bin` helper for the Sub case any more)
+    // and verify operand order is preserved.
+    let g_sub = {
+        let mut t = Tb::empty();
+        let a = t.f64(5.0);
+        let b = t.f64(2.0);
+        let neg_b = t.fun(b, ir::FloatUnaryOp::Neg, ir::node::NodeOutputType::F64);
+        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, ir::node::NodeOutputType::F64);
+        let as_int = t.float_to_int(lowered, ir::node::NodeOutputType::U64);
+        t.ret_val(as_int)
+    };
     a::none(
         &g_sub,
         float_sub(float_const(2.0f64.to_bits()), float_const(5.0f64.to_bits())),
     );
+
+    let g_div = shapes::float_bin(10.0, 4.0, FloatBinaryOp::Div);
     a::none(
         &g_div,
         float_div(float_const(4.0f64.to_bits()), float_const(10.0f64.to_bits())),
@@ -226,9 +240,22 @@ fn float_eq_commutes() {
 
 #[test]
 fn float_ne_commutes() {
-    let g = graph_float_cmp(1.0, 2.0, FloatCmpOp::NotEqual);
-    a::matches(&g, float_cmp(FloatCmpOp::NotEqual, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
-    a::matches(&g, float_cmp(FloatCmpOp::NotEqual, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
+    // `FloatCmpOp::NotEqual` is no longer a primitive — `pattern::float_ne`
+    // is an ergonomic alias that constructs `BoolNeg(FloatEqual(_, _))`.
+    // Build the lowered shape and verify both operand orderings match
+    // (FloatEqual is commutative, BoolNeg is unary, so the composition is
+    // commutative in the operand pair).
+    let g = {
+        let mut t = Tb::empty();
+        let a = t.f64(1.0);
+        let b = t.f64(2.0);
+        let eq = t.fcmp(a, b, FloatCmpOp::Equal);
+        let ne = t.bool_un(eq, ir::BoolUnaryOp::Neg);
+        let as_int = t.as_int(ne, ir::node::NodeOutputType::U64);
+        t.ret_val(as_int)
+    };
+    a::matches(&g, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())), 1);
+    a::matches(&g, float_ne(float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())), 1);
 }
 
 #[test]

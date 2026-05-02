@@ -11,7 +11,6 @@
 mod common;
 
 use ir::node::{NodeKind, NodeOutputType};
-use ir::IntBinaryOp;
 use opt::*;
 
 use common::sp_vn;

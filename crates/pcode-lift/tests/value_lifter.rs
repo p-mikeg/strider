@@ -624,3 +624,80 @@ fn lift_call_other_returns_false_via_value_lifter() {
     assert!(!lifter.lift(&insn).unwrap());
 }
 
+// ── Float lift-time canonicalisation shape checks ─────────────────────────────
+
+#[test]
+fn lift_float_sub_lowers_to_float_add_neg() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::FloatSub,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::FloatBinaryOp(ir::FloatBinaryOp::Add)),
+        "FloatSub lift must produce a FloatAdd (the lowering wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::FloatUnaryOp(ir::FloatUnaryOp::Neg)),
+        "FloatSub lift must produce a FloatUnaryOp::Neg (the negated rhs)"
+    );
+}
+
+#[test]
+fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::FloatNotEqual,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::BoolUnaryOp(BoolUnaryOp::Neg)),
+        "FloatNotEqual lift must produce a BoolUnaryOp::Neg (the lowering wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Equal)),
+        "FloatNotEqual lift must produce a FloatCmpOp::Equal (the lowered cmp)"
+    );
+}
+
+#[test]
+fn lift_float_less_equal_lowers_to_or_less_equal() {
+    // `a <= b` (IEEE 754) lowers to `Or(Less(a, b), Equal(a, b))`,
+    // NaN-aware (both children false on NaN, so Or is false).
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::FloatLessEqual,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    assert!(
+        graph_has_kind(&builder, NodeKind::BoolBinaryOp(ir::BoolBinaryOp::Or)),
+        "FloatLessEqual lift must produce a BoolBinaryOp::Or (the disjunction wrap)"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Less)),
+        "FloatLessEqual lift must produce a FloatCmpOp::Less"
+    );
+    assert!(
+        graph_has_kind(&builder, NodeKind::FloatCmpOp(ir::FloatCmpOp::Equal)),
+        "FloatLessEqual lift must produce a FloatCmpOp::Equal"
+    );
+}
+

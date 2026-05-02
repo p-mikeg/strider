@@ -263,7 +263,7 @@ pub fn build_value_phi_target_scenario(
 pub fn build_pop_pc_via_stack_load_forward_scenario(
 ) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp};
+    use ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 
@@ -364,7 +364,7 @@ pub fn build_push_target_pop_pc_scenario(
     k: u64,
 ) -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     use ir::node::NodeOutputType;
-    use ir::{FunctionBuilder, IntBinaryOp};
+    use ir::FunctionBuilder;
     use opt::{ConstantFold, OptimizerPipeline, StackLoadForward, StackStoreDetect};
     use target::Endianness;
 

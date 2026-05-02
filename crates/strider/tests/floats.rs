@@ -43,11 +43,15 @@ per_arch_test!("floats", "f32_neg_abs",  has_float_neg, ignore = {
 });
 
 fn has_four_float_binops(g: &ir::BuiltFunctionGraph) {
+    // `FloatBinaryOp::Sub` is no longer a primitive — `FloatSub` lifts to
+    // `FloatAdd(_, FloatUnaryOp::Neg(_))`.  A real subtraction in the
+    // source contributes one `FloatAdd` AND one `FloatUnaryOp::Neg`, so
+    // counting Adds alone double-counts subtractions; instead we count
+    // each binop kind plus the lowered-Sub `Neg` markers.
     let total = count_float_binop(g, FloatBinaryOp::Add)
-        + count_float_binop(g, FloatBinaryOp::Sub)
         + count_float_binop(g, FloatBinaryOp::Mul)
         + count_float_binop(g, FloatBinaryOp::Div);
-    assert!(total >= 4, "expected ≥4 FloatBinaryOp, got {total}");
+    assert!(total >= 4, "expected ≥4 FloatBinaryOp (including lowered subs counted as Add), got {total}");
 }
 fn has_float_to_float(g: &ir::BuiltFunctionGraph) {
     assert!(has_kind(g, |k| matches!(k, NodeKind::FloatToFloat)),
@@ -68,10 +72,10 @@ fn has_two_float_cmps(g: &ir::BuiltFunctionGraph) {
     // assertion that survives all archs: at least 2 FloatCmpOp nodes
     // (one per `OP` in the source, regardless of whether the surrounding
     // construct lowers as If or cmov).
-    let total = count_float_cmp(g, FloatCmpOp::Less)
-        + count_float_cmp(g, FloatCmpOp::LessEqual)
-        + count_float_cmp(g, FloatCmpOp::Equal)
-        + count_float_cmp(g, FloatCmpOp::NotEqual);
+    // `LessEqual` and `NotEqual` are no longer primitives — they lower to
+    // compositions of `Equal` and `Less` (see `pcode_lift::value::float`).
+    // Either source-level `<=` becomes one `Equal` + one `Less` here.
+    let total = count_float_cmp(g, FloatCmpOp::Less) + count_float_cmp(g, FloatCmpOp::Equal);
     assert!(total >= 2, "expected ≥2 FloatCmpOp, got {total}");
 }
 fn has_float_neg(g: &ir::BuiltFunctionGraph) {

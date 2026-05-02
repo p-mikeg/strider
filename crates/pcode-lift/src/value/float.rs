@@ -8,7 +8,7 @@
 //! `FloatTrunc`).
 
 use ir::node::NodeOutputType;
-use ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
+use ir::{BoolBinaryOp, BoolUnaryOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::Result;
 use crate::ValueLifter;
@@ -78,9 +78,64 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input = self.read_vn(&insn.inputs[0])?;
         let out_vn = crate::require_output_vn(insn)?;
-        let result = self
+        // `is_nan(x)` ≡ `x != x` (IEEE 754: NaN ≠ NaN).  Since
+        // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
+        // lift to `BoolNeg(FloatEqual)`), build the lowered shape
+        // directly: `BoolNeg(FloatEqual(input, input))`.
+        let eq = self
             .builder
-            .build_float_cmp_op(input, input, FloatCmpOp::NotEqual)?;
+            .build_float_cmp_op(input, input, FloatCmpOp::Equal)?;
+        let result = self.builder.build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+        self.write_vn(out_vn, result)
+    }
+
+    /// Lowers `FloatSub(a, b)` to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
+    ///
+    /// IEEE 754: `a - b ≡ a + (-b)` for all finite values, and the
+    /// negation flips the sign bit on infinities and NaNs without
+    /// changing their NaN-ness — so the bit-pattern result matches
+    /// `FloatSub` exactly.  Removes the `FloatBinaryOp::Sub` variant
+    /// and unifies subtraction with addition for downstream patterns.
+    pub(super) fn handle_float_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let float_ty = Self::float_type_from_vn(out_vn)?;
+        let neg_rhs = self.builder.build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
+        let result = self.builder.build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
+        self.write_float_to_vn(out_vn, result)
+    }
+
+    /// Lowers `FloatNotEqual(a, b)` to `BoolNeg(FloatEqual(a, b))`.
+    ///
+    /// Sound under IEEE 754: `Equal` is false when either operand is
+    /// NaN, so `!Equal` is true (matching the correct `NotEqual` for
+    /// NaN inputs).  Mirrors the `IntNotEqual → BoolNeg(IntEqual)`
+    /// precedent.
+    pub(super) fn handle_float_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
+        let result = self.builder.build_boolean_unary_operation(eq, BoolUnaryOp::Neg)?;
+        self.write_vn(out_vn, result)
+    }
+
+    /// Lowers `FloatLessEqual(a, b)` to `Or(FloatLess(a, b), FloatEqual(a, b))`.
+    ///
+    /// IEEE 754 requires NaN-aware semantics: `a <= b` returns false
+    /// when either operand is NaN, while `BoolNeg(Less(b, a))` would
+    /// return true for NaN inputs.  The two-cmp disjunction
+    /// (`a < b ∨ a == b`) preserves the correct false-on-NaN result
+    /// because both `Less` and `Equal` return false on NaN, so the
+    /// `Or` is also false.
+    pub(super) fn handle_float_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let lhs = self.read_vn(&insn.inputs[0])?;
+        let rhs = self.read_vn(&insn.inputs[1])?;
+        let out_vn = crate::require_output_vn(insn)?;
+        let lt = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
+        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
+        let result = self.builder.build_boolean_operation(lt, eq, BoolBinaryOp::Or)?;
         self.write_vn(out_vn, result)
     }
 

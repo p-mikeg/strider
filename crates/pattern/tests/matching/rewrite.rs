@@ -54,9 +54,14 @@ fn find_add(g: &ir::BuiltFunctionGraph) -> NodeId {
     a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
+/// Locates the outermost `Add` node of the lowered subtraction shape.
+/// `IntBinaryOp::Sub` is not a primitive in this IR — `t.sub(x, y)` builds
+/// `Add(x, Neg(y))` directly.  For `t.sub(x, x)` (`x - x`), the resulting
+/// graph has exactly one Add (the outer one wrapping `Neg(x)`), so finding
+/// it via `IntBinaryOp::Add` is unambiguous in the test fixtures here.
 #[track_caller]
 fn find_sub(g: &ir::BuiltFunctionGraph) -> NodeId {
-    a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Sub)))
+    a::find_node(g, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 /// Returns the `NodeKind` of the node producing the Return's data input.

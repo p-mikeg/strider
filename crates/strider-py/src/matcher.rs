@@ -291,7 +291,6 @@ fn float_binary_op_name(op: ir::FloatBinaryOp) -> String {
     use ir::FloatBinaryOp::*;
     match op {
         Add => "Add",
-        Sub => "Sub",
         Mul => "Mul",
         Div => "Div",
     }
@@ -315,9 +314,7 @@ fn float_cmp_op_name(op: ir::FloatCmpOp) -> String {
     use ir::FloatCmpOp::*;
     match op {
         Equal => "Equal",
-        NotEqual => "NotEqual",
         Less => "Less",
-        LessEqual => "LessEqual",
     }
     .to_string()
 }

@@ -26,10 +26,11 @@ pub(crate) fn is_commutative_int_cmp_op(op: IntCmpOp) -> bool {
     matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
 }
 
-/// `Equal` and `NotEqual` are symmetric for IEEE 754 (the comparison
-/// returns the same result regardless of operand order, including for
-/// NaN inputs — both orderings yield `false` / `true` consistently).
-/// `Less` / `LessEqual` are directional and intentionally excluded.
+/// `Equal` is symmetric for IEEE 754 (yields the same result regardless
+/// of operand order, including for NaN inputs).  `Less` is directional.
+/// `NotEqual` and `LessEqual` are not primitives in this IR — they are
+/// lowered at lift time to compositions of `Equal` and `Less` (see
+/// `pcode_lift::value::float`).
 pub(crate) fn is_commutative_float_cmp_op(op: FloatCmpOp) -> bool {
-    matches!(op, FloatCmpOp::Equal | FloatCmpOp::NotEqual)
+    matches!(op, FloatCmpOp::Equal)
 }

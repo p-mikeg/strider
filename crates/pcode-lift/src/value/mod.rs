@@ -94,7 +94,7 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
         Opcode::Cast => lifter.handle_cast(insn)?,
         // ── Float arithmetic ──────────────────────────────────────────────
         Opcode::FloatAdd => lifter.process_float_binary_op(insn, FloatBinaryOp::Add)?,
-        Opcode::FloatSub => lifter.process_float_binary_op(insn, FloatBinaryOp::Sub)?,
+        Opcode::FloatSub => lifter.handle_float_sub(insn)?,
         Opcode::FloatMul => lifter.process_float_binary_op(insn, FloatBinaryOp::Mul)?,
         Opcode::FloatDiv => lifter.process_float_binary_op(insn, FloatBinaryOp::Div)?,
         // ── Float unary (float → float) ───────────────────────────────────
@@ -106,11 +106,11 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
         Opcode::FloatRound => lifter.process_float_unary_op(insn, FloatUnaryOp::Round)?,
         // ── Float comparisons (→ bool) ────────────────────────────────────
         Opcode::FloatEqual => lifter.process_float_cmp_op(insn, FloatCmpOp::Equal)?,
-        Opcode::FloatNotEqual => lifter.process_float_cmp_op(insn, FloatCmpOp::NotEqual)?,
+        Opcode::FloatNotEqual => lifter.handle_float_not_equal(insn)?,
         Opcode::FloatLess => lifter.process_float_cmp_op(insn, FloatCmpOp::Less)?,
-        Opcode::FloatLessEqual => lifter.process_float_cmp_op(insn, FloatCmpOp::LessEqual)?,
+        Opcode::FloatLessEqual => lifter.handle_float_less_equal(insn)?,
         // FloatNan: tests whether input is NaN (unary, → bool).  Lowered to
-        // FloatCmpOp::NotEqual(x, x) since IEEE 754 guarantees NaN != NaN.
+        // BoolNeg(FloatEqual(x, x)) since IEEE 754 guarantees NaN != NaN.
         Opcode::FloatNan => lifter.handle_float_nan(insn)?,
         // ── Float / integer conversions ───────────────────────────────────
         Opcode::FloatInt2Float => lifter.handle_float_int_to_float(insn)?,

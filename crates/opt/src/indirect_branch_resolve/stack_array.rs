@@ -255,8 +255,7 @@ fn match_stack_array_shape(
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
     let mut terms: Vec<NodeOutputId> = Vec::new();
-    let mut sub_const_offset: i64 = 0;
-    flatten_add_tree(graph, addr_output, &mut terms, &mut sub_const_offset, &mut 0);
+    flatten_add_tree(graph, addr_output, &mut terms, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
@@ -278,9 +277,7 @@ fn match_stack_array_shape(
     // SP-rooted (`Terminal`) or a constant.  Constants accumulate in
     // `extra_offset`; SP-rooted terms must be exactly one (sp + K).
     let mut sp_memo = SpExprMemo::default();
-    // Seed the offset accumulator with the constant-rhs Sub adjustment
-    // that `flatten_add_tree` rolled up while walking.
-    let mut base_offset_acc: i64 = sub_const_offset;
+    let mut base_offset_acc: i64 = 0;
     let mut found_sp = false;
     for (i, t) in terms.iter().enumerate() {
         if i == idx_pos {
@@ -341,7 +338,6 @@ fn flatten_add_tree(
     graph: &Graph,
     out: NodeOutputId,
     acc: &mut Vec<NodeOutputId>,
-    extra_offset: &mut i64,
     budget: &mut usize,
 ) {
     if *budget >= 32 {
@@ -350,17 +346,18 @@ fn flatten_add_tree(
     }
     *budget += 1;
     let node = graph.get_node_from_output(out);
-    if let NodeKind::IntBinaryOp(IntBinaryOp::Add) = graph.node_kind(node) {
-        if let Ok([lhs, rhs]) = graph.node_inputs_exact::<2>(node) {
-            // `addr -= K` from arm/arm-thumb stack-array dispatch lowering
-            // arrives as `Add(addr, Neg(IntConst(K)))` (or the post-fold
-            // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
-            // `Neg(IntConst)`, so the per-term decompose step downstream
-            // catches that constant via the `None` arm at line ~307.
-            flatten_add_tree(graph, lhs, acc, extra_offset, budget);
-            flatten_add_tree(graph, rhs, acc, extra_offset, budget);
-            return;
-        }
+    // `addr -= K` from arm/arm-thumb stack-array dispatch lowering arrives
+    // as `Add(addr, Neg(IntConst(K)))` (or the post-fold
+    // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
+    // `Neg(IntConst)`, so the per-term decompose step downstream catches
+    // that constant via the `None` arm at line ~307.
+    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) = (
+        graph.node_kind(node),
+        graph.node_inputs_exact::<2>(node),
+    ) {
+        flatten_add_tree(graph, lhs, acc, budget);
+        flatten_add_tree(graph, rhs, acc, budget);
+        return;
     }
     acc.push(out);
 }

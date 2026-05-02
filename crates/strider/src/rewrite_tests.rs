@@ -99,13 +99,36 @@ fn count_adds(g: &ir::BuiltFunctionGraph) -> usize {
         .count()
 }
 
+/// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
+/// `IntBinaryOp::Sub` is not a primitive in this IR — `build_int_sub`
+/// produces this two-node shape, and `pattern::sub(_, _)` matches it.
 fn count_subs(g: &ir::BuiltFunctionGraph) -> usize {
     g.preorder()
-        .filter(|nid| {
-            matches!(
-                g.graph.node_kind(*nid),
-                ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Sub),
-            )
+        .filter(|&nid| {
+            // Outer node must be Add with exactly two value inputs.
+            if !matches!(
+                g.graph.node_kind(nid),
+                ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            ) {
+                return false;
+            }
+            let inputs = g.graph.node_inputs(nid);
+            if inputs.len() != 2 {
+                return false;
+            }
+            // RHS must be Neg.  (Add commutes; we don't enforce a side
+            // here since the lowering always emits Neg as the second
+            // input, but check both for robustness against later
+            // commutativity-driven canonicalisation.)
+            let lhs_node = g.graph.get_node_from_output(inputs[0]);
+            let rhs_node = g.graph.get_node_from_output(inputs[1]);
+            let is_neg = |id: ir::node::NodeId| {
+                matches!(
+                    g.graph.node_kind(id),
+                    ir::node::NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg),
+                )
+            };
+            is_neg(lhs_node) || is_neg(rhs_node)
         })
         .count()
 }
@@ -161,9 +184,13 @@ fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
     // first rule at both Add candidates.  Subsequent calls return
     // 0 (nothing further to do — the Adds are now unreachable
     // from `Return`'s now-direct input).
+    // Fixture builds `Sub(Add(11, 0), Add(13, 0))` via `build_int_sub`,
+    // which lowers to `Add(Add(11, 0), Neg(Add(13, 0)))` — three Adds
+    // (two inner identity-Adds plus the outer-Sub-lowering Add) and one
+    // Neg.  `count_subs` recognises the outer Add+Neg pair as one Sub.
     let mut built = sub_of_two_add_zeros(11, 13);
-    assert_eq!(count_adds(&built), 2, "fixture has two Adds");
-    assert_eq!(count_subs(&built), 1, "fixture has one Sub");
+    assert_eq!(count_adds(&built), 3, "fixture has three Adds (two inner + one outer-Sub)");
+    assert_eq!(count_subs(&built), 1, "fixture has one lowered Sub (Add+Neg pair)");
 
     let y = Capture::new();
     let z = Capture::new();
@@ -184,12 +211,14 @@ fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
             break;
         }
     }
-    assert!(total >= 2, "rule must fire at least twice on the two Adds");
-    // Both Adds collapse via the first rule — the post-rewrite
-    // reachable graph has zero Adds.  The Sub stays (distinct
-    // inputs, so `sub(z, z)` never matched).
-    assert_eq!(count_adds(&built), 0, "round-robin must collapse all Adds");
-    assert_eq!(count_subs(&built), 1, "Sub stays — its inputs are distinct constants");
+    assert!(total >= 2, "rule must fire at least twice on the two inner Adds");
+    // The two inner identity Adds (a+0, b+0) collapse via `add(x, 0) → x`.
+    // The outer Add — the one wrapping `Neg(_)` to form the lowered Sub —
+    // does NOT have a `0` operand and stays.  Its operands are now
+    // distinct constants, so the `sub(z, z)` rule (which under the new
+    // ergonomic alias matches `Add(z, Neg(z))`) doesn't fire either.
+    assert_eq!(count_adds(&built), 1, "the two inner identity Adds collapse; the outer Sub-Add stays");
+    assert_eq!(count_subs(&built), 1, "lowered Sub stays — its operands are distinct constants");
     Ok(())
 }
 

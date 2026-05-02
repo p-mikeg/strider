@@ -52,8 +52,9 @@ fn f32_arith_graph_is_valid(g: &ir::BuiltFunctionGraph) {
     // On soft-float ABIs (ARM / MIPS), four float ops become four library
     // calls; accept either FloatBinaryOp nodes OR Call nodes as evidence
     // that the operations were lowered without a type error.
+    // `FloatBinaryOp::Sub` is no longer a primitive (lowered to
+    // `Add(_, Neg(_))`), so the Add count subsumes subtraction.
     let float_ops = count_float_binop(g, ir::FloatBinaryOp::Add)
-        + count_float_binop(g, ir::FloatBinaryOp::Sub)
         + count_float_binop(g, ir::FloatBinaryOp::Mul)
         + count_float_binop(g, ir::FloatBinaryOp::Div);
     let calls = count_calls(g);

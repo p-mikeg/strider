@@ -195,7 +195,6 @@ fn bool_unary_any_captures_variant() {
 fn float_binary_any_captures_variant() {
     for op in [
         FloatBinaryOp::Add,
-        FloatBinaryOp::Sub,
         FloatBinaryOp::Mul,
         FloatBinaryOp::Div,
     ] {
@@ -239,9 +238,7 @@ fn float_unary_any_captures_variant() {
 fn float_cmp_any_captures_variant() {
     for op in [
         FloatCmpOp::Equal,
-        FloatCmpOp::NotEqual,
         FloatCmpOp::Less,
-        FloatCmpOp::LessEqual,
     ] {
         let mut t = Tb::empty();
         let l = t.f64(1.0);

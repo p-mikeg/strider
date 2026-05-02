@@ -24,13 +24,23 @@ pub fn float_binary(
 decl_pat_binary_ops!(float_binary, FloatBinaryOp, FloatBinaryOpPat, [
     /// Matches a float addition node.  Commutative.
     (float_add, Add),
-    /// Matches a float subtraction node.  Not commutative.
-    (float_sub, Sub),
     /// Matches a float multiplication node.  Commutative.
     (float_mul, Mul),
     /// Matches a float division node.  Not commutative.
     (float_div, Div),
 ]);
+
+/// Matches a float subtraction `lhs - rhs`.
+///
+/// `FloatBinaryOp::Sub` is not a primitive; pcode-lift lowers
+/// `FloatSub(a, b)` at lift time to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
+/// This constructor produces the lowered shape so `float_sub(a, b)`
+/// matches the same IR `a - b` produces.
+pub fn float_sub(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::builders::unary_pat;
+    let neg_rhs = unary_pat(ir::FloatUnaryOp::Neg, rhs.into());
+    BinaryOpPat::new(FloatBinaryOp::Add, lhs.into(), neg_rhs).into()
+}
 
 /// Matches a float unary operation with the given `op`.
 pub fn float_unary(op: FloatUnaryOp, operand: impl Into<Pat>) -> Pat {
@@ -63,13 +73,37 @@ pub fn float_cmp(op: FloatCmpOp, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pa
 decl_pat_cmp_ops!(float_cmp, FloatCmpOp, Pat, [
     /// Matches a float equality comparison.
     (float_eq, Equal),
-    /// Matches a float not-equal comparison.
-    (float_ne, NotEqual),
     /// Matches a float less-than comparison.
     (float_lt, Less),
-    /// Matches a float less-or-equal comparison.
-    (float_le, LessEqual),
 ]);
+
+/// Matches a float not-equal comparison `lhs != rhs`.
+///
+/// `FloatCmpOp::NotEqual` is not a primitive; pcode-lift lowers
+/// `FloatNotEqual(a, b)` at lift time to `BoolNeg(FloatEqual(a, b))`.
+/// This constructor produces the lowered shape directly.
+pub fn float_ne(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::ctor::bool_::bool_not;
+    bool_not(cmp_pat(FloatCmpOp::Equal, lhs.into(), rhs.into()))
+}
+
+/// Matches a float less-or-equal comparison `lhs <= rhs`.
+///
+/// `FloatCmpOp::LessEqual` is not a primitive; pcode-lift lowers
+/// `FloatLessEqual(a, b)` at lift time to
+/// `Or(FloatLess(a, b), FloatEqual(a, b))` — NaN-aware (cannot use
+/// the operand-swap-and-negate trick because IEEE 754 `<=` is false
+/// on NaN, while `BoolNeg(Less(b, a))` would be true).
+pub fn float_le(lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
+    use crate::pat::ctor::bool_::bool_or;
+    let lhs_p: Pat = lhs.into();
+    let rhs_p: Pat = rhs.into();
+    bool_or(
+        cmp_pat(FloatCmpOp::Less, lhs_p.clone(), rhs_p.clone()),
+        cmp_pat(FloatCmpOp::Equal, lhs_p, rhs_p),
+    )
+    .into()
+}
 
 /// Matches an `IntToFloat` value-conversion node.
 pub fn int_to_float(operand: impl Into<Pat>) -> Pat {
