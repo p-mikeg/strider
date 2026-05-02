@@ -1710,19 +1710,6 @@ fn eval_int_cmp_carry_unmasked_u8() {
     );
 }
 
-#[test]
-fn eval_int_cmp_borrow_unmasked_u8() {
-    use crate::constant_fold::eval_int::eval_int_cmp;
-    use ir::IntCmpOp;
-    use ir::node::NodeOutputType;
-
-    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
-    assert!(
-        eval_int_cmp(IntCmpOp::Borrow, 0x100, 0x01, NodeOutputType::U8).unwrap(),
-        "Borrow must mask both sides to U8 before comparing"
-    );
-}
-
 // ── IntUnaryOp::Neg/Not constant-fold semantics ──────────────────────
 //
 // The IR's enum variants follow Sleigh's counter-intuitive opcode

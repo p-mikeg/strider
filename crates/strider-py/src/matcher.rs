@@ -268,7 +268,6 @@ fn int_cmp_op_name(op: ir::IntCmpOp) -> String {
         Carry => "Carry",
         Scarry => "Scarry",
         Sborrow => "Sborrow",
-        Borrow => "Borrow",
     }
     .to_string()
 }

@@ -124,18 +124,12 @@ pub(super) fn eval_int_binary(
 }
 
 /// Evaluates a comparison on two constant integer values.
-//
-// `IntCmpOp::Less` and `IntCmpOp::Borrow` both evaluate to `l < r` because an
-// unsigned subtract borrows iff the minuend is less than the subtrahend. The
-// two operations are conceptually distinct — keep them as separate arms with
-// their own names rather than merging them into `Less | Borrow => l < r`.
-#[allow(clippy::match_same_arms)]
 pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -> Result<bool> {
     // Mask both inputs to ty at entry.  Unsigned comparisons (Equal, Less,
-    // LessEqual, Carry, Borrow) operate on raw u128s and would otherwise
-    // return wrong answers for narrow IntConsts that carry high bits beyond
-    // the type width.  The signed arms re-mask via get_signed_int so
-    // the double-mask is idempotent for them.
+    // LessEqual, Carry) operate on raw u128s and would otherwise return
+    // wrong answers for narrow IntConsts that carry high bits beyond the
+    // type width.  The signed arms re-mask via get_signed_int so the
+    // double-mask is idempotent for them.
     let mask = ty.bit_mask_u128();
     let l = l & mask;
     let r = r & mask;
@@ -177,7 +171,6 @@ pub(super) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -
                 l.wrapping_add(r) > max
             }
         }
-        IntCmpOp::Borrow => l < r,
         IntCmpOp::Scarry => {
             let (min, max) = signed_min_max();
             let sl = signed(l)?;

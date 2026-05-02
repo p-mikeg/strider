@@ -34,7 +34,12 @@ pub enum IntCmpOp {
     Sless,
     /// Signed less-than-or-equal: `(signed)l <= (signed)r`.
     SlessEqual,
-    /// Unsigned less-than: `l < r`.
+    /// Unsigned less-than: `l < r`.  Also represents the unsigned borrow
+    /// predicate `l - r < 0`: rsleigh's `IntLess` opcode is documented as
+    /// "also indicates a borrow on unsigned subtraction" (see
+    /// `rsleigh/src/ffi.rs` `IntLess = 15`), and an unsigned subtraction
+    /// borrows iff the minuend is less than the subtrahend.  There is no
+    /// separate `Borrow` variant.
     Less,
     /// Unsigned less-than-or-equal: `l <= r`.
     LessEqual,
@@ -42,8 +47,6 @@ pub enum IntCmpOp {
     Carry,
     /// Signed carry (overflow): the addition `l + r` overflows the signed range.
     Scarry,
-    /// Unsigned borrow: `l < r` (subtraction `l - r` would borrow).
-    Borrow,
     /// Signed borrow (overflow): the subtraction `l - r` overflows the signed range.
     Sborrow,
 }

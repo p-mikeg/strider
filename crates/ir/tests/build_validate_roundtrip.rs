@@ -62,7 +62,6 @@ fn every_int_cmp_op_validates() {
         IntCmpOp::SlessEqual,
         IntCmpOp::Carry,
         IntCmpOp::Scarry,
-        IntCmpOp::Borrow,
         IntCmpOp::Sborrow,
     ] {
         let _ = common::return_int_cmp(1, 2, op, NodeOutputType::U32);
