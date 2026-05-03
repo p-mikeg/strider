@@ -1,9 +1,11 @@
 """Regression tests for two distinct bugs surfaced by lifting real
 arm64 FreeBSD kernels.
 
-The kernels are large and not shipped with the repo, so the tests skip
-cleanly when ``../bsdfinder/kernels/arm64/{11.1,11.2,11.3,11.4}/kernel``
-is missing.
+The 11.1 kernel is shipped via Git LFS at
+``fixtures/kernels/freebsd/arm64/11.1/kernel``.  The 11.2–11.4 kernels
+are not bundled (size); the tests fall back to
+``../bsdfinder/kernels/arm64/<version>/kernel`` and skip cleanly when
+missing.
 
 1. ``vmspace_exitfree`` lifted with ``function_max_size`` used to fail
    inside the optimizer with ``StriderError: node nodeNNN has 0 inputs,
@@ -40,20 +42,19 @@ import strider
 from strider.errors import StriderError, UnresolvedIndirectBranchError  # noqa: F401 — re-exported for typed catches
 
 
-KERNELS_ROOT = (
-    pathlib.Path(__file__).resolve().parents[4]
-    / ".."
-    / "bsdfinder"
-    / "kernels"
-    / "arm64"
-)
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
+_IN_REPO_KERNELS = _REPO_ROOT / "fixtures" / "kernels" / "freebsd" / "arm64"
+_EXTERNAL_KERNELS = _REPO_ROOT / ".." / "bsdfinder" / "kernels" / "arm64"
 
 
 def _kernel_path(version: str) -> pathlib.Path:
-    p = KERNELS_ROOT / version / "kernel"
-    if not p.exists():
-        pytest.skip(f"kernel fixture missing: {p}")
-    return p
+    in_repo = _IN_REPO_KERNELS / version / "kernel"
+    if in_repo.exists():
+        return in_repo
+    external = _EXTERNAL_KERNELS / version / "kernel"
+    if external.exists():
+        return external
+    pytest.skip(f"kernel fixture missing: {in_repo} (and {external})")
 
 
 def _bounded_lift(kernel: pathlib.Path, symbol: str):

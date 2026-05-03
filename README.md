@@ -69,6 +69,20 @@ The `opt` crate runs all passes in a shared fixed-point loop via `default_pipeli
 
 ## Usage
 
+### Prerequisites
+
+Some test fixtures (currently the FreeBSD arm64 11.1 kernel under `fixtures/kernels/`) are stored via [Git LFS](https://git-lfs.com/). Install it once before cloning, or run it after the fact to fetch the real blobs:
+
+```bash
+sudo apt install git-lfs   # or: brew install git-lfs
+git lfs install
+git lfs pull               # if the repo was already cloned without LFS
+```
+
+Without LFS, those paths resolve to ~130-byte pointer files and any test that loads them will fail to parse the ELF rather than skip.
+
+### Build & test
+
 ```bash
 # Build
 cargo build --workspace
