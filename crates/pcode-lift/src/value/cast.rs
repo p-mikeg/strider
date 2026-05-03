@@ -29,7 +29,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// so we reject it explicitly.
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = &insn.inputs[0];
-        let byte_offset = insn.inputs[1].addr.off;
+        let byte_offset = insn.inputs[1].addr_off;
         if byte_offset >= u64::from(input_vn.size) {
             bail!(
                 "Subpiece byte_offset {byte_offset} out of range for input size {} (opcode {:?})",
@@ -110,8 +110,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // Lowered to: Truncate(ShiftRight(x, lsb), narrow_ty), with an extra
         // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
         let input = self.read_vn(&insn.inputs[0])?;
-        let lsb = insn.inputs[1].addr.off as u8;
-        let len = insn.inputs[2].addr.off as u8;
+        let lsb = insn.inputs[1].addr_off as u8;
+        let len = insn.inputs[2].addr_off as u8;
         let out_vn = crate::require_output_vn(insn)?;
         let narrow_ty: NodeOutputType = out_vn.size.try_into()?;
         let x_nat_ty = self.builder.get_output_type(input)?.to_natural_int_type();
@@ -152,8 +152,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // Lowered to: Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb)).
         let dest = self.read_vn(&insn.inputs[0])?;
         let src = self.read_vn(&insn.inputs[1])?;
-        let lsb = insn.inputs[2].addr.off as u8;
-        let len = insn.inputs[3].addr.off as u8;
+        let lsb = insn.inputs[2].addr_off as u8;
+        let len = insn.inputs[3].addr_off as u8;
         let out_vn = crate::require_output_vn(insn)?;
         let out_ty: NodeOutputType = out_vn.size.try_into()?;
 
@@ -213,7 +213,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_ptr_add(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(&insn.inputs[0])?;
         let index = self.read_vn(&insn.inputs[1])?;
-        let elem_size = insn.inputs[2].addr.off;
+        let elem_size = insn.inputs[2].addr_off;
         let out_vn = crate::require_output_vn(insn)?;
         let out_ty: ir::ValueType = out_vn.size.try_into()?;
         let elem_const = self.builder.build_int_const(elem_size, out_ty)?;

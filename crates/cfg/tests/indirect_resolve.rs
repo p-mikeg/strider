@@ -21,7 +21,7 @@ use cfg::test_api::{
 };
 use opt::ReadOnlyMemory;
 use rsleigh::mem_readers::BufMemReader;
-use rsleigh::{Insn, Opcode, Vn, VnAddr, VnSpace};
+use rsleigh::{Insn, Opcode, Vn, VnSpace};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -54,7 +54,7 @@ fn make_x86_64_sleigh() -> rsleigh::Sleigh<TestReader> {
 
 /// 4-byte REGISTER varnode at the given Sleigh register-space offset.
 fn reg4(off: u64) -> Vn {
-    Vn { size: 4, addr: VnAddr { off, space: VnSpace::REGISTER } }
+    Vn { size: 4, addr_off: off, addr_space: VnSpace::REGISTER }
 }
 
 /// Look up an x86 / x86-64 Sleigh register by name; panics if the name
@@ -71,7 +71,7 @@ fn vn_for_name<R: rsleigh::MemReader>(sleigh: &rsleigh::Sleigh<R>, name: &str) -
 /// A short way to construct a CONST varnode of declared `size` carrying
 /// integer `val`.
 fn const_vn(val: u64, size: u32) -> Vn {
-    Vn { size, addr: VnAddr { off: val, space: VnSpace::CONST } }
+    Vn { size, addr_off: val, addr_space: VnSpace::CONST }
 }
 
 /// Wrap an [`rsleigh::Insn`] into a [`RegionInstruction`] at the given
@@ -93,7 +93,7 @@ fn branch_indirect(target_vn: Vn) -> Insn {
     Insn {
         opcode: Opcode::BranchIndirect,
         output: None,
-        inputs: vec![target_vn],
+        inputs: vec![target_vn].into(),
     }
 }
 
@@ -111,7 +111,7 @@ fn resolves_direct_const_to_single() {
             Insn {
                 opcode: Opcode::Copy,
                 output: Some(target),
-                inputs: vec![const_vn(0xdead_beef, 4)],
+                inputs: vec![const_vn(0xdead_beef, 4)].into(),
             },
         ),
         ri(0x1004, 0, branch_indirect(target)),
@@ -141,7 +141,7 @@ fn resolves_arithmetic_chain_to_single() {
             Insn {
                 opcode: Opcode::Copy,
                 output: Some(target),
-                inputs: vec![const_vn(0x100, 4)],
+                inputs: vec![const_vn(0x100, 4)].into(),
             },
         ),
         ri(
@@ -150,7 +150,7 @@ fn resolves_arithmetic_chain_to_single() {
             Insn {
                 opcode: Opcode::IntAdd,
                 output: Some(target),
-                inputs: vec![target, const_vn(0x33, 4)],
+                inputs: vec![target, const_vn(0x33, 4)].into(),
             },
         ),
         ri(0x1008, 0, branch_indirect(target)),
@@ -199,7 +199,7 @@ fn resolves_sub_register_aliasing_to_single() {
             Insn {
                 opcode: Opcode::Copy,
                 output: Some(eax),
-                inputs: vec![const_vn(0xdead_beef, 4)],
+                inputs: vec![const_vn(0xdead_beef, 4)].into(),
             },
         ),
         // mov eax, K on x86-64 zero-extends into rax — model that
@@ -211,7 +211,7 @@ fn resolves_sub_register_aliasing_to_single() {
             Insn {
                 opcode: Opcode::IntZext,
                 output: Some(rax),
-                inputs: vec![eax],
+                inputs: vec![eax].into(),
             },
         ),
         ri(0x1008, 0, branch_indirect(rax)),
@@ -247,7 +247,7 @@ fn resolves_link_register_to_link_register() {
     // any real x86 register the empty region might inadvertently touch.
     let lr_like = Vn {
         size: 4,
-        addr: VnAddr { off: 0x100, space: VnSpace::REGISTER },
+        addr_off: 0x100, addr_space: VnSpace::REGISTER,
     };
     let region = vec![ri(0x2000, 0, branch_indirect(lr_like))];
     let res = resolve_indirect_target_for_test(
@@ -450,7 +450,7 @@ fn malformed_branch_indirect_returns_ok_none() {
         Insn {
             opcode: Opcode::BranchIndirect,
             output: None,
-            inputs: vec![],
+            inputs: vec![].into(),
         },
     )];
     let res = resolve_indirect_target_for_test(
@@ -505,7 +505,7 @@ fn tier_1_resolved_const_returns_ok_some_single() {
             Insn {
                 opcode: Opcode::Copy,
                 output: Some(target),
-                inputs: vec![const_vn(0xdead_beef, 4)],
+                inputs: vec![const_vn(0xdead_beef, 4)].into(),
             },
         ),
         ri(0x1004, 0, branch_indirect(target)),

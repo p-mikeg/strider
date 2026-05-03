@@ -632,10 +632,8 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     let sp = sp_vn();
     // A second register at a different offset that's not SP.
     let other = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![sp, other], &[other], &[sp], &[], None, 0)?;

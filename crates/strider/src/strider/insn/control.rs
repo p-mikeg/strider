@@ -229,10 +229,15 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Direct call: the target varnode is in the code space and its offset
         // *is* the target address — it's not a pointer to dereference.
         let target_vn = &insn.inputs[0];
-        let space_info = self.cfg.sleigh.space_info(target_vn.addr.space);
+        let space = target_vn.addr_space;
+        let space_info = self
+            .cfg
+            .sleigh
+            .space_info(space)
+            .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
         let call_address = self
             .builder
-            .build_int_const(target_vn.addr.off, space_info.addr_size().try_into()?)?;
+            .build_int_const(target_vn.addr_off, space_info.addr_size().try_into()?)?;
         self.builder.build_call(call_address)?;
         Ok(())
     }
@@ -252,7 +257,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
         let default_code_space = self.cfg.sleigh.default_code_space();
-        let space_info = self.cfg.sleigh.space_info(default_code_space);
+        let space_info = self
+            .cfg
+            .sleigh
+            .space_info(default_code_space)
+            .ok_or_else(|| {
+                anyhow::anyhow!("no space info for default code space {default_code_space:?}")
+            })?;
         let call_address = self
             .builder
             .build_int_const(target, space_info.addr_size().try_into()?)?;
@@ -319,10 +330,8 @@ mod tests {
     /// Build a 4-byte register VN to act as the `idx` source.
     fn idx_vn() -> rsleigh::Vn {
         rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x10,
-            },
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         }
     }

@@ -264,10 +264,8 @@ where
     F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<ir::Value>,
 {
     let v = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x40,
-        },
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
     let mut b = FunctionBuilder::new_raw(vec![v], &[], &[], &[], None, 0)?;

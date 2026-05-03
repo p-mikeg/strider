@@ -55,10 +55,8 @@ where
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
         size,
-        addr: rsleigh::VnAddr {
-            off,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: off,
+        addr_space: rsleigh::VnSpace::REGISTER,
     }
 }
 

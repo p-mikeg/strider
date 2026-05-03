@@ -70,10 +70,8 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 /// Fake 4-byte SP for x86-cdecl-like scenarios.
 fn sp32_vn() -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     }
 }
@@ -323,10 +321,8 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 /// 8-byte SP varnode for aarch64-like scenarios.
 fn sp64_vn() -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x40,
-        },
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     }
 }
@@ -447,10 +443,8 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 
     let rdi = rdi_like_vn();
     let rsi = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x30,
-        },
+        addr_off: 0x30,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let sp = sp_vn();

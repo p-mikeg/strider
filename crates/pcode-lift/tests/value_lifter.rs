@@ -19,7 +19,7 @@
 use ir::FunctionBuilder;
 use pcode_lift::ValueLifter;
 use rsleigh::mem_readers::BufMemReader;
-use rsleigh::{Insn, Opcode, Vn, VnAddr, VnSpace};
+use rsleigh::{Insn, Opcode, Vn, VnSpace};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -36,12 +36,12 @@ fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
 
 /// 4-byte register at the given REGISTER-space offset.
 fn reg(off: u64) -> Vn {
-    Vn { size: 4, addr: VnAddr { off, space: VnSpace::REGISTER } }
+    Vn { size: 4, addr_off: off, addr_space: VnSpace::REGISTER }
 }
 
 /// CONST-space varnode of byte width `size` carrying integer `val`.
 fn const_vn(val: u64, size: u32) -> Vn {
-    Vn { size, addr: VnAddr { off: val, space: VnSpace::CONST } }
+    Vn { size, addr_off: val, addr_space: VnSpace::CONST }
 }
 
 /// Builds a `FunctionBuilder` with three 4-byte REGISTER variables at
@@ -70,7 +70,7 @@ fn lift_bool_and_of_consts() {
     let insn = Insn {
         opcode: Opcode::BoolAnd,
         output: Some(reg(0)),
-        inputs: vec![const_vn(1, 1), const_vn(1, 1)],
+        inputs: vec![const_vn(1, 1), const_vn(1, 1)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -83,7 +83,7 @@ fn lift_bool_or_of_consts() {
     let insn = Insn {
         opcode: Opcode::BoolOr,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0, 1), const_vn(1, 1)],
+        inputs: vec![const_vn(0, 1), const_vn(1, 1)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -96,7 +96,7 @@ fn lift_bool_neg_of_const() {
     let insn = Insn {
         opcode: Opcode::BoolNeg,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0, 1)],
+        inputs: vec![const_vn(0, 1)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -111,7 +111,7 @@ fn lift_int_copy_from_const() {
     let insn = Insn {
         opcode: Opcode::Copy,
         output: Some(reg(0)),
-        inputs: vec![const_vn(42, 4)],
+        inputs: vec![const_vn(42, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -124,7 +124,7 @@ fn lift_int_zext_extends_const() {
     let insn = Insn {
         opcode: Opcode::IntZext,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0xff, 1)],
+        inputs: vec![const_vn(0xff, 1)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -137,7 +137,7 @@ fn lift_int_sext_extends_const() {
     let insn = Insn {
         opcode: Opcode::IntSext,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0xff, 1)],
+        inputs: vec![const_vn(0xff, 1)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -152,7 +152,7 @@ fn lift_int_add_of_consts() {
     let insn = Insn {
         opcode: Opcode::IntAdd,
         output: Some(reg(0)),
-        inputs: vec![const_vn(7, 4), const_vn(35, 4)],
+        inputs: vec![const_vn(7, 4), const_vn(35, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -165,7 +165,7 @@ fn lift_int_sub_of_consts() {
     let insn = Insn {
         opcode: Opcode::IntSub,
         output: Some(reg(0)),
-        inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+        inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -178,7 +178,7 @@ fn lift_int_mul_of_consts() {
     let insn = Insn {
         opcode: Opcode::IntMul,
         output: Some(reg(0)),
-        inputs: vec![const_vn(6, 4), const_vn(7, 4)],
+        inputs: vec![const_vn(6, 4), const_vn(7, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -193,8 +193,8 @@ fn lift_truncate_extracts_low_bits() {
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let insn = Insn {
         opcode: Opcode::Subpiece,
-        output: Some(Vn { size: 1, addr: VnAddr { off: 0, space: VnSpace::REGISTER } }),
-        inputs: vec![const_vn(0x1234_5678, 4), const_vn(0, 4)],
+        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
+        inputs: vec![const_vn(0x1234_5678, 4), const_vn(0, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -206,8 +206,8 @@ fn lift_piece_concatenates() {
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let insn = Insn {
         opcode: Opcode::Piece,
-        output: Some(Vn { size: 4, addr: VnAddr { off: 0, space: VnSpace::REGISTER } }),
-        inputs: vec![const_vn(0xAA, 2), const_vn(0xBB, 2)],
+        output: Some(Vn { size: 4, addr_off: 0, addr_space: VnSpace::REGISTER }),
+        inputs: vec![const_vn(0xAA, 2), const_vn(0xBB, 2)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -220,8 +220,8 @@ fn lift_extract_returns_slice() {
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let insn = Insn {
         opcode: Opcode::Extract,
-        output: Some(Vn { size: 1, addr: VnAddr { off: 0, space: VnSpace::REGISTER } }),
-        inputs: vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)],
+        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
+        inputs: vec![const_vn(0xFF00, 4), const_vn(8, 4), const_vn(8, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -234,7 +234,7 @@ fn lift_popcount() {
     let insn = Insn {
         opcode: Opcode::Popcount,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0b1011, 4)],
+        inputs: vec![const_vn(0b1011, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -247,7 +247,7 @@ fn lift_lzcount() {
     let insn = Insn {
         opcode: Opcode::Lzcount,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0xF, 4)],
+        inputs: vec![const_vn(0xF, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -264,7 +264,7 @@ fn lift_float_add_of_consts() {
         output: Some(reg(0)),
         // 4-byte (F32) varnodes — float-typed when read via read_vn,
         // but const space carries arbitrary bits.
-        inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+        inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -277,7 +277,7 @@ fn lift_float_neg() {
     let insn = Insn {
         opcode: Opcode::FloatNeg,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0, 4)],
+        inputs: vec![const_vn(0, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -301,7 +301,7 @@ fn lift_segment_op_recognised() {
     let insn = Insn {
         opcode: Opcode::SegmentOp,
         output: Some(reg(0)),
-        inputs: vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)],
+        inputs: vec![const_vn(0, 4), const_vn(0, 2), const_vn(0, 4)].into(),
     };
     assert!(lifter.lift(&insn).unwrap());
 }
@@ -344,7 +344,7 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
-            inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+            inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -371,7 +371,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
-            inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+            inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -392,7 +392,7 @@ fn lift_dedup_unions_two_addresses() {
     let insn = Insn {
         opcode: Opcode::IntAdd,
         output: Some(reg(0)),
-        inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+        inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
     };
     builder.set_lift_addr(Some(0x1000));
     {
@@ -419,7 +419,7 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
         let insn = Insn {
             opcode: Opcode::IntLessEqual,
             output: Some(reg(0)),
-            inputs: vec![const_vn(5, 4), const_vn(7, 4)],
+            inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -443,7 +443,7 @@ fn lift_int_sub_lowers_to_add_neg() {
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(0)),
-            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -483,7 +483,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(8)),
-            inputs: vec![reg(0), reg(4)],
+            inputs: vec![reg(0), reg(4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -498,7 +498,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(0)),
-            inputs: vec![reg(0), reg(4)],
+            inputs: vec![reg(0), reg(4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -533,7 +533,7 @@ fn lift_int_sub_caches_lowered_shape() {
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(0)),
-            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -545,7 +545,7 @@ fn lift_int_sub_caches_lowered_shape() {
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(4)),
-            inputs: vec![const_vn(50, 4), const_vn(8, 4)],
+            inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -565,7 +565,7 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
         let insn = Insn {
             opcode: Opcode::IntSlessEqual,
             output: Some(reg(0)),
-            inputs: vec![const_vn(5, 4), const_vn(7, 4)],
+            inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -586,7 +586,7 @@ fn lift_returns_false_for_branch() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::Branch, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::Branch, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -595,7 +595,7 @@ fn lift_returns_false_for_cond_branch() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -604,7 +604,7 @@ fn lift_returns_false_for_branch_indirect() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -613,7 +613,7 @@ fn lift_returns_false_for_return() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::Return, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::Return, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -622,7 +622,7 @@ fn lift_returns_false_for_call() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::Call, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::Call, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -631,7 +631,7 @@ fn lift_returns_false_for_call_indirect() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -640,7 +640,7 @@ fn lift_returns_false_for_call_other() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -649,7 +649,7 @@ fn lift_returns_false_for_store() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::Store, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::Store, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -658,7 +658,7 @@ fn lift_returns_false_for_nop() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::Nop, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::Nop, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -725,9 +725,9 @@ fn lift_subpiece_out_of_range_errors() {
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let insn = Insn {
         opcode: Opcode::Subpiece,
-        output: Some(Vn { size: 1, addr: VnAddr { off: 0, space: VnSpace::REGISTER } }),
+        output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
         // input is 4 bytes wide, byte_offset = 5 (> 4) ⇒ error.
-        inputs: vec![const_vn(0, 4), const_vn(5, 4)],
+        inputs: vec![const_vn(0, 4), const_vn(5, 4)].into(),
     };
     let res = lifter.lift(&insn);
     assert!(res.is_err(), "out-of-range Subpiece should error");
@@ -744,7 +744,7 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
     let insn = Insn {
         opcode: Opcode::Copy,
         output: None,
-        inputs: vec![const_vn(0, 4)],
+        inputs: vec![const_vn(0, 4)].into(),
     };
     let res = lifter.lift(&insn);
     assert!(res.is_err(), "Copy without output_vn should error");
@@ -759,7 +759,7 @@ fn lift_call_other_returns_false_via_value_lifter() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
-    let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: vec![] };
+    let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
 
@@ -774,7 +774,7 @@ fn lift_float_sub_lowers_to_float_add_neg() {
         let insn = Insn {
             opcode: Opcode::FloatSub,
             output: Some(reg(0)),
-            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -797,7 +797,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
         let insn = Insn {
             opcode: Opcode::FloatNotEqual,
             output: Some(reg(0)),
-            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }
@@ -822,7 +822,7 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
         let insn = Insn {
             opcode: Opcode::FloatLessEqual,
             output: Some(reg(0)),
-            inputs: vec![const_vn(0, 4), const_vn(0, 4)],
+            inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
         assert!(lifter.lift(&insn).unwrap());
     }

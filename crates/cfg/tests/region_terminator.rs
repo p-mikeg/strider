@@ -213,10 +213,8 @@ fn switch_variant_is_constructible_with_optional_target_value() {
     // `BranchIndirect` and `target_value` left `None`.  This test
     // pins the variant's API shape.
     let target_vn = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let term = RegionTerminator::Switch {
@@ -249,10 +247,8 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
     // trips identically.  Pins the contract that `target_value` is
     // plumbed through clone/equality without surprise.
     let target_vn = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let targets = vec![0x1100u64, 0x1200, 0x1300, 0x1400];
@@ -289,10 +285,8 @@ fn unresolved_indirect_branch_variant_is_constructible() {
 
     let target_vn = rsleigh::Vn {
         size: 8,
-        addr: rsleigh::VnAddr {
-            off: 0x100,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0x100,
+        addr_space: rsleigh::VnSpace::REGISTER,
     };
     let pcode_addr = PcodeInsnAddr {
         machine_addr: MachineInsnAddr { addr: 0x1000 },

@@ -108,10 +108,10 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let id_vn = pcode_lift::first_input_or_err(insn)?;
-        if id_vn.addr.space != rsleigh::VnSpace::CONST {
+        if id_vn.addr_space != rsleigh::VnSpace::CONST {
             bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
         }
-        let user_op_id = id_vn.addr.off;
+        let user_op_id = id_vn.addr_off;
         // Sleigh's native user-op id width is u32; an offset that
         // doesn't fit signals malformed input.  `set_call_other_name`
         // would silently no-op below; surface explicitly so the error

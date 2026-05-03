@@ -438,10 +438,8 @@ mod tests {
         // RedundantPhis, the anchor's producer would still be a
         // VarPhi and the classifier would defer.
         let lr_vn = rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x4c,
-            },
+            addr_off: 0x4c,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
         let mut b = FunctionBuilder::new_raw(vec![lr_vn], &[], &[], &[], None, 0).unwrap();

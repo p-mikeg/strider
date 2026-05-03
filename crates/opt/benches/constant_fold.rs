@@ -9,10 +9,8 @@ use opt::{ConstantFold, Optimizer};
 
 fn build_chain(n: usize) -> ir::BuiltFunctionGraph {
     let vn = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            off: 0x1000,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0x1000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let mut b = FunctionBuilder::new_raw(vec![vn], &[vn], &[], &[], None, 0).unwrap();

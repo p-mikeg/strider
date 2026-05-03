@@ -707,10 +707,8 @@ fn build_pred_if_graph(
 ) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
     use ir::{FunctionBuilder, IntCmpOp};
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
@@ -785,10 +783,8 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     const LOOSE_BOUND: u64 = 16;
 
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
@@ -854,10 +850,8 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     // The walk reaches Entry without finding a bound → None.
     use ir::FunctionBuilder;
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
@@ -888,17 +882,13 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     // dispatch's idx.  The walk must NOT confabulate a bound.
     use ir::{FunctionBuilder, IntCmpOp};
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let other_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x14,
-        },
+        addr_off: 0x14,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var, other_var], &[], &[], &[], None, 0)
@@ -1054,10 +1044,8 @@ fn build_diamond_two_bounds(
 ) -> (BuiltFunctionGraph, NodeOutputId, NodeOutputId) {
     use ir::{FunctionBuilder, IntCmpOp};
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();
@@ -1154,10 +1142,8 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     // predecessor → join's bound = None.
     use ir::{FunctionBuilder, IntCmpOp};
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0).unwrap();

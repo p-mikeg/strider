@@ -434,10 +434,10 @@ pub struct PyMemReaderAdapter {
 }
 
 impl rsleigh::MemReader for PyMemReaderAdapter {
-    type Err = anyhow::Error;
+    type Err = reader::MemReadError;
 
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> anyhow::Result<usize> {
-        Python::with_gil(|py| {
+    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
+        Python::with_gil(|py| -> anyhow::Result<usize> {
             let result = self
                 .py_obj
                 .call_method1(py, "read", (addr.off, out_buf.len()))
@@ -453,6 +453,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
             out_buf[..n].copy_from_slice(&bytes[..n]);
             Ok(n)
         })
+        .map_err(reader::MemReadError::from)
     }
 }
 
@@ -528,9 +529,9 @@ pub enum AnyMemReader {
 }
 
 impl rsleigh::MemReader for AnyMemReader {
-    type Err = anyhow::Error;
+    type Err = reader::MemReadError;
 
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> anyhow::Result<usize> {
+    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         match self {
             AnyMemReader::Map(m) => m.read(addr, out_buf),
             AnyMemReader::Cb(c) => c.read(addr, out_buf),
@@ -548,12 +549,14 @@ pub struct PyMemoryMapReader {
 }
 
 impl rsleigh::MemReader for PyMemoryMapReader {
-    type Err = anyhow::Error;
+    type Err = reader::MemReadError;
 
-    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> anyhow::Result<usize> {
+    fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         self.table
             .read(addr.off, out_buf)
-            .ok_or_else(|| anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+            .ok_or_else(|| {
+                reader::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+            })
     }
 }
 

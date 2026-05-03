@@ -125,7 +125,7 @@ impl OptimizerOnBuilt for FunctionArgDetect {
 ///
 /// When the exact-`Vn` lookup misses, fall back to any `InitialVar` whose
 /// `Vn` lies fully within `reg`'s byte range
-/// `[reg.addr.off, reg.addr.off + reg.size)` in the same address space.
+/// `[reg.addr_off, reg.addr_off + reg.size)` in the same address space.
 /// If multiple candidates exist, pick the largest (the most specific
 /// reading of `reg`'s state).  The emitted `FunctionArg`'s `source`
 /// records the actual sub-register Vn, so downstream consumers see the
@@ -154,14 +154,14 @@ fn detect_register_args(
         initial_vars: &rustc_hash::FxHashMap<rsleigh::Vn, NodeId>,
         reg: rsleigh::Vn,
     ) -> Option<(rsleigh::Vn, NodeId)> {
-        let lo = reg.addr.off;
-        let hi = reg.addr.off + (reg.size as u64);
+        let lo = reg.addr_off;
+        let hi = reg.addr_off + (reg.size as u64);
         initial_vars
             .iter()
             .filter(|(vn, _)| {
-                vn.addr.space == reg.addr.space
-                    && vn.addr.off >= lo
-                    && vn.addr.off + (vn.size as u64) <= hi
+                vn.addr_space == reg.addr_space
+                    && vn.addr_off >= lo
+                    && vn.addr_off + (vn.size as u64) <= hi
             })
             .max_by_key(|(vn, _)| vn.size)
             .map(|(vn, n)| (*vn, *n))

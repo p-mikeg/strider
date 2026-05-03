@@ -203,7 +203,7 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
             // We don't pin its exact Vn shape here — what matters is
             // that the terminator records *some* register-space VN
             // and a pcode address inside the function range.
-            assert_eq!(target_vn.addr.space, rsleigh::VnSpace::REGISTER);
+            assert_eq!(target_vn.addr_space, rsleigh::VnSpace::REGISTER);
             assert_eq!(addr.machine_addr.addr, base);
         }
         other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
@@ -269,10 +269,8 @@ fn call_indirect_unchanged_when_target_is_lr() {
 fn options_set_link_register_round_trips() {
     let vn = rsleigh::Vn {
         size: 4,
-        addr: rsleigh::VnAddr {
-            off: 0x100,
-            space: VnSpace::REGISTER,
-        },
+        addr_off: 0x100,
+        addr_space: VnSpace::REGISTER,
     };
     let opts = OptionsBuilder::new().set_link_register(vn).build();
     let got = test_api::options_link_register_vn(&opts);

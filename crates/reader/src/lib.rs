@@ -22,6 +22,50 @@ pub type Result<T> = anyhow::Result<T>;
 pub mod elf;
 pub use elf::{ElfFileMemReader, load_elf};
 
+// ── MemReadError ─────────────────────────────────────────────────────────────
+//
+// rsleigh 4.0.0's [`rsleigh::MemReader`] requires `type Err: std::error::Error
+// + 'static`.  Strider's readers want to keep using the ergonomic
+// [`anyhow::Error`] for everything else, but `anyhow::Error` itself does *not*
+// implement [`std::error::Error`] (precisely so it can hold any error
+// transparently).  This thin wrapper bridges the gap: it owns an
+// `anyhow::Error`, implements [`std::error::Error`] by delegating
+// `Display` / `Debug` / `source` to the wrapped value, and offers `From`
+// conversions so call sites can use `?` and `anyhow!`/`bail!` as before.
+
+/// Error type returned by every [`rsleigh::MemReader`] impl in the strider
+/// crates.  Wraps an [`anyhow::Error`] so the trait's `std::error::Error`
+/// bound (introduced in rsleigh 4.0.0) is satisfied while preserving the
+/// `anyhow!` / `?` ergonomics callers already rely on.
+#[derive(Debug)]
+pub struct MemReadError(pub anyhow::Error);
+
+impl std::fmt::Display for MemReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for MemReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // `anyhow::Error` does not implement `std::error::Error`, but its
+        // inner cause does.  Walk one level down so consumers that
+        // chase `source()` see the real underlying error.
+        self.0.source()
+    }
+}
+
+impl From<anyhow::Error> for MemReadError {
+    fn from(err: anyhow::Error) -> Self {
+        MemReadError(err)
+    }
+}
+
+// `From<MemReadError> for anyhow::Error` is provided automatically by
+// anyhow's blanket `impl<E: std::error::Error + Send + Sync + 'static>
+// From<E> for anyhow::Error`, since `MemReadError: std::error::Error +
+// Send + Sync + 'static`.
+
 // ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
 
 /// Provides read access to a statically-known region of memory (e.g. a

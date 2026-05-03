@@ -7,10 +7,8 @@ use target::Endianness;
 /// Fake 4-byte SP varnode (x86-cdecl-like).
 fn sp32_vn() -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     }
 }
@@ -18,10 +16,8 @@ fn sp32_vn() -> rsleigh::Vn {
 /// 8-byte SP for aarch64/x86-64-like scenarios.
 fn sp64_vn() -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x40,
-        },
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     }
 }

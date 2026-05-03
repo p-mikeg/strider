@@ -177,18 +177,19 @@ impl PyVn {
         Self {
             inner: rsleigh::Vn {
                 size,
-                addr: rsleigh::VnAddr { off, space: space.inner },
+                addr_off: off,
+                addr_space: space.inner,
             },
         }
     }
 
     #[getter]
     fn space(&self) -> PyVnSpace {
-        PyVnSpace { inner: self.inner.addr.space }
+        PyVnSpace { inner: self.inner.addr_space }
     }
     #[getter]
     fn off(&self) -> u64 {
-        self.inner.addr.off
+        self.inner.addr_off
     }
     #[getter]
     fn size(&self) -> u32 {
@@ -196,9 +197,9 @@ impl PyVn {
     }
 
     fn __repr__(&self) -> String {
-        let space_name = PyVnSpace { inner: self.inner.addr.space }.name();
+        let space_name = PyVnSpace { inner: self.inner.addr_space }.name();
         format!("Vn(space=VnSpace.{}, off={:#x}, size={})",
-            space_name.to_lowercase(), self.inner.addr.off, self.inner.size)
+            space_name.to_lowercase(), self.inner.addr_off, self.inner.size)
     }
 
     fn __eq__(&self, other: &Self) -> bool {
@@ -206,7 +207,7 @@ impl PyVn {
     }
 
     fn __hash__(&self) -> u64 {
-        let mut h = self.inner.addr.off;
+        let mut h = self.inner.addr_off;
         h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h
     }

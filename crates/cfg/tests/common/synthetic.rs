@@ -70,7 +70,7 @@ pub fn fake_insn() -> rsleigh::Insn {
     rsleigh::Insn {
         opcode: rsleigh::Opcode::Copy,
         output: None,
-        inputs: vec![],
+        inputs: vec![].into(),
     }
 }
 

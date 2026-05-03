@@ -159,10 +159,8 @@ pub fn build_value_phi_target_scenario(
     // StackLoadForward only care that it's the SP register passed
     // into the pass constructors.
     let sp = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)
@@ -268,17 +266,13 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     use target::Endianness;
 
     let sp = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let lr = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x4c,
-        },
+        addr_off: 0x4c,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
@@ -369,17 +363,13 @@ pub fn build_push_target_pop_pc_scenario(
     use target::Endianness;
 
     let sp = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let lr = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x4c,
-        },
+        addr_off: 0x4c,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![sp, lr], &[], &[sp], &[], None, 0)
@@ -469,10 +459,8 @@ pub fn build_jump_table_known_bits_scenario(
     // from `read_variable` so it's a non-IntConst (else the matcher
     // would mis-disambiguate stride vs idx in commuted multiplications).
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
@@ -535,10 +523,8 @@ pub fn build_jump_table_predecessor_if_scenario(
     use opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)
@@ -603,10 +589,8 @@ pub fn build_jump_table_unbounded_scenario(
     use opt::{ConstantFold, OptimizerPipeline};
 
     let idx_var = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x10,
-        },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let mut b = FunctionBuilder::new_raw(vec![idx_var], &[], &[], &[], None, 0)

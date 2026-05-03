@@ -653,10 +653,8 @@ mod tests {
 
     fn smoke_vn() -> rsleigh::Vn {
         rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0,
-            },
+            addr_off: 0,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         }
     }

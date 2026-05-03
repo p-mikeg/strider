@@ -11,25 +11,26 @@
 mod common;
 use common::{addr, fake_lift_res, fake_lift_res_with_len, make_builder, make_region_builder};
 
-use rsleigh::{Vn, VnAddr, VnSpace};
+use rsleigh::{Vn, VnSpace};
 
 fn const_vn(offset: u64) -> Vn {
     Vn {
-        addr: VnAddr { space: VnSpace::CONST, off: offset },
+        addr_off: offset, addr_space: VnSpace::CONST,
         size: 8,
     }
 }
 
 fn code_space_vn(space: VnSpace, offset: u64) -> Vn {
     Vn {
-        addr: VnAddr { space, off: offset },
+        addr_off: offset,
+        addr_space: space,
         size: 8,
     }
 }
 
 fn register_vn(offset: u64) -> Vn {
     Vn {
-        addr: VnAddr { space: VnSpace::REGISTER, off: offset },
+        addr_off: offset, addr_space: VnSpace::REGISTER,
         size: 8,
     }
 }
@@ -91,7 +92,7 @@ fn unknown_space_returns_invalid_branch_target_error() {
     let mut b = make_builder(0x1000);
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
     let vn = Vn {
-        addr: VnAddr { space: VnSpace::new(b'x'), off: 0x2000 },
+        addr_off: 0x2000, addr_space: VnSpace::new(b'x'),
         size: 8,
     };
     let lift = fake_lift_res(1);
@@ -106,7 +107,7 @@ fn unique_space_returns_invalid_branch_target_error() {
     let mut b = make_builder(0x1000);
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
     let vn = Vn {
-        addr: VnAddr { space: VnSpace::UNIQUE, off: 0x40 },
+        addr_off: 0x40, addr_space: VnSpace::UNIQUE,
         size: 8,
     };
     let lift = fake_lift_res(1);
@@ -126,10 +127,7 @@ fn decode_branch_target_const_space_negative_offset_does_not_wrap() {
 
     // Synthetic CONST varnode: off = -2 (two's complement u64), size irrelevant.
     let vn = Vn {
-        addr: VnAddr {
-            space: VnSpace::CONST,
-            off: (-2_i64) as u64,
-        },
+        addr_off: (-2_i64) as u64, addr_space: VnSpace::CONST,
         size: 8,
     };
 
@@ -151,10 +149,7 @@ fn decode_branch_target_const_space_underflow_errors() {
     let rb = make_region_builder(&mut b, addr(0x1000, 0));
 
     let vn = Vn {
-        addr: VnAddr {
-            space: VnSpace::CONST,
-            off: (-5_i64) as u64,
-        },
+        addr_off: (-5_i64) as u64, addr_space: VnSpace::CONST,
         size: 8,
     };
 
@@ -181,10 +176,7 @@ fn decode_branch_target_const_space_index_past_end_errors() {
     let lift = fake_lift_res(usize::try_from(pcode_count).expect("pcode_count fits in usize"));
 
     let vn = Vn {
-        addr: VnAddr {
-            space: VnSpace::CONST,
-            off: pcode_count + 1, // forward jump past the last pcode op
-        },
+        addr_off: pcode_count + 1, addr_space: VnSpace::CONST,
         size: 8,
     };
 
@@ -254,10 +246,7 @@ fn const_space_branch_to_pcode_count_falls_through_to_next_insn() {
     let lift = fake_lift_res_with_len(pcode_count, 4);
 
     let vn = Vn {
-        addr: VnAddr {
-            space: VnSpace::CONST,
-            off: pcode_count as u64, // == insns.len() — the fall-through idiom
-        },
+        addr_off: pcode_count as u64, addr_space: VnSpace::CONST,
         size: 8,
     };
 
@@ -287,10 +276,7 @@ fn decode_branch_target_const_space_index_past_pcode_count_errors() {
     let lift = fake_lift_res(usize::try_from(pcode_count).expect("pcode_count fits in usize"));
 
     let vn = Vn {
-        addr: VnAddr {
-            space: VnSpace::CONST,
-            off: pcode_count + 1, // strictly more than one past end — invalid
-        },
+        addr_off: pcode_count + 1, addr_space: VnSpace::CONST,
         size: 8,
     };
 

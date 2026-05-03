@@ -283,7 +283,7 @@ fn process_new_insn_branch_with_empty_inputs_errors() {
 
     let bad_insn = rsleigh::Insn {
         opcode: rsleigh::Opcode::Branch,
-        inputs: vec![],
+        inputs: vec![].into(),
         output: None,
     };
 
@@ -305,7 +305,7 @@ fn process_new_insn_condbranch_with_empty_inputs_errors() {
 
     let bad_insn = rsleigh::Insn {
         opcode: rsleigh::Opcode::CondBranch,
-        inputs: vec![],
+        inputs: vec![].into(),
         output: None,
     };
 

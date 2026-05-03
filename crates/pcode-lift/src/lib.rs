@@ -103,7 +103,7 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
 /// final per-region IR) stay aligned.
 #[must_use]
 pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
-    (vn.addr.space.shortcut_raw(), vn.addr.off, vn.size)
+    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }
 
 /// Returns `insn.inputs[0]` or a typed "too few inputs" error.  Used by
@@ -126,7 +126,7 @@ pub fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
 ///
 /// P-code encodes the target space as a CONST-space varnode at `inputs[0]`
 /// whose offset is a pointer to a Sleigh `AddrSpace` object.  Reading
-/// `.addr.space` directly yields `CONST` (the encoding's space), not the
+/// `.addr_space` directly yields `CONST` (the encoding's space), not the
 /// actual target space — callers that care about the target must decode
 /// via [`rsleigh::VnSpace::by_id`].
 ///
@@ -136,7 +136,7 @@ pub fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
 /// not in CONST space.
 pub fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *first_input_or_err(insn)?;
-    if space_id_vn.addr.space != rsleigh::VnSpace::CONST {
+    if space_id_vn.addr_space != rsleigh::VnSpace::CONST {
         anyhow::bail!(
             "opcode {:?} expects a CONST input at position 0",
             insn.opcode

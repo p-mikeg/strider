@@ -128,7 +128,8 @@ impl KindSpec {
 pub(crate) fn exemplar_vn() -> rsleigh::Vn {
     rsleigh::Vn {
         size: 0,
-        addr: rsleigh::VnAddr { off: 0, space: rsleigh::VnSpace::CONST },
+        addr_off: 0,
+        addr_space: rsleigh::VnSpace::CONST,
     }
 }
 

@@ -468,10 +468,8 @@ fn example_load_store() {
     // Build: load a constant into arg register, call(0xABCD)
     let arg_vn = rsleigh::Vn {
         size: 8,
-        addr: rsleigh::VnAddr {
-            off: 0,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0,
+        addr_space: rsleigh::VnSpace::REGISTER,
     };
     let mut b3 = FunctionBuilder::new_raw(vec![arg_vn], &[arg_vn], &[], &[], None, 0).expect("build");
     let r3 = b3.create_region().expect("build");
@@ -511,17 +509,13 @@ fn example_initial_vars() {
     // Simulate a register varnode (8-byte, offset 0 in register space).
     let rax_vn = rsleigh::Vn {
         size: 8,
-        addr: rsleigh::VnAddr {
-            off: 0,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0,
+        addr_space: rsleigh::VnSpace::REGISTER,
     };
     let rbx_vn = rsleigh::Vn {
         size: 8,
-        addr: rsleigh::VnAddr {
-            off: 8,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 8,
+        addr_space: rsleigh::VnSpace::REGISTER,
     };
 
     // Build: rax + rbx, return result

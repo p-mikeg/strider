@@ -33,10 +33,8 @@ fn collapse_phis(g: &mut BuiltFunctionGraph) {
 fn x_vn() -> rsleigh::Vn {
     rsleigh::Vn {
         size: 8,
-        addr: rsleigh::VnAddr {
-            off: 0x40,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
     }
 }
 
@@ -121,10 +119,8 @@ fn truncate_initial_var_all_mask_one_match() {
 fn x_u32_vn() -> rsleigh::Vn {
     rsleigh::Vn {
         size: 4,
-        addr: rsleigh::VnAddr {
-            off: 0x40,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
     }
 }
 
@@ -203,10 +199,8 @@ fn sext_initial_var_extend_mask_one_match() {
 fn x_u16_vn() -> rsleigh::Vn {
     rsleigh::Vn {
         size: 2,
-        addr: rsleigh::VnAddr {
-            off: 0x48,
-            space: rsleigh::VnSpace::REGISTER,
-        },
+        addr_off: 0x48,
+        addr_space: rsleigh::VnSpace::REGISTER,
     }
 }
 

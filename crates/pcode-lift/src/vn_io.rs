@@ -60,17 +60,20 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// resulting node.
     pub fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ir::Value> {
         let default_code_space = self.sleigh.default_code_space();
-        let space = vn.addr.space;
+        let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self
                 .builder
-                .build_int_const(vn.addr.off, vn.size.try_into()?),
+                .build_int_const(vn.addr_off, vn.size.try_into()?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             space if space == default_code_space => {
-                let space_info = self.sleigh.space_info(space);
+                let space_info = self
+                    .sleigh
+                    .space_info(space)
+                    .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
+                    .build_int_const(vn.addr_off, space_info.addr_size().try_into()?)?;
                 Ok(self.builder.build_load(addr, space, vn.size.try_into()?)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
@@ -94,15 +97,18 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// builder rejects the resulting node.
     pub fn write_vn(&mut self, vn: &rsleigh::Vn, val: ir::Value) -> Result<()> {
         let default_code_space = self.sleigh.default_code_space();
-        let space = vn.addr.space;
+        let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.write_reg_vn(vn, val),
             space if space == default_code_space => {
-                let space_info = self.sleigh.space_info(space);
+                let space_info = self
+                    .sleigh
+                    .space_info(space)
+                    .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self
                     .builder
-                    .build_int_const(vn.addr.off, space_info.addr_size().try_into()?)?;
+                    .build_int_const(vn.addr_off, space_info.addr_size().try_into()?)?;
                 Ok(self.builder.build_store(addr, val, space)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
@@ -129,7 +135,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         &self,
         reg: &rsleigh::Vn,
     ) -> Result<rsleigh::Vn> {
-        let space = reg.addr.space;
+        let space = reg.addr_space;
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
@@ -145,14 +151,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // (defensive — preserves the previous behaviour and lets
         // tests that hand-craft a Vn without registering it still
         // resolve a containment).
-        let reg_start = reg.addr.off;
+        let reg_start = reg.addr_off;
         let reg_end = reg_start + reg.size as u64;
         let mut best: Option<rsleigh::Vn> = None;
         for sleigh_reg in self.builder.variables() {
-            if sleigh_reg.addr.space != space {
+            if sleigh_reg.addr_space != space {
                 continue;
             }
-            let s = sleigh_reg.addr.off;
+            let s = sleigh_reg.addr_off;
             let e = s + sleigh_reg.size as u64;
             if s > reg_start || e < reg_end {
                 continue;
@@ -180,11 +186,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         container_reg: &rsleigh::Vn,
     ) -> u64 {
         match self.endianness {
-            target::Endianness::Little => 8 * (reg.addr.off - container_reg.addr.off),
+            target::Endianness::Little => 8 * (reg.addr_off - container_reg.addr_off),
             target::Endianness::Big => {
                 8 * (container_reg.size as u64
                     - reg.size as u64
-                    - (reg.addr.off - container_reg.addr.off))
+                    - (reg.addr_off - container_reg.addr_off))
             }
         }
     }
@@ -326,10 +332,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
 
 #[cfg(test)]
 mod shift_formula_tests {
-    use rsleigh::{Vn, VnAddr, VnSpace};
+    use rsleigh::{Vn, VnSpace};
 
     fn reg(off: u64, size: u32) -> Vn {
-        Vn { addr: VnAddr { off, space: VnSpace::REGISTER }, size }
+        Vn { addr_off: off, addr_space: VnSpace::REGISTER, size }
     }
 
     /// Shift placement for little-endian: byte offset within container × 8.
@@ -380,10 +386,10 @@ mod shift_formula_tests {
     // Free helpers mirroring calculate_reg_shift_from_container's two arms,
     // unit-testable without spinning up a full ValueLifter.
     fn compute_shift_le(reg: &Vn, container: &Vn) -> u64 {
-        8 * (reg.addr.off - container.addr.off)
+        8 * (reg.addr_off - container.addr_off)
     }
     fn compute_shift_be(reg: &Vn, container: &Vn) -> u64 {
-        8 * (container.size as u64 - reg.size as u64 - (reg.addr.off - container.addr.off))
+        8 * (container.size as u64 - reg.size as u64 - (reg.addr_off - container.addr_off))
     }
 }
 
@@ -402,10 +408,10 @@ mod shift_formula_tests {
 #[cfg(test)]
 mod positioned_mask_tests {
     use super::vn_mask;
-    use rsleigh::{Vn, VnAddr, VnSpace};
+    use rsleigh::{Vn, VnSpace};
 
     fn reg_at(off: u64, size: u32) -> Vn {
-        Vn { addr: VnAddr { off, space: VnSpace::REGISTER }, size }
+        Vn { addr_off: off, addr_space: VnSpace::REGISTER, size }
     }
 
     /// Positioned mask = `vn_mask(reg) << shift_bits` must select exactly the
@@ -503,10 +509,10 @@ mod positioned_mask_tests {
 #[cfg(test)]
 mod vn_mask_tests {
     use super::*;
-    use rsleigh::{Vn, VnAddr, VnSpace};
+    use rsleigh::{Vn, VnSpace};
 
     fn reg(size: u32) -> Vn {
-        Vn { size, addr: VnAddr { off: 0, space: VnSpace::REGISTER } }
+        Vn { size, addr_off: 0, addr_space: VnSpace::REGISTER }
     }
 
     /// Masks must exactly cover each supported byte width with no extra bits.

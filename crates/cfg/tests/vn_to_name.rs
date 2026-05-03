@@ -7,7 +7,7 @@ mod common;
 use common::{binary, build_cfg};
 
 use cfg::test_api::vn_to_name;
-use rsleigh::{Vn, VnAddr, VnSpace};
+use rsleigh::{Vn, VnSpace};
 
 fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", "add");
@@ -24,7 +24,7 @@ fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
 #[test]
 fn const_formats_as_hex_offset_colon_size() {
     let cfg = real_cfg();
-    let vn = Vn { addr: VnAddr { space: VnSpace::CONST, off: 0x2a }, size: 4 };
+    let vn = Vn { addr_off: 0x2a, addr_space: VnSpace::CONST, size: 4 };
     let name = vn_to_name(&cfg, &vn).unwrap();
     assert_eq!(name, "0x2a:4");
 }
@@ -34,7 +34,7 @@ fn const_formats_as_hex_offset_colon_size() {
 #[test]
 fn ram_formats_as_ram_offset_size() {
     let cfg = real_cfg();
-    let vn = Vn { addr: VnAddr { space: VnSpace::RAM, off: 0x1000 }, size: 8 };
+    let vn = Vn { addr_off: 0x1000, addr_space: VnSpace::RAM, size: 8 };
     let name = vn_to_name(&cfg, &vn).unwrap();
     assert_eq!(name, "ram[0x1000]:8");
 }
@@ -44,7 +44,7 @@ fn ram_formats_as_ram_offset_size() {
 #[test]
 fn unique_formats_as_unique_offset_size() {
     let cfg = real_cfg();
-    let vn = Vn { addr: VnAddr { space: VnSpace::UNIQUE, off: 0x80 }, size: 1 };
+    let vn = Vn { addr_off: 0x80, addr_space: VnSpace::UNIQUE, size: 1 };
     let name = vn_to_name(&cfg, &vn).unwrap();
     assert_eq!(name, "unique[0x80]:1");
 }
@@ -72,7 +72,7 @@ fn register_unknown_offset_returns_invalid_reg_vn_error() {
     // Pick a REGISTER-space offset the register table will not map — far
     // outside any real register.
     let bogus = Vn {
-        addr: VnAddr { space: VnSpace::REGISTER, off: 0xffff_ffff_ffff_ffff },
+        addr_off: 0xffff_ffff_ffff_ffff, addr_space: VnSpace::REGISTER,
         size: 1,
     };
     let err = vn_to_name(&cfg, &bogus).unwrap_err();
@@ -87,7 +87,7 @@ fn unsupported_space_returns_unsupported_error() {
     // Use a space shortcut that is neither CONST (#), REGISTER (%),
     // RAM (r), nor UNIQUE (u). Any other byte triggers the `_` arm.
     let exotic = Vn {
-        addr: VnAddr { space: VnSpace::new(b'?'), off: 0 },
+        addr_off: 0, addr_space: VnSpace::new(b'?'),
         size: 1,
     };
     let err = vn_to_name(&cfg, &exotic).unwrap_err();

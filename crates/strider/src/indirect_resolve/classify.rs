@@ -305,10 +305,8 @@ mod tests {
         // typecheck against `expected_signature`'s `PHI` slot.
         let fake_token_node = graph.graph.create_node(
             NodeKind::VarPhi(rsleigh::Vn {
-                addr: rsleigh::VnAddr {
-                    space: rsleigh::VnSpace::REGISTER,
-                    off: 0xdead,
-                },
+                addr_off: 0xdead,
+                addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             }),
             [],
@@ -375,10 +373,8 @@ mod tests {
         let mut graph = builder.build().expect("build");
         let fake_token_node = graph.graph.create_node(
             NodeKind::VarPhi(rsleigh::Vn {
-                addr: rsleigh::VnAddr {
-                    space: rsleigh::VnSpace::REGISTER,
-                    off: 0xdead,
-                },
+                addr_off: 0xdead,
+                addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             }),
             [],

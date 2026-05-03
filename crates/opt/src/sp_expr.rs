@@ -393,7 +393,8 @@ mod tests {
 
     fn sp() -> rsleigh::Vn {
         rsleigh::Vn {
-            addr: rsleigh::VnAddr { space: rsleigh::VnSpace::REGISTER, off: 0x20 },
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         }
     }

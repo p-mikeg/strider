@@ -878,7 +878,8 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 
 fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr { space: rsleigh::VnSpace::UNIQUE, off },
+        addr_off: off,
+        addr_space: rsleigh::VnSpace::UNIQUE,
         size,
     }
 }
@@ -952,7 +953,8 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
 fn flag_reg_byte() -> rsleigh::Vn {
     // Generic 1-byte REGISTER varnode shaped like ARM N/Z/V/C flags.
     rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x60, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x60,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     }
 }
@@ -1002,11 +1004,13 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
 #[test]
 fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x1000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let f0_f1_8byte = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x1000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     // Both varnodes referenced (mimicking the f64-using function): the
@@ -1035,7 +1039,8 @@ fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
 #[test]
 fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x1000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let b = FunctionBuilder::new_raw(
@@ -1060,11 +1065,13 @@ fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
 #[test]
 fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x1000, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x1000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let unrelated = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x2000, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x2000,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     // f0_4byte is not in the input set at all.  ret_val_vars upgrade has
@@ -1144,7 +1151,8 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
 #[test]
 fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
     let rdi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let map: HashMap<rsleigh::Vn, VarId> =
@@ -1159,11 +1167,13 @@ fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked()
     // RDI 8-byte tracked; we ask for EDI (4-byte sub-register at the same
     // offset) — must return RDI.
     let rdi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let edi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let map: HashMap<rsleigh::Vn, VarId> =
@@ -1179,11 +1189,13 @@ fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked()
 #[test]
 fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
     let rdi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let edi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     // Only EDI is tracked; ask for RDI.
@@ -1202,11 +1214,13 @@ fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
 #[test]
 fn upgrade_to_tracked_returns_none_when_no_overlap() {
     let rdi = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let unrelated = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x200, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x200,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let map: HashMap<rsleigh::Vn, VarId> =
@@ -1221,15 +1235,18 @@ fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
     // Asking for a 1-byte vn at off 56.  Both 4-byte and 8-byte covers
     // are tracked — the 4-byte one is tighter.
     let target = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
     let cover_4 = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let cover_8 = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 56, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 56,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let map: HashMap<rsleigh::Vn, VarId> = [
@@ -1249,15 +1266,18 @@ fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
 fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
     // RCX 8-byte: not tracked.
     let rcx = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let ecx = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     };
     let cl = rsleigh::Vn {
-        addr: rsleigh::VnAddr { off: 0x10, space: rsleigh::VnSpace::REGISTER },
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 1,
     };
     let map: HashMap<rsleigh::Vn, VarId> = [

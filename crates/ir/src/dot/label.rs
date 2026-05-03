@@ -18,9 +18,9 @@ pub fn vn_to_display_name<R: MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     vn: &rsleigh::Vn,
 ) -> anyhow::Result<String> {
-    let offset = vn.addr.off;
+    let offset = vn.addr_off;
     let size = vn.size;
-    match vn.addr.space {
+    match vn.addr_space {
         rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
         rsleigh::VnSpace::REGISTER => {
             let regs = sleigh.regs()?;

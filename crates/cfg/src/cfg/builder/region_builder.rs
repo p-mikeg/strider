@@ -131,7 +131,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     ) -> Result<PcodeInsnAddr> {
         let default_code_space = self.builder.sleigh.default_code_space();
 
-        match branch_target_var.addr.space {
+        match branch_target_var.addr_space {
             // CONST-space: pcode-local relative branch. The "address" is a
             // signed offset on the *pcode index* within the same machine
             // instruction, two's-complement-encoded into the u64 `off` (so
@@ -149,7 +149,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // a 32-bit-encoded -4 (= 0xFFFFFFFC) reads as the giant
                 // positive number 4_294_967_292 when cast straight from u64,
                 // and the bounds check below incorrectly rejects the target.
-                let raw = branch_target_var.addr.off;
+                let raw = branch_target_var.addr_off;
                 let off: i64 = match branch_target_var.size {
                     1 => i64::from(raw as i8),
                     2 => i64::from(raw as i16),
@@ -197,7 +197,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             // sign-extension.  `size` is therefore intentionally
             // ignored here.
             space if space == default_code_space => {
-                Ok(PcodeInsnAddr::at_machine_start(branch_target_var.addr.off))
+                Ok(PcodeInsnAddr::at_machine_start(branch_target_var.addr_off))
             }
             _ => Err(anyhow!(
                 "invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"

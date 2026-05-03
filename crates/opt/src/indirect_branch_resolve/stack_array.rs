@@ -440,10 +440,8 @@ mod tests {
 
     fn sp64() -> rsleigh::Vn {
         rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x40,
-            },
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         }
     }
@@ -455,10 +453,8 @@ mod tests {
     ) -> (ir::BuiltFunctionGraph, NodeOutputId) {
         let sp = sp64();
         let arg_vn = rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x38,
-            },
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
         let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
@@ -569,10 +565,8 @@ mod tests {
     fn classify_stack_array_returns_none_on_unbounded_idx() {
         let sp = sp64();
         let arg_vn = rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x38,
-            },
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
         let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
@@ -647,10 +641,8 @@ mod tests {
     /// inner would incorrectly pin the captured "non-const" side.
     fn build_load_anchor() -> (ir::BuiltFunctionGraph, NodeOutputId) {
         let reg = rsleigh::Vn {
-            addr: rsleigh::VnAddr {
-                space: rsleigh::VnSpace::REGISTER,
-                off: 0x10,
-            },
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
         let mut b =

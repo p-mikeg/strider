@@ -32,7 +32,8 @@ where
 /// requested address in hex.
 pub fn assert_mem_reader_unmapped_is_not_mapped_error<R>(r: &R, addr: u64)
 where
-    R: MemReader<Err = anyhow::Error>,
+    R: MemReader,
+    R::Err: std::fmt::Display,
 {
     let mut buf = [0u8; 1];
     let err = r

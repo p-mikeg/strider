@@ -259,10 +259,8 @@ fn layer_c_control_state_bad_predecessor() {
 
 fn test_vn() -> rsleigh::Vn {
     rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x20,
-        },
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 4,
     }
 }
@@ -444,10 +442,8 @@ fn layer_c_duplicate_function_arg_index_detected() {
     let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
     let reg = rsleigh::Vn {
-        addr: rsleigh::VnAddr {
-            space: rsleigh::VnSpace::REGISTER,
-            off: 0x38,
-        },
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
     let _a = graph.create_node(

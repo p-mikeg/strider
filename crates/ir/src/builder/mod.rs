@@ -55,18 +55,18 @@ fn upgrade_to_tracked_for(
     if variable_to_id.contains_key(&vn) {
         return Some(vn);
     }
-    if !is_aliasable_space(vn.addr.space) {
+    if !is_aliasable_space(vn.addr_space) {
         return None;
     }
-    let vn_end = vn.addr.off + vn.size as u64;
+    let vn_end = vn.addr_off + vn.size as u64;
 
     // Smallest tracked container that COVERS vn (existing behaviour).
     if let Some(cover) = variable_to_id
         .keys()
         .filter(|t| {
-            t.addr.space == vn.addr.space
-                && t.addr.off <= vn.addr.off
-                && t.addr.off + t.size as u64 >= vn_end
+            t.addr_space == vn.addr_space
+                && t.addr_off <= vn.addr_off
+                && t.addr_off + t.size as u64 >= vn_end
         })
         .min_by_key(|t| t.size)
         .copied()
@@ -80,9 +80,9 @@ fn upgrade_to_tracked_for(
     variable_to_id
         .keys()
         .filter(|t| {
-            t.addr.space == vn.addr.space
-                && t.addr.off >= vn.addr.off
-                && t.addr.off + t.size as u64 <= vn_end
+            t.addr_space == vn.addr_space
+                && t.addr_off >= vn.addr_off
+                && t.addr_off + t.size as u64 <= vn_end
         })
         .max_by_key(|t| t.size)
         .copied()
@@ -284,14 +284,14 @@ impl FunctionBuilder {
         let all_variables: Vec<_> = all_used_variables
             .iter()
             .filter(|v| {
-                if !is_aliasable_space(v.addr.space) {
+                if !is_aliasable_space(v.addr_space) {
                     return true;
                 }
                 !all_used_variables.iter().any(|other| {
                     other != *v
-                        && other.addr.space == v.addr.space
-                        && other.addr.off <= v.addr.off
-                        && other.addr.off + other.size as u64 >= v.addr.off + v.size as u64
+                        && other.addr_space == v.addr_space
+                        && other.addr_off <= v.addr_off
+                        && other.addr_off + other.size as u64 >= v.addr_off + v.size as u64
                         && other.size > v.size
                 })
             })
@@ -452,14 +452,14 @@ impl FunctionBuilder {
             let vars: Vec<&rsleigh::Vn> = self.variable_to_id.keys().collect();
             let mut out: HashMap<rsleigh::Vn, rsleigh::Vn> = HashMap::with_capacity(vars.len());
             for v in &vars {
-                let v_start = v.addr.off;
+                let v_start = v.addr_off;
                 let v_end = v_start.saturating_add(u64::from(v.size));
                 let mut best: rsleigh::Vn = **v;
                 for other in &vars {
-                    if other.addr.space != v.addr.space {
+                    if other.addr_space != v.addr_space {
                         continue;
                     }
-                    let s = other.addr.off;
+                    let s = other.addr_off;
                     let e = s.saturating_add(u64::from(other.size));
                     if s > v_start || e < v_end {
                         continue;

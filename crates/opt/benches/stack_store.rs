@@ -5,7 +5,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ir::node::NodeOutputType;
 use ir::test_utils::sp_vn_x86 as sp_vn;
-use ir::{FunctionBuilder, IntBinaryOp};
+use ir::FunctionBuilder;
 use opt::{Optimizer, StackStoreDetect};
 
 /// Builds a straight-line `cdecl`-style function: N consecutive `push reg`
