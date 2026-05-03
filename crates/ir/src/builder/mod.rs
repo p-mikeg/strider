@@ -127,6 +127,14 @@ pub struct FunctionBuilder {
     /// Lookup turns the per-call O(V) linear scan in
     /// `pcode_lift::find_largest_fitting_register` into O(1).
     pub(crate) largest_container: std::cell::OnceCell<HashMap<rsleigh::Vn, rsleigh::Vn>>,
+    /// Asm-instruction address attributed to every node `create_node`
+    /// produces while this is `Some`.  The lifter / strider region driver
+    /// sets it to `Some(addr)` immediately before each pcode insn (see
+    /// [`Self::set_lift_addr`]) and back to `None` between insns.
+    /// Region-setup helpers (`build_entry`, `build_function_args`,
+    /// region/phi creation) leave it `None`, so synthesised structural
+    /// nodes legitimately stay empty in the fingerprint side-table.
+    pub(crate) lift_addr: Option<u64>,
 }
 
 impl FunctionBuilder {
@@ -354,19 +362,46 @@ impl FunctionBuilder {
             stack_ptr_vn,
             ret_stack_pop,
             largest_container: std::cell::OnceCell::new(),
+            lift_addr: None,
         };
         fb.build_entry()?;
         Ok(fb)
     }
 
-    /// Creates a node in the graph with the given kind, inputs, and output kinds.
+    /// Sets the asm-instruction address attributed to every subsequent
+    /// `create_node` call until reset to `None` or replaced.  The
+    /// strider per-region driver calls this before each pcode insn.
+    /// Region-setup helpers (e.g. [`Self::build_entry`]) leave it `None`.
+    #[inline]
+    pub fn set_lift_addr(&mut self, addr: Option<u64>) {
+        self.lift_addr = addr;
+    }
+
+    /// Returns the currently-attributed asm address (or `None` if no insn
+    /// is active).
+    #[inline]
+    #[must_use]
+    pub fn lift_addr(&self) -> Option<u64> {
+        self.lift_addr
+    }
+
+    /// Creates a node in the graph with the given kind, inputs, and
+    /// output kinds.  When [`Self::lift_addr`] is `Some(addr)`, also
+    /// records `addr` in the resulting node's asm-fingerprint side-table
+    /// entry; if `create_node` hits the dedup cache, the contributor is
+    /// unioned into the existing entry.
     pub(super) fn create_node(
         &mut self,
         kind: NodeKind,
         inputs: impl IntoIterator<Item = NodeOutputId>,
         output_kinds: impl IntoIterator<Item = NodeOutputKind>,
     ) -> NodeId {
-        self.graph_mut().create_node(kind, inputs, output_kinds)
+        let addr = self.lift_addr;
+        let node_id = self.graph_mut().create_node(kind, inputs, output_kinds);
+        if let Some(addr) = addr {
+            self.graph_mut().extend_asm_fingerprint(node_id, &[addr]);
+        }
+        node_id
     }
 
     /// Creates a single-output, pure (no side-effect) node and returns its

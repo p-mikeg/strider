@@ -315,6 +315,7 @@ fn lift_segment_op_recognised() {
 // in some code path) fails immediately.
 
 use ir::BoolUnaryOp;
+use ir::IntBinaryOp;
 use ir::IntCmpOp;
 use ir::node::NodeKind;
 
@@ -323,6 +324,90 @@ fn graph_has_kind(builder: &ir::FunctionBuilder, target: NodeKind) -> bool {
     let body = builder.body();
     body.graph.all_node_ids()
         .any(|id| body.graph.node_kind(id) == &target)
+}
+
+/// Returns the first node-id in the graph matching `target`, or `None`.
+fn find_first_node(builder: &ir::FunctionBuilder, target: NodeKind) -> Option<ir::node::NodeId> {
+    let body = builder.body();
+    body.graph
+        .all_node_ids()
+        .find(|id| body.graph.node_kind(*id) == &target)
+}
+
+#[test]
+fn lift_with_set_lift_addr_records_asm_fingerprint() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    builder.set_lift_addr(Some(0x4242));
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntAdd,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
+        .expect("IntAdd lift must produce an Add node");
+    let fp = builder.body().graph.asm_fingerprint(add_node);
+    assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
+    // The two IntConst inputs should also carry the address.
+    let const3 = find_first_node(&builder, NodeKind::IntConst(3))
+        .expect("IntConst(3) must be present");
+    let const4 = find_first_node(&builder, NodeKind::IntConst(4))
+        .expect("IntConst(4) must be present");
+    assert_eq!(builder.body().graph.asm_fingerprint(const3), &[0x4242]);
+    assert_eq!(builder.body().graph.asm_fingerprint(const4), &[0x4242]);
+}
+
+#[test]
+fn lift_without_lift_addr_leaves_fingerprint_empty() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    // Note: builder.set_lift_addr is NOT called.
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let insn = Insn {
+            opcode: Opcode::IntAdd,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+        };
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
+        .expect("IntAdd lift must produce an Add node");
+    assert!(
+        builder.body().graph.asm_fingerprint(add_node).is_empty(),
+        "Add fingerprint should be empty when no lift addr is set"
+    );
+}
+
+#[test]
+fn lift_dedup_unions_two_addresses() {
+    // Same insn lifted twice from two different machine addresses; the
+    // dedup cache returns the same NodeId; both contributors are unioned.
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let insn = Insn {
+        opcode: Opcode::IntAdd,
+        output: Some(reg(0)),
+        inputs: vec![const_vn(3, 4), const_vn(4, 4)],
+    };
+    builder.set_lift_addr(Some(0x1000));
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    builder.set_lift_addr(Some(0x2000));
+    {
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        assert!(lifter.lift(&insn).unwrap());
+    }
+    let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
+        .expect("Add must dedup to a single node");
+    let fp = builder.body().graph.asm_fingerprint(add_node);
+    assert_eq!(fp, &[0x1000, 0x2000], "both addresses should be unioned");
 }
 
 #[test]
