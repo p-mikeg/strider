@@ -67,20 +67,18 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         // Build node label once
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
+        // rsleigh's `Insn::ctx_fmt(sleigh, regs)` produces
+        // `<Opcode> <vn0>, <vn1>, …` with register names resolved via
+        // the sleigh register table — exactly what we want for human
+        // inspection.  Resolving `regs` is not free (FFI walk over the
+        // arch's register table), so we cache it once per `dump_as_dot`
+        // invocation rather than per-instruction.
+        let regs = self.0.sleigh.regs()?;
         for insn in &node.insns {
-            let variables: Vec<String> = insn
-                .insn
-                .output
-                .iter()
-                .chain(insn.insn.inputs.iter())
-                .map(|vn| ir::dot::label::vn_to_display_name(&self.0.sleigh, vn))
-                .collect::<Result<_>>()?;
             let insn_addr = insn.addr.machine_addr.addr;
-            write!(&mut label, "\\l{insn_addr:#x}: {:?}", insn.insn.opcode)
+            let pretty = insn.insn.ctx_fmt(&self.0.sleigh, &regs);
+            write!(&mut label, "\\l{insn_addr:#x}: {pretty}")
                 .map_err(anyhow::Error::from)?;
-            if !variables.is_empty() {
-                write!(&mut label, ", {}", variables.join(", ")).map_err(anyhow::Error::from)?;
-            }
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 

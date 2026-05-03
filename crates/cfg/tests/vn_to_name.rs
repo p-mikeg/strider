@@ -1,7 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! Tests for `Cfg::vn_to_name` — every supported space variant plus the
-//! two error paths (`InvalidRegVn`, `UnsupportedVnSpaceDisplay`).
+//! Tests for `Cfg::vn_to_name` — every supported space variant.
+//!
+//! After the rsleigh-4 migration, `vn_to_display_name` delegates to
+//! [`rsleigh::Vn::ctx_fmt`] (`crates/ir/src/dot/label.rs`).  rsleigh's
+//! formatter happens to produce **byte-identical output** to the old
+//! hand-rolled rendering for CONST / RAM / UNIQUE / known-register
+//! varnodes (the sleigh space `.name()` table returns `"ram"`, `"unique"`,
+//! `"register"`, `"const"` exactly).  The two formerly-erroring paths
+//! (unknown-register-offset and exotic-space-byte) now produce a
+//! best-effort fallback string instead of an error — pinned below.
 
 mod common;
 use common::{binary, build_cfg};
@@ -67,29 +75,32 @@ fn register_known_offset_returns_register_name() {
 }
 
 #[test]
-fn register_unknown_offset_returns_invalid_reg_vn_error() {
+fn register_unknown_offset_falls_back_to_space_addr_size() {
     let cfg = real_cfg();
     // Pick a REGISTER-space offset the register table will not map — far
-    // outside any real register.
+    // outside any real register.  rsleigh's `VnCtxFmt::NotReg` arm formats
+    // it as `<space-name>[0x<off>]:<size>` (no error).
     let bogus = Vn {
         addr_off: 0xffff_ffff_ffff_ffff, addr_space: VnSpace::REGISTER,
         size: 1,
     };
-    let err = vn_to_name(&cfg, &bogus).unwrap_err();
-    assert!(err.to_string().contains("invalid register vn"), "got: {err}");
+    let resolved = vn_to_name(&cfg, &bogus).unwrap();
+    assert_eq!(resolved, "register[0xffffffffffffffff]:1");
 }
 
 // ── unsupported space ─────────────────────────────────────────────────────────
 
 #[test]
-fn unsupported_space_returns_unsupported_error() {
+fn unknown_space_byte_falls_back_to_shortcut_char() {
     let cfg = real_cfg();
     // Use a space shortcut that is neither CONST (#), REGISTER (%),
-    // RAM (r), nor UNIQUE (u). Any other byte triggers the `_` arm.
+    // RAM (r), nor UNIQUE (u).  rsleigh's `VnSpaceCtxFmt::Unnamed` arm
+    // renders the raw shortcut character via `Display for VnSpace`,
+    // and the address as `<chr>[0x<off>]:<size>` (no error).
     let exotic = Vn {
         addr_off: 0, addr_space: VnSpace::new(b'?'),
         size: 1,
     };
-    let err = vn_to_name(&cfg, &exotic).unwrap_err();
-    assert!(err.to_string().contains("unsupported varnode space"), "got: {err}");
+    let resolved = vn_to_name(&cfg, &exotic).unwrap();
+    assert_eq!(resolved, "?[0x0]:1");
 }

@@ -75,3 +75,35 @@ fn dot_output_mentions_every_region() {
         "every region must emit exactly one Instruction(addr=...) label"
     );
 }
+
+/// Pins that the per-instruction line uses rsleigh's
+/// [`rsleigh::ctx_fmt::InsnCtxFmt`] formatter, not `{:?}` on the opcode.
+///
+/// The user-visible difference: `InsnCtxFmt` separates the opcode from
+/// its first operand with a *space* (`IntAdd RAX, RBX, RCX`), whereas
+/// the hand-rolled `"{:?}, {}"` form emits a *comma* after the opcode
+/// (`IntAdd, RAX, RBX, RCX`).  We pin both spellings: the new one must
+/// appear, and the old one must not.
+///
+/// We don't try to assert on operand *ordering* (rsleigh 4.0.0 puts
+/// the output varnode first, before the inputs — see rsleigh commit
+/// 6e33cbb).
+#[test]
+fn dot_output_uses_rsleigh_insn_ctx_fmt() {
+    let cfg = cfg_for("add");
+    let s = dot_source(&cfg);
+    // x86_64's `add` decodes to `IntAdd` with at least one register
+    // operand.  rsleigh's `InsnCtxFmt` separates opcode and operands
+    // by a space ("IntAdd R..."); the old hand-rolled formatter put
+    // a comma there ("IntAdd, R...").  Pin both directions.
+    assert!(
+        s.contains("IntAdd R"),
+        "expected `IntAdd R<...>` (rsleigh InsnCtxFmt spelling) in \
+         the dot source for `add`; got:\n{s}",
+    );
+    assert!(
+        !s.contains("IntAdd, R"),
+        "the hand-rolled `<Opcode>, <Reg>` spelling must not appear; \
+         the cfg dot dumper should delegate to InsnCtxFmt.\n\nfull dot:\n{s}",
+    );
+}

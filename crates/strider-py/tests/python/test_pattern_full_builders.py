@@ -412,7 +412,12 @@ def test_vn_constructor_and_repr():
     assert vn.space == strider.VnSpace.register()
     assert vn.off == 0x10
     assert vn.size == 4
-    assert "Vn" in repr(vn)
+    # `repr(vn)` delegates to rsleigh's `impl Display for Vn`
+    # (core_types.rs:139): REGISTER-space varnodes render as
+    # `<space-shortcut>[0x<off>]:<size>` with `%` as the REGISTER
+    # shortcut.  See test_sleigh.test_vn_repr_for_register_uses_rsleigh_display
+    # for the full contract.
+    assert repr(vn) == "%[0x10]:4"
 
 
 def test_sleigh_reg_returns_vn_or_none():

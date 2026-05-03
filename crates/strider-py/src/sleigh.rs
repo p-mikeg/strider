@@ -197,9 +197,11 @@ impl PyVn {
     }
 
     fn __repr__(&self) -> String {
-        let space_name = PyVnSpace { inner: self.inner.addr_space }.name();
-        format!("Vn(space=VnSpace.{}, off={:#x}, size={})",
-            space_name.to_lowercase(), self.inner.addr_off, self.inner.size)
+        // Delegate to rsleigh's `impl Display for Vn` (core_types.rs:139)
+        // so the spelling tracks rsleigh upstream.  For a register varnode
+        // this yields `<space-shortcut>[0x<off>]:<size>` (e.g. `%[0x20]:8`
+        // for x86_64 RSP); for CONST-space, `0x<off>:<size>`.
+        format!("{}", self.inner)
     }
 
     fn __eq__(&self, other: &Self) -> bool {

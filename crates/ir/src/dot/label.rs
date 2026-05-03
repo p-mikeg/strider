@@ -4,36 +4,27 @@ use std::io;
 use super::{GraphDotDumper, node_fillcolor, node_shape};
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
-/// Render a varnode to its display name.  REGISTER varnodes resolve through
-/// `sleigh`'s register table; CONST / RAM / UNIQUE format from the varnode
-/// alone; the architecture's default code space renders as `ram[…]` even if
-/// it is not literally `VnSpace::RAM`.
+/// Render a varnode to its display name by delegating to rsleigh's
+/// [`rsleigh::Vn::ctx_fmt`] (`crates/rsleigh/src/ctx_fmt.rs`).  REGISTER
+/// varnodes whose byte range matches a named register resolve to the
+/// register name (e.g. `"RAX"`); every other varnode renders as
+/// `<space-name>[0x<off>]:<size>` for non-CONST spaces, or `0x<off>:<size>`
+/// for CONST.  Unknown space-shortcut bytes fall back to the raw
+/// shortcut character via [`rsleigh::VnSpace`]'s `Display`.
 ///
 /// # Errors
 ///
-/// Returns an error when (i) `sleigh.regs()` fails, (ii) the varnode is in
-/// REGISTER space but no register name covers its byte range, or
-/// (iii) the varnode is in an unrecognised space.
+/// Propagates `sleigh.regs()` failures.  The format itself is infallible:
+/// rsleigh's `VnCtxFmt` covers every space variant via `space_info` /
+/// shortcut-character fallback, so the previous `InvalidRegVn` and
+/// `UnsupportedVnSpaceDisplay` error paths no longer fire — those inputs
+/// now produce a best-effort fallback string.
 pub fn vn_to_display_name<R: MemReader>(
     sleigh: &rsleigh::Sleigh<R>,
     vn: &rsleigh::Vn,
 ) -> anyhow::Result<String> {
-    let offset = vn.addr_off;
-    let size = vn.size;
-    match vn.addr_space {
-        rsleigh::VnSpace::CONST => Ok(format!("{offset:#x}:{size}")),
-        rsleigh::VnSpace::REGISTER => {
-            let regs = sleigh.regs()?;
-            let name = regs
-                .vn_to_name(*vn)
-                .ok_or_else(|| anyhow::anyhow!("invalid register vn {vn:?}"))?;
-            Ok(name.to_string())
-        }
-        rsleigh::VnSpace::RAM => Ok(format!("ram[{offset:#x}]:{size}")),
-        rsleigh::VnSpace::UNIQUE => Ok(format!("unique[{offset:#x}]:{size}")),
-        s if s == sleigh.default_code_space() => Ok(format!("ram[{offset:#x}]:{size}")),
-        s => Err(anyhow::anyhow!("unsupported varnode space for display: {s:?}")),
-    }
+    let regs = sleigh.regs()?;
+    Ok(vn.ctx_fmt(sleigh, &regs).to_string())
 }
 
 /// Formats a signed SP-relative offset so that the sign is always shown
