@@ -58,3 +58,6 @@ mod int_const_width_aware;
 
 #[path = "matching/if_pat_symmetric.rs"]
 mod if_pat_symmetric;
+
+#[path = "matching/asm_fingerprint.rs"]
+mod asm_fingerprint;

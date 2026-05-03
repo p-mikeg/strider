@@ -228,6 +228,31 @@ impl Match {
         }
     }
 
+    /// Returns the asm-instruction-address fingerprint of the node bound
+    /// to `c`, as a sorted-deduplicated slice.  Returns an empty slice
+    /// when the capture is unbound or when the bound node has no
+    /// recorded contributors (legitimately empty for region / phi /
+    /// initial-state kinds — see
+    /// [`ir::Graph::asm_fingerprint`] for the documented exempt set).
+    ///
+    /// This is the proof-of-correctness aid: when a pattern query
+    /// captures a value node, this slice lists the machine
+    /// instructions whose lifting (or subsequent rewrite) contributed
+    /// to that node's value.  See
+    /// `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`
+    /// for the full contract.
+    #[must_use]
+    pub fn asm_fingerprint<'g>(
+        &self,
+        c: Capture,
+        graph: &'g BuiltFunctionGraph,
+    ) -> &'g [u64] {
+        match self.bindings.get_node(c) {
+            Some(node) => graph.graph.asm_fingerprint(node),
+            None => &[],
+        }
+    }
+
     /// Returns an owned copy of the full [`Bindings`] captured by this match.
     /// Used by the rewrite-rule interpreter (drops the `Matcher` borrow
     /// before mutating the graph) and by tests.
