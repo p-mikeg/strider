@@ -327,6 +327,10 @@ fn detect_stack_args(
         for (load, load_ty) in load_types {
             let [old_out] = fg.graph.node_outputs_exact::<1>(load)?;
             if load_ty == max_type {
+                // FunctionArg is exempt from the fingerprint check; no need
+                // to absorb the load's fingerprint into it (and doing so
+                // would couple FunctionArg's identity to the loads it
+                // happens to subsume).
                 fg.graph.replace_all_uses(old_out, new_out)?;
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
@@ -336,6 +340,10 @@ fn detect_stack_args(
                     [NodeOutputKind::OutputType(load_ty)],
                 );
                 let [trunc_out] = fg.graph.node_outputs_exact::<1>(trunc)?;
+                // The Truncate is non-exempt and freshly created; inherit
+                // the rewritten Load's fingerprint so the contributing
+                // machine instruction's address survives the rewrite.
+                fg.graph.extend_asm_fingerprint_from(trunc, load);
                 fg.graph.replace_all_uses(old_out, trunc_out)?;
             }
             fg.graph.detach_node_inputs(load);

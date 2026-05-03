@@ -29,11 +29,15 @@ impl OptimizationResult {
         }
     }
 
-    /// Replaces every use of `old` with `new` and folds the resulting
-    /// `Changed`/`NoChange` into `self`.  Equivalent to
-    /// `self | OptimizationResult::from_changed(fg.graph.replace_all_uses(old, new)?)`
-    /// — extracted because that exact line is the most common rewrite-and-
-    /// escalate idiom in the constant_fold and known_bits passes.
+    /// Replaces every use of `old` with `new`, **absorbs** the producer
+    /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
+    /// resulting `Changed`/`NoChange` into `self`.
+    ///
+    /// The fingerprint absorption preserves the superset-only contract
+    /// (see `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`):
+    /// every contributing machine-instruction address present in the
+    /// rewritten producer survives the rewrite by being unioned into
+    /// the surviving producer.
     ///
     /// # Errors
     ///
@@ -45,6 +49,9 @@ impl OptimizationResult {
         old: ir::node::NodeOutputId,
         new: ir::node::NodeOutputId,
     ) -> crate::Result<Self> {
+        let old_node = fg.graph.get_node_from_output(old);
+        let new_node = fg.graph.get_node_from_output(new);
+        fg.graph.extend_asm_fingerprint_from(new_node, old_node);
         Ok(self | OptimizationResult::from_changed(fg.graph.replace_all_uses(old, new)?))
     }
 }

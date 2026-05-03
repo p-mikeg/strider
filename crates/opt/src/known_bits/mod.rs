@@ -403,6 +403,11 @@ impl OptimizerOnBuilt for KnownBits {
                     consumers.push(consumer);
                 }
                 let new_out = function.graph.make_int_const(kb.ones, ty)?;
+                // Absorb the rewritten node's fingerprint into the new const.
+                let new_node = function.graph.get_node_from_output(new_out);
+                function
+                    .graph
+                    .extend_asm_fingerprint_from(new_node, node_id);
                 if function.graph.replace_all_uses(out, new_out)? {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {

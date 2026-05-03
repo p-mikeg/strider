@@ -81,6 +81,15 @@ pub fn rewrite_rule(
         match outcome {
             BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
+                // Absorb the rewritten root's asm-fingerprint into the new
+                // node BEFORE redirecting uses.  This is the single funnel
+                // where every pattern-driven rewrite preserves the
+                // contributing-asm-instruction history; whether the RHS
+                // built a fresh node or hit the dedup cache, the union
+                // semantics of `extend_asm_fingerprint_from` keep us
+                // superset-correct.
+                let new_node = fg.graph.get_node_from_output(new_out);
+                fg.graph.extend_asm_fingerprint_from(new_node, node);
                 let changed = fg.graph.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }

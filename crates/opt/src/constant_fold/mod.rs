@@ -43,6 +43,9 @@ fn try_lower_cast_to_float(
     } else {
         fg.graph.make_int_bits_to_float_node(input, out_ty)?
     };
+    // Absorb the rewritten cast node's asm-fingerprint into the new producer.
+    let new_node = fg.graph.get_node_from_output(new_out);
+    fg.graph.extend_asm_fingerprint_from(new_node, node_id);
     Ok(OptimizationResult::from_changed(fg.graph.replace_all_uses(out, new_out)?))
 }
 

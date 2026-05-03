@@ -127,6 +127,19 @@ fn elide_call_other(
         return Ok(OptimizationResult::NoChange);
     }
 
+    // Absorb the elided CallOther's asm-fingerprint into the producers
+    // we are redirecting through.  The CallOther node itself becomes a
+    // zombie below and is unreachable from `entry`, so its side-table
+    // entry would be lost; folding it into the surviving producers
+    // preserves the contributing-asm-instruction's address in the graph.
+    // Note: the ctrl_in producer is typically a ControlState (exempt) and
+    // the mem_in producer is typically a Store/StackStore (non-exempt) —
+    // we union into both so consumers can recover the address from
+    // either side regardless of where they came from.
+    let ctrl_in_node = fg.graph.get_node_from_output(ctrl_in);
+    let mem_in_node = fg.graph.get_node_from_output(mem_in);
+    fg.graph.extend_asm_fingerprint_from(ctrl_in_node, node_id);
+    fg.graph.extend_asm_fingerprint_from(mem_in_node, node_id);
     // Rewire all consumers of ctrl_out → ctrl_in, mem_out → mem_in.
     let ctrl_changed = fg.graph.replace_all_uses(ctrl_out, ctrl_in)?;
     let mem_changed = fg.graph.replace_all_uses(mem_out, mem_in)?;

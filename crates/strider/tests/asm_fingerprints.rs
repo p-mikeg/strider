@@ -72,6 +72,37 @@ fn arithmetic_x86_default_validate_remains_unchanged() {
 }
 
 #[test]
+fn control_x86_clamp_validate_with_asm_fingerprint_check() {
+    // Control flow with two If branches; exercises constant-fold,
+    // dead-branch, redundant-phi propagation alongside lift-time.
+    let g = analyze(Arch::X86, "control", "clamp");
+    let opts = ValidateOptions { check_asm_fingerprints: true };
+    validate_with_options(&g.graph, g.entry, opts)
+        .expect("clamp pipeline preserves the fingerprint invariant");
+}
+
+#[test]
+fn control_x86_count_bits_validate_with_asm_fingerprint_check() {
+    // Loop body — exercises mem-phi / var-phi at the join points.
+    let g = analyze(Arch::X86, "control", "count_bits");
+    let opts = ValidateOptions { check_asm_fingerprints: true };
+    validate_with_options(&g.graph, g.entry, opts)
+        .expect("count_bits pipeline preserves the fingerprint invariant");
+}
+
+#[test]
+fn arithmetic_x86_complex_validate_with_asm_fingerprint_check() {
+    // Heavier folding pressure: bit_and / bit_or / shl / lshr exercise
+    // KnownBits and the AND-mask merge.
+    for fn_name in ["bit_and", "bit_or", "shl", "lshr", "bit_xor"] {
+        let g = analyze(Arch::X86, "arithmetic", fn_name);
+        let opts = ValidateOptions { check_asm_fingerprints: true };
+        validate_with_options(&g.graph, g.entry, opts)
+            .unwrap_or_else(|e| panic!("{fn_name}: {e}"));
+    }
+}
+
+#[test]
 fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
     // Every fingerprint address for a reachable value node must be a
     // plausible machine address (non-zero, fits the function's region).

@@ -39,6 +39,10 @@ fn try_detect_stack_store(
                 [memory, base, data],
                 [NodeOutputKind::Memory],
             );
+            // StackStore is non-exempt; absorb the rewritten Store's
+            // fingerprint into it so the contributing machine instruction
+            // survives the rewrite.
+            fg.graph.extend_asm_fingerprint_from(new_node, node_id);
             fg.graph.node_outputs_exact::<1>(new_node)?[0]
         }
         SpExpr::Phi { phi_node, offsets } => {
@@ -57,6 +61,11 @@ fn try_detect_stack_store(
                 [NodeOutputKind::Memory],
             );
             fg.graph.set_stack_phi_offsets(new_node, offsets);
+            // StackStorePhi is exempt (it's a phi-shaped synthesised
+            // node), but we still absorb the rewritten Store's
+            // fingerprint so downstream consumers can recover the
+            // contributing machine instruction via the side-table.
+            fg.graph.extend_asm_fingerprint_from(new_node, node_id);
             fg.graph.node_outputs_exact::<1>(new_node)?[0]
         }
     };

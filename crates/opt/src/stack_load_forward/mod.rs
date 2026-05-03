@@ -115,6 +115,14 @@ fn try_forward_load(
     };
     let forwarded = realize(fg, shape, load_ty, endianness)?;
 
+    // Absorb the rewritten Load's asm-fingerprint into the forwarded
+    // producer.  `realize` may have returned an existing-attributed node
+    // (when the value comes straight from a StackStore's data slot) or
+    // freshly synthesised one (Truncate / ShiftRight / ValuePhi); either
+    // way the union semantics of `extend_asm_fingerprint_from` keep us
+    // superset-correct.
+    let forwarded_node = fg.graph.get_node_from_output(forwarded);
+    fg.graph.extend_asm_fingerprint_from(forwarded_node, load);
     let changed = fg.graph.replace_all_uses(load_out, forwarded)?;
     if changed {
         fg.graph.detach_node_inputs(load);
