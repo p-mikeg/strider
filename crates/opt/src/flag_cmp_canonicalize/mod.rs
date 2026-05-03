@@ -53,7 +53,7 @@
 use std::sync::LazyLock;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
 use pattern::{
     Capture, Pat, add, bool_and, bool_not, bool_or, cast_to_int, int_const, int_eq, int_lt,
     int_sborrow, int_slt, neg, var, Matcher,
@@ -336,13 +336,6 @@ fn build_rules() -> Vec<Rule> {
         ),
     ]
 }
-
-// Suppress unused-warning for the type aliases we use in the API surface.
-#[allow(dead_code)]
-const _: () = {
-    let _ = IntBinaryOp::Add;
-    let _ = IntUnaryOp::Neg;
-};
 
 #[cfg(test)]
 mod tests;

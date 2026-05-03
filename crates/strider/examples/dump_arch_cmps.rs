@@ -16,13 +16,6 @@ struct Sample {
     bytes: Vec<u8>,
 }
 
-fn s(label: &str, bytes: &[u8]) -> Sample {
-    Sample {
-        label: label.into(),
-        bytes: bytes.to_vec(),
-    }
-}
-
 /// All AArch64 (LE) `cmp w0, #5; b.<cond> +4` sequences.
 fn aarch64_samples() -> (SleighArch, Vec<Sample>) {
     fn b_cond(cond4: u8) -> u32 {
