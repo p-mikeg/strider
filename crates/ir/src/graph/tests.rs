@@ -988,3 +988,89 @@ fn node_input_id_at_returns_error_on_out_of_bounds() {
     );
 }
 
+// ── asm-fingerprint side-table tests ──────────────────────────────────────
+
+#[test]
+fn asm_fingerprint_unset_returns_empty_slice() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    assert_eq!(graph.asm_fingerprint(n), &[] as &[u64]);
+}
+
+#[test]
+fn asm_fingerprint_set_then_get() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+}
+
+#[test]
+fn asm_fingerprint_extend_sorts_and_dedupes() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    graph.extend_asm_fingerprint(n, &[0x1004, 0x1000, 0x1004]);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004]);
+    // Extending with one new + two duplicates yields a sorted, deduplicated set.
+    graph.extend_asm_fingerprint(n, &[0x1008, 0x1000, 0x1004]);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+}
+
+#[test]
+fn asm_fingerprint_extend_from_unions_two_nodes() {
+    let mut graph = Graph::new();
+    let a = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let b = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    graph.set_asm_fingerprint(a, vec![0x1000, 0x1004]);
+    graph.set_asm_fingerprint(b, vec![0x1004, 0x100C]);
+    graph.extend_asm_fingerprint_from(a, b);
+    assert_eq!(graph.asm_fingerprint(a), &[0x1000, 0x1004, 0x100C]);
+    // Source unaffected.
+    assert_eq!(graph.asm_fingerprint(b), &[0x1004, 0x100C]);
+}
+
+#[test]
+fn asm_fingerprint_extend_never_shrinks() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    // Extending with a strict subset must NOT remove any existing entries.
+    graph.extend_asm_fingerprint(n, &[0x1004]);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+    // Extending with the empty slice is a no-op.
+    graph.extend_asm_fingerprint(n, &[]);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
+}
+
+#[test]
+fn asm_fingerprint_extend_from_self_is_noop() {
+    let mut graph = Graph::new();
+    let n = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    graph.set_asm_fingerprint(n, vec![0x1000, 0x1004]);
+    graph.extend_asm_fingerprint_from(n, n);
+    assert_eq!(graph.asm_fingerprint(n), &[0x1000, 0x1004]);
+}
+
+#[test]
+fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
+    // Two `create_node` calls for IntConst(7) hit the dedup cache — they
+    // return the same NodeId.  Production code calls
+    // `extend_asm_fingerprint(id, &[addr])` at every create_node site, so
+    // both contributors end up unioned into the single side-table entry.
+    let mut graph = Graph::new();
+    let a = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    graph.extend_asm_fingerprint(a, &[0x2000]);
+    let b = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    assert_eq!(a, b, "cacheable nodes should dedup");
+    graph.extend_asm_fingerprint(b, &[0x3000]);
+    assert_eq!(graph.asm_fingerprint(a), &[0x2000, 0x3000]);
+}
+

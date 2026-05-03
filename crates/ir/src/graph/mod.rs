@@ -72,6 +72,28 @@ pub struct Graph {
     /// "name set to empty string"; the previous `HashMap` accessor returned
     /// `None` for the former and `Some("")` for the latter.
     pub(crate) call_other_names: SecondaryMap<NodeId, Option<String>>,
+    /// Side-map from every [`NodeId`] to a sorted-deduped list of the
+    /// machine-instruction addresses ("asm addresses") whose lifting or
+    /// subsequent rewrite contributed to the node's value — its
+    /// **fingerprint**.
+    ///
+    /// The contract is **superset-only**:
+    /// - The fingerprint may overstate (extra ancestors are tolerated).
+    /// - It must never *omit* a contributing address — every optimisation
+    ///   pass that folds `old → new` must absorb `old`'s fingerprint into
+    ///   `new` via [`Graph::extend_asm_fingerprint_from`].
+    /// - Two structurally identical nodes share one entry on the
+    ///   side-table; [`Graph::create_node`]'s callers union additional
+    ///   contributors via the same `extend_*` helper.
+    ///
+    /// Stored as `SecondaryMap<NodeId, Vec<u64>>` for O(1) array indexing
+    /// and small-set merge — the typical fingerprint is 1–4 entries.
+    /// The default value is the empty `Vec`, which represents "no
+    /// contributors recorded".  Region nodes (`ControlState`, phis,
+    /// `Entry`, `InitialMemory`, `InitialVar`, `FunctionArg`, `IfCase`)
+    /// legitimately stay empty; the validator's opt-in fingerprint check
+    /// exempts those kinds and flags any other reachable empty entry.
+    pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
 }
 
 impl Default for Graph {
@@ -93,6 +115,7 @@ impl Graph {
             node_to_id: HashMap::new(),
             stack_phi_offsets: SecondaryMap::new(),
             call_other_names: SecondaryMap::new(),
+            asm_fingerprints: SecondaryMap::new(),
         }
     }
 

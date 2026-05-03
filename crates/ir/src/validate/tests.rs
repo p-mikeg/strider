@@ -738,6 +738,118 @@ fn layer_c_tolerates_unreachable_zero_predecessor_control_state() {
 /// — it's mutated in-place by the indirect-branch resolver into a real
 /// `Return` (LinkRegister) or replaced by a `Call+Return` pair (tail call).
 #[test]
+fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
+    // Opt-in is off → fully-empty fingerprints on a non-exempt node are OK.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let _const_node = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    // The IntConst is unreachable from entry; default validate ignores it.
+    validate(&graph, entry).expect("default validate is unaffected");
+}
+
+#[test]
+fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
+    // Opt-in is on → a reachable IntConst with no fingerprint is an error.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let int_const = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let const_out = graph.node_outputs(int_const).into_iter().next().unwrap();
+    // Return takes [ctrl, mem, ...values].
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
+    let opts = ValidateOptions { check_asm_fingerprints: true };
+    let errs = validate_with_options(&graph, entry, opts).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::MissingAsmFingerprint { kind: NodeKind::IntConst(_), .. }
+        )),
+        "expected MissingAsmFingerprint for the IntConst, got: {errs:?}"
+    );
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::MissingAsmFingerprint { kind: NodeKind::Return, .. }
+        )),
+        "expected MissingAsmFingerprint for Return, got: {errs:?}"
+    );
+}
+
+#[test]
+fn asm_fingerprint_check_accepts_when_fingerprint_present() {
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let int_const = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let const_out = graph.node_outputs(int_const).into_iter().next().unwrap();
+    let ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
+    graph.set_asm_fingerprint(int_const, vec![0x1000]);
+    graph.set_asm_fingerprint(ret, vec![0x1004]);
+    let opts = ValidateOptions { check_asm_fingerprints: true };
+    validate_with_options(&graph, entry, opts).expect("populated fingerprints validate");
+}
+
+#[test]
+fn asm_fingerprint_check_exempts_phis_and_initials() {
+    // Build a tiny join: Entry → ControlState ← (mem? no, just one pred);
+    // verify that ControlState/InitialMemory are exempt from the check.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let cs = graph.create_node(
+        NodeKind::ControlState,
+        [entry_ctrl],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let cs_ctrl = graph.node_outputs(cs).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [cs_ctrl, mem_out], []);
+    let opts = ValidateOptions { check_asm_fingerprints: true };
+    let res = validate_with_options(&graph, entry, opts);
+    // The Return is reachable and non-exempt — it must be flagged.  But
+    // ControlState / Entry / InitialMemory must NOT be flagged.
+    let errs = res.unwrap_err();
+    for e in &errs.0 {
+        if let ValidationError::MissingAsmFingerprint { kind, .. } = e {
+            assert!(
+                !matches!(
+                    kind,
+                    NodeKind::Entry
+                        | NodeKind::InitialMemory
+                        | NodeKind::ControlState
+                ),
+                "exempt kind {kind:?} was flagged"
+            );
+        }
+    }
+    // Sanity: at least one MissingAsmFingerprint for the Return.
+    assert!(
+        errs.0
+            .iter()
+            .any(|e| matches!(e, ValidationError::MissingAsmFingerprint { kind: NodeKind::Return, .. })),
+        "expected Return to be flagged"
+    );
+}
+
+#[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);

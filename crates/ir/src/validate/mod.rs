@@ -23,9 +23,24 @@ mod tests;
 use layer_a::check_layer_a;
 use layer_b::check_layer_b;
 use layer_c::{
-    check_layer_c_control_state, check_layer_c_function_arg_uniqueness, check_layer_c_phis,
-    check_layer_c_uniqueness,
+    check_layer_c_asm_fingerprints, check_layer_c_control_state,
+    check_layer_c_function_arg_uniqueness, check_layer_c_phis, check_layer_c_uniqueness,
 };
+
+/// Optional checks the validator can opt into.  The default is
+/// "everything that the original `validate` did before opt-ins existed",
+/// i.e. all opt-in flags `false`.  Add new opt-in flags here as later
+/// passes need them; existing tests using [`validate`] keep passing
+/// without modification.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ValidateOptions {
+    /// When `true`, every node reachable from `entry` whose kind is not
+    /// in the documented exempt set must have a non-empty
+    /// [`crate::graph::Graph::asm_fingerprint`].  Exempt kinds:
+    /// `Entry`, `InitialMemory`, `InitialVar`, `FunctionArg`,
+    /// `ControlState`, `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi`.
+    pub check_asm_fingerprints: bool,
+}
 
 /// Validates the structural invariants of `graph` starting from `entry`.
 ///
@@ -46,6 +61,22 @@ use layer_c::{
 /// violation found in `graph`. Validation does not fail fast — every layer
 /// runs to completion so the caller sees the full set of problems at once.
 pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
+    validate_with_options(graph, entry, ValidateOptions::default())
+}
+
+/// Like [`validate`], but with extra opt-in checks selected via
+/// [`ValidateOptions`].  Existing call-sites that pass
+/// [`ValidateOptions::default`] (or use [`validate`]) get exactly the
+/// previous behaviour.
+///
+/// # Errors
+///
+/// Same as [`validate`], plus the opt-in errors for any selected option.
+pub fn validate_with_options(
+    graph: &Graph,
+    entry: NodeId,
+    options: ValidateOptions,
+) -> Result<(), ValidationErrors> {
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
@@ -70,6 +101,10 @@ pub fn validate(graph: &Graph, entry: NodeId) -> Result<(), ValidationErrors> {
     check_layer_c_phis(graph, &mut errs);
 
     check_layer_c_function_arg_uniqueness(graph, &mut errs);
+
+    if options.check_asm_fingerprints {
+        check_layer_c_asm_fingerprints(graph, &reachable, &mut errs);
+    }
 
     if errs.is_empty() {
         Ok(())
@@ -217,6 +252,16 @@ pub enum ValidationError {
         index: u32,
         first: NodeId,
         second: NodeId,
+    },
+
+    #[error(
+        "node {node:?} (kind {kind:?}) is reachable but has an empty \
+         asm-fingerprint; non-exempt nodes must record at least one \
+         contributing machine-instruction address"
+    )]
+    MissingAsmFingerprint {
+        node: NodeId,
+        kind: crate::node::NodeKind,
     },
 }
 

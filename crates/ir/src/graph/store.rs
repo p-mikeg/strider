@@ -83,6 +83,74 @@ impl Graph {
         self.call_other_names[node_id] = Some(name);
     }
 
+    /// Returns the asm-instruction-address fingerprint of `node_id` as a
+    /// sorted-deduplicated slice.  Returns an empty slice when no
+    /// contributors have been recorded.
+    #[inline]
+    #[must_use]
+    pub fn asm_fingerprint(&self, node_id: NodeId) -> &[u64] {
+        self.asm_fingerprints[node_id].as_slice()
+    }
+
+    /// Replaces `node_id`'s fingerprint with `addrs`.
+    ///
+    /// Sorts and deduplicates `addrs` first so callers cannot accidentally
+    /// install an unsorted entry.  This is the test-only / synthetic-graph
+    /// entry point: production passes use
+    /// [`Self::extend_asm_fingerprint`] / [`Self::extend_asm_fingerprint_from`]
+    /// to preserve the superset-only invariant.
+    #[inline]
+    pub fn set_asm_fingerprint(&mut self, node_id: NodeId, mut addrs: Vec<u64>) {
+        addrs.sort_unstable();
+        addrs.dedup();
+        self.asm_fingerprints[node_id] = addrs;
+    }
+
+    /// Unions `contributors` into `node_id`'s fingerprint.  Result is
+    /// kept sorted and deduplicated.  Existing entries are never
+    /// removed: this satisfies the no-shrink contract.  Empty
+    /// `contributors` is a no-op (no allocation, no reallocation).
+    pub fn extend_asm_fingerprint(&mut self, node_id: NodeId, contributors: &[u64]) {
+        if contributors.is_empty() {
+            return;
+        }
+        let existing = &mut self.asm_fingerprints[node_id];
+        // Fast path: pushing strictly-greater elements one by one is the
+        // common lift-time case (insns processed in increasing address order
+        // means the new contributor is usually `>` the last entry).
+        let mut needs_resort = false;
+        for &addr in contributors {
+            match existing.last() {
+                None => existing.push(addr),
+                Some(&last) if addr > last => existing.push(addr),
+                Some(&last) if addr == last => { /* already present */ }
+                Some(_) => {
+                    existing.push(addr);
+                    needs_resort = true;
+                }
+            }
+        }
+        if needs_resort {
+            existing.sort_unstable();
+            existing.dedup();
+        }
+    }
+
+    /// Unions the fingerprint of `src` into `dst`.  Equivalent to
+    /// `extend_asm_fingerprint(dst, &asm_fingerprint(src).to_vec())` but
+    /// avoids the intermediate allocation.  Self-extension (`src == dst`)
+    /// is a no-op.
+    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+        if dst == src {
+            return;
+        }
+        // SAFETY-WORKAROUND: SecondaryMap doesn't allow simultaneous
+        // borrows.  Snapshot the source slice into a tiny stack-friendly
+        // buffer.  Fingerprints are typically small.
+        let src_slice = self.asm_fingerprints[src].clone();
+        self.extend_asm_fingerprint(dst, &src_slice);
+    }
+
     /// Creates a new node with the given kind, inputs, and output kinds.
     ///
     /// For cacheable node kinds (see [`NodeKind::is_cacheable`]), an identical

@@ -131,10 +131,8 @@ Allowed-to-be-empty (documented exemption):
 
 * `Entry`, `InitialMemory`, `InitialVar(_)`, `FunctionArg` — synthesised at
   function-entry, before any insn has been processed.
-* `ControlState`, `MemPhi`, `VarPhi`, `StackStorePhi` — synthesised as part
-  of region setup, *not* by an asm insn.
-* `IfCase` outputs are tied to the parent `If`; the `IfCase` node itself
-  carries no contributor.
+* `ControlState`, `MemPhi`, `VarPhi`, `ValuePhi`, `StackStorePhi` —
+  synthesised as part of region setup, *not* by an asm insn.
 
 A node is **expected non-empty** if it is reachable via `walk_graph(entry)`
 **and** its kind is not in the exempt set above.  The Layer-C validator

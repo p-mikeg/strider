@@ -157,6 +157,50 @@ pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>)
     }
 }
 
+/// Returns `true` if `kind` is allowed to carry an empty asm-fingerprint
+/// even when reachable from the entry.  Region / phi / initial-state
+/// nodes are synthesised by the lifter without a contributing machine
+/// instruction; their fingerprint legitimately stays empty.
+fn asm_fingerprint_exempt(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::InitialVar(_)
+            | NodeKind::FunctionArg { .. }
+            | NodeKind::ControlState
+            | NodeKind::MemPhi
+            | NodeKind::VarPhi(_)
+            | NodeKind::ValuePhi
+            | NodeKind::StackStorePhi { .. }
+    )
+}
+
+/// Layer C (opt-in): every reachable, non-exempt node must carry at
+/// least one asm-fingerprint contributor.  See
+/// [`crate::graph::Graph::asm_fingerprint`] for the full contract.
+pub(super) fn check_layer_c_asm_fingerprints(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
+        let kind = graph.node_kind(node);
+        if asm_fingerprint_exempt(kind) {
+            continue;
+        }
+        if graph.asm_fingerprint(node).is_empty() {
+            errs.push(ValidationError::MissingAsmFingerprint {
+                node,
+                kind: *kind,
+            });
+        }
+    }
+}
+
 /// Layer C: at most one [`NodeKind::FunctionArg`] per `index`.  The
 /// [`opt::FunctionArgDetect`] pass emits one canonical node per argument
 /// index; having two would mean patterns keyed by `matcher.function_arg(i)`
