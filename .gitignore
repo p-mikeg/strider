@@ -15,3 +15,6 @@ __pycache__/
 
 # Stray rlib artifacts from out-of-tree test builds
 /*.rlib
+
+# Stray ELF artifacts from out-of-tree test builds
+/rust_out
