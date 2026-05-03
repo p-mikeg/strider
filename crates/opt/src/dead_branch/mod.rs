@@ -106,6 +106,13 @@ fn try_eliminate_dead_branch(
     }
 
     // ── Step 1: replace live ctrl with ctrl_in (bypass the If) ───────────────
+    // Absorb the If's asm-fingerprint into the surviving control producer
+    // (typically a ControlState — exempt from the non-empty check, but
+    // unioning the address there preserves the contributing-asm-instruction
+    // history so consumers can recover it from the side-table later).
+    let if_node = fg.graph.get_node_from_output(live_ctrl);
+    let ctrl_in_node = fg.graph.get_node_from_output(ctrl_in);
+    fg.graph.extend_asm_fingerprint_from(ctrl_in_node, if_node);
     fg.graph.replace_all_uses(live_ctrl, ctrl_in)?;
 
     // The dead-side cleanup is **all-or-nothing** based on whether the dead

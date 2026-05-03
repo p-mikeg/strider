@@ -97,6 +97,12 @@ fn remove_phis(
                     };
                     let value = function.graph.node_inputs(node_id)[j + 1];
                     let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
+                    // Absorb the phi's asm-fingerprint into the surviving
+                    // value producer.  Phis are exempt-empty by default, but
+                    // an earlier opt pass (e.g. StackStoreDetect) may have
+                    // unioned addresses into them; preserve those here.
+                    let value_node = function.graph.get_node_from_output(value);
+                    function.graph.extend_asm_fingerprint_from(value_node, node_id);
                     function.graph.replace_all_uses(output, value)?
                 }
                 _ => match (value_iter.next(), value_iter.next()) {
@@ -106,6 +112,8 @@ fn remove_phis(
                     // predecessors, so we don't touch it here.)
                     (Some(&value), None) => {
                         let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
+                        let value_node = function.graph.get_node_from_output(value);
+                        function.graph.extend_asm_fingerprint_from(value_node, node_id);
                         function.graph.replace_all_uses(output, value)?
                     }
                     _ => false,
@@ -131,6 +139,11 @@ fn remove_phis(
                 (Some(&input), None) => {
                     let [output, _phi_token] =
                         function.graph.node_outputs_exact::<2>(node_id)?;
+                    // ControlState is exempt-empty by default; absorb its
+                    // fingerprint into the surviving control producer for
+                    // the same reason as the phi-collapse path above.
+                    let input_node = function.graph.get_node_from_output(input);
+                    function.graph.extend_asm_fingerprint_from(input_node, node_id);
                     function.graph.replace_all_uses(output, input)?
                 }
                 _ => false,
