@@ -1,5 +1,6 @@
 /target
 fixtures/out
+fixtures/vmlinux
 /.worktrees
 /.venv
 __pycache__/
