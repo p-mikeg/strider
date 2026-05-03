@@ -310,24 +310,39 @@ impl Strider {
                     ir_region_of,
                 )?;
             }
-            match special_terminator {
-                Some(SpecialTerm::Unresolved(target_vn, addr)) => {
-                    ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
+            // Asm-fingerprint context for the terminator handlers: every
+            // node born inside one of these handlers is "caused by" the
+            // region's terminator machine instruction.  Use the last
+            // pcode insn's machine address as the contributor; when the
+            // region is empty the field stays None.
+            let term_addr = region
+                .insns
+                .last()
+                .map(|wrapped| wrapped.addr.machine_addr.addr);
+            ir_strider.builder.set_lift_addr(term_addr);
+            let term_res = (|| -> Result<()> {
+                match special_terminator {
+                    Some(SpecialTerm::Unresolved(target_vn, addr)) => {
+                        ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                    }
+                    Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
+                        ir_strider.handle_switch(
+                            cfg_rid,
+                            &target_vn,
+                            &targets,
+                            target_value,
+                            &ir_region_of,
+                        )?;
+                    }
+                    Some(SpecialTerm::TailCall(target)) => {
+                        ir_strider.handle_tail_call(target)?;
+                    }
+                    None => {}
                 }
-                Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
-                    ir_strider.handle_switch(
-                        cfg_rid,
-                        &target_vn,
-                        &targets,
-                        target_value,
-                        &ir_region_of,
-                    )?;
-                }
-                Some(SpecialTerm::TailCall(target)) => {
-                    ir_strider.handle_tail_call(target)?;
-                }
-                None => {}
-            }
+                Ok(())
+            })();
+            ir_strider.builder.set_lift_addr(None);
+            term_res?;
         }
 
         // Link fallthrough edges.  Walk the CFG's edges directly —

@@ -127,6 +127,11 @@ pub fn apply_tail_call(
         .as_integer_or_err()
         .unwrap_or(ir::node::NodeOutputType::U64);
 
+    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it; we
+    // absorb it into every new node spliced in below so the placeholder's
+    // contributing-asm-instruction history survives the rewrite.
+    let placeholder_fingerprint: Vec<u64> = graph.asm_fingerprint(placeholder).to_vec();
+
     // CORRECTNESS — detach BEFORE creating the new chain: removes the
     // placeholder's three inputs from their use-lists.
     graph.detach_node_inputs(placeholder);
@@ -137,6 +142,7 @@ pub fn apply_tail_call(
         [],
         [NodeOutputKind::OutputType(target_int_ty)],
     );
+    graph.extend_asm_fingerprint(int_const, &placeholder_fingerprint);
     let int_const_out = graph.node_outputs_exact::<1>(int_const)?[0];
 
     // Create the Call node.  Inputs: [control, memory, target,
@@ -153,6 +159,7 @@ pub fn apply_tail_call(
     call_outputs.push(NodeOutputKind::Memory);
     call_outputs.extend_from_slice(clobbered_kinds);
     let call = graph.create_node(NodeKind::Call, call_inputs, call_outputs);
+    graph.extend_asm_fingerprint(call, &placeholder_fingerprint);
     // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
     // those are produced for downstream consumers (typically empty
     // here because the only consumer is the freshly-spliced Return).
@@ -165,6 +172,7 @@ pub fn apply_tail_call(
     new_return_inputs.push(call_mem_out);
     new_return_inputs.extend_from_slice(ret_val_outputs);
     let new_return = graph.create_node(NodeKind::Return, new_return_inputs, []);
+    graph.extend_asm_fingerprint(new_return, &placeholder_fingerprint);
 
     Ok(new_return)
 }

@@ -18,7 +18,31 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         &mut self,
         region_id: cfg::RegionId,
         insn: &rsleigh::Insn,
-        _addr: cfg::PcodeInsnAddr,
+        addr: cfg::PcodeInsnAddr,
+        region_lookup: F,
+    ) -> Result<()>
+    where
+        F: Fn(cfg::RegionId) -> Result<ir::RegionId>,
+    {
+        // Set the asm-fingerprint attribution context for every node the
+        // builder will produce while handling this pcode insn — value-lifter
+        // path, control-flow handlers, store, call, etc.  Cleared on the
+        // way out so region-setup helpers (e.g. fallthrough wiring) stay
+        // unattributed.  This is the single funnel where every IR node
+        // born from a pcode insn picks up its parent machine-instruction
+        // address; later optimisation passes only ever absorb fingerprints,
+        // never set them.
+        let machine_addr = addr.machine_addr.addr;
+        self.builder.set_lift_addr(Some(machine_addr));
+        let res = self.process_insn_inner(region_id, insn, region_lookup);
+        self.builder.set_lift_addr(None);
+        res
+    }
+
+    fn process_insn_inner<F>(
+        &mut self,
+        region_id: cfg::RegionId,
+        insn: &rsleigh::Insn,
         region_lookup: F,
     ) -> Result<()>
     where
