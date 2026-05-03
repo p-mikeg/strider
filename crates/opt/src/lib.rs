@@ -38,6 +38,7 @@ pub use error::Result;
 mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
+mod flag_cmp_canonicalize;
 mod function_args;
 mod if_cond_inversion;
 pub mod indirect_branch_resolve;
@@ -52,6 +53,7 @@ mod test_support;
 pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
+pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
@@ -104,6 +106,11 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     p.add(ConstantFold);
     // KnownBits: bit-level annotation, recomputes per-iteration.
     p.add(KnownBits);
+    // FlagCmpCanonicalize: rewrites flag-tree If conds (AArch64 NZCV-style)
+    // into single IntCmpOp shapes against the original `(a, b)`.  Runs
+    // before IfCondInversion so the BoolNeg-wrapped outputs of the LS / GE / LE
+    // rules get swapped to direct shape next.
+    p.add(FlagCmpCanonicalize);
     // IfCondInversion: canonicalises `If(BoolNeg(C))` into `If(C)` with
     // branches swapped.  Runs after ConstantFold so the
     // `BoolNeg(BoolNeg(x)) → x` rule has collapsed double negations
@@ -171,6 +178,7 @@ pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);
     p.add(KnownBits);
+    p.add(FlagCmpCanonicalize);
     p.add(IfCondInversion);
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
