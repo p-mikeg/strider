@@ -219,6 +219,27 @@ impl PyMatch {
         let g = g.read_inner().map_err(into_strider_err)?;
         Ok(self.inner.stack_phi_offsets(cap, &g).map(<[i64]>::to_vec))
     }
+
+    /// Returns the asm-instruction-address fingerprint of the node
+    /// bound to `c` as a sorted-deduplicated `list[int]`.  Returns an
+    /// empty list when the capture is unbound or when the captured
+    /// node is one of the documented exempt kinds (see
+    /// `ir::Graph::asm_fingerprint`).
+    ///
+    /// The fingerprint is the proof-of-correctness aid: when a pattern
+    /// query captures a value node, this list names the machine
+    /// instructions whose lifting (or subsequent rewrite) contributed
+    /// to that node's value.
+    fn asm_fingerprint(
+        &self,
+        py: Python<'_>,
+        key: CaptureKey<'_>,
+    ) -> PyResult<Vec<u64>> {
+        let cap = key.resolve()?;
+        let g = self.graph.borrow(py);
+        let g = g.read_inner().map_err(into_strider_err)?;
+        Ok(self.inner.asm_fingerprint(cap, &g).to_vec())
+    }
 }
 
 // ── Op-variant name helpers ──────────────────────────────────────────────
