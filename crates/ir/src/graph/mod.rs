@@ -20,8 +20,11 @@ use crate::node::{
 };
 
 mod access;
+mod compact;
 mod store;
 mod uses;
+
+pub use compact::NodeIdRemap;
 
 #[cfg(test)]
 mod tests;
