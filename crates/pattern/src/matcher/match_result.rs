@@ -23,6 +23,16 @@ pub struct Match {
 }
 
 impl Match {
+    /// Constructs a `Match` directly from a root and a bindings map.
+    /// Test-only entry point: production matches go through
+    /// [`crate::Matcher`].  Exposed so external tests (and the
+    /// rewrite-rule interpreter) can synthesise matches without
+    /// running a full pattern walk.
+    #[must_use]
+    pub fn new_for_test(root: NodeId, bindings: super::bindings::Bindings) -> Self {
+        Self { root, bindings }
+    }
+
     /// The root node where the top-level pattern matched.
     #[must_use]
     pub fn root(&self) -> NodeId {
@@ -159,8 +169,17 @@ impl Match {
     ///
     /// * `InitialVar(vn)` — the varnode whose function-entry value is
     ///   read.
-    /// * `Call` outputs at slot `2 + i` — the varnode at
-    ///   `BuiltFunctionGraph::call_clobbered[i]`.
+    /// * `Call` outputs at slot `2 + i` — the varnode at the per-Call
+    ///   override on [`ir::Graph::call_clobbered_override`] when one
+    ///   was recorded (e.g. `__fentry__` callbacks built via
+    ///   [`ir::FunctionBuilder::build_call_with_cc`]), otherwise the
+    ///   varnode at `BuiltFunctionGraph::call_clobbered[i]`.
+    /// * `CallOther` outputs in their clobber slot range (slot 2.. for
+    ///   value-less CallOther, slot 3.. for CallOther with a value
+    ///   output) — the varnode at the per-CallOther override on
+    ///   [`ir::Graph::call_clobbered_override`] when one was recorded,
+    ///   otherwise the varnode at
+    ///   `BuiltFunctionGraph::call_other_clobbered[i]`.
     ///
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
@@ -169,9 +188,41 @@ impl Match {
         let binding = self.bindings.get_binding(c)?;
         if let Some(out) = binding.output {
             let (node, slot) = graph.graph.output_definition(out);
-            if matches!(graph.graph.node_kind(node), NodeKind::Call) && slot >= 2 {
+            let kind = graph.graph.node_kind(node);
+            // Call: clobber slots start at index 2.
+            if matches!(kind, NodeKind::Call) && slot >= 2 {
                 let idx = (slot - 2) as usize;
+                if let Some(override_list) = graph.graph.call_clobbered_override(node) {
+                    return override_list.get(idx).copied();
+                }
                 return graph.call_clobbered.get(idx).copied();
+            }
+            // CallOther: clobber slots start at index 2 (no value
+            // output) or 3 (with value output).  Detect by total
+            // output count: `2 + clobber_len` for value-less,
+            // `3 + clobber_len` for value-bearing.
+            if matches!(kind, NodeKind::CallOther { .. }) {
+                let total_outputs = graph.graph.node_outputs(node).len();
+                let clobber_len = graph.call_other_clobbered.len();
+                let clobber_start: u32 = if total_outputs == 2 + clobber_len {
+                    2
+                } else if total_outputs == 3 + clobber_len {
+                    3
+                } else {
+                    // Shape we don't recognise; bail.
+                    return None;
+                };
+                if slot < clobber_start {
+                    // Slot 0/1 are Control/Memory; slot 2 (value-bearing
+                    // form) is the user-op's value output — none of these
+                    // map to a varnode.
+                    return None;
+                }
+                let idx = (slot - clobber_start) as usize;
+                if let Some(override_list) = graph.graph.call_clobbered_override(node) {
+                    return override_list.get(idx).copied();
+                }
+                return graph.call_other_clobbered.get(idx).copied();
             }
         }
         match graph.graph.node_kind(binding.node) {

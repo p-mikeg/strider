@@ -19,3 +19,4 @@ workspace = true
 rsleigh.workspace = true
 opt.workspace = true
 ir = { workspace = true, features = ["test-utils"] }
+target.workspace = true
