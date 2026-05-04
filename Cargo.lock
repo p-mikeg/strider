@@ -710,6 +710,7 @@ dependencies = [
  "opt",
  "rsleigh",
  "rustc-hash",
+ "target",
  "thiserror",
 ]
 

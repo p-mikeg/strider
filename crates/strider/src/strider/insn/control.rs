@@ -235,10 +235,19 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             .sleigh
             .space_info(space)
             .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
+        let target_addr = target_vn.addr_off;
         let call_address = self
             .builder
-            .build_int_const(target_vn.addr_off, space_info.addr_size().try_into()?)?;
-        self.builder.build_call(call_address)?;
+            .build_int_const(target_addr, space_info.addr_size().try_into()?)?;
+        // Per-address CC override: when the call target matches a
+        // user-supplied entry, build the Call with that CC instead of
+        // the function-default.
+        let override_cc = self
+            .per_address_ccs
+            .and_then(|m| m.get(&target_addr));
+        self.builder
+            .build_call_with_cc(call_address, override_cc)
+            .map(|_| ())?;
         Ok(())
     }
 
@@ -267,7 +276,13 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let call_address = self
             .builder
             .build_int_const(target, space_info.addr_size().try_into()?)?;
-        self.builder.build_call(call_address)?;
+        // Per-address CC override applies to lift-time tail calls too.
+        let override_cc = self
+            .per_address_ccs
+            .and_then(|m| m.get(&target));
+        self.builder
+            .build_call_with_cc(call_address, override_cc)
+            .map(|_| ())?;
         let ret_regs = self.builder.ret_val_vars().to_vec();
         self.builder.build_return(None, &ret_regs)?;
         Ok(())

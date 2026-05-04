@@ -63,6 +63,20 @@ pub struct BuiltFunctionGraph {
     /// (they normally are — callee-saved ret regs are unusual), and matches
     /// `Return` node input slots `2..2+ret_val_regs.len()`.
     pub ret_val_regs: Box<[rsleigh::Vn]>,
+    /// Function-default clobber list for every `CallOther` node.
+    ///
+    /// Equals the function's tracked-variable set (`variables.values()`)
+    /// filtered to exclude the stack pointer.  Order matches the
+    /// CallOther's clobber output slots: the i-th clobber output of any
+    /// CallOther (output index `i + 2` for value-less CallOther,
+    /// `i + 3` for CallOther with a value output) corresponds to
+    /// `call_other_clobbered[i]`.  Distinct from
+    /// [`Self::call_clobbered`] (which excludes both callee-saved AND
+    /// SP and is per-CC) — `call_other_clobbered` is the conservative
+    /// "everything except SP" set used by every CallOther unless a
+    /// per-CallOther override on
+    /// [`crate::Graph::call_clobbered_overrides`] shadows it.
+    pub call_other_clobbered: Box<[rsleigh::Vn]>,
 }
 
 impl BuiltFunctionGraph {
@@ -84,6 +98,7 @@ impl BuiltFunctionGraph {
             variables: PrimaryMap::new(),
             call_clobbered: Box::new([]),
             ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
         }
     }
 
@@ -113,9 +128,27 @@ impl BuiltFunctionGraph {
         self.graph.nodes.keys()
     }
 
+    /// Rebuilds the underlying [`crate::graph::Graph`] to retain only
+    /// nodes reachable from [`Self::entry`] via
+    /// [`crate::walk::walk_graph`].  `self.entry` is remapped through
+    /// the returned [`crate::graph::NodeIdRemap`]; other fields
+    /// (`variables`, `call_clobbered`, `ret_val_regs`) are vn-keyed
+    /// and stay valid as-is.
+    ///
+    /// External callers that hold any pre-compaction `NodeId` /
+    /// `NodeOutputId` / `NodeInputId` MUST rewrite them through the
+    /// returned remap (or drop them).
+    pub fn compact(&mut self) -> crate::graph::NodeIdRemap {
+        let remap = self.graph.retain_reachable(self.entry);
+        self.entry = remap
+            .node_old_to_new(self.entry)
+            .expect("entry must survive its own compaction");
+        remap
+    }
+
     /// Returns a [`GraphDotDumper`](crate::dot::GraphDotDumper) that can render
     /// this function graph to a `.dot` / `.html` file.
-    #[must_use] 
+    #[must_use]
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
@@ -127,5 +160,35 @@ impl BuiltFunctionGraph {
             call_clobbered: &self.call_clobbered,
             ret_val_regs: &self.ret_val_regs,
         }
+    }
+}
+
+#[cfg(test)]
+mod compact_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::node::{NodeKind, NodeOutputKind};
+
+    #[test]
+    fn compact_remaps_entry_and_drops_zombies() {
+        let mut graph = crate::graph::Graph::new();
+        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let _zombie = graph.create_node(
+            NodeKind::IntConst(0xdead),
+            [],
+            [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
+        );
+        let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+        let pre_count = bfg.graph.all_node_ids().count();
+
+        let _remap = bfg.compact();
+
+        let post_count = bfg.graph.all_node_ids().count();
+        assert!(post_count < pre_count, "compact must shrink the graph");
+        // entry was remapped; new entry id still has the Control output.
+        let outs: Vec<_> = bfg.graph.node_outputs(bfg.entry).into_iter().collect();
+        assert_eq!(outs.len(), 1);
+        assert!(bfg.graph.output_kind(outs[0]).is_control());
     }
 }

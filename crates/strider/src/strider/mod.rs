@@ -21,6 +21,11 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift
     /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
     pub(crate) unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
+    /// Per-target-address CC override map.  `None` (the default) means
+    /// every direct Call uses the function-default.  Set by
+    /// [`Strider::analyze_cfg_with_vns_and_overrides`].
+    pub(crate) per_address_ccs:
+        Option<&'a std::collections::HashMap<u64, target::BuiltCallingConvention>>,
 }
 
 impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
@@ -44,7 +49,16 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             builder,
             cfg,
             unresolved_branches: Vec::new(),
+            per_address_ccs: None,
         })
+    }
+
+    /// Replaces the per-target-address CC override map with `map`.
+    pub(crate) fn set_per_address_ccs(
+        &mut self,
+        map: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
+    ) {
+        self.per_address_ccs = Some(map);
     }
 
 }

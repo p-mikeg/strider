@@ -20,8 +20,11 @@ use crate::node::{
 };
 
 mod access;
+mod compact;
 mod store;
 mod uses;
+
+pub use compact::NodeIdRemap;
 
 #[cfg(test)]
 mod tests;
@@ -94,6 +97,24 @@ pub struct Graph {
     /// legitimately stay empty; the validator's opt-in fingerprint check
     /// exempts those kinds and flags any other reachable empty entry.
     pub(crate) asm_fingerprints: SecondaryMap<NodeId, Vec<u64>>,
+    /// Per-Call clobber-list override.
+    ///
+    /// `None` (the default) means the Call uses the function-default
+    /// clobber list at [`crate::function::BuiltFunctionGraph::call_clobbered`];
+    /// `Some(list)` shadows the function-default for this one Call —
+    /// the i-th value-typed output (slot `i + 2`) corresponds to
+    /// `list[i]` instead of the function-default.  Populated by
+    /// [`crate::FunctionBuilder::build_call_with_cc`] when the call
+    /// site uses a per-address calling-convention override (e.g.
+    /// Linux-kernel `__fentry__` / `mcount` callbacks that preserve
+    /// every register).
+    ///
+    /// Stored as `SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>` so
+    /// the default `None` is the "no override" sentinel; the previous
+    /// `HashMap`-keyed shape isn't used because the override is
+    /// per-NodeId and benefits from the `SecondaryMap`'s O(1) array
+    /// lookup with no hashing.
+    pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
 }
 
 impl Default for Graph {
@@ -116,6 +137,7 @@ impl Graph {
             stack_phi_offsets: SecondaryMap::new(),
             call_other_names: SecondaryMap::new(),
             asm_fingerprints: SecondaryMap::new(),
+            call_clobbered_overrides: SecondaryMap::new(),
         }
     }
 

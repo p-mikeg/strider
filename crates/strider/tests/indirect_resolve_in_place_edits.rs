@@ -192,6 +192,8 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     };
     // The contract pinned here: `run` returns a typed result, never
     // panics, regardless of whether the optimiser folds the

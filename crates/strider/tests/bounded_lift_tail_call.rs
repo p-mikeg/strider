@@ -63,6 +63,8 @@ fn bounded_lift_handles_tail_call_terminator() {
         rom: None,
         fn_max_size: Some(10),
         allow_code_before_start_addr: false,
+        compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     };
     let graph = run(config).expect("orchestrator must lift TailCall as Call+Return");
 
@@ -162,6 +164,8 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
         rom: None,
         fn_max_size: Some(10),
         allow_code_before_start_addr: true,
+        compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     })
     .expect("backward jmp + fn_max_size must classify as tail call regardless of reach-back flag");
 
@@ -214,6 +218,8 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
         rom: None,
         fn_max_size: Some(2),
         allow_code_before_start_addr: false,
+        compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     })
     .expect("fall-through past fn_max_size must truncate cleanly, not crash on OOB lift");
 
@@ -255,6 +261,8 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
         rom: None,
         fn_max_size: Some(2),
         allow_code_before_start_addr: false,
+        compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     })
     .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
 

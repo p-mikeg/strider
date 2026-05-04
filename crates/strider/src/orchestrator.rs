@@ -83,6 +83,26 @@ where
     /// as a tail call — i.e. the orchestrator follows it as an
     /// intra-fn branch.
     pub allow_code_before_start_addr: bool,
+    /// Compact the IR arena at finalize, dropping nodes that aren't
+    /// reachable from `entry` via [`ir::walk::walk_graph`].  Default
+    /// `true` is recommended (passes leave detached "zombie" nodes
+    /// the destructive pipeline severs from the live graph; without
+    /// compaction these stay in the arena).  Pre-compaction NodeIds
+    /// become invalid across the call.
+    pub compact: bool,
+    /// Per-target-address calling-convention overrides.  When a `Call`
+    /// is emitted (either at lift time for a direct call to an
+    /// `IntConst(K)` target, or by the indirect-branch resolver as an
+    /// in-place tail-call edit to address `K`), if `K` is in this map
+    /// the matching CC fully replaces the function-default for that
+    /// one Call.  Empty by default.
+    ///
+    /// Driver: Linux-kernel `__fentry__` / `mcount` hooks that preserve
+    /// every register and observe no arguments — express via
+    /// [`target::CallingConvention::x86_64_all_preserving`] (and the
+    /// per-arch siblings).  The user supplies raw addresses; symbol
+    /// resolution is the caller's responsibility.
+    pub per_address_ccs: HashMap<u64, target::CallingConvention>,
 }
 
 /// Internal view of [`RunConfig`] without the Sleigh handle — see
@@ -94,6 +114,12 @@ struct RunOpts<'a> {
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
+    compact: bool,
+    /// Pre-resolved per-target-address CC overrides.  See the
+    /// [`RunConfig::per_address_ccs`] doc.  Resolved once at
+    /// `LoopState::new` so any unresolved register name surfaces
+    /// before iteration starts.
+    per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention>,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -251,6 +277,29 @@ where
     fn new(config: RunConfig<'a, R>) -> Result<Self> {
         let lr_vn = config.strider.calling_convention().link_register_vn;
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
+        // Pre-resolve per-address CC overrides against the same Sleigh
+        // register table the function-default CC was built against.
+        let per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention> =
+            if config.per_address_ccs.is_empty() {
+                HashMap::new()
+            } else {
+                let sleigh_regs = config
+                    .sleigh
+                    .regs()
+                    .map_err(|e| anyhow!("orchestrator: Sleigh::regs() failed: {e:?}"))?;
+                config
+                    .per_address_ccs
+                    .iter()
+                    .map(|(addr, cc)| {
+                        cc.clone()
+                            .build(&sleigh_regs)
+                            .map(|built| (*addr, built))
+                            .map_err(|e| {
+                                anyhow!("per-address CC at {addr:#x} unresolved: {e:?}")
+                            })
+                    })
+                    .collect::<Result<_>>()?
+            };
         Ok(Self {
             sleigh: Some(config.sleigh),
             known_targets: HashMap::new(),
@@ -272,6 +321,8 @@ where
                 rom: config.rom,
                 fn_max_size: config.fn_max_size,
                 allow_code_before_start_addr: config.allow_code_before_start_addr,
+                compact: config.compact,
+                per_address_built_ccs,
             },
         })
     }
@@ -395,8 +446,12 @@ where
     /// final graph.
     fn finalize(mut self) -> Result<ir::BuiltFunctionGraph> {
         let pipeline = self.opts.strider.build_destructive_optimizer_pipeline();
+        let compact = self.opts.compact;
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
+        if compact {
+            graph.compact();
+        }
         self.graph
             .take()
             .ok_or_else(|| anyhow!("orchestrator finalize: graph already consumed"))
@@ -460,12 +515,20 @@ where
     ) -> Result<()> {
         let strider = self.opts.strider;
         let region_index = &self.region_index;
+        let per_address_built_ccs = &self.opts.per_address_built_ccs;
         let graph = self
             .graph
             .as_mut()
             .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))?;
         for (placeholder, resolved) in in_place_edits {
-            apply_in_place_edit(graph, strider, region_index, *placeholder, resolved)?;
+            apply_in_place_edit(
+                graph,
+                strider,
+                region_index,
+                *placeholder,
+                resolved,
+                per_address_built_ccs,
+            )?;
         }
         Ok(())
     }
@@ -518,16 +581,30 @@ fn apply_in_place_edit(
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
+    per_address_built_ccs: &HashMap<u64, target::BuiltCallingConvention>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
-            let ctx = build_anchor_calling_context(graph, placeholder, strider, region_index);
+            let ctx = build_anchor_calling_context(
+                graph,
+                placeholder,
+                strider,
+                region_index,
+                None,
+            );
             apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
-            let ctx = build_anchor_calling_context(graph, placeholder, strider, region_index);
-            let _new_return = apply_tail_call(
+            let override_cc = per_address_built_ccs.get(target);
+            let ctx = build_anchor_calling_context(
+                graph,
+                placeholder,
+                strider,
+                region_index,
+                override_cc,
+            );
+            let new_return = apply_tail_call(
                 graph,
                 placeholder,
                 *target,
@@ -535,12 +612,46 @@ fn apply_in_place_edit(
                 &ctx.clobbered_kinds,
                 &ctx.ret_val_outputs,
             )?;
+            // When an override was used, record the per-Call clobber
+            // varnodes on the spliced Call so pattern queries can
+            // recover the right varnode for each clobber slot.  The
+            // spliced node is the freshly-created Call adjacent to
+            // `new_return`'s ctrl predecessor.
+            if let Some(cc) = override_cc {
+                if let Some(call_id) = locate_spliced_call(graph, new_return) {
+                    let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+                    let clobber_vars: Vec<rsleigh::Vn> = graph
+                        .variables
+                        .values()
+                        .copied()
+                        .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
+                        .collect();
+                    graph.graph.set_call_clobbered_override(call_id, clobber_vars);
+                }
+            }
             Ok(())
         }
         ResolvedTargets::Multiple(_) => Err(anyhow!(
             "apply_in_place_edit called with ResolvedTargets::Multiple — caller must route via CFG rebuild"
         )),
     }
+}
+
+/// Walks back from a freshly-spliced Return node to find the Call
+/// node that `apply_tail_call` inserted as the Return's control
+/// predecessor.  Returns `None` if the shape doesn't match the
+/// expected `[..ctrl_state..] -> Call -> Return` chain — defensive,
+/// since per-address-CC override recording is best-effort and a
+/// missed shape is correctness-neutral (the Call still works, just
+/// without an override side-table entry).
+fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
+    let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
+    let ctrl_in = *inputs.first()?;
+    let (producer, _slot) = graph.graph.output_definition(ctrl_in);
+    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::Call) {
+        return Some(producer);
+    }
+    None
 }
 
 /// Build the calling-convention context for the placeholder's
@@ -558,8 +669,13 @@ fn build_anchor_calling_context(
     placeholder: NodeId,
     strider: &Strider,
     region_index: &RegionIndex,
+    override_cc: Option<&target::BuiltCallingConvention>,
 ) -> opt::AnchorCallingContext {
-    let cc = strider.calling_convention();
+    // When an override is supplied, route arg-passing / ret-val /
+    // clobber computation through the override CC instead of the
+    // function-default.
+    let cc: &target::BuiltCallingConvention = override_cc
+        .unwrap_or_else(|| strider.calling_convention());
     let region = region_index.region_for_placeholder(graph, placeholder);
     let mut ctx = opt::AnchorCallingContext::default();
 
@@ -579,18 +695,37 @@ fn build_anchor_calling_context(
             ctx.arg_passing_outputs.push(out);
         }
     }
-    // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
-    // entry — the canonical shape `FunctionBuilder::build_call`
-    // produces.  Pattern queries index directly into `call_clobbered`
-    // to recover varnodes; iterating `cc.callee_saved_regs` here would
-    // emit the OPPOSITE set (preserved-across-call regs) with the
-    // wrong count.
-    for vn in graph.call_clobbered.iter() {
-        let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-            continue;
-        };
-        ctx.clobbered_kinds
-            .push(ir::node::NodeOutputKind::OutputType(ty));
+    // Clobber list: when an override is supplied, recompute from the
+    // override's callee_saved set against the function's tracked
+    // variables.  Without an override, fall back to the function-
+    // default `BuiltFunctionGraph::call_clobbered` (existing
+    // behaviour).
+    if override_cc.is_some() {
+        let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+        for vn in graph.variables.values() {
+            if cc.callee_saved_regs.contains(vn) || Some(*vn) == stack_ptr_vn {
+                continue;
+            }
+            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
+                continue;
+            };
+            ctx.clobbered_kinds
+                .push(ir::node::NodeOutputKind::OutputType(ty));
+        }
+    } else {
+        // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
+        // entry — the canonical shape `FunctionBuilder::build_call`
+        // produces.  Pattern queries index directly into `call_clobbered`
+        // to recover varnodes; iterating `cc.callee_saved_regs` here would
+        // emit the OPPOSITE set (preserved-across-call regs) with the
+        // wrong count.
+        for vn in graph.call_clobbered.iter() {
+            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
+                continue;
+            };
+            ctx.clobbered_kinds
+                .push(ir::node::NodeOutputKind::OutputType(ty));
+        }
     }
     for vn in &cc.ret_val_regs {
         if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
@@ -689,7 +824,11 @@ where
     let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
     all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
 
-    let outcome = opts.strider.analyze_cfg_with_vns(&cfg, all_vns)?;
+    let outcome = opts.strider.analyze_cfg_with_vns_and_overrides(
+        &cfg,
+        all_vns,
+        &opts.per_address_built_ccs,
+    )?;
     let region_index = RegionIndex::from_handles(&outcome.region_handles);
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
@@ -774,6 +913,8 @@ mod tests {
             rom: None,
             fn_max_size,
             allow_code_before_start_addr,
+            compact: true,
+            per_address_built_ccs: HashMap::new(),
         }
     }
 

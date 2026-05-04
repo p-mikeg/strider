@@ -131,10 +131,24 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             Some(out_vn) => Some(out_vn.size.try_into()?),
             None => None,
         };
-        let (node_id, result) = self
-            .builder
-            .build_call_other(user_op_id, &args, output_ty)?;
-        if let Some(name) = self.cfg.sleigh.user_op_name(user_op_id_u32) {
+        // Look up the user-op name first: lifters that recognise a
+        // user-op as an IR-level no-op (e.g. ARM `setISAMode`) want to
+        // suppress the conservative-clobber default so downstream
+        // `CallOtherElide` can drop the node without leaving the
+        // tracked variables rebound to a now-detached node's clobber
+        // outputs.
+        let user_op_name = self.cfg.sleigh.user_op_name(user_op_id_u32);
+        let is_known_no_op = user_op_name.is_some_and(|name| {
+            opt::NO_OP_USER_OPS.contains(&name)
+        });
+        let (node_id, result) = if is_known_no_op {
+            self.builder
+                .build_call_other_with_clobbers(user_op_id, &args, output_ty, &[])?
+        } else {
+            self.builder
+                .build_call_other(user_op_id, &args, output_ty)?
+        };
+        if let Some(name) = user_op_name {
             self.builder
                 .body_mut()
                 .graph

@@ -1052,6 +1052,30 @@ fn asm_fingerprint_extend_from_self_is_noop() {
 }
 
 #[test]
+fn call_clobbered_override_default_is_none() {
+    let mut graph = Graph::new();
+    let nid = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    assert!(graph.call_clobbered_override(nid).is_none());
+}
+
+#[test]
+fn call_clobbered_override_set_then_get_round_trips() {
+    let mut graph = Graph::new();
+    let nid = graph.create_node(
+        NodeKind::IntConst(0),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let vns: Vec<rsleigh::Vn> = vec![];
+    graph.set_call_clobbered_override(nid, vns.clone());
+    assert_eq!(graph.call_clobbered_override(nid), Some(vns.as_slice()));
+}
+
+#[test]
 fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     // Two `create_node` calls for IntConst(7) hit the dedup cache — they
     // return the same NodeId.  Production code calls

@@ -76,6 +76,17 @@ impl PyCallingConvention {
             preset_name: "x86_cdecl",
         }
     }
+    /// "All-preserving" x86_64 calling convention: every userland
+    /// caller-clobbered register is listed as callee-saved.  Use as a
+    /// per-address CC override for sites that observe no caller state
+    /// changes (e.g. Linux-kernel `__fentry__` / `mcount`).
+    #[classmethod]
+    fn x86_64_all_preserving(_cls: &Bound<'_, PyType>) -> Self {
+        Self {
+            inner: target::CallingConvention::x86_64_all_preserving(),
+            preset_name: "x86_64_all_preserving",
+        }
+    }
 
     // ── Linux kernel + syscall presets ───────────────────────────────────
     //
