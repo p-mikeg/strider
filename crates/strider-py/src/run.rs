@@ -51,6 +51,7 @@ pub struct PyRunResult {
     allow_code_before_start_addr = false,
     function_max_size = None,
     compact = true,
+    per_address_ccs = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -64,6 +65,7 @@ pub fn run(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
     compact: bool,
+    per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
 ) -> PyResult<PyRunResult> {
     match pipeline {
         Some(p) => run_with_custom_pipeline(
@@ -88,6 +90,7 @@ pub fn run(
             allow_code_before_start_addr,
             function_max_size,
             compact,
+            per_address_ccs.unwrap_or_default(),
         ),
     }
 }
@@ -105,6 +108,7 @@ fn run_via_orchestrator(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
     compact: bool,
+    per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
     // Snapshot the reader so we can hand a fresh AnyMemReader to both
     // the orchestrator (consumed) and the snapshot CFG (consumed).
@@ -143,6 +147,11 @@ fn run_via_orchestrator(
     let rom_arc = rom.map(|r| r.into_arc());
 
     let strider_borrow = strider_obj.borrow(py);
+    let per_address_ccs: std::collections::HashMap<u64, target::CallingConvention> =
+        per_address_ccs_py
+            .into_iter()
+            .map(|(addr, py_cc)| (addr, py_cc.inner))
+            .collect();
     let config = strider::RunConfig {
         strider: &strider_borrow.inner,
         start_addr: entry,
@@ -151,7 +160,7 @@ fn run_via_orchestrator(
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
         compact,
-        per_address_ccs: std::collections::HashMap::new(),
+        per_address_ccs,
     };
     let graph = strider::run(config).map_err(into_strider_err)?;
     drop(strider_borrow);
