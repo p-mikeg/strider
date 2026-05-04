@@ -168,10 +168,12 @@ def count_int_binop(g, op: str) -> int:
 
 
 def count_int_unop(g, op: str) -> int:
+    # Variant names match `ir::IntUnaryOp` exactly: `Neg` is two's-complement
+    # negation (`-x`); `BitNot` is bitwise complement (`~x`).
     if op == "Neg":
         return count_pat(g, pat.neg(any_()))
-    if op == "Not":
-        return count_pat(g, pat.not_(any_()))
+    if op == "BitNot":
+        return count_pat(g, pat.bit_not(any_()))
     raise ValueError(f"unknown int unop {op!r}")
 
 

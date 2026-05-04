@@ -100,8 +100,11 @@ def test_bit_xor(arch_id, fixtures_dir):
 
 def test_bit_not(arch_id, fixtures_dir):
     g = analyze(arch_id, "arithmetic", "bit_not", fixtures_dir=fixtures_dir)
-    # Sleigh `IntNeg` (bitwise complement) maps to IntUnaryOp::Neg.
-    assert count_int_unop(g, "Neg") >= 1
+    # Sleigh's `IntNeg` opcode (bitwise complement, `~x`) lifts to
+    # `IntUnaryOp::BitNot` — rsleigh keeps the pre-rename Sleigh name
+    # on the opcode, but the IR variant is `BitNot`.  `Neg` is reserved
+    # for two's-complement negation (`-x`).
+    assert count_int_unop(g, "BitNot") >= 1
 
 
 def test_shl(arch_id, fixtures_dir):

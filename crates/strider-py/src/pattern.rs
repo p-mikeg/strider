@@ -800,6 +800,15 @@ macro_rules! int_unop {
 int_unop!(neg);
 // `pattern.bit_not(x)` matches bitwise complement (`~x`).
 int_unop!(bit_not);
+// `pattern.not_(x)` is the keyword-collision-renamed alias for
+// `bit_not` — the Rust pattern crate keeps `not` since it's not a Rust
+// keyword, but `not` is a Python keyword so the Python surface uses
+// `not_` (matching the `and_` / `or_` convention above).
+#[pyfunction(name = "not_")]
+pub fn not_(operand: PatLike<'_>) -> PyResult<PyPat> {
+    let op = operand.into_pat()?;
+    Ok(PyPat::from_pat(pattern::bit_not(op)))
+}
 
 // ── Bool binary ops ──────────────────────────────────────────────────────
 
@@ -1864,6 +1873,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // int unary
     add_fn!(neg);
     add_fn!(bit_not);
+    add_fn!(not_);
     // bool
     add_fn!(bool_and);
     add_fn!(bool_or);
