@@ -63,6 +63,20 @@ pub struct BuiltFunctionGraph {
     /// (they normally are — callee-saved ret regs are unusual), and matches
     /// `Return` node input slots `2..2+ret_val_regs.len()`.
     pub ret_val_regs: Box<[rsleigh::Vn]>,
+    /// Function-default clobber list for every `CallOther` node.
+    ///
+    /// Equals the function's tracked-variable set (`variables.values()`)
+    /// filtered to exclude the stack pointer.  Order matches the
+    /// CallOther's clobber output slots: the i-th clobber output of any
+    /// CallOther (output index `i + 2` for value-less CallOther,
+    /// `i + 3` for CallOther with a value output) corresponds to
+    /// `call_other_clobbered[i]`.  Distinct from
+    /// [`Self::call_clobbered`] (which excludes both callee-saved AND
+    /// SP and is per-CC) — `call_other_clobbered` is the conservative
+    /// "everything except SP" set used by every CallOther unless a
+    /// per-CallOther override on
+    /// [`crate::Graph::call_clobbered_overrides`] shadows it.
+    pub call_other_clobbered: Box<[rsleigh::Vn]>,
 }
 
 impl BuiltFunctionGraph {
@@ -84,6 +98,7 @@ impl BuiltFunctionGraph {
             variables: PrimaryMap::new(),
             call_clobbered: Box::new([]),
             ret_val_regs: Box::new([]),
+            call_other_clobbered: Box::new([]),
         }
     }
 

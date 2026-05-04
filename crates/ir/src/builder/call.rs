@@ -178,24 +178,85 @@ impl FunctionBuilder {
         args: &[NodeOutputId],
         output_ty: Option<NodeOutputType>,
     ) -> Result<(NodeId, Option<NodeOutputId>)> {
+        // Default: conservative clobber set = every tracked variable except SP.
+        let stack_ptr_vn = self.stack_ptr_vn;
+        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = self
+            .variables
+            .values()
+            .copied()
+            .filter(|v| Some(*v) != stack_ptr_vn)
+            .collect();
+        self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
+    }
+
+    /// Variant of [`Self::build_call_other`] that takes an explicit
+    /// `clobber_vars` slice instead of computing the conservative
+    /// "every-tracked-variable-except-SP" default.  Used by callers
+    /// that know the user-op's true clobber semantics — e.g. lifters
+    /// emitting `setISAMode` (a known no-op in the IR's value model)
+    /// pass an empty slice so no variables get rebound through the
+    /// CallOther.
+    ///
+    /// # Errors
+    ///
+    /// Same set as [`Self::build_call_other`].
+    pub fn build_call_other_with_clobbers(
+        &mut self,
+        user_op_id: u64,
+        args: &[NodeOutputId],
+        output_ty: Option<NodeOutputType>,
+        clobber_vars: &[rsleigh::Vn],
+    ) -> Result<(NodeId, Option<NodeOutputId>)> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
         self.validate_value_inputs(args)?;
 
-        let mut output_kinds: SmallVec<[NodeOutputKind; 3]> = SmallVec::new();
+        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = clobber_vars.iter().copied().collect();
+
+        // Read each clobbered variable to validate it has a kind we
+        // can express.  Same defensive check as `build_call`.
+        let mut clobber_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
+        for var in &clobber_vars {
+            let out = self.read_variable(var)?;
+            let k = self.graph().output_kind(out);
+            if !k.is_value() {
+                return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
+            }
+            clobber_kinds.push(k);
+        }
+
+        let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
         output_kinds.push(NodeOutputKind::Memory);
         if let Some(ty) = output_ty {
             output_kinds.push(NodeOutputKind::OutputType(ty));
         }
+        output_kinds.extend(clobber_kinds);
 
         let inputs = [ctrl, memory].into_iter().chain(args.iter().copied());
         let node = self.create_node(NodeKind::CallOther { user_op_id }, inputs, output_kinds);
-        let outputs: SmallVec<[NodeOutputId; 3]> =
+        let outputs: SmallVec<[NodeOutputId; 8]> =
             self.graph().node_outputs(node).into_iter().collect();
         self.advance_cur_region_ctrl(outputs[0])?;
         self.advance_cur_region_memory(outputs[1])?;
-        Ok((node, outputs.get(2).copied()))
+
+        // Optional value output sits at slot 2 when present; clobber
+        // outputs follow at slot 2 (value-less) or slot 3 (with value).
+        let (value_output, clobber_start_slot) = if output_ty.is_some() {
+            (Some(outputs[2]), 3usize)
+        } else {
+            (None, 2usize)
+        };
+
+        // Rebind each clobbered variable to its CallOther output.
+        for (var, out) in core::iter::zip(
+            clobber_vars.iter(),
+            outputs.iter().skip(clobber_start_slot),
+        ) {
+            self.write_variable(var, *out)?;
+        }
+
+        Ok((node, value_output))
     }
 }

@@ -509,12 +509,24 @@ impl FunctionBuilder {
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
+        // Conservative CallOther clobber default: every tracked variable
+        // except the stack pointer.  The order here matches the iteration
+        // order used by `build_call_other` so the i-th clobber output of a
+        // CallOther node corresponds to `call_other_clobbered[i]`.
+        let stack_ptr_vn = self.stack_ptr_vn;
+        let call_other_clobbered: Box<[rsleigh::Vn]> = self
+            .variables
+            .values()
+            .copied()
+            .filter(|v| Some(*v) != stack_ptr_vn)
+            .collect();
         let built = crate::function::BuiltFunctionGraph {
             graph: self.function.graph,
             entry: self.function.entry,
             variables: self.variables,
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
             ret_val_regs: self.ret_val_vars.into_boxed_slice(),
+            call_other_clobbered,
         };
         crate::validate::validate(&built.graph, built.entry)?;
         Ok(built)
