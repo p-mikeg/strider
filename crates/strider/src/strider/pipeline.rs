@@ -254,7 +254,30 @@ impl Strider {
         cfg: &cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
     ) -> Result<AnalyzeOutcome> {
+        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, &std::collections::HashMap::new())
+    }
+
+    /// Variant of [`Self::analyze_cfg_with_vns`] that accepts a
+    /// per-target-address calling-convention override map.  Direct
+    /// Calls whose target is in the map are built via
+    /// [`ir::FunctionBuilder::build_call_with_cc`] with the override.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::analyze_cfg_with_vns`].
+    pub fn analyze_cfg_with_vns_and_overrides<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+        all_vns: Vec<rsleigh::Vn>,
+        per_address_built_ccs: &std::collections::HashMap<
+            u64,
+            target::BuiltCallingConvention,
+        >,
+    ) -> Result<AnalyzeOutcome> {
         let mut ir_strider = IrStrider::new(self, cfg, all_vns)?;
+        if !per_address_built_ccs.is_empty() {
+            ir_strider.set_per_address_ccs(per_address_built_ccs);
+        }
         ir_strider.builder.build_entry()?;
 
         // Map every CFG region id to its newly-allocated IR region id.

@@ -151,6 +151,7 @@ fn run_via_orchestrator(
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
         compact,
+        per_address_ccs: std::collections::HashMap::new(),
     };
     let graph = strider::run(config).map_err(into_strider_err)?;
     drop(strider_borrow);

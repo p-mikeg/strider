@@ -54,6 +54,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         fn_max_size: None,
         allow_code_before_start_addr: true,
         compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     };
     strider::run(config)
 }

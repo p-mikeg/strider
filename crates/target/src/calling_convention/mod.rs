@@ -170,6 +170,38 @@ impl CallingConvention {
         }
     }
 
+    /// "All-preserving" x86_64 calling convention: every userland
+    /// caller-clobbered register is listed as callee-saved.  Empty
+    /// arg-passing list, empty ret-val list.  Used for sites like
+    /// Linux-kernel `__fentry__` / `mcount` callbacks that preserve
+    /// all caller state.
+    ///
+    /// Pair with the per-address override map on
+    /// [`crate::CallingConvention`] consumers (e.g.
+    /// `strider::RunConfig::per_address_ccs`) so the override applies
+    /// only to specific Call sites; the function-default CC stays
+    /// SystemV.
+    #[must_use]
+    pub fn x86_64_all_preserving() -> CallingConvention {
+        CallingConvention {
+            stack_ptr_reg_name: "RSP",
+            arg_passing_regs: &[],
+            callee_saved_regs: &[
+                "RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP",
+                "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
+                "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5",
+                "XMM6", "XMM7", "XMM8", "XMM9", "XMM10", "XMM11",
+                "XMM12", "XMM13", "XMM14", "XMM15",
+            ],
+            ret_val_regs: &[],
+            ret_val_regs_float: &[],
+            stack_arg_offsets: &[],
+            ret_stack_pop: 0,
+            link_register_reg_name: None,
+            syscall_number_reg_name: None,
+        }
+    }
+
     /// Returns the AArch64 AAPCS64 calling convention.
     ///
     /// Argument registers: x0–x7

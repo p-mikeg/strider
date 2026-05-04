@@ -39,6 +39,7 @@ fn run_with(compact: bool) -> ir::BuiltFunctionGraph {
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact,
+        per_address_ccs: std::collections::HashMap::new(),
     };
     strider::run(config).unwrap()
 }

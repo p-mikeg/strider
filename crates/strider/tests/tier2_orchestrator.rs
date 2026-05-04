@@ -34,6 +34,7 @@ fn make_config<'a>(
         fn_max_size: None,
         allow_code_before_start_addr: false,
         compact: true,
+        per_address_ccs: std::collections::HashMap::new(),
     }
 }
 

@@ -90,6 +90,19 @@ where
     /// compaction these stay in the arena).  Pre-compaction NodeIds
     /// become invalid across the call.
     pub compact: bool,
+    /// Per-target-address calling-convention overrides.  When a `Call`
+    /// is emitted (either at lift time for a direct call to an
+    /// `IntConst(K)` target, or by the indirect-branch resolver as an
+    /// in-place tail-call edit to address `K`), if `K` is in this map
+    /// the matching CC fully replaces the function-default for that
+    /// one Call.  Empty by default.
+    ///
+    /// Driver: Linux-kernel `__fentry__` / `mcount` hooks that preserve
+    /// every register and observe no arguments — express via
+    /// [`target::CallingConvention::x86_64_all_preserving`] (and the
+    /// per-arch siblings).  The user supplies raw addresses; symbol
+    /// resolution is the caller's responsibility.
+    pub per_address_ccs: HashMap<u64, target::CallingConvention>,
 }
 
 /// Internal view of [`RunConfig`] without the Sleigh handle — see
@@ -102,6 +115,11 @@ struct RunOpts<'a> {
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
     compact: bool,
+    /// Pre-resolved per-target-address CC overrides.  See the
+    /// [`RunConfig::per_address_ccs`] doc.  Resolved once at
+    /// `LoopState::new` so any unresolved register name surfaces
+    /// before iteration starts.
+    per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention>,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -259,6 +277,29 @@ where
     fn new(config: RunConfig<'a, R>) -> Result<Self> {
         let lr_vn = config.strider.calling_convention().link_register_vn;
         let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
+        // Pre-resolve per-address CC overrides against the same Sleigh
+        // register table the function-default CC was built against.
+        let per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention> =
+            if config.per_address_ccs.is_empty() {
+                HashMap::new()
+            } else {
+                let sleigh_regs = config
+                    .sleigh
+                    .regs()
+                    .map_err(|e| anyhow!("orchestrator: Sleigh::regs() failed: {e:?}"))?;
+                config
+                    .per_address_ccs
+                    .iter()
+                    .map(|(addr, cc)| {
+                        cc.clone()
+                            .build(&sleigh_regs)
+                            .map(|built| (*addr, built))
+                            .map_err(|e| {
+                                anyhow!("per-address CC at {addr:#x} unresolved: {e:?}")
+                            })
+                    })
+                    .collect::<Result<_>>()?
+            };
         Ok(Self {
             sleigh: Some(config.sleigh),
             known_targets: HashMap::new(),
@@ -281,6 +322,7 @@ where
                 fn_max_size: config.fn_max_size,
                 allow_code_before_start_addr: config.allow_code_before_start_addr,
                 compact: config.compact,
+                per_address_built_ccs,
             },
         })
     }
@@ -702,7 +744,11 @@ where
     let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
     all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
 
-    let outcome = opts.strider.analyze_cfg_with_vns(&cfg, all_vns)?;
+    let outcome = opts.strider.analyze_cfg_with_vns_and_overrides(
+        &cfg,
+        all_vns,
+        &opts.per_address_built_ccs,
+    )?;
     let region_index = RegionIndex::from_handles(&outcome.region_handles);
     let mut graph = outcome.graph;
     let unresolved = outcome.unresolved_branches;
@@ -788,6 +834,7 @@ mod tests {
             fn_max_size,
             allow_code_before_start_addr,
             compact: true,
+            per_address_built_ccs: HashMap::new(),
         }
     }
 
