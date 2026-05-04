@@ -83,6 +83,23 @@ impl Graph {
         self.call_other_names[node_id] = Some(name);
     }
 
+    /// Returns the per-Call clobber-list override for `node_id`, or
+    /// `None` if the Call uses the function-default
+    /// [`crate::function::BuiltFunctionGraph::call_clobbered`].
+    #[inline]
+    #[must_use]
+    pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {
+        self.call_clobbered_overrides[node_id].as_deref()
+    }
+
+    /// Records `clobbered` as the per-Call clobber-list override for
+    /// `node_id`.  Replaces any prior value.  Pass an empty `Vec` to
+    /// declare "this Call clobbers nothing" (e.g. `__fentry__`).
+    #[inline]
+    pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
+        self.call_clobbered_overrides[node_id] = Some(clobbered);
+    }
+
     /// Returns the asm-instruction-address fingerprint of `node_id` as a
     /// sorted-deduplicated slice.  Returns an empty slice when no
     /// contributors have been recorded.
