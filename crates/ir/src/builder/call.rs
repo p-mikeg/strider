@@ -7,7 +7,33 @@ use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType
 use crate::ops::IntBinaryOp;
 
 impl FunctionBuilder {
+    /// Terminates the current region with a `Call` node, using the
+    /// function-default calling convention.  Equivalent to
+    /// [`Self::build_call_with_cc`] with `override_cc = None`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::build_call_with_cc`].
+    pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
+        self.build_call_with_cc(call_address, None).map(|_| ())
+    }
+
     /// Terminates the current region with a `Call` node.
+    ///
+    /// When `override_cc` is `None`, the Call is built with the
+    /// function-default arg-passing / clobber / ret-stack-pop set
+    /// from `FunctionBuilder::new`.  When `override_cc` is `Some(cc)`,
+    /// `cc` fully replaces the function-default for this single Call:
+    /// `cc.arg_passing_regs` (filtered through the function's tracked-
+    /// variable set) become the args; `cc.callee_saved_regs` define a
+    /// fresh `is_clobbered = !callee_saved.contains(v) && Some(*v) !=
+    /// stack_ptr` filter that produces this Call's clobber list;
+    /// `cc.ret_stack_pop` drives the post-call SP-add.  The per-Call
+    /// clobber list is recorded on
+    /// [`crate::Graph::call_clobbered_overrides`] so pattern queries
+    /// can recover the right varnode for each clobber slot.
+    ///
+    /// Returns the freshly-created Call's [`NodeId`].
     ///
     /// # Errors
     ///
@@ -18,24 +44,59 @@ impl FunctionBuilder {
     /// clobbered varnode is not tracked, and `UnsupportedOutputSize`
     /// when the stack-pointer varnode's byte size has no matching
     /// [`NodeOutputType`] (only applicable on stack-push ISAs).
-    pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
+    pub fn build_call_with_cc(
+        &mut self,
+        call_address: NodeOutputId,
+        override_cc: Option<&target::BuiltCallingConvention>,
+    ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
-        let arg_passing: SmallVec<[NodeOutputId; 4]> = self
-            .arg_passing_vars
+        // Pick the per-call arg-passing list, clobber list, and
+        // ret_stack_pop based on whether an override was supplied.
+        let (arg_vars, clobber_vars, ret_stack_pop): (
+            SmallVec<[rsleigh::Vn; 4]>,
+            SmallVec<[rsleigh::Vn; 4]>,
+            i64,
+        ) = match override_cc {
+            None => (
+                self.arg_passing_vars.iter().copied().collect(),
+                self.call_clobbered_variables.iter().copied().collect(),
+                self.ret_stack_pop,
+            ),
+            Some(cc) => {
+                // Filter override args through the function's tracked
+                // variables.  Override args that the function never
+                // reads are silently dropped — they would otherwise
+                // produce a `VariableNotFound` error from `read_variable`.
+                let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
+                    .arg_passing_regs
+                    .iter()
+                    .copied()
+                    .filter(|v| self.variable_to_id.contains_key(v))
+                    .collect();
+                // Per-call clobber list: every tracked variable that
+                // is NOT in `callee_saved_regs` and NOT the SP.
+                let callee_saved = &cc.callee_saved_regs;
+                let stack_ptr_vn = self.stack_ptr_vn;
+                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
+                    .variables
+                    .values()
+                    .copied()
+                    .filter(|v| !callee_saved.contains(v) && Some(*v) != stack_ptr_vn)
+                    .collect();
+                (arg_vars, clobber_vars, cc.ret_stack_pop)
+            }
+        };
+
+        let arg_passing: SmallVec<[NodeOutputId; 4]> = arg_vars
             .iter()
             .map(|var| self.read_variable(var))
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
 
-        let clobbered: SmallVec<[_; 4]> = self.call_clobbered_variables.iter().copied().collect();
-
-        // Single pass over clobbered variables: read, validate kind, collect
-        // kinds. Preserves the offending NodeOutputId in the error (was
-        // previously emitted as NodeOutputId::default() — unactionable).
         let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
-        for var in &self.call_clobbered_variables {
+        for var in &clobber_vars {
             let out = self.read_variable(var)?;
             let k = self.graph().output_kind(out);
             if !k.is_value() {
@@ -51,10 +112,9 @@ impl FunctionBuilder {
             ));
         }
 
-        // Snapshot the pre-call SP before creating the `Call` node, so the
-        // post-call adjust consumes the caller's SP as of the call site.
+        // Snapshot pre-call SP for the post-call adjust.
         let sp_pre_call = match self.stack_ptr_vn {
-            Some(sp) if self.ret_stack_pop != 0 => {
+            Some(sp) if ret_stack_pop != 0 => {
                 self.read_variable_optional(&sp)?.map(|out| (sp, out))
             }
             _ => None,
@@ -69,8 +129,14 @@ impl FunctionBuilder {
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
         self.advance_cur_region_memory(call_outputs[1])?;
-        for (variable, new_val) in core::iter::zip(clobbered, call_outputs.iter().skip(2)) {
-            self.write_variable(&variable, *new_val)?;
+        for (variable, new_val) in core::iter::zip(&clobber_vars, call_outputs.iter().skip(2)) {
+            self.write_variable(variable, *new_val)?;
+        }
+
+        // Record the per-Call override clobber list when an override was used.
+        if override_cc.is_some() {
+            let list: Vec<rsleigh::Vn> = clobber_vars.into_iter().collect();
+            self.body_mut().graph.set_call_clobbered_override(call, list);
         }
 
         // Model the caller-visible effect of the callee's `ret` on SP: on
@@ -79,12 +145,12 @@ impl FunctionBuilder {
         // link-register ISAs `ret_stack_pop == 0` and we skip this entirely.
         if let Some((sp, pre)) = sp_pre_call {
             let sp_ty: NodeOutputType = sp.size.try_into()?;
-            let const_id = self.build_int_const(self.ret_stack_pop as u64, sp_ty)?;
+            let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
             self.write_variable(&sp, adjusted)?;
         }
-        Ok(())
+        Ok(call)
     }
 
     /// Emits a `CallOther` (user-defined op) node and advances the control
