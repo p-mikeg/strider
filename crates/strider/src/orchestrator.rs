@@ -515,12 +515,20 @@ where
     ) -> Result<()> {
         let strider = self.opts.strider;
         let region_index = &self.region_index;
+        let per_address_built_ccs = &self.opts.per_address_built_ccs;
         let graph = self
             .graph
             .as_mut()
             .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))?;
         for (placeholder, resolved) in in_place_edits {
-            apply_in_place_edit(graph, strider, region_index, *placeholder, resolved)?;
+            apply_in_place_edit(
+                graph,
+                strider,
+                region_index,
+                *placeholder,
+                resolved,
+                per_address_built_ccs,
+            )?;
         }
         Ok(())
     }
@@ -573,16 +581,30 @@ fn apply_in_place_edit(
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
+    per_address_built_ccs: &HashMap<u64, target::BuiltCallingConvention>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
-            let ctx = build_anchor_calling_context(graph, placeholder, strider, region_index);
+            let ctx = build_anchor_calling_context(
+                graph,
+                placeholder,
+                strider,
+                region_index,
+                None,
+            );
             apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
-            let ctx = build_anchor_calling_context(graph, placeholder, strider, region_index);
-            let _new_return = apply_tail_call(
+            let override_cc = per_address_built_ccs.get(target);
+            let ctx = build_anchor_calling_context(
+                graph,
+                placeholder,
+                strider,
+                region_index,
+                override_cc,
+            );
+            let new_return = apply_tail_call(
                 graph,
                 placeholder,
                 *target,
@@ -590,12 +612,46 @@ fn apply_in_place_edit(
                 &ctx.clobbered_kinds,
                 &ctx.ret_val_outputs,
             )?;
+            // When an override was used, record the per-Call clobber
+            // varnodes on the spliced Call so pattern queries can
+            // recover the right varnode for each clobber slot.  The
+            // spliced node is the freshly-created Call adjacent to
+            // `new_return`'s ctrl predecessor.
+            if let Some(cc) = override_cc {
+                if let Some(call_id) = locate_spliced_call(graph, new_return) {
+                    let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+                    let clobber_vars: Vec<rsleigh::Vn> = graph
+                        .variables
+                        .values()
+                        .copied()
+                        .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
+                        .collect();
+                    graph.graph.set_call_clobbered_override(call_id, clobber_vars);
+                }
+            }
             Ok(())
         }
         ResolvedTargets::Multiple(_) => Err(anyhow!(
             "apply_in_place_edit called with ResolvedTargets::Multiple — caller must route via CFG rebuild"
         )),
     }
+}
+
+/// Walks back from a freshly-spliced Return node to find the Call
+/// node that `apply_tail_call` inserted as the Return's control
+/// predecessor.  Returns `None` if the shape doesn't match the
+/// expected `[..ctrl_state..] -> Call -> Return` chain — defensive,
+/// since per-address-CC override recording is best-effort and a
+/// missed shape is correctness-neutral (the Call still works, just
+/// without an override side-table entry).
+fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
+    let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
+    let ctrl_in = *inputs.first()?;
+    let (producer, _slot) = graph.graph.output_definition(ctrl_in);
+    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::Call) {
+        return Some(producer);
+    }
+    None
 }
 
 /// Build the calling-convention context for the placeholder's
@@ -613,8 +669,13 @@ fn build_anchor_calling_context(
     placeholder: NodeId,
     strider: &Strider,
     region_index: &RegionIndex,
+    override_cc: Option<&target::BuiltCallingConvention>,
 ) -> opt::AnchorCallingContext {
-    let cc = strider.calling_convention();
+    // When an override is supplied, route arg-passing / ret-val /
+    // clobber computation through the override CC instead of the
+    // function-default.
+    let cc: &target::BuiltCallingConvention = override_cc
+        .unwrap_or_else(|| strider.calling_convention());
     let region = region_index.region_for_placeholder(graph, placeholder);
     let mut ctx = opt::AnchorCallingContext::default();
 
@@ -634,18 +695,37 @@ fn build_anchor_calling_context(
             ctx.arg_passing_outputs.push(out);
         }
     }
-    // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
-    // entry — the canonical shape `FunctionBuilder::build_call`
-    // produces.  Pattern queries index directly into `call_clobbered`
-    // to recover varnodes; iterating `cc.callee_saved_regs` here would
-    // emit the OPPOSITE set (preserved-across-call regs) with the
-    // wrong count.
-    for vn in graph.call_clobbered.iter() {
-        let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-            continue;
-        };
-        ctx.clobbered_kinds
-            .push(ir::node::NodeOutputKind::OutputType(ty));
+    // Clobber list: when an override is supplied, recompute from the
+    // override's callee_saved set against the function's tracked
+    // variables.  Without an override, fall back to the function-
+    // default `BuiltFunctionGraph::call_clobbered` (existing
+    // behaviour).
+    if override_cc.is_some() {
+        let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+        for vn in graph.variables.values() {
+            if cc.callee_saved_regs.contains(vn) || Some(*vn) == stack_ptr_vn {
+                continue;
+            }
+            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
+                continue;
+            };
+            ctx.clobbered_kinds
+                .push(ir::node::NodeOutputKind::OutputType(ty));
+        }
+    } else {
+        // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
+        // entry — the canonical shape `FunctionBuilder::build_call`
+        // produces.  Pattern queries index directly into `call_clobbered`
+        // to recover varnodes; iterating `cc.callee_saved_regs` here would
+        // emit the OPPOSITE set (preserved-across-call regs) with the
+        // wrong count.
+        for vn in graph.call_clobbered.iter() {
+            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
+                continue;
+            };
+            ctx.clobbered_kinds
+                .push(ir::node::NodeOutputKind::OutputType(ty));
+        }
     }
     for vn in &cc.ret_val_regs {
         if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
