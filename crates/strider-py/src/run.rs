@@ -50,6 +50,7 @@ pub struct PyRunResult {
     pipeline = None,
     allow_code_before_start_addr = false,
     function_max_size = None,
+    compact = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -62,6 +63,7 @@ pub fn run(
     pipeline: Option<&crate::opt::PyOptimizerPipeline>,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
+    compact: bool,
 ) -> PyResult<PyRunResult> {
     match pipeline {
         Some(p) => run_with_custom_pipeline(
@@ -74,6 +76,7 @@ pub fn run(
             p,
             allow_code_before_start_addr,
             function_max_size,
+            compact,
         ),
         None => run_via_orchestrator(
             py,
@@ -84,6 +87,7 @@ pub fn run(
             rom,
             allow_code_before_start_addr,
             function_max_size,
+            compact,
         ),
     }
 }
@@ -100,6 +104,7 @@ fn run_via_orchestrator(
     rom: Option<RomInput>,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
+    compact: bool,
 ) -> PyResult<PyRunResult> {
     // Snapshot the reader so we can hand a fresh AnyMemReader to both
     // the orchestrator (consumed) and the snapshot CFG (consumed).
@@ -145,7 +150,7 @@ fn run_via_orchestrator(
         rom: rom_arc,
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
-        compact: true,
+        compact,
     };
     let graph = strider::run(config).map_err(into_strider_err)?;
     drop(strider_borrow);
@@ -173,6 +178,7 @@ fn run_with_custom_pipeline(
     pipeline: &crate::opt::PyOptimizerPipeline,
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
+    compact: bool,
 ) -> PyResult<PyRunResult> {
     let _ = rom; // custom pipeline owns its own pass list
     let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;
@@ -208,6 +214,9 @@ fn run_with_custom_pipeline(
         actual_pipeline
             .run_on_built(&mut graph)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
+        if compact {
+            graph.compact();
+        }
     }
 
     Ok(PyRunResult {
