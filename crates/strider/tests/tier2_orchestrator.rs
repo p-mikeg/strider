@@ -33,6 +33,7 @@ fn make_config<'a>(
         rom: None,
         fn_max_size: None,
         allow_code_before_start_addr: false,
+        compact: true,
     }
 }
 

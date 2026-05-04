@@ -83,6 +83,13 @@ where
     /// as a tail call — i.e. the orchestrator follows it as an
     /// intra-fn branch.
     pub allow_code_before_start_addr: bool,
+    /// Compact the IR arena at finalize, dropping nodes that aren't
+    /// reachable from `entry` via [`ir::walk::walk_graph`].  Default
+    /// `true` is recommended (passes leave detached "zombie" nodes
+    /// the destructive pipeline severs from the live graph; without
+    /// compaction these stay in the arena).  Pre-compaction NodeIds
+    /// become invalid across the call.
+    pub compact: bool,
 }
 
 /// Internal view of [`RunConfig`] without the Sleigh handle — see
@@ -94,6 +101,7 @@ struct RunOpts<'a> {
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
+    compact: bool,
 }
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
@@ -272,6 +280,7 @@ where
                 rom: config.rom,
                 fn_max_size: config.fn_max_size,
                 allow_code_before_start_addr: config.allow_code_before_start_addr,
+                compact: config.compact,
             },
         })
     }
@@ -395,8 +404,12 @@ where
     /// final graph.
     fn finalize(mut self) -> Result<ir::BuiltFunctionGraph> {
         let pipeline = self.opts.strider.build_destructive_optimizer_pipeline();
+        let compact = self.opts.compact;
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
+        if compact {
+            graph.compact();
+        }
         self.graph
             .take()
             .ok_or_else(|| anyhow!("orchestrator finalize: graph already consumed"))
@@ -774,6 +787,7 @@ mod tests {
             rom: None,
             fn_max_size,
             allow_code_before_start_addr,
+            compact: true,
         }
     }
 

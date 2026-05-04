@@ -53,6 +53,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
         rom: Some(rom),
         fn_max_size: None,
         allow_code_before_start_addr: true,
+        compact: true,
     };
     strider::run(config)
 }

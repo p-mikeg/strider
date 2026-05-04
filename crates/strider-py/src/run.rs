@@ -145,6 +145,7 @@ fn run_via_orchestrator(
         rom: rom_arc,
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
+        compact: true,
     };
     let graph = strider::run(config).map_err(into_strider_err)?;
     drop(strider_borrow);
