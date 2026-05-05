@@ -215,7 +215,7 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory];
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
-            inputs.into_iter(),
+            inputs,
             output_kinds,
         );
         // Intentionally DO NOT call advance_cur_region_ctrl /

@@ -41,6 +41,10 @@ pub enum UserOpClass {
 /// currently support.  If a future name collides between arches with
 /// different semantics, promote the API to
 /// `(arch, name) -> UserOpClass`.
+//
+// `match_same_arms`: each name is a separate diffable entry — combining
+// arms via `|` would defeat the table's per-line diff property.
+#[allow(clippy::match_same_arms)]
 #[must_use]
 pub fn classify(name: &str) -> Option<UserOpClass> {
     // ASCII-sorted within each group for diffability.
