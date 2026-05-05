@@ -81,6 +81,12 @@ impl std::fmt::Display for AnalyzeOutcome {
 pub struct Strider {
     pub(super) calling_convention: crate::BuiltCallingConvention,
     pub(super) arch: crate::SleighArch,
+    /// Cached `SleighRegs` table from Strider construction.  Used by the
+    /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
+    /// to resolve `UserOpAbi::implicit_reads`/`implicit_writes` register
+    /// names to `rsleigh::Vn`s without paying the per-call cost of
+    /// `Sleigh::regs()` (an "expensive operation" per its docstring).
+    pub(super) sleigh_regs: rsleigh::SleighRegs,
 }
 
 impl Strider {
@@ -104,6 +110,7 @@ impl Strider {
         Ok(Self {
             arch,
             calling_convention: built_calling_convention,
+            sleigh_regs,
         })
     }
 

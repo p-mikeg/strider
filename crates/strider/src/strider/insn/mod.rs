@@ -120,27 +120,78 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let name = self.cfg.sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
-        let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
-            insn.inputs[1..]
-                .iter()
-                .map(|vn| self.read_vn(vn))
-                .collect::<Result<_>>()?
-        } else {
-            Vec::new()
-        };
-        let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
-            Some(out_vn) => Some(out_vn.size.try_into()?),
-            None => None,
-        };
-        match self
-            .builder
-            .build_call_other(name, user_op_id, &args, output_ty)?
-        {
-            ir::CallOtherOutcome::NoOp | ir::CallOtherOutcome::NoReturn => Ok(()),
-            ir::CallOtherOutcome::Built { value, .. } => {
+
+        let class = target::user_ops::classify(name).ok_or_else(|| {
+            ir::error::UnknownUserOpError {
+                name: name.to_string(),
+            }
+        })?;
+
+        match class {
+            target::user_ops::UserOpClass::NoOp => Ok(()),
+
+            target::user_ops::UserOpClass::NoReturn => {
+                let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
+                Ok(())
+            }
+
+            target::user_ops::UserOpClass::Call(abi) => {
+                // 1. Resolve pcode-explicit inputs (args).
+                let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
+                    insn.inputs[1..]
+                        .iter()
+                        .map(|vn| self.read_vn(vn))
+                        .collect::<Result<_>>()?
+                } else {
+                    Vec::new()
+                };
+                let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
+                    Some(out_vn) => Some(out_vn.size.try_into()?),
+                    None => None,
+                };
+
+                // 2. Resolve ABI register names -> Vns via Sleigh's
+                //    cached register table on Strider.
+                let regs = &self.strider.sleigh_regs;
+                let resolve = |reg_names: &[&str]| -> Result<Vec<rsleigh::Vn>> {
+                    reg_names
+                        .iter()
+                        .map(|n| {
+                            regs.name_to_vn(n).ok_or_else(|| {
+                                anyhow!(
+                                    "user-op {name:?} ABI references unknown register {n:?}"
+                                )
+                            })
+                        })
+                        .collect()
+                };
+                let implicit_reads_vns = resolve(abi.implicit_reads)?;
+                let implicit_writes_vns = resolve(abi.implicit_writes)?;
+
+                // 3. Build the precise CallOther node.
+                let (node, value, clobber_outs) = self.builder.build_call_other_modeled(
+                    user_op_id,
+                    name,
+                    &args,
+                    output_ty,
+                    &implicit_reads_vns,
+                    &implicit_writes_vns,
+                )?;
+
+                // 4. Memory edge: strider decides whether to advance.
+                if abi.memory_edge {
+                    let mem_out = self.builder.body().graph.node_outputs(node)[1];
+                    self.builder.advance_cur_region_memory(mem_out)?;
+                }
+
+                // 5. Rebind tracked variables.
                 if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
                     self.write_vn(out_vn, val)?;
                 }
+                for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
+                    self.builder.write_variable(vn, slot)?;
+                }
+
                 Ok(())
             }
         }

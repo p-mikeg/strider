@@ -90,10 +90,15 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
             memory_edge: true,
         })),
 
-        // Linux ARM SWI ABI.
+        // "swi" — name collides between ARM (svc/swi syscall: r7 in,
+        // r0..r6 args, r0 out) and x86 INT instruction (any imm8;
+        // INT3 trap; INT 0x80 is Linux 32-bit syscall).  Spec keeps
+        // the table arch-blind, so we use an empty ABI + memory_edge:
+        // sound for both arches but loses ARM syscall arg precision.
+        // A future per-arch keying spec can restore the ARM precision.
         "swi" => Some(UserOpClass::Call(UserOpAbi {
-            implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
-            implicit_writes: &["r0"],
+            implicit_reads: &[],
+            implicit_writes: &[],
             memory_edge: true,
         })),
 

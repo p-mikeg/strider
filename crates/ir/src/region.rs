@@ -102,7 +102,12 @@ impl FunctionBuilder {
     }
 
     /// Advances the memory token of the active region to `memory`.
-    pub(crate) fn advance_cur_region_memory(&mut self, memory: NodeOutputId) -> Result<()> {
+    ///
+    /// `pub` (rather than `pub(crate)`) so the strider layer can advance
+    /// memory after a `build_call_other_modeled` call whose ABI's
+    /// `memory_edge` is true — see `crates/strider/src/strider/insn/mod.rs`
+    /// `handle_call_other`.
+    pub fn advance_cur_region_memory(&mut self, memory: NodeOutputId) -> Result<()> {
         self.require_memory_kind(memory)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
