@@ -321,16 +321,23 @@ impl Tb {
 
     /// Emits a `CallOther(user_op_id)` node with `args` and (optional) ret
     /// type.  Returns the ret-value output when `ret_ty` is `Some`.
+    /// `name` must be a known Opaque user-op in
+    /// `target::user_ops::classify`; tests typically pass `"cpuid"`.
     pub fn call_other(
         &mut self,
+        name: &str,
         user_op_id: u64,
         args: &[NodeOutputId],
         ret_ty: Option<NodeOutputType>,
     ) -> Option<NodeOutputId> {
-        self.fb
-            .build_call_other(user_op_id, args, ret_ty)
+        match self
+            .fb
+            .build_call_other(name, user_op_id, args, ret_ty)
             .expect("call_other")
-            .1
+        {
+            ir::CallOtherOutcome::Built { value, .. } => value,
+            other => panic!("expected Built outcome, got {other:?}"),
+        }
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────

@@ -283,7 +283,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
         b.build_if(cond, true_r, false_r)?;
 
         b.set_region(true_r);
-        let _ = b.build_call_other(0, &[], None)?;
+        let _ = b.build_call_other("cpuid", 0, &[], None)?;
         b.build_branch(join)?;
 
         b.set_region(false_r);
