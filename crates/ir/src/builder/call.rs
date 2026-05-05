@@ -178,26 +178,21 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// Emits a `CallOther` (user-defined op) node and advances the control
-    /// and memory chain of the active region.
+    /// Legacy entry point for emitting a `CallOther` (user-defined op)
+    /// node bypassing classification.  Internal during the migration:
+    /// the new classified [`Self::build_call_other`] (taking a `name`
+    /// argument) is the public entry point and dispatches via
+    /// [`target::user_ops::classify`].
     ///
-    /// `args` are additional arguments to the intrinsic (may be empty).
-    /// `output_ty` is `Some` when the source instruction has an output varnode
-    /// and `None` when the intrinsic produces no value (e.g. `syscall` without
-    /// an explicit return).  Memory is always treated as clobbered.
-    ///
-    /// Returns `(node_id, value_output)` where `value_output` is the
-    /// optional value-typed output of the call (matching `output_ty`), and
-    /// `node_id` is the freshly created [`NodeKind::CallOther`] — useful for
-    /// callers that need to record the user-op name in
-    /// [`crate::Graph::set_call_other_name`].
+    /// Body identical to the pre-classification implementation.  Will
+    /// be deleted once every caller migrates to the classified API.
     ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` / `RegionTerminated`
     /// when there is no active region, or `ExpectedValue` when
     /// any element of `args` is not a value edge.
-    pub fn build_call_other(
+    pub(crate) fn build_call_other_legacy(
         &mut self,
         user_op_id: u64,
         args: &[NodeOutputId],
@@ -212,6 +207,89 @@ impl FunctionBuilder {
             .filter(|v| Some(*v) != stack_ptr_vn)
             .collect();
         self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
+    }
+
+    /// Internal: emit a CallOther node with the conservative clobber
+    /// set (every tracked variable except SP).  Used by the new
+    /// classified `build_call_other` for the `Opaque` arm.
+    pub(crate) fn build_call_other_opaque(
+        &mut self,
+        user_op_id: u64,
+        args: &[NodeOutputId],
+        output_ty: Option<NodeOutputType>,
+    ) -> Result<(NodeId, Option<NodeOutputId>)> {
+        let stack_ptr_vn = self.stack_ptr_vn;
+        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = self
+            .variables
+            .values()
+            .copied()
+            .filter(|v| Some(*v) != stack_ptr_vn)
+            .collect();
+        self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
+    }
+
+    /// Internal: emit a CallOther node intended as a region
+    /// terminator (Linux `BUG_ON`-class trap).  Has only ctrl +
+    /// memory inputs and ctrl + memory outputs — no clobbers, no
+    /// value, no args.  The outputs are expected to dangle: the
+    /// cfg has already terminated the region with
+    /// `RegionTerminator::NoReturn`, so no successor will read them.
+    pub(crate) fn build_call_other_terminal(
+        &mut self,
+        user_op_id: u64,
+    ) -> Result<NodeId> {
+        let ctrl = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
+        let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
+        output_kinds.push(NodeOutputKind::Control);
+        output_kinds.push(NodeOutputKind::Memory);
+        let inputs = [ctrl, memory];
+        let node = self.create_node(
+            NodeKind::CallOther { user_op_id },
+            inputs.into_iter(),
+            output_kinds,
+        );
+        // Intentionally DO NOT call advance_cur_region_ctrl /
+        // advance_cur_region_memory — outputs dangle.
+        Ok(node)
+    }
+
+    /// Classified CallOther construction.  Looks up `name` in
+    /// [`target::user_ops::classify`] and dispatches to the matching
+    /// builder shape.
+    ///
+    /// # Errors
+    /// Returns [`crate::error::UnknownUserOpError`] (via `anyhow`) if
+    /// `name` has no entry in the classification table.
+    pub fn build_call_other(
+        &mut self,
+        name: &str,
+        user_op_id: u64,
+        args: &[NodeOutputId],
+        output_ty: Option<NodeOutputType>,
+    ) -> Result<CallOtherOutcome> {
+        use target::user_ops::{UserOpClass, classify};
+        let class = classify(name).ok_or_else(|| crate::error::UnknownUserOpError {
+            name: name.to_string(),
+        })?;
+        match class {
+            UserOpClass::NoOp => Ok(CallOtherOutcome::NoOp),
+            UserOpClass::NoReturn => {
+                let node = self.build_call_other_terminal(user_op_id)?;
+                self.body_mut()
+                    .graph
+                    .set_call_other_name(node, name.to_string());
+                Ok(CallOtherOutcome::NoReturn)
+            }
+            UserOpClass::Opaque => {
+                let (node, value) =
+                    self.build_call_other_opaque(user_op_id, args, output_ty)?;
+                self.body_mut()
+                    .graph
+                    .set_call_other_name(node, name.to_string());
+                Ok(CallOtherOutcome::Built { node, value })
+            }
+        }
     }
 
     /// Variant of [`Self::build_call_other`] that takes an explicit
