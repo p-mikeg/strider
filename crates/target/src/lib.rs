@@ -16,6 +16,7 @@
 
 pub mod arch;
 pub mod calling_convention;
+pub mod user_ops;
 
 pub use arch::{Endianness, SleighArch};
 pub use calling_convention::{BuiltCallingConvention, CallingConvention};
