@@ -54,9 +54,13 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         "SoftwareBreakpoint" => Some(UserOpClass::NoReturn),
 
         // ── Opaque (test-required + initial real-world set) ──
+        "NEON_rev64" => Some(UserOpClass::Opaque),
+        "NEON_uaddlv" => Some(UserOpClass::Opaque),
         "cpuid" => Some(UserOpClass::Opaque),
-        "syscall" => Some(UserOpClass::Opaque),
         "rdtsc" => Some(UserOpClass::Opaque),
+        "swi" => Some(UserOpClass::Opaque),
+        "syscall" => Some(UserOpClass::Opaque),
+        "trap" => Some(UserOpClass::Opaque),
 
         _ => None,
     }

@@ -109,16 +109,17 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let id_vn = pcode_lift::first_input_or_err(insn)?;
         if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
+            bail!(
+                "opcode {:?} expects a CONST input at position 0",
+                insn.opcode
+            );
         }
         let user_op_id = id_vn.addr_off;
-        // Sleigh's native user-op id width is u32; an offset that
-        // doesn't fit signals malformed input.  `set_call_other_name`
-        // would silently no-op below; surface explicitly so the error
-        // is attributable to the lift, not to a downstream
-        // `CallOtherElide` miss.
         let user_op_id_u32 = u32::try_from(user_op_id)
             .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
+        let name = self.cfg.sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
+            anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
+        })?;
         let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
             insn.inputs[1..]
                 .iter()
@@ -131,33 +132,18 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             Some(out_vn) => Some(out_vn.size.try_into()?),
             None => None,
         };
-        // Look up the user-op name first: lifters that recognise a
-        // user-op as an IR-level no-op (e.g. ARM `setISAMode`) want to
-        // suppress the conservative-clobber default so downstream
-        // `CallOtherElide` can drop the node without leaving the
-        // tracked variables rebound to a now-detached node's clobber
-        // outputs.
-        let user_op_name = self.cfg.sleigh.user_op_name(user_op_id_u32);
-        let is_known_no_op = user_op_name.is_some_and(|name| {
-            opt::NO_OP_USER_OPS.contains(&name)
-        });
-        let (node_id, result) = if is_known_no_op {
-            self.builder
-                .build_call_other_with_clobbers(user_op_id, &args, output_ty, &[])?
-        } else {
-            self.builder
-                .build_call_other(user_op_id, &args, output_ty)?
-        };
-        if let Some(name) = user_op_name {
-            self.builder
-                .body_mut()
-                .graph
-                .set_call_other_name(node_id, name.to_string());
+        match self
+            .builder
+            .build_call_other(name, user_op_id, &args, output_ty)?
+        {
+            ir::CallOtherOutcome::NoOp | ir::CallOtherOutcome::NoReturn => Ok(()),
+            ir::CallOtherOutcome::Built { value, .. } => {
+                if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
+                    self.write_vn(out_vn, val)?;
+                }
+                Ok(())
+            }
         }
-        if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), result) {
-            self.write_vn(out_vn, val)?;
-        }
-        Ok(())
     }
 }
 
