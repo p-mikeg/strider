@@ -56,7 +56,6 @@ EXPECTED_ERRORS = {
 }
 
 EXPECTED_OPT = {
-    "CallOtherElide",
     "CallStackArgCollect",
     "ConstantFold",
     "DeadBranchElim",

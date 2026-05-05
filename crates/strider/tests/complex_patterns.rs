@@ -11,9 +11,9 @@
 //!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
 //!     between the If and the following Call to set up the ISA-mode
 //!     context bit.  The matcher's ConsumersSpec walk does not pass
-//!     through CallOther, but `opt::CallOtherElide` (wired into
-//!     `default_pipeline`) drops `setISAMode` and a few other
-//!     IR-invisible user-ops, so structural compositions like
+//!     through CallOther, but `target::user_ops::classify("setISAMode")`
+//!     returns `NoOp` so the IR builder skips emitting the CallOther
+//!     entirely, and structural compositions like
 //!     `if_node().true_branch(call().arg(0, function_arg(1)))` match
 //!     on Thumb just like every other arch.
 //!
@@ -244,9 +244,10 @@ fn if_bit_clear_call_assertions(g: &ir::BuiltFunctionGraph) {
     // On Thumb-2, gcc emits a `setISAMode` user-op as a `CallOther`
     // between the If and the Call to set up the ISA-mode context.  The
     // matcher's ConsumersSpec walk doesn't pass through CallOther, but
-    // `opt::CallOtherElide` now drops setISAMode in the optimizer
-    // pipeline, so the strict composition `If(true_branch=Call(...))`
-    // matches on Thumb just like every other arch.
+    // `target::user_ops::classify("setISAMode")` returns `NoOp` so the
+    // IR builder skips the node entirely, and the strict composition
+    // `If(true_branch=Call(...))` matches on Thumb just like every
+    // other arch.
     let m = matcher(g);
     assert!(!m.find_all(&if_node().into()).is_empty(),
             "no If matched in if_bit_clear_call");
@@ -264,8 +265,8 @@ fn if_bit_clear_call_assertions(g: &ir::BuiltFunctionGraph) {
     //   je do_call; call        (call on True side)
     // so we accept *either* branch shape — but the composition itself
     // (If immediately consuming a Call with that arg) must succeed on
-    // every arch, including arm_thumb (proves CallOtherElide drops the
-    // setISAMode CallOther that previously blocked the walk).
+    // every arch, including arm_thumb (proves the construction-time
+    // NoOp classification of setISAMode keeps the walk unblocked).
     let true_pat: Pat = if_node()
         .true_branch(call().arg(0, function_arg(1)))
         .into();
@@ -277,8 +278,8 @@ fn if_bit_clear_call_assertions(g: &ir::BuiltFunctionGraph) {
     assert!(
         !true_hits.is_empty() || !false_hits.is_empty(),
         "expected If(true_branch | false_branch = Call(arg(0)=function_arg(1))) \
-         (proves CallOtherElide drops the Thumb setISAMode CallOther between \
-         If and Call); got 0 matches on either branch",
+         (proves construction-time NoOp classification of setISAMode \
+         keeps If→Call walks unblocked on Thumb); got 0 matches on either branch",
     );
 }
 
@@ -370,8 +371,8 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     // the compiler chooses either polarity freely so we accept either
     // branch — but the composition itself (If immediately consuming
     // Call, no opaque CallOther in the way) must succeed on every
-    // arch including arm_thumb, which proves `opt::CallOtherElide`
-    // drops the `setISAMode` CallOther between If and Call.
+    // arch including arm_thumb — proven by the construction-time NoOp
+    // classification of setISAMode in target::user_ops.
     let off2 = Capture::new();
     let base2 = Capture::new();
     let off3 = Capture::new();
@@ -385,8 +386,8 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     assert!(
         !m.find_all(&true_pat).is_empty() || !m.find_all(&false_pat).is_empty(),
         "expected If(true_branch | false_branch = Call(arg(0) = field-load)) \
-         in dispatch_on_flag (proves CallOtherElide drops the Thumb \
-         setISAMode CallOther between If and Call)",
+         in dispatch_on_flag (proves construction-time NoOp \
+         classification of setISAMode keeps If→Call walks unblocked)",
     );
 }
 

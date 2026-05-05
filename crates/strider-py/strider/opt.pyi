@@ -17,9 +17,6 @@ class RedundantPhis:
 class DeadBranchElim:
     def __init__(self) -> None: ...
 
-class CallOtherElide:
-    def __init__(self) -> None: ...
-
 # CC/arch-aware passes.
 class StackStoreDetect:
     def __init__(self, sleigh: Any, cc: Any) -> None: ...

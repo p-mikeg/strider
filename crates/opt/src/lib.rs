@@ -35,7 +35,6 @@ mod pipeline;
 pub mod sp_expr;
 mod worklist;
 pub use error::Result;
-mod call_other_elide;
 mod constant_fold;
 mod dead_branch;
 mod flag_cmp_canonicalize;
@@ -50,7 +49,6 @@ mod stack_store;
 #[cfg(test)]
 mod test_support;
 
-pub use call_other_elide::{CallOtherElide, NO_OP_USER_OPS};
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
@@ -140,16 +138,16 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
 ///    strips dead control edges.  A later iteration could re-make the
 ///    condition phi-dependent, but the branch is already gone.
-/// 3. [`CallOtherElide`] — drops opaque `CallOther`s whose user-op is
-///    a known IR-level no-op (e.g. ARM `setISAMode`).  Treated as
-///    destructive for symmetry with the spec table — every node-
-///    removal pass is deferred to fixed point.
+///
+/// CallOther no-op handling is now done at construction time in
+/// `target::user_ops::classify` — the pre-existing `CallOtherElide`
+/// pass is gone.  See
+/// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
 #[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
-    p.add(CallOtherElide);
     p
 }
 
@@ -171,8 +169,10 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
 /// 4. [`DeadBranchElimination`] — `If(const)` branch pruning
-/// 5. [`CallOtherElide`] — drops opaque `CallOther`s whose user-op name is a
-///    known no-op in the IR's value/memory model (e.g. ARM `setISAMode`).
+///
+/// CallOther no-op handling is now done at construction time in
+/// `target::user_ops::classify` — the pre-existing `CallOtherElide`
+/// pass is gone.
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -182,6 +182,5 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(IfCondInversion);
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
-    p.add(CallOtherElide);
     p
 }

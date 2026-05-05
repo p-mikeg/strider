@@ -56,20 +56,6 @@ fn stable_subset_does_not_include_dead_branch_elimination() {
 }
 
 #[test]
-fn stable_subset_does_not_include_call_other_elide() {
-    // CallOtherElide removes CallOther nodes whose user-op is a known
-    // no-op.  It rewires the memory chain past them.  Treated as
-    // destructive for symmetry with the spec's table — even though it
-    // doesn't touch phis directly, the safer default is to defer all
-    // node-removal passes to the fixed-point.
-    let names = pass_names(&stable_default_pipeline());
-    assert!(
-        !names.iter().any(|n| n.contains("CallOtherElide")),
-        "stable_default_pipeline contains CallOtherElide: {names:?}"
-    );
-}
-
-#[test]
 fn stable_subset_includes_constant_fold_and_known_bits() {
     // The two rewrite-only passes that the spec marks ✓ for
     // mid-iteration use AND that take no caller-supplied state
@@ -102,15 +88,6 @@ fn destructive_subset_includes_redundant_phis_and_dead_branch_elim() {
             "destructive subset missing {required}: {names:?}"
         );
     }
-}
-
-#[test]
-fn destructive_subset_includes_call_other_elide() {
-    let names = pass_names(&destructive_default_pipeline());
-    assert!(
-        names.iter().any(|n| n.contains("CallOtherElide")),
-        "destructive subset missing CallOtherElide: {names:?}"
-    );
 }
 
 #[test]

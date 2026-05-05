@@ -62,7 +62,6 @@ impl PipelineState {
         s.passes.push(Box::new(opt::KnownBits));
         s.passes.push(Box::new(opt::RedundantPhis));
         s.passes.push(Box::new(opt::DeadBranchElimination));
-        s.passes.push(Box::new(opt::CallOtherElide));
         s
     }
 
@@ -77,7 +76,6 @@ impl PipelineState {
         let mut s = Self::new();
         s.passes.push(Box::new(opt::RedundantPhis));
         s.passes.push(Box::new(opt::DeadBranchElimination));
-        s.passes.push(Box::new(opt::CallOtherElide));
         s
     }
 }
@@ -264,14 +262,6 @@ impl PyDeadBranchElim {
     fn new() -> Self { Self }
 }
 
-#[pyclass(name = "CallOtherElide", module = "strider.opt")]
-pub struct PyCallOtherElide;
-#[pymethods]
-impl PyCallOtherElide {
-    #[new]
-    fn new() -> Self { Self }
-}
-
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
 // Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
@@ -417,8 +407,6 @@ pub enum PyOptPass<'py> {
     RedundantPhis(Bound<'py, PyRedundantPhis>),
     #[allow(dead_code)]
     DeadBranchElim(Bound<'py, PyDeadBranchElim>),
-    #[allow(dead_code)]
-    CallOtherElide(Bound<'py, PyCallOtherElide>),
     StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
@@ -433,7 +421,6 @@ impl PyOptPass<'_> {
             PyOptPass::KnownBits(_) => Box::new(opt::KnownBits),
             PyOptPass::RedundantPhis(_) => Box::new(opt::RedundantPhis),
             PyOptPass::DeadBranchElim(_) => Box::new(opt::DeadBranchElimination),
-            PyOptPass::CallOtherElide(_) => Box::new(opt::CallOtherElide),
             PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
@@ -452,7 +439,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKnownBits>()?;
     m.add_class::<PyRedundantPhis>()?;
     m.add_class::<PyDeadBranchElim>()?;
-    m.add_class::<PyCallOtherElide>()?;
     m.add_class::<PyStackStoreDetect>()?;
     m.add_class::<PyStackLoadForward>()?;
     m.add_class::<PyFunctionArgDetect>()?;

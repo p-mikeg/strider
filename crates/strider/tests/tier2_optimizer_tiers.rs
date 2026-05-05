@@ -8,7 +8,7 @@
 //!   * the stable subset is idempotent (running it twice in a row
 //!     produces no further change),
 //!   * the destructive subset includes RedundantPhis +
-//!     DeadBranchElimination + CallOtherElide,
+//!     DeadBranchElimination,
 //!   * the stable subset does NOT include those passes,
 //!   * tier 2's classification produces the same induced edge set
 //!     before and after the destructive subset runs (the "robust to

@@ -184,7 +184,6 @@ impl PyGraph {
             // Append the destructive passes after the stable ones.
             pipe.add(opt::RedundantPhis);
             pipe.add(opt::DeadBranchElimination);
-            pipe.add(opt::CallOtherElide);
         }
         let mut graph = self
             .inner

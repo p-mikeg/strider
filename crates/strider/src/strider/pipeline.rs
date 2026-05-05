@@ -156,9 +156,9 @@ impl Strider {
     /// adds new phi inputs: `ConstantFold`, `KnownBits`,
     /// `StackStoreDetect`, `StackLoadForward`, and the
     /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`RedundantPhis` / `DeadBranchElimination` / `CallOtherElide`)
-    /// are deferred to the final iteration because they remove nodes
-    /// that the orchestrator's per-iteration index pins.
+    /// (`RedundantPhis` / `DeadBranchElimination`) are deferred to the
+    /// final iteration because they remove nodes that the
+    /// orchestrator's per-iteration index pins.
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::stable_default_pipeline();
@@ -180,8 +180,9 @@ impl Strider {
     /// fixed-point exit (or in the no-`BranchIndirect` fast path).
     ///
     /// Composed of node-removal passes safe to run only after the IR
-    /// shape is final: `RedundantPhis`, `DeadBranchElimination`,
-    /// `CallOtherElide`, plus the `CallStackArgCollect` post-pass.
+    /// shape is final: `RedundantPhis`, `DeadBranchElimination`, plus
+    /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
+    /// is now done at construction time in `target::user_ops::classify`.
     #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::destructive_default_pipeline();

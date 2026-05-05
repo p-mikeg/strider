@@ -30,8 +30,7 @@ def test_add_pure_pass():
     pipe.add(strider.opt.KnownBits())
     pipe.add(strider.opt.RedundantPhis())
     pipe.add(strider.opt.DeadBranchElim())
-    pipe.add(strider.opt.CallOtherElide())
-    assert pipe.pass_count() == 5
+    assert pipe.pass_count() == 4
 
 
 def test_cc_aware_passes_construct(x86_memory_elf):
