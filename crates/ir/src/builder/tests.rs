@@ -493,25 +493,22 @@ fn builder_with_region() -> Result<FunctionBuilder> {
 }
 
 #[test]
-fn build_call_other_without_output_advances_ctrl_and_memory() -> Result<()> {
+fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
     let mut b = builder_with_region()?;
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let outcome = b.build_call_other("cpuid", 7, &[], None)?;
-    let crate::CallOtherOutcome::Built { node: _, value } = outcome else {
-        anyhow::bail!("expected Built outcome, got {outcome:?}");
-    };
-    assert!(value.is_none(), "no output varnode → no value output");
+    let (node, value, clobber_outs) =
+        b.build_call_other_modeled(7, "NEON_rev64", &[], None, &[], &[], &[])?;
+    assert!(value.is_none(), "no output_ty -> no value output");
+    assert!(clobber_outs.is_empty(), "no implicit_writes -> no clobber slots");
 
-    // Ctrl and memory tokens must advance (be different outputs).
+    // Ctrl advances; memory does NOT (caller decides via memory_edge).
     let ctrl_after = b.cur_region_control()?;
     let mem_after = b.cur_region_memory()?;
     assert_ne!(ctrl_before, ctrl_after);
-    assert_ne!(mem_before, mem_after);
+    assert_eq!(mem_before, mem_after, "memory must NOT advance");
 
-    // The node must be a CallOther with the given id.
-    let node = b.graph().get_node_from_output(ctrl_after);
     assert_eq!(
         b.graph().node_kind(node),
         &NodeKind::CallOther { user_op_id: 7 }
@@ -520,20 +517,23 @@ fn build_call_other_without_output_advances_ctrl_and_memory() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_with_output_returns_typed_value() -> Result<()> {
+fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
     let arg = b.build_int_const(0x42u64, NodeOutputType::U64)?;
-    let outcome = b.build_call_other("cpuid", 3, &[arg], Some(NodeOutputType::U32))?;
-    let crate::CallOtherOutcome::Built { node: _, value: out } = outcome else {
-        anyhow::bail!("expected Built outcome, got {outcome:?}");
-    };
-    let out = out
-        .ok_or_else(|| anyhow!("assertion failed: output_ty = Some → value output"))?;
+    let (node, value, _) = b.build_call_other_modeled(
+        3,
+        "cpuid",
+        &[arg],
+        Some(NodeOutputType::U32),
+        &[],
+        &[],
+        &[],
+    )?;
+    let out = value.ok_or_else(|| anyhow!("output_ty = Some -> value output"))?;
     assert_eq!(
         b.graph().output_kind(out),
         NodeOutputKind::OutputType(NodeOutputType::U32)
     );
-    let node = b.graph().get_node_from_output(out);
     assert_eq!(
         b.graph().node_kind(node),
         &NodeKind::CallOther { user_op_id: 3 }
@@ -542,10 +542,10 @@ fn build_call_other_with_output_returns_typed_value() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_rejects_non_value_arg() -> Result<()> {
+fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other("cpuid", 0, &[mem], None);
+    let res = b.build_call_other_modeled(0, "cpuid", &[mem], None, &[], &[], &[]);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
