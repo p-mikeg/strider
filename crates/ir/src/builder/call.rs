@@ -6,6 +6,31 @@ use crate::error::Result;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::IntBinaryOp;
 
+/// Outcome of [`FunctionBuilder::build_call_other`].
+#[derive(Debug)]
+#[must_use]
+pub enum CallOtherOutcome {
+    /// Classification was [`target::user_ops::UserOpClass::NoOp`].
+    /// No IR node emitted; control / memory unchanged.
+    NoOp,
+
+    /// Classification was [`target::user_ops::UserOpClass::NoReturn`].
+    /// A `NodeKind::CallOther` node was emitted with control + memory
+    /// inputs only (no clobber outputs, no value output); its outputs
+    /// dangle.  The cfg has already terminated the region on this
+    /// CallOther (see `RegionTerminator::NoReturn`), so the per-region
+    /// IR walk has nothing left to process.
+    NoReturn,
+
+    /// Classification was [`target::user_ops::UserOpClass::Opaque`].
+    /// Today's behaviour: full CallOther with conservative clobber
+    /// outputs and the optional value output.
+    Built {
+        node: crate::node::NodeId,
+        value: Option<crate::node::NodeOutputId>,
+    },
+}
+
 impl FunctionBuilder {
     /// Terminates the current region with a `Call` node, using the
     /// function-default calling convention.  Equivalent to
