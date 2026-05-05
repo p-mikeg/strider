@@ -104,6 +104,13 @@ pub enum RegionTerminator {
     /// indirect-branch resolver lands, a `BranchIndirect`).  No
     /// outgoing edge.
     Return,
+    /// Region terminates with no successor.  Emitted by
+    /// `cfg::region_builder::process_new_insn` when a CallOther's
+    /// `target::user_ops::classify` result is `NoReturn` (Linux
+    /// `BUG()` / `BUG_ON()`-class traps: x86 `ud2`, aarch64
+    /// `brk #imm`).  See
+    /// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
+    NoReturn,
     /// Direct branch whose target lies outside the function range.
     /// The IR layer is expected to lower this as
     /// `Call(IntConst(target)) + Return`.  No outgoing edge.
