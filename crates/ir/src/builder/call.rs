@@ -22,9 +22,10 @@ pub enum CallOtherOutcome {
     /// IR walk has nothing left to process.
     NoReturn,
 
-    /// Classification was [`target::user_ops::UserOpClass::Opaque`].
-    /// Today's behaviour: full CallOther with conservative clobber
-    /// outputs and the optional value output.
+    /// Classification was [`target::user_ops::UserOpClass::Call`]
+    /// (v1-compat shim: ignores the ABI and uses the conservative
+    /// every-tracked-variable-except-SP clobber set).  Removed in
+    /// Task 6 once all callers migrate to `build_call_other_modeled`.
     Built {
         node: crate::node::NodeId,
         value: Option<crate::node::NodeOutputId>,
@@ -179,8 +180,8 @@ impl FunctionBuilder {
     }
 
     /// Internal: emit a CallOther node with the conservative clobber
-    /// set (every tracked variable except SP).  Used by the new
-    /// classified `build_call_other` for the `Opaque` arm.
+    /// set (every tracked variable except SP).  Used by the v1
+    /// `build_call_other` for any classified call shape.
     pub(crate) fn build_call_other_opaque(
         &mut self,
         user_op_id: u64,
@@ -197,15 +198,16 @@ impl FunctionBuilder {
         self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
     }
 
-    /// Internal: emit a CallOther node intended as a region
-    /// terminator (Linux `BUG_ON`-class trap).  Has only ctrl +
-    /// memory inputs and ctrl + memory outputs — no clobbers, no
-    /// value, no args.  The outputs are expected to dangle: the
-    /// cfg has already terminated the region with
-    /// `RegionTerminator::NoReturn`, so no successor will read them.
-    pub(crate) fn build_call_other_terminal(
+    /// Emit a CallOther node intended as a region terminator (Linux
+    /// `BUG_ON`-class trap).  Has only ctrl + memory inputs and
+    /// ctrl + memory outputs — no clobbers, no value, no args.  The
+    /// outputs are expected to dangle: the cfg has already terminated
+    /// the region with `RegionTerminator::NoReturn`, so no successor
+    /// will read them.  Stamps `name` on `Graph::call_other_names`.
+    pub fn build_call_other_terminal(
         &mut self,
         user_op_id: u64,
+        name: &str,
     ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
@@ -218,9 +220,132 @@ impl FunctionBuilder {
             inputs,
             output_kinds,
         );
+        self.body_mut()
+            .graph
+            .set_call_other_name(node, name.to_string());
         // Intentionally DO NOT call advance_cur_region_ctrl /
         // advance_cur_region_memory — outputs dangle.
         Ok(node)
+    }
+
+    /// Emit a CallOther with the precise per-op ABI shape.
+    ///
+    /// Inputs of the resulting node:
+    ///   `[ctrl_in, mem_in, *args, *implicit_read_values]`
+    ///
+    /// Outputs of the resulting node:
+    ///   `[ctrl_out, mem_out, value?, *clobber_per_implicit_write]`
+    ///
+    /// This method advances the region's control token to the new
+    /// `ctrl_out` but **does not** advance the memory token — the
+    /// strider layer is responsible for calling
+    /// `advance_cur_region_memory(mem_out)` IFF the ABI's
+    /// `memory_edge` is true.  Similarly the strider layer rebinds
+    /// each `implicit_writes_vns` Vn to its corresponding
+    /// `clobber_outputs` slot via `write_variable`.
+    ///
+    /// Stamps `name` on `Graph::call_other_names`.  Records a per-
+    /// CallOther override on `Graph::call_clobbered_overrides` so that
+    /// `pattern::Match::get_vn` recovers the correct varnode for each
+    /// clobber slot directly from `implicit_writes_vns`.
+    ///
+    /// Returns `(node, value_output, clobber_outputs)`.
+    /// `value_output.is_some() == output_ty.is_some()`.
+    /// `clobber_outputs.len() == implicit_writes_vns.len()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any `args` entry is not a value edge,
+    /// when an implicit-read or implicit-write Vn is not a tracked
+    /// variable, or when the resulting node fails to advance the
+    /// active region's control token.
+    pub fn build_call_other_modeled(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        args: &[NodeOutputId],
+        output_ty: Option<NodeOutputType>,
+        implicit_reads_vns: &[rsleigh::Vn],
+        implicit_writes_vns: &[rsleigh::Vn],
+    ) -> Result<(NodeId, Option<NodeOutputId>, Vec<NodeOutputId>)> {
+        let ctrl = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
+
+        self.validate_value_inputs(args)?;
+
+        // Read each implicit-read register through the variable
+        // machinery — gives the current SSA value for that register
+        // (including any aliasing fixups).  Width must be a value edge.
+        let mut implicit_read_values: SmallVec<[NodeOutputId; 8]> = SmallVec::new();
+        for vn in implicit_reads_vns {
+            let out = self.read_variable(vn)?;
+            let k = self.graph().output_kind(out);
+            if !k.is_value() {
+                return Err(anyhow!(
+                    "implicit_read for user-op {name:?}: output {out:?} \
+                     is not a value edge (got {k:?})"
+                ));
+            }
+            implicit_read_values.push(out);
+        }
+
+        // Read each implicit-write register's *kind* so we can declare
+        // the correct output slot type.  The value itself is irrelevant
+        // here — we just need the kind.
+        let mut implicit_write_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
+        for vn in implicit_writes_vns {
+            let out = self.read_variable(vn)?;
+            let k = self.graph().output_kind(out);
+            if !k.is_value() {
+                return Err(anyhow!(
+                    "implicit_write for user-op {name:?}: output {out:?} \
+                     is not a value edge (got {k:?})"
+                ));
+            }
+            implicit_write_kinds.push(k);
+        }
+
+        let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
+        output_kinds.push(NodeOutputKind::Control);
+        output_kinds.push(NodeOutputKind::Memory);
+        if let Some(ty) = output_ty {
+            output_kinds.push(NodeOutputKind::OutputType(ty));
+        }
+        output_kinds.extend(implicit_write_kinds);
+
+        let inputs = [ctrl, memory]
+            .into_iter()
+            .chain(args.iter().copied())
+            .chain(implicit_read_values.iter().copied());
+
+        let node = self.create_node(
+            NodeKind::CallOther { user_op_id },
+            inputs,
+            output_kinds,
+        );
+        let outputs: SmallVec<[NodeOutputId; 8]> =
+            self.graph().node_outputs(node).into_iter().collect();
+
+        // Advance ctrl only.  Memory is the strider layer's call.
+        self.advance_cur_region_ctrl(outputs[0])?;
+
+        let (value_output, clobber_start_slot) = if output_ty.is_some() {
+            (Some(outputs[2]), 3usize)
+        } else {
+            (None, 2usize)
+        };
+
+        let clobber_outputs: Vec<NodeOutputId> = outputs[clobber_start_slot..].to_vec();
+
+        // Stamp the user-op name + per-CallOther clobber override.
+        let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();
+        let body = self.body_mut();
+        body.graph.set_call_other_name(node, name.to_string());
+        if !writes_vec.is_empty() {
+            body.graph.set_call_clobbered_override(node, writes_vec);
+        }
+
+        Ok((node, value_output, clobber_outputs))
     }
 
     /// Classified CallOther construction.  Looks up `name` in
@@ -244,13 +369,16 @@ impl FunctionBuilder {
         match class {
             UserOpClass::NoOp => Ok(CallOtherOutcome::NoOp),
             UserOpClass::NoReturn => {
-                let node = self.build_call_other_terminal(user_op_id)?;
-                self.body_mut()
-                    .graph
-                    .set_call_other_name(node, name.to_string());
+                let _node = self.build_call_other_terminal(user_op_id, name)?;
                 Ok(CallOtherOutcome::NoReturn)
             }
-            UserOpClass::Opaque => {
+            // v1-compat shim: any Call(abi) classification falls back to the
+            // conservative-clobber Opaque path.  v2's strider routes through
+            // the new build_call_other_modeled and bypasses this method
+            // entirely.  This shim only keeps v1 callers (legacy tests still
+            // calling build_call_other) compiling until Tasks 6-10 migrate
+            // them out.
+            UserOpClass::Call(_) => {
                 let (node, value) =
                     self.build_call_other_opaque(user_op_id, args, output_ty)?;
                 self.body_mut()
