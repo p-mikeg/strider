@@ -178,37 +178,6 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// Legacy entry point for emitting a `CallOther` (user-defined op)
-    /// node bypassing classification.  Internal during the migration:
-    /// the new classified [`Self::build_call_other`] (taking a `name`
-    /// argument) is the public entry point and dispatches via
-    /// [`target::user_ops::classify`].
-    ///
-    /// Body identical to the pre-classification implementation.  Will
-    /// be deleted once every caller migrates to the classified API.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
-    /// when there is no active region, or `ExpectedValue` when
-    /// any element of `args` is not a value edge.
-    pub(crate) fn build_call_other_legacy(
-        &mut self,
-        user_op_id: u64,
-        args: &[NodeOutputId],
-        output_ty: Option<NodeOutputType>,
-    ) -> Result<(NodeId, Option<NodeOutputId>)> {
-        // Default: conservative clobber set = every tracked variable except SP.
-        let stack_ptr_vn = self.stack_ptr_vn;
-        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = self
-            .variables
-            .values()
-            .copied()
-            .filter(|v| Some(*v) != stack_ptr_vn)
-            .collect();
-        self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
-    }
-
     /// Internal: emit a CallOther node with the conservative clobber
     /// set (every tracked variable except SP).  Used by the new
     /// classified `build_call_other` for the `Opaque` arm.
@@ -292,18 +261,16 @@ impl FunctionBuilder {
         }
     }
 
-    /// Variant of [`Self::build_call_other`] that takes an explicit
-    /// `clobber_vars` slice instead of computing the conservative
-    /// "every-tracked-variable-except-SP" default.  Used by callers
-    /// that know the user-op's true clobber semantics — e.g. lifters
-    /// emitting `setISAMode` (a known no-op in the IR's value model)
-    /// pass an empty slice so no variables get rebound through the
-    /// CallOther.
+    /// Internal helper for [`Self::build_call_other_opaque`]: emits a
+    /// CallOther with an explicit `clobber_vars` slice.  All callers
+    /// now go through the classified [`Self::build_call_other`] entry
+    /// point — this helper is `pub(crate)` and used only by
+    /// [`Self::build_call_other_opaque`].
     ///
     /// # Errors
     ///
     /// Same set as [`Self::build_call_other`].
-    pub fn build_call_other_with_clobbers(
+    pub(crate) fn build_call_other_with_clobbers(
         &mut self,
         user_op_id: u64,
         args: &[NodeOutputId],
