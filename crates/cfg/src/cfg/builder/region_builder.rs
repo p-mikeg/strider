@@ -392,6 +392,34 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 Ok(ProcessInsnRes::FinishedProcessing)
             }
             rsleigh::Opcode::BranchIndirect => self.process_branch_indirect(insn, addr),
+            rsleigh::Opcode::CallOther => {
+                // Resolve the user-op id from the CONST input at
+                // position 0.  Fall through to today's behaviour if
+                // the input shape is unexpected — the IR layer's
+                // strict-on-emission check will surface any real
+                // problem with full context.
+                let id_vn = match insn.inputs.first() {
+                    Some(v) => v,
+                    None => return Ok(ProcessInsnRes::DidntFinishProcessing),
+                };
+                if id_vn.addr_space != rsleigh::VnSpace::CONST {
+                    return Ok(ProcessInsnRes::DidntFinishProcessing);
+                }
+                let id_u32 = match u32::try_from(id_vn.addr_off) {
+                    Ok(v) => v,
+                    Err(_) => return Ok(ProcessInsnRes::DidntFinishProcessing),
+                };
+                let name = self.builder.sleigh.user_op_name(id_u32);
+                let class = name.and_then(target::user_ops::classify);
+                if matches!(class, Some(target::user_ops::UserOpClass::NoReturn)) {
+                    // CallOther is already in self.insns from the
+                    // process_new_insn prologue push; finish_current_region
+                    // carries it.  Trailing BranchIndirect is never decoded.
+                    self.finish_current_region(RegionTerminator::NoReturn)?;
+                    return Ok(ProcessInsnRes::FinishedProcessing);
+                }
+                Ok(ProcessInsnRes::DidntFinishProcessing)
+            }
             _ => Ok(ProcessInsnRes::DidntFinishProcessing),
         }
     }
