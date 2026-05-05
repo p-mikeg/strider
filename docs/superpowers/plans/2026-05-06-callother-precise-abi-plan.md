@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace v1's `UserOpClass::Opaque` catch-all with explicit `Call(UserOpAbi)` entries giving each Sleigh user-op its precise ISA register footprint and memory-edge effect.  Hard cutover — no `Opaque` variant survives.  IR builder clobbers only what the ABI specifies (no more "every tracked variable except SP" default).
+**Goal:** Replace v1's `CallOtherClass::Opaque` catch-all with explicit `Call(CallOtherAbi)` entries giving each Sleigh user-op its precise ISA register footprint and memory-edge effect.  Hard cutover — no `Opaque` variant survives.  IR builder clobbers only what the ABI specifies (no more "every tracked variable except SP" default).
 
-**Architecture:** Single `target::user_ops::classify` table consumed by cfg (NoReturn termination only, unchanged from v1) and strider (full dispatch + ABI resolution).  IR layer gains `build_call_other_modeled(user_op_id, name, args, output_ty, implicit_reads_vns, implicit_writes_vns)`; v1's `build_call_other(name, …)` / `_opaque` / `_with_clobbers` / `CallOtherOutcome` are removed.
+**Architecture:** Single `target::call_other_abi::classify` table consumed by cfg (NoReturn termination only, unchanged from v1) and strider (full dispatch + ABI resolution).  IR layer gains `build_call_other_modeled(user_op_id, name, args, output_ty, implicit_reads_vns, implicit_writes_vns)`; v1's `build_call_other(name, …)` / `_opaque` / `_with_clobbers` / `CallOtherOutcome` are removed.
 
 **Tech Stack:** Rust 1.x, anyhow, thiserror, petgraph (cfg), cranelift-entity (ir), rsleigh (Sleigh wrapper), pytest + maturin (strider-py).
 
@@ -15,7 +15,7 @@
 ## File Map
 
 **Modify:**
-- `crates/target/src/user_ops.rs` — `UserOpAbi` struct; `UserOpClass` loses `Opaque`, gains `Call(UserOpAbi)`; `classify` body reclassifies all 28 previously-Opaque entries.
+- `crates/target/src/call_other_abi.rs` — `CallOtherAbi` struct; `CallOtherClass` loses `Opaque`, gains `Call(CallOtherAbi)`; `classify` body reclassifies all 28 previously-Opaque entries.
 - `crates/ir/src/builder/call.rs` — add `build_call_other_modeled`; remove `build_call_other(name, …)` (v1) + `build_call_other_opaque` + `build_call_other_with_clobbers`.
 - `crates/ir/src/lib.rs` — remove `pub use builder::CallOtherOutcome`.
 - `crates/strider/src/strider/insn/mod.rs` — replace `handle_call_other`'s body with the v2 dispatch (resolve ABI Vns, call `build_call_other_modeled`, handle `memory_edge` + clobber rebinding).
@@ -24,7 +24,7 @@
 - `crates/pattern/tests/get_vn_with_callother_clobber.rs` — use `build_call_other_modeled` with explicit `[EAX, EBX, ECX, EDX]`.
 - `crates/pattern/tests/matching/support/graph.rs` — `callother_node` helper grows `implicit_reads` / `implicit_writes` parameters.
 - `crates/opt/src/dead_branch/tests.rs` — switch to `build_call_other_modeled` with empty implicit slices.
-- `CLAUDE.md` — update the "callother classification" section to reflect the v2 shape (UserOpAbi, no Opaque).
+- `CLAUDE.md` — update the "callother classification" section to reflect the v2 shape (CallOtherAbi, no Opaque).
 
 **Create:**
 - `crates/strider/tests/call_other_precise_abi.rs` — two integration tests proving (a) `cpuid` rebinds exactly the four named registers and (b) `mrs x0, S3_3_C15_C0_7` rebinds only x0.
@@ -33,25 +33,25 @@
 - `crates/ir/tests/call_other_conservative_clobber.rs` — entire file tests v1 conservative-clobber default; behaviour gone.
 
 **No change to:**
-- `crates/cfg/src/cfg/builder/region_builder.rs` — v1's `Opcode::CallOther` arm continues to read `classify()` only for NoReturn detection; doesn't touch `UserOpAbi`.
+- `crates/cfg/src/cfg/builder/region_builder.rs` — v1's `Opcode::CallOther` arm continues to read `classify()` only for NoReturn detection; doesn't touch `CallOtherAbi`.
 - `crates/cfg/src/cfg/types.rs` — `RegionTerminator::NoReturn` already exists from v1.
 - `crates/pattern/src/pat/builders/call.rs` — pattern builder API unchanged.
-- `crates/strider-py/` — Python surface unchanged (UserOpAbi is internal; `UnknownUserOpError` still exists from v1).
+- `crates/strider-py/` — Python surface unchanged (CallOtherAbi is internal; `UnknownCallOtherError` still exists from v1).
 
 ---
 
-## Task 1: `target::user_ops` — add `UserOpAbi`, reclassify table
+## Task 1: `target::call_other_abi` — add `CallOtherAbi`, reclassify table
 
 **Files:**
-- Modify: `crates/target/src/user_ops.rs`
+- Modify: `crates/target/src/call_other_abi.rs`
 
 - [ ] **Step 1: Read the current file**
 
-Run: `cat /home/mike/Desktop/strider/crates/target/src/user_ops.rs`
+Run: `cat /home/mike/Desktop/strider/crates/target/src/call_other_abi.rs`
 
-Confirm the v1 shape: `UserOpClass = NoOp | NoReturn | Opaque`, single classify match, 33 entries.
+Confirm the v1 shape: `CallOtherClass = NoOp | NoReturn | Opaque`, single classify match, 33 entries.
 
-- [ ] **Step 2: Write the failing test for UserOpAbi presence + reclassification**
+- [ ] **Step 2: Write the failing test for CallOtherAbi presence + reclassification**
 
 Replace the bottom `#[cfg(test)] mod tests` block with this expanded version:
 
@@ -60,8 +60,8 @@ Replace the bottom `#[cfg(test)] mod tests` block with this expanded version:
 mod tests {
     use super::*;
 
-    fn empty_abi() -> UserOpAbi {
-        UserOpAbi {
+    fn empty_abi() -> CallOtherAbi {
+        CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &[],
             memory_edge:     false,
@@ -74,7 +74,7 @@ mod tests {
                   "DataSynchronizationBarrier", "DC_CVAC", "Hint_Prefetch",
                   "InstructionSynchronizationBarrier", "LOCK", "UNLOCK",
                   "Yield"] {
-            assert_eq!(classify(n), Some(UserOpClass::NoOp), "{n}");
+            assert_eq!(classify(n), Some(CallOtherClass::NoOp), "{n}");
         }
     }
 
@@ -82,14 +82,14 @@ mod tests {
     fn known_trap_classifies_as_noreturn() {
         for n in ["invalidInstructionException", "SoftwareBreakpoint",
                   "UndefinedInstructionException", "sysret", "trap"] {
-            assert_eq!(classify(n), Some(UserOpClass::NoReturn), "{n}");
+            assert_eq!(classify(n), Some(CallOtherClass::NoReturn), "{n}");
         }
     }
 
     #[test]
     fn syscall_has_linux_x86_64_abi() {
         let class = classify("syscall").expect("syscall classified");
-        let UserOpClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
+        let CallOtherClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
         assert_eq!(abi.implicit_reads,  &["RAX","RDI","RSI","RDX","R10","R8","R9"]);
         assert_eq!(abi.implicit_writes, &["RAX","RCX","R11"]);
         assert!(abi.memory_edge);
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn cpuid_has_implicit_writes_to_four_regs() {
         let class = classify("cpuid").expect("cpuid classified");
-        let UserOpClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
+        let CallOtherClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
         assert_eq!(abi.implicit_reads,  &["ECX"]);
         assert_eq!(abi.implicit_writes, &["EAX","EBX","ECX","EDX"]);
         assert!(!abi.memory_edge);
@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn rdtsc_writes_edx_eax_no_memory_edge() {
         let class = classify("rdtsc").expect("rdtsc classified");
-        let UserOpClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
+        let CallOtherClass::Call(abi) = class else { panic!("expected Call, got {class:?}") };
         assert_eq!(abi.implicit_reads,  &[]);
         assert_eq!(abi.implicit_writes, &["EAX","EDX"]);
         assert!(!abi.memory_edge);
@@ -119,7 +119,7 @@ mod tests {
                   "MP_INT_ABS", "UnkSytemRegRead", "swapgs",
                   "ExclusiveMonitorPass", "ExclusiveMonitorsStatus"] {
             let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
-            let UserOpClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert_eq!(abi, empty_abi(), "{n}");
         }
     }
@@ -128,7 +128,7 @@ mod tests {
     fn smccc_ops_share_x0_x7_in_x0_x3_out() {
         for n in ["CallHyperVisor", "CallSecureMonitor"] {
             let class = classify(n).expect(n);
-            let UserOpClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert_eq!(abi.implicit_reads,  &["x0","x1","x2","x3","x4","x5","x6","x7"], "{n}");
             assert_eq!(abi.implicit_writes, &["x0","x1","x2","x3"], "{n}");
             assert!(abi.memory_edge, "{n}");
@@ -139,7 +139,7 @@ mod tests {
     fn port_io_has_memory_edge_no_implicit_regs() {
         for n in ["in", "out"] {
             let class = classify(n).expect(n);
-            let UserOpClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
             assert_eq!(abi.implicit_reads,  &[], "{n}");
             assert_eq!(abi.implicit_writes, &[], "{n}");
             assert!(abi.memory_edge, "{n}");
@@ -153,12 +153,12 @@ mod tests {
 
     #[test]
     fn opaque_variant_does_not_exist() {
-        // Compile-time guard: every variant of UserOpClass is matched
+        // Compile-time guard: every variant of CallOtherClass is matched
         // exhaustively here, so adding/removing a variant fails compile.
         for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
             let class = classify(n).unwrap();
             match class {
-                UserOpClass::NoOp | UserOpClass::NoReturn | UserOpClass::Call(_) => {}
+                CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
             }
         }
     }
@@ -167,11 +167,11 @@ mod tests {
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `cargo test -p target user_ops --lib 2>&1 | tail -30`
+Run: `cargo test -p target call_other_abi --lib 2>&1 | tail -30`
 
-Expected: compile errors for `UserOpAbi`, `UserOpClass::Call`, etc. (v1 doesn't have these).
+Expected: compile errors for `CallOtherAbi`, `CallOtherClass::Call`, etc. (v1 doesn't have these).
 
-- [ ] **Step 4: Implement UserOpAbi + reclassified table**
+- [ ] **Step 4: Implement CallOtherAbi + reclassified table**
 
 Replace the file content above the `#[cfg(test)]` block with:
 
@@ -187,7 +187,7 @@ Replace the file content above the `#[cfg(test)]` block with:
 /// the ABI fills in the *implicit* (ISA-fixed, not in pcode)
 /// channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UserOpAbi {
+pub struct CallOtherAbi {
     /// Register names this op reads beyond Sleigh's pcode-explicit
     /// `inputs[1..]`.  Resolved to `rsleigh::Vn` by the strider
     /// layer at lift time and appended to the CallOther's value
@@ -210,7 +210,7 @@ pub struct UserOpAbi {
 /// What `strider::handle_call_other` does for a given user-op name.
 /// Single source of truth for all CallOther dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserOpClass {
+pub enum CallOtherClass {
     /// True no-op.  No IR node emitted; control / memory unchanged;
     /// pcode-explicit output (if any) is ignored.
     NoOp,
@@ -223,13 +223,13 @@ pub enum UserOpClass {
 
     /// Op with a precise ABI describing its register footprint and
     /// memory effect beyond what Sleigh's pcode already encodes.
-    Call(UserOpAbi),
+    Call(CallOtherAbi),
 }
 
 /// Look up a user-op name in the classification table.
 ///
 /// Strict-on-emission policy: the ir layer (`build_call_other_modeled`'s
-/// caller) converts `None` into `UnknownUserOpError`.  The cfg builder
+/// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
 //
@@ -237,72 +237,72 @@ pub enum UserOpClass {
 // arms via `|` would defeat the table's per-line diff property.
 #[allow(clippy::match_same_arms)]
 #[must_use]
-pub fn classify(name: &str) -> Option<UserOpClass> {
+pub fn classify(name: &str) -> Option<CallOtherClass> {
     // ASCII-sorted within each group for diffability.
     match name {
         // ─── NoOp ─────────────────────────────────────────────────
-        "DC_CVAC"                           => Some(UserOpClass::NoOp),
-        "DataMemoryBarrier"                 => Some(UserOpClass::NoOp),
-        "DataSynchronizationBarrier"        => Some(UserOpClass::NoOp),
-        "Hint_Prefetch"                     => Some(UserOpClass::NoOp),
-        "InstructionSynchronizationBarrier" => Some(UserOpClass::NoOp),
-        "LOCK"                              => Some(UserOpClass::NoOp),
-        "UNLOCK"                            => Some(UserOpClass::NoOp),
-        "Yield"                             => Some(UserOpClass::NoOp),
-        "setEndianState"                    => Some(UserOpClass::NoOp),
-        "setISAMode"                        => Some(UserOpClass::NoOp),
+        "DC_CVAC"                           => Some(CallOtherClass::NoOp),
+        "DataMemoryBarrier"                 => Some(CallOtherClass::NoOp),
+        "DataSynchronizationBarrier"        => Some(CallOtherClass::NoOp),
+        "Hint_Prefetch"                     => Some(CallOtherClass::NoOp),
+        "InstructionSynchronizationBarrier" => Some(CallOtherClass::NoOp),
+        "LOCK"                              => Some(CallOtherClass::NoOp),
+        "UNLOCK"                            => Some(CallOtherClass::NoOp),
+        "Yield"                             => Some(CallOtherClass::NoOp),
+        "setEndianState"                    => Some(CallOtherClass::NoOp),
+        "setISAMode"                        => Some(CallOtherClass::NoOp),
 
         // ─── NoReturn ─────────────────────────────────────────────
-        "SoftwareBreakpoint"          => Some(UserOpClass::NoReturn),
-        "UndefinedInstructionException" => Some(UserOpClass::NoReturn),
-        "invalidInstructionException" => Some(UserOpClass::NoReturn),
-        "sysret"                      => Some(UserOpClass::NoReturn),
-        "trap"                        => Some(UserOpClass::NoReturn),
+        "SoftwareBreakpoint"          => Some(CallOtherClass::NoReturn),
+        "UndefinedInstructionException" => Some(CallOtherClass::NoReturn),
+        "invalidInstructionException" => Some(CallOtherClass::NoReturn),
+        "sysret"                      => Some(CallOtherClass::NoReturn),
+        "trap"                        => Some(CallOtherClass::NoReturn),
 
         // ─── Call (precise ABI) ───────────────────────────────────
 
         // Linux x86_64 syscall ABI.
-        "syscall" => Some(UserOpClass::Call(UserOpAbi {
+        "syscall" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["RAX","RDI","RSI","RDX","R10","R8","R9"],
             implicit_writes: &["RAX","RCX","R11"],
             memory_edge:     true,
         })),
 
         // Linux ARM SWI ABI.
-        "swi" => Some(UserOpClass::Call(UserOpAbi {
+        "swi" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7","r0","r1","r2","r3","r4","r5","r6"],
             implicit_writes: &["r0"],
             memory_edge:     true,
         })),
 
         // ARM SMCCC (X0..X7 in, X0..X3 out).
-        "CallHyperVisor" => Some(UserOpClass::Call(UserOpAbi {
+        "CallHyperVisor" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0","x1","x2","x3","x4","x5","x6","x7"],
             implicit_writes: &["x0","x1","x2","x3"],
             memory_edge:     true,
         })),
-        "CallSecureMonitor" => Some(UserOpClass::Call(UserOpAbi {
+        "CallSecureMonitor" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0","x1","x2","x3","x4","x5","x6","x7"],
             implicit_writes: &["x0","x1","x2","x3"],
             memory_edge:     true,
         })),
 
         // x86 CPUID — Sleigh emits CALLOTHER(cpuid, EAX) with no output.
-        "cpuid" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX","EBX","ECX","EDX"],
             memory_edge:     false,
         })),
 
         // x86 RDTSC — no inputs, writes EDX:EAX.
-        "rdtsc" => Some(UserOpClass::Call(UserOpAbi {
+        "rdtsc" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &[],
             implicit_writes: &["EAX","EDX"],
             memory_edge:     false,
         })),
 
         // x86 RDPKRU — ECX must be 0; writes EAX, clears EDX.
-        "rdpkru_u32" => Some(UserOpClass::Call(UserOpAbi {
+        "rdpkru_u32" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["ECX"],
             implicit_writes: &["EAX","EDX"],
             memory_edge:     false,
@@ -310,48 +310,48 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
         // x86 port I/O — port + value are pcode-explicit; memory edge captures
         // the external port-state effect.
-        "in"  => Some(UserOpClass::Call(UserOpAbi {
+        "in"  => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
         })),
-        "out" => Some(UserOpClass::Call(UserOpAbi {
+        "out" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
         })),
 
         // x86 SWAPGS — touches the synthetic GS_base MSR; no general-reg
         // effect, no memory edge (kernel-mode register swap).
-        "swapgs" => Some(UserOpClass::Call(UserOpAbi {
+        "swapgs" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
 
         // ARM exclusive-monitor primitives — synthetic monitor flag,
         // pcode-handled.  LDREX/STREX themselves emit pcode loads/stores.
-        "ExclusiveMonitorPass" => Some(UserOpClass::Call(UserOpAbi {
+        "ExclusiveMonitorPass" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
-        "ExclusiveMonitorsStatus" => Some(UserOpClass::Call(UserOpAbi {
+        "ExclusiveMonitorsStatus" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
 
         // ARM unmodelled sysreg read — pcode-explicit encoding constant
         // and destination.  Empty ABI per c1 (lift succeeds; opaque value).
-        "UnkSytemRegRead" => Some(UserOpClass::Call(UserOpAbi {
+        "UnkSytemRegRead" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
 
         // NEON / SVE / multi-precision — Sleigh's pcode is fully sufficient.
-        "MP_INT_ABS"  => Some(UserOpClass::Call(UserOpAbi {
+        "MP_INT_ABS"  => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
-        "NEON_rev64"  => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_rev64"  => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
-        "NEON_sqshl"  => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_sqshl"  => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
-        "NEON_uaddlv" => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_uaddlv" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
-        "SVE_fnmla"   => Some(UserOpClass::Call(UserOpAbi {
+        "SVE_fnmla"   => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: false,
         })),
 
@@ -362,7 +362,7 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cargo test -p target user_ops --lib 2>&1 | tail -15`
+Run: `cargo test -p target call_other_abi --lib 2>&1 | tail -15`
 
 Expected: all 9 tests pass.
 
@@ -370,16 +370,16 @@ Expected: all 9 tests pass.
 
 Run: `cargo build --workspace 2>&1 | tail -10`
 
-Expected: compile errors in ir/strider/etc. that still call `build_call_other(name, …)` expecting the old `Opaque` variant.  This is correct — Tasks 2 and 3 fix those callers.  If you see ONLY `error[E0599]: no variant or associated item named Opaque found for enum UserOpClass` — good, that's the planned breakage.  Any other unexpected error is a problem.
+Expected: compile errors in ir/strider/etc. that still call `build_call_other(name, …)` expecting the old `Opaque` variant.  This is correct — Tasks 2 and 3 fix those callers.  If you see ONLY `error[E0599]: no variant or associated item named Opaque found for enum CallOtherClass` — good, that's the planned breakage.  Any other unexpected error is a problem.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/target/src/user_ops.rs
+git add crates/target/src/call_other_abi.rs
 git commit -m "$(cat <<'EOF'
-target: replace UserOpClass::Opaque with Call(UserOpAbi)
+target: replace CallOtherClass::Opaque with Call(CallOtherAbi)
 
-Hard cutover to precise per-op ABIs.  UserOpAbi describes the
+Hard cutover to precise per-op ABIs.  CallOtherAbi describes the
 implicit (ISA-fixed, not in Sleigh's pcode) register reads,
 writes, and memory edge.  All 28 previously-Opaque entries
 reclassified:
@@ -688,19 +688,19 @@ Replace the existing body (the v1 version that dispatches via `CallOtherOutcome`
             )
         })?;
 
-        let class = target::user_ops::classify(name).ok_or_else(|| {
-            ir::error::UnknownUserOpError { name: name.to_string() }
+        let class = target::call_other_abi::classify(name).ok_or_else(|| {
+            ir::error::UnknownCallOtherError { name: name.to_string() }
         })?;
 
         match class {
-            target::user_ops::UserOpClass::NoOp => Ok(()),
+            target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
-            target::user_ops::UserOpClass::NoReturn => {
+            target::call_other_abi::CallOtherClass::NoReturn => {
                 let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
                 Ok(())
             }
 
-            target::user_ops::UserOpClass::Call(abi) => {
+            target::call_other_abi::CallOtherClass::Call(abi) => {
                 // 1. Resolve pcode-explicit inputs (args).
                 let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
                     insn.inputs[1..]
@@ -780,7 +780,7 @@ strider: route handle_call_other through the precise-ABI dispatch
 
 handle_call_other now:
   * Resolves the user-op name from Sleigh.
-  * Calls target::user_ops::classify(name) and matches on UserOpClass.
+  * Calls target::call_other_abi::classify(name) and matches on CallOtherClass.
   * For NoOp: returns Ok(()).
   * For NoReturn: calls ir::FunctionBuilder::build_call_other_terminal.
   * For Call(abi):
@@ -791,7 +791,7 @@ handle_call_other now:
       - Rebinds the pcode-explicit output (if any) and each implicit
         write to its tracked variable.
 
-Unknown user-op names error out with UnknownUserOpError (strict
+Unknown user-op names error out with UnknownCallOtherError (strict
 on emission).
 
 v1's build_call_other(name, ...) / _opaque / CallOtherOutcome
@@ -907,7 +907,7 @@ Run: `cargo test -p strider --test call_other_precise_abi 2>&1 | tail -15`
 
 Expected: 2 passed.
 
-If a test fails because the actual register names in our ABI table don't match Sleigh's exact spelling, fix the table in `crates/target/src/user_ops.rs` and re-test.
+If a test fails because the actual register names in our ABI table don't match Sleigh's exact spelling, fix the table in `crates/target/src/call_other_abi.rs` and re-test.
 
 - [ ] **Step 4: Commit**
 
@@ -972,10 +972,10 @@ Verify the encoding in objdump first.  `trap` is not a real ARM instruction; it'
 
 - [ ] **Step 3: If either op needs reclassification, edit and commit**
 
-If sysret's pcode does NOT include a final Return AND our NoReturn classification doesn't terminate the region (somehow), or if trap turns out to be a regular call rather than a trap, edit `crates/target/src/user_ops.rs` to reclassify.  Re-run all tests.  Commit:
+If sysret's pcode does NOT include a final Return AND our NoReturn classification doesn't terminate the region (somehow), or if trap turns out to be a regular call rather than a trap, edit `crates/target/src/call_other_abi.rs` to reclassify.  Re-run all tests.  Commit:
 
 ```bash
-git add crates/target/src/user_ops.rs
+git add crates/target/src/call_other_abi.rs
 git commit -m "target: reclassify sysret / trap based on Sleigh pcode shape verification"
 ```
 
@@ -1030,7 +1030,7 @@ ir: drop v1 build_call_other(name) / _opaque / _with_clobbers / CallOtherOutcome
 The v1 high-level dispatch entry and its supporting helpers are
 caller-less after Task 3's strider migration.  build_call_other_terminal
 remains (used for NoReturn) and build_call_other_modeled is the new
-entry for Call(UserOpAbi) construction.
+entry for Call(CallOtherAbi) construction.
 
 Tests still call the old API; Tasks 7-10 migrate them.
 
@@ -1200,7 +1200,7 @@ fn build_call_other_modeled_with_value_and_clobbers() {
 }
 ```
 
-(Note: the v1 "unknown name → UnknownUserOpError" test moves to a strider-side integration test, since v2's `build_call_other_modeled` doesn't classify — strider does.  If a test of UnknownUserOpError surfacing is needed, add it to `crates/strider/tests/call_other_precise_abi.rs` from Task 4.)
+(Note: the v1 "unknown name → UnknownCallOtherError" test moves to a strider-side integration test, since v2's `build_call_other_modeled` doesn't classify — strider does.  If a test of UnknownCallOtherError surfacing is needed, add it to `crates/strider/tests/call_other_precise_abi.rs` from Task 4.)
 
 - [ ] **Step 3: Run the tests**
 
@@ -1416,12 +1416,12 @@ Expected: same offsets as v1's smoke (0x678, 0x4d0, 0x670).  Any regression here
 
 - [ ] **Step 5: Harvest any new unknown user-ops**
 
-If Step 3 or Step 4 surfaced `UnknownUserOpError` for a name not in the table, add it to `crates/target/src/user_ops.rs` with the appropriate classification (likely `Call(UserOpAbi { all-empty })` or `NoOp` depending on the op).  Document each addition in its commit.
+If Step 3 or Step 4 surfaced `UnknownCallOtherError` for a name not in the table, add it to `crates/target/src/call_other_abi.rs` with the appropriate classification (likely `Call(CallOtherAbi { all-empty })` or `NoOp` depending on the op).  Document each addition in its commit.
 
 - [ ] **Step 6: Update CLAUDE.md**
 
-In `CLAUDE.md`, find the "callother classification" / `target::user_ops` section and update to mention:
-* The `UserOpAbi` struct.
+In `CLAUDE.md`, find the "callother classification" / `target::call_other_abi` section and update to mention:
+* The `CallOtherAbi` struct.
 * The three-variant enum (NoOp / NoReturn / Call).
 * No `Opaque` variant.
 * The classify table is consumed by both cfg (NoReturn detection) and strider (full dispatch + ABI resolution).
@@ -1433,7 +1433,7 @@ git add CLAUDE.md
 git commit -m "$(cat <<'EOF'
 docs: update CLAUDE.md for CallOther v2 (precise per-op ABIs)
 
-UserOpClass: NoOp | NoReturn | Call(UserOpAbi).  Opaque gone.
+CallOtherClass: NoOp | NoReturn | Call(CallOtherAbi).  Opaque gone.
 ir::FunctionBuilder gains build_call_other_modeled; v1 entries
 (build_call_other(name) / _opaque / _with_clobbers / CallOtherOutcome)
 removed.  Bsdfinder corpus regression-checked.
@@ -1449,7 +1449,7 @@ EOF
 
 **Spec coverage:**
 - ✅ Goal 1 (no Opaque variant) → Task 1 + Task 6.
-- ✅ Goal 2 (UserOpAbi describes the delta) → Task 1 (struct) + Task 2 (consumer).
+- ✅ Goal 2 (CallOtherAbi describes the delta) → Task 1 (struct) + Task 2 (consumer).
 - ✅ Goal 3 (no conservative-clobber default) → Task 6 (removes the helper) + Task 9 (deletes its test).
 - ✅ Goal 4 (precise memory edge) → Task 2 (build_call_other_modeled doesn't advance memory) + Task 3 (strider advances IFF abi.memory_edge).
 - ✅ Goal 5 (hard cutover, no shim) → Task 6.
@@ -1458,5 +1458,5 @@ EOF
 **Placeholder scan:** Task 5 (sysret/trap verification) is intentionally exploratory — outcome may be no-op (no commit).  Task 11 step 5 (harvest) is iterative.  Both are bounded discovery work, not vague placeholders.
 
 **Type consistency:**
-- `UserOpAbi { implicit_reads, implicit_writes, memory_edge }` — used identically in Task 1 (definition), Task 3 (consumer), Task 4 (test asserts).
+- `CallOtherAbi { implicit_reads, implicit_writes, memory_edge }` — used identically in Task 1 (definition), Task 3 (consumer), Task 4 (test asserts).
 - `build_call_other_modeled` signature — `(user_op_id, name, args, output_ty, implicit_reads_vns, implicit_writes_vns) -> Result<(NodeId, Option<NodeOutputId>, Vec<NodeOutputId>)>` — used identically in Task 2 (definition), Tasks 3, 7, 8, 10 (callers).

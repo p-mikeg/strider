@@ -16,7 +16,7 @@ create_exception!(strider.errors, ReaderError, StriderError);
 create_exception!(strider.errors, PatternError, StriderError);
 create_exception!(strider.errors, RewriteError, StriderError);
 create_exception!(strider.errors, UnresolvedIndirectBranchError, StriderError);
-create_exception!(strider.errors, UnknownUserOpError, StriderError);
+create_exception!(strider.errors, UnknownCallOtherError, StriderError);
 
 /// Convert an `anyhow::Error` into the most specific `StriderError`
 /// subclass we can recover from its typed inner error.  Falls back to
@@ -32,16 +32,16 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     if e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some() {
         return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
     }
-    if e.downcast_ref::<ir::error::UnknownUserOpError>().is_some() {
-        return UnknownUserOpError::new_err(format!("{e:?}"));
+    if e.downcast_ref::<ir::error::UnknownCallOtherError>().is_some() {
+        return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     StriderError::new_err(format!("{e:?}"))
 }
 
 #[allow(dead_code)]
 pub fn into_lift_err(e: anyhow::Error) -> PyErr {
-    if e.downcast_ref::<ir::error::UnknownUserOpError>().is_some() {
-        return UnknownUserOpError::new_err(format!("{e:?}"));
+    if e.downcast_ref::<ir::error::UnknownCallOtherError>().is_some() {
+        return UnknownCallOtherError::new_err(format!("{e:?}"));
     }
     LiftError::new_err(format!("{e:?}"))
 }
@@ -74,8 +74,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
         py.get_type_bound::<UnresolvedIndirectBranchError>(),
     )?;
     m.add(
-        "UnknownUserOpError",
-        py.get_type_bound::<UnknownUserOpError>(),
+        "UnknownCallOtherError",
+        py.get_type_bound::<UnknownCallOtherError>(),
     )?;
     parent.add_submodule(&m)?;
     parent.add("StriderError", py.get_type_bound::<StriderError>())?;

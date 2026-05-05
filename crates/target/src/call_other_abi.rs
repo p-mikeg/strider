@@ -9,7 +9,7 @@
 /// the ABI fills in the *implicit* (ISA-fixed, not in pcode)
 /// channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UserOpAbi {
+pub struct CallOtherAbi {
     /// Register names this op reads beyond Sleigh's pcode-explicit
     /// `inputs[1..]`.  Resolved to `rsleigh::Vn` by the strider
     /// layer at lift time and appended to the CallOther's value
@@ -32,7 +32,7 @@ pub struct UserOpAbi {
 /// What `strider::handle_call_other` does for a given user-op name.
 /// Single source of truth for all CallOther dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserOpClass {
+pub enum CallOtherClass {
     /// True no-op.  No IR node emitted; control / memory unchanged;
     /// pcode-explicit output (if any) is ignored.
     NoOp,
@@ -45,13 +45,13 @@ pub enum UserOpClass {
 
     /// Op with a precise ABI describing its register footprint and
     /// memory effect beyond what Sleigh's pcode already encodes.
-    Call(UserOpAbi),
+    Call(CallOtherAbi),
 }
 
 /// Look up a user-op name in the classification table.
 ///
 /// Strict-on-emission policy: the ir layer (`build_call_other_modeled`'s
-/// caller) converts `None` into `UnknownUserOpError`.  The cfg builder
+/// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
 //
@@ -59,32 +59,32 @@ pub enum UserOpClass {
 // arms via `|` would defeat the table's per-line diff property.
 #[allow(clippy::match_same_arms)]
 #[must_use]
-pub fn classify(name: &str) -> Option<UserOpClass> {
+pub fn classify(name: &str) -> Option<CallOtherClass> {
     // ASCII-sorted within each group for diffability.
     match name {
         // ─── NoOp ─────────────────────────────────────────────────
-        "DC_CVAC" => Some(UserOpClass::NoOp),
-        "DataMemoryBarrier" => Some(UserOpClass::NoOp),
-        "DataSynchronizationBarrier" => Some(UserOpClass::NoOp),
-        "Hint_Prefetch" => Some(UserOpClass::NoOp),
-        "InstructionSynchronizationBarrier" => Some(UserOpClass::NoOp),
-        "LOCK" => Some(UserOpClass::NoOp),
-        "UNLOCK" => Some(UserOpClass::NoOp),
-        "Yield" => Some(UserOpClass::NoOp),
-        "setEndianState" => Some(UserOpClass::NoOp),
-        "setISAMode" => Some(UserOpClass::NoOp),
+        "DC_CVAC" => Some(CallOtherClass::NoOp),
+        "DataMemoryBarrier" => Some(CallOtherClass::NoOp),
+        "DataSynchronizationBarrier" => Some(CallOtherClass::NoOp),
+        "Hint_Prefetch" => Some(CallOtherClass::NoOp),
+        "InstructionSynchronizationBarrier" => Some(CallOtherClass::NoOp),
+        "LOCK" => Some(CallOtherClass::NoOp),
+        "UNLOCK" => Some(CallOtherClass::NoOp),
+        "Yield" => Some(CallOtherClass::NoOp),
+        "setEndianState" => Some(CallOtherClass::NoOp),
+        "setISAMode" => Some(CallOtherClass::NoOp),
 
         // ─── NoReturn ─────────────────────────────────────────────
-        "SoftwareBreakpoint" => Some(UserOpClass::NoReturn),
-        "UndefinedInstructionException" => Some(UserOpClass::NoReturn),
-        "invalidInstructionException" => Some(UserOpClass::NoReturn),
-        "sysret" => Some(UserOpClass::NoReturn),
-        "trap" => Some(UserOpClass::NoReturn),
+        "SoftwareBreakpoint" => Some(CallOtherClass::NoReturn),
+        "UndefinedInstructionException" => Some(CallOtherClass::NoReturn),
+        "invalidInstructionException" => Some(CallOtherClass::NoReturn),
+        "sysret" => Some(CallOtherClass::NoReturn),
+        "trap" => Some(CallOtherClass::NoReturn),
 
         // ─── Call (precise ABI) ───────────────────────────────────
 
         // Linux x86_64 syscall ABI.
-        "syscall" => Some(UserOpClass::Call(UserOpAbi {
+        "syscall" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
             memory_edge: true,
@@ -96,19 +96,19 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         // the table arch-blind, so we use an empty ABI + memory_edge:
         // sound for both arches but loses ARM syscall arg precision.
         // A future per-arch keying spec can restore the ARM precision.
-        "swi" => Some(UserOpClass::Call(UserOpAbi {
+        "swi" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
 
         // ARM SMCCC (X0..X7 in, X0..X3 out).
-        "CallHyperVisor" => Some(UserOpClass::Call(UserOpAbi {
+        "CallHyperVisor" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
             memory_edge: true,
         })),
-        "CallSecureMonitor" => Some(UserOpClass::Call(UserOpAbi {
+        "CallSecureMonitor" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
             memory_edge: true,
@@ -124,101 +124,101 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         // this empty-channel ABI.  memory_edge is true so the post-
         // cpuid Loads see the ordering effect (the ABI doesn't clobber
         // RAM but the user-op itself is opaque w.r.t. memory state).
-        "cpuid" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_basic_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_basic_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Version_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Version_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_cache_tlb_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_cache_tlb_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_serial_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_serial_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Deterministic_Cache_Parameters_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Deterministic_Cache_Parameters_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_MONITOR_MWAIT_Features_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_MONITOR_MWAIT_Features_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Thermal_Power_Management_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Thermal_Power_Management_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Extended_Feature_Enumeration_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Extended_Feature_Enumeration_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Direct_Cache_Access_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Direct_Cache_Access_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Architectural_Performance_Monitoring_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Architectural_Performance_Monitoring_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Extended_Topology_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Extended_Topology_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Processor_Extended_States_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Processor_Extended_States_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_Quality_of_Service_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_Quality_of_Service_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_brand_part1_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_brand_part1_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_brand_part2_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_brand_part2_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "cpuid_brand_part3_info" => Some(UserOpClass::Call(UserOpAbi {
+        "cpuid_brand_part3_info" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
 
         // x86 RDTSC — no inputs, writes EDX:EAX.
-        "rdtsc" => Some(UserOpClass::Call(UserOpAbi {
+        "rdtsc" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &["EAX", "EDX"],
             memory_edge: false,
         })),
 
         // x86 RDPKRU — ECX must be 0; writes EAX, clears EDX.
-        "rdpkru_u32" => Some(UserOpClass::Call(UserOpAbi {
+        "rdpkru_u32" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["ECX"],
             implicit_writes: &["EAX", "EDX"],
             memory_edge: false,
@@ -226,12 +226,12 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
         // x86 port I/O — port + value are pcode-explicit; memory edge captures
         // the external port-state effect.
-        "in" => Some(UserOpClass::Call(UserOpAbi {
+        "in" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
-        "out" => Some(UserOpClass::Call(UserOpAbi {
+        "out" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
@@ -239,7 +239,7 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
         // x86 SWAPGS — touches the synthetic GS_base MSR; no general-reg
         // effect, no memory edge (kernel-mode register swap).
-        "swapgs" => Some(UserOpClass::Call(UserOpAbi {
+        "swapgs" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -247,12 +247,12 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
         // ARM exclusive-monitor primitives — synthetic monitor flag,
         // pcode-handled.  LDREX/STREX themselves emit pcode loads/stores.
-        "ExclusiveMonitorPass" => Some(UserOpClass::Call(UserOpAbi {
+        "ExclusiveMonitorPass" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
         })),
-        "ExclusiveMonitorsStatus" => Some(UserOpClass::Call(UserOpAbi {
+        "ExclusiveMonitorsStatus" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -260,7 +260,7 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 
         // ARM unmodelled sysreg read — pcode-explicit encoding constant
         // and destination.  Empty ABI per c1 (lift succeeds; opaque value).
-        "UnkSytemRegRead" => Some(UserOpClass::Call(UserOpAbi {
+        "UnkSytemRegRead" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -271,7 +271,7 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         // branch resolver may classify it as a tail call to the trap
         // handler, or leave it unresolved.  Empty ABI; not NoReturn at
         // the user-op level (Sleigh emits a real branch target).
-        "software_udf" => Some(UserOpClass::Call(UserOpAbi {
+        "software_udf" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -280,34 +280,34 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         // ARM software_interrupt - SVC/SWI raised by an immediate; Sleigh
         // emits CALLOTHER(software_interrupt, imm).  No implicit channel
         // (the kernel side touches everything; we model it opaquely).
-        "software_interrupt" => Some(UserOpClass::Call(UserOpAbi {
+        "software_interrupt" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
         })),
 
         // NEON / SVE / multi-precision — Sleigh's pcode is fully sufficient.
-        "MP_INT_ABS" => Some(UserOpClass::Call(UserOpAbi {
+        "MP_INT_ABS" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
         })),
-        "NEON_rev64" => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_rev64" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
         })),
-        "NEON_sqshl" => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_sqshl" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
         })),
-        "NEON_uaddlv" => Some(UserOpClass::Call(UserOpAbi {
+        "NEON_uaddlv" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
         })),
-        "SVE_fnmla" => Some(UserOpClass::Call(UserOpAbi {
+        "SVE_fnmla" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -321,8 +321,8 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
 mod tests {
     use super::*;
 
-    fn empty_abi() -> UserOpAbi {
-        UserOpAbi {
+    fn empty_abi() -> CallOtherAbi {
+        CallOtherAbi {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: false,
@@ -343,7 +343,7 @@ mod tests {
             "UNLOCK",
             "Yield",
         ] {
-            assert_eq!(classify(n), Some(UserOpClass::NoOp), "{n}");
+            assert_eq!(classify(n), Some(CallOtherClass::NoOp), "{n}");
         }
     }
 
@@ -356,14 +356,14 @@ mod tests {
             "sysret",
             "trap",
         ] {
-            assert_eq!(classify(n), Some(UserOpClass::NoReturn), "{n}");
+            assert_eq!(classify(n), Some(CallOtherClass::NoReturn), "{n}");
         }
     }
 
     #[test]
     fn syscall_has_linux_x86_64_abi() {
         let class = classify("syscall").expect("syscall classified");
-        let UserOpClass::Call(abi) = class else {
+        let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
         assert_eq!(
@@ -401,7 +401,7 @@ mod tests {
             "cpuid_brand_part3_info",
         ] {
             let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
-            let UserOpClass::Call(abi) = class else {
+            let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
             assert!(abi.implicit_reads.is_empty(), "{n}");
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn rdtsc_writes_edx_eax_no_memory_edge() {
         let class = classify("rdtsc").expect("rdtsc classified");
-        let UserOpClass::Call(abi) = class else {
+        let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
@@ -435,7 +435,7 @@ mod tests {
             "ExclusiveMonitorsStatus",
         ] {
             let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
-            let UserOpClass::Call(abi) = class else {
+            let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
             assert_eq!(abi, empty_abi(), "{n}");
@@ -446,7 +446,7 @@ mod tests {
     fn smccc_ops_share_x0_x7_in_x0_x3_out() {
         for n in ["CallHyperVisor", "CallSecureMonitor"] {
             let class = classify(n).expect(n);
-            let UserOpClass::Call(abi) = class else {
+            let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
             assert_eq!(
@@ -463,7 +463,7 @@ mod tests {
     fn port_io_has_memory_edge_no_implicit_regs() {
         for n in ["in", "out"] {
             let class = classify(n).expect(n);
-            let UserOpClass::Call(abi) = class else {
+            let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
             assert_eq!(abi.implicit_reads, &[] as &[&str], "{n}");
@@ -479,12 +479,12 @@ mod tests {
 
     #[test]
     fn opaque_variant_does_not_exist() {
-        // Compile-time guard: every variant of UserOpClass is matched
+        // Compile-time guard: every variant of CallOtherClass is matched
         // exhaustively here, so adding/removing a variant fails compile.
         for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
             let class = classify(n).unwrap();
             match class {
-                UserOpClass::NoOp | UserOpClass::NoReturn | UserOpClass::Call(_) => {}
+                CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
             }
         }
     }

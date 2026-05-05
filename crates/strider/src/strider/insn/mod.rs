@@ -121,21 +121,21 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
 
-        let class = target::user_ops::classify(name).ok_or_else(|| {
-            ir::error::UnknownUserOpError {
+        let class = target::call_other_abi::classify(name).ok_or_else(|| {
+            ir::error::UnknownCallOtherError {
                 name: name.to_string(),
             }
         })?;
 
         match class {
-            target::user_ops::UserOpClass::NoOp => Ok(()),
+            target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
-            target::user_ops::UserOpClass::NoReturn => {
+            target::call_other_abi::CallOtherClass::NoReturn => {
                 let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
                 Ok(())
             }
 
-            target::user_ops::UserOpClass::Call(abi) => {
+            target::call_other_abi::CallOtherClass::Call(abi) => {
                 // 1. Resolve pcode-explicit inputs (args) via the
                 //    aliasing-aware value lifter.
                 let args: Vec<ir::Value> = if insn.inputs.len() > 1 {

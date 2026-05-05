@@ -83,7 +83,7 @@ pub struct Strider {
     pub(super) arch: crate::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
     /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
-    /// to resolve `UserOpAbi::implicit_reads`/`implicit_writes` register
+    /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
     /// names to `rsleigh::Vn`s without paying the per-call cost of
     /// `Sleigh::regs()` (an "expensive operation" per its docstring).
     pub(super) sleigh_regs: rsleigh::SleighRegs,
@@ -189,7 +189,7 @@ impl Strider {
     /// Composed of node-removal passes safe to run only after the IR
     /// shape is final: `RedundantPhis`, `DeadBranchElimination`, plus
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
-    /// is now done at construction time in `target::user_ops::classify`.
+    /// is now done at construction time in `target::call_other_abi::classify`.
     #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::destructive_default_pipeline();

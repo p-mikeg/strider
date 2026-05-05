@@ -52,7 +52,7 @@ EXPECTED_ERRORS = {
     "ReaderError",
     "RewriteError",
     "StriderError",
-    "UnknownUserOpError",
+    "UnknownCallOtherError",
     "UnresolvedIndirectBranchError",
 }
 

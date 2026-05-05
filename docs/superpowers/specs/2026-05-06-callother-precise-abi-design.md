@@ -1,7 +1,7 @@
 # Precise per-user-op CallOther ABIs (v2)
 
-Replace v1's `UserOpClass::Opaque` catch-all with explicit
-`UserOpClass::Call(UserOpAbi)` entries that give each Sleigh user-op
+Replace v1's `CallOtherClass::Opaque` catch-all with explicit
+`CallOtherClass::Call(CallOtherAbi)` entries that give each Sleigh user-op
 its precise ISA-level register footprint and memory-edge effect.
 Hard cutover: no `Opaque` exists after this lands.  The IR builder
 clobbers only the registers an op actually touches (typically zero
@@ -16,7 +16,7 @@ with structured per-op ABIs.
 ## Motivation
 
 Every entry currently classified `Opaque` in
-`crates/target/src/user_ops.rs` is being modelled imprecisely.  The
+`crates/target/src/call_other_abi.rs` is being modelled imprecisely.  The
 v1 IR builder's Opaque arm conservatively clobbers every tracked
 variable except the stack pointer — destroying SSA provenance for
 every register on every CallOther site, even when the actual ISA op
@@ -40,11 +40,11 @@ precision they need.
 
 ## Goals
 
-1. **No `Opaque` variant.**  `UserOpClass = NoOp | NoReturn |
-   Call(UserOpAbi)`.  Every previously-Opaque entry gets reclassified
+1. **No `Opaque` variant.**  `CallOtherClass = NoOp | NoReturn |
+   Call(CallOtherAbi)`.  Every previously-Opaque entry gets reclassified
    into exactly one of the three.
 
-2. **`UserOpAbi` describes the *delta* on top of Sleigh's pcode.**
+2. **`CallOtherAbi` describes the *delta* on top of Sleigh's pcode.**
    Sleigh's pcode insn already carries per-instruction-encoded
    operands as `inputs[1..]` and `output`.  The ABI specifies only
    the *implicit* (ISA-fixed, not in pcode) reads, writes, and
@@ -62,7 +62,7 @@ precision they need.
    would happen across any real memory write).
 
 5. **Hard cutover, no transitional shim.**  v1's
-   `UserOpClass::Opaque` and the IR's `build_call_other(name, …)`
+   `CallOtherClass::Opaque` and the IR's `build_call_other(name, …)`
    /`build_call_other_opaque` /`CallOtherOutcome` surface are
    removed in the same change-set.  No "v1-compat fallback" lingers.
 
@@ -93,7 +93,7 @@ precision they need.
   acquire-release ordering.  A future ordering analysis would need
   a separate signal.
 
-* **New `Pure` enum variant.**  Empty-ABI `Call(UserOpAbi { all-empty })`
+* **New `Pure` enum variant.**  Empty-ABI `Call(CallOtherAbi { all-empty })`
   is the canonical way to express "Sleigh's pcode is fully sufficient";
   no separate `Pure` variant is added (decided in design discussion —
   uniform dispatch through `Call` is preferred over a fourth variant).
@@ -101,12 +101,12 @@ precision they need.
 ## Architectural facts
 
 * v1 (`2026-05-05-callother-classification-design.md`) put the
-  classification table in `crates/target/src/user_ops.rs`,
+  classification table in `crates/target/src/call_other_abi.rs`,
   consumed by `cfg::region_builder` (NoReturn termination only) and
   by `ir::FunctionBuilder::build_call_other(name, …)` (full IR
   shape dispatch via the `CallOtherOutcome` return type).
 
-* v1's `UserOpClass::Opaque` arm in `build_call_other` calls
+* v1's `CallOtherClass::Opaque` arm in `build_call_other` calls
   `build_call_other_opaque`, which calls
   `build_call_other_with_clobbers` with the conservative
   `every-tracked-variable-except-SP` clobber set.  The output
@@ -135,20 +135,20 @@ precision they need.
 * `cfg::region_builder::process_new_insn`'s v1 `Opcode::CallOther`
   arm (added in commit 26898da7) consults `classify` and finishes
   the region as `RegionTerminator::NoReturn` only when the result
-  is `UserOpClass::NoReturn`.  All other classifications fall
+  is `CallOtherClass::NoReturn`.  All other classifications fall
   through to today's catch-all (insn appended to `self.insns`,
   loop continues).  v2 leaves this arm unchanged: cfg never reads
-  the `UserOpAbi` payload.
+  the `CallOtherAbi` payload.
 
 ## Design
 
-### Module changes — `target::user_ops`
+### Module changes — `target::call_other_abi`
 
 ```rust
-// crates/target/src/user_ops.rs (v2)
+// crates/target/src/call_other_abi.rs (v2)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserOpClass {
+pub enum CallOtherClass {
     /// True no-op in the IR's data-flow / control-flow / memory model.
     /// `build_call_other_*` is never called (strider's
     /// `handle_call_other` returns Ok(()) without IR construction).
@@ -162,11 +162,11 @@ pub enum UserOpClass {
 
     /// Op with a precise ABI describing its register footprint and
     /// memory effect *beyond* what Sleigh's pcode already encodes.
-    Call(UserOpAbi),
+    Call(CallOtherAbi),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UserOpAbi {
+pub struct CallOtherAbi {
     /// Register names this op reads beyond Sleigh's pcode-explicit
     /// `inputs[1..]`.  Resolved to `rsleigh::Vn` by the strider
     /// layer at lift time and appended to the CallOther's value
@@ -194,7 +194,7 @@ pub struct UserOpAbi {
 }
 
 #[must_use]
-pub fn classify(name: &str) -> Option<UserOpClass> { … }
+pub fn classify(name: &str) -> Option<CallOtherClass> { … }
 ```
 
 The `classify` function's body becomes the table below.
@@ -243,7 +243,7 @@ against `Sleigh::regs()` during implementation.
 
 Linux x86_64 syscall-class (SYSCALL ABI):
 ```rust
-"syscall" => Call(UserOpAbi {
+"syscall" => Call(CallOtherAbi {
     implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
     implicit_writes: &["RAX", "RCX", "R11"],
     memory_edge:     true,   // syscall affects arbitrary kernel state
@@ -252,7 +252,7 @@ Linux x86_64 syscall-class (SYSCALL ABI):
 
 Linux ARM syscall-class (SWI):
 ```rust
-"swi" => Call(UserOpAbi {
+"swi" => Call(CallOtherAbi {
     implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
     implicit_writes: &["r0"],
     memory_edge:     true,
@@ -261,12 +261,12 @@ Linux ARM syscall-class (SWI):
 
 ARM SMCCC (HVC and SMC use the same ABI: X0..X7 in, X0..X3 out):
 ```rust
-"CallHyperVisor" => Call(UserOpAbi {
+"CallHyperVisor" => Call(CallOtherAbi {
     implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
     implicit_writes: &["x0", "x1", "x2", "x3"],
     memory_edge:     true,
 }),
-"CallSecureMonitor" => Call(UserOpAbi {
+"CallSecureMonitor" => Call(CallOtherAbi {
     implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
     implicit_writes: &["x0", "x1", "x2", "x3"],
     memory_edge:     true,
@@ -275,7 +275,7 @@ ARM SMCCC (HVC and SMC use the same ABI: X0..X7 in, X0..X3 out):
 
 x86 SWAPGS (touches the synthetic GS_base MSR; no general-reg effect):
 ```rust
-"swapgs" => Call(UserOpAbi {
+"swapgs" => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    false,
 }),
@@ -285,7 +285,7 @@ x86 CPUID (Sleigh emits `CALLOTHER(cpuid, EAX)` — EAX is in pcode args;
 ECX is read for subleaves but Sleigh's spec doesn't model that;
 EAX/EBX/ECX/EDX are written but Sleigh's spec doesn't model that):
 ```rust
-"cpuid" => Call(UserOpAbi {
+"cpuid" => Call(CallOtherAbi {
     implicit_reads:  &["ECX"],
     implicit_writes: &["EAX", "EBX", "ECX", "EDX"],
     memory_edge:     false,
@@ -294,12 +294,12 @@ EAX/EBX/ECX/EDX are written but Sleigh's spec doesn't model that):
 
 x86 RDTSC / RDPKRU:
 ```rust
-"rdtsc" => Call(UserOpAbi {
+"rdtsc" => Call(CallOtherAbi {
     implicit_reads:  &[],
     implicit_writes: &["EAX", "EDX"],
     memory_edge:     false,
 }),
-"rdpkru_u32" => Call(UserOpAbi {
+"rdpkru_u32" => Call(CallOtherAbi {
     implicit_reads:  &["ECX"],            // must be 0 per ISA
     implicit_writes: &["EAX", "EDX"],     // EDX cleared per ISA
     memory_edge:     false,
@@ -309,11 +309,11 @@ x86 RDTSC / RDPKRU:
 x86 IN / OUT (port I/O — pcode args carry the port + value; we just
 note the memory edge):
 ```rust
-"in"  => Call(UserOpAbi {
+"in"  => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    true,
 }),
-"out" => Call(UserOpAbi {
+"out" => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    true,
 }),
@@ -322,11 +322,11 @@ note the memory edge):
 ARM exclusive-monitor primitives (synthetic monitor-flag effect; no
 general-reg effect; LDREX/STREX themselves emit pcode loads/stores):
 ```rust
-"ExclusiveMonitorPass" => Call(UserOpAbi {
+"ExclusiveMonitorPass" => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    false,
 }),
-"ExclusiveMonitorsStatus" => Call(UserOpAbi {
+"ExclusiveMonitorsStatus" => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    false,
 }),
@@ -336,7 +336,7 @@ ARM unmodelled sysreg read (per c1 — see spec discussion at
 `docs/superpowers/specs/2026-05-06-callother-precise-abi-design.md`,
 Q&A on UnkSytemRegRead):
 ```rust
-"UnkSytemRegRead" => Call(UserOpAbi {
+"UnkSytemRegRead" => Call(CallOtherAbi {
     implicit_reads: &[], implicit_writes: &[],
     memory_edge:    false,
 }),
@@ -345,11 +345,11 @@ Q&A on UnkSytemRegRead):
 NEON / SVE / multi-precision ops (Sleigh's pcode is fully sufficient;
 no implicit channel):
 ```rust
-"NEON_rev64"  => Call(UserOpAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
-"NEON_sqshl"  => Call(UserOpAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
-"NEON_uaddlv" => Call(UserOpAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
-"SVE_fnmla"   => Call(UserOpAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
-"MP_INT_ABS"  => Call(UserOpAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
+"NEON_rev64"  => Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
+"NEON_sqshl"  => Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
+"NEON_uaddlv" => Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
+"SVE_fnmla"   => Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
+"MP_INT_ABS"  => Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: false }),
 ```
 
 ### IR builder changes
@@ -425,18 +425,18 @@ fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         anyhow::anyhow!("user-op id {user_op_id_u32} not in Sleigh's user_op table")
     })?;
 
-    let class = target::user_ops::classify(name)
-        .ok_or_else(|| ir::error::UnknownUserOpError { name: name.to_string() })?;
+    let class = target::call_other_abi::classify(name)
+        .ok_or_else(|| ir::error::UnknownCallOtherError { name: name.to_string() })?;
 
     match class {
-        target::user_ops::UserOpClass::NoOp => Ok(()),
+        target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
-        target::user_ops::UserOpClass::NoReturn => {
+        target::call_other_abi::CallOtherClass::NoReturn => {
             let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
             Ok(())
         }
 
-        target::user_ops::UserOpClass::Call(abi) => {
+        target::call_other_abi::CallOtherClass::Call(abi) => {
             // Resolve pcode-explicit inputs.
             let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
                 insn.inputs[1..].iter().map(|vn| self.read_vn(vn)).collect::<Result<_>>()?
@@ -494,7 +494,7 @@ fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
 
 `cfg::region_builder::process_new_insn`'s v1 `Opcode::CallOther` arm
 continues to consult `classify()` only to detect `NoReturn` and
-finish the region.  It never reads the `UserOpAbi` payload.
+finish the region.  It never reads the `CallOtherAbi` payload.
 
 ### Pattern surface — unchanged
 
@@ -515,7 +515,7 @@ CallOther via v1's `build_call_other(name, …)` or
 Affected files (re-survey during Task 7 of the plan):
 
 * `crates/ir/src/builder/tests.rs` — `build_call_other_no_value_emits_clobber_per_tracked_var` and `build_call_other_rebinds_tracked_variables` test the v1 conservative-clobber default behaviour, which is gone.  **Delete** these two tests; the behaviour they test no longer exists.  The `build_call_other_with_value_keeps_value_in_slot_2_clobber_starts_at_3` test similarly anchors on the v1 Opaque shape — rewrite using `build_call_other_modeled` with explicit Vn slices.
-* `crates/ir/tests/call_other_classification.rs` — v1's outcome-level test.  Rewrite NoOp / NoReturn / Built tests to call `build_call_other_terminal` / `build_call_other_modeled` directly; assert on the precise IR shape; the "Unknown name → UnknownUserOpError" case moves to `handle_call_other` (strider-side test).
+* `crates/ir/tests/call_other_classification.rs` — v1's outcome-level test.  Rewrite NoOp / NoReturn / Built tests to call `build_call_other_terminal` / `build_call_other_modeled` directly; assert on the precise IR shape; the "Unknown name → UnknownCallOtherError" case moves to `handle_call_other` (strider-side test).
 * `crates/ir/tests/call_other_conservative_clobber.rs` — entire file tests v1's conservative-clobber default.  **Delete** the file.
 * `crates/pattern/tests/get_vn_with_callother_clobber.rs` — v1 used `build_call_other("cpuid", 7, &[], None)` and asserted on the all-vars clobber set's recovery.  Rewrite using `build_call_other_modeled` with explicit `&[EAX, EBX, ECX, EDX]` writes; assert recovery of those four named clobbers.
 * `crates/pattern/tests/matching/support/graph.rs` — test helper `callother_node` takes a name; update it to take `(name, user_op_id, args, ret_ty, implicit_reads, implicit_writes)` and forward to `build_call_other_modeled`.
@@ -531,7 +531,7 @@ A new test added by this spec:
 
 This is a breaking change to the IR builder API.  Sequence:
 
-1. Update `target::user_ops` (UserOpAbi struct, reclassified table).
+1. Update `target::call_other_abi` (CallOtherAbi struct, reclassified table).
    Tests in target verify all 33 entries are exhaustively classified.
 2. Add `build_call_other_modeled` to ir.  v1 helpers still exist
    here; both old and new code compiles.
@@ -555,7 +555,7 @@ breaking-cleanup pass.
   `name_to_vn` returns `None` and the lift errors out cleanly
   (`anyhow!("user-op {name} ABI references unknown register name
   {n}")`).  Implementer verifies each name during Task 1 by running
-  `cargo test -p target user_ops` after each batch of additions.
+  `cargo test -p target call_other_abi` after each batch of additions.
 
 * **`sysret` classification.**  Best-effort marked NoReturn.  If
   Sleigh's pcode for SYSRET emits a clean `Return` after the

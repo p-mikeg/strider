@@ -11,7 +11,7 @@
 //!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
 //!     between the If and the following Call to set up the ISA-mode
 //!     context bit.  The matcher's ConsumersSpec walk does not pass
-//!     through CallOther, but `target::user_ops::classify("setISAMode")`
+//!     through CallOther, but `target::call_other_abi::classify("setISAMode")`
 //!     returns `NoOp` so the IR builder skips emitting the CallOther
 //!     entirely, and structural compositions like
 //!     `if_node().true_branch(call().arg(0, function_arg(1)))` match
@@ -244,7 +244,7 @@ fn if_bit_clear_call_assertions(g: &ir::BuiltFunctionGraph) {
     // On Thumb-2, gcc emits a `setISAMode` user-op as a `CallOther`
     // between the If and the Call to set up the ISA-mode context.  The
     // matcher's ConsumersSpec walk doesn't pass through CallOther, but
-    // `target::user_ops::classify("setISAMode")` returns `NoOp` so the
+    // `target::call_other_abi::classify("setISAMode")` returns `NoOp` so the
     // IR builder skips the node entirely, and the strict composition
     // `If(true_branch=Call(...))` matches on Thumb just like every
     // other arch.
@@ -372,7 +372,7 @@ fn dispatch_on_flag_assertions(g: &ir::BuiltFunctionGraph) {
     // branch — but the composition itself (If immediately consuming
     // Call, no opaque CallOther in the way) must succeed on every
     // arch including arm_thumb — proven by the construction-time NoOp
-    // classification of setISAMode in target::user_ops.
+    // classification of setISAMode in target::call_other_abi.
     let off2 = Capture::new();
     let base2 = Capture::new();
     let off3 = Capture::new();

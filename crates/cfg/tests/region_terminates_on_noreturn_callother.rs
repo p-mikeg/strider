@@ -1,5 +1,5 @@
 //! cfg::region_builder terminates a region as RegionTerminator::NoReturn
-//! when it sees a CallOther whose target::user_ops::classify is NoReturn.
+//! when it sees a CallOther whose target::call_other_abi::classify is NoReturn.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
