@@ -266,6 +266,26 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
             memory_edge: false,
         })),
 
+        // ARM software_udf - permanently undefined instruction.  Sleigh
+        // returns a target and emits `goto [target]` after; the indirect
+        // branch resolver may classify it as a tail call to the trap
+        // handler, or leave it unresolved.  Empty ABI; not NoReturn at
+        // the user-op level (Sleigh emits a real branch target).
+        "software_udf" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: false,
+        })),
+
+        // ARM software_interrupt - SVC/SWI raised by an immediate; Sleigh
+        // emits CALLOTHER(software_interrupt, imm).  No implicit channel
+        // (the kernel side touches everything; we model it opaquely).
+        "software_interrupt" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+
         // NEON / SVE / multi-precision — Sleigh's pcode is fully sufficient.
         "MP_INT_ABS" => Some(UserOpClass::Call(UserOpAbi {
             implicit_reads: &[],
