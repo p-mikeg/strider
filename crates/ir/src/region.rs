@@ -107,6 +107,11 @@ impl FunctionBuilder {
     /// memory after a `build_call_other_modeled` call whose ABI's
     /// `memory_edge` is true — see `crates/strider/src/strider/insn/mod.rs`
     /// `handle_call_other`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` when no region is active and
+    /// `WrongOutputKind` when `memory` is not a `Memory` edge.
     pub fn advance_cur_region_memory(&mut self, memory: NodeOutputId) -> Result<()> {
         self.require_memory_kind(memory)?;
         let region_id = self.require_cur_region()?;

@@ -159,6 +159,10 @@ impl FunctionBuilder {
     /// outputs are expected to dangle: the cfg has already terminated
     /// the region with `RegionTerminator::NoReturn`, so no successor
     /// will read them.  Stamps `name` on `Graph::call_other_names`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` when no region is active.
     pub fn build_call_other_terminal(
         &mut self,
         user_op_id: u64,
@@ -221,6 +225,12 @@ impl FunctionBuilder {
     /// `implicit_writes_vns` differ in length, when any
     /// implicit-write kind is not a value kind, or when the resulting
     /// node fails to advance the active region's control token.
+    // Eight-arg signature is the natural shape: id + name + the four
+    // pcode-explicit channels (args, output_ty) + the three implicit
+    // ABI channels (reads, writes_vns, write_kinds).  Splitting into a
+    // builder type would add boilerplate without simplifying the call
+    // site.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_call_other_modeled(
         &mut self,
         user_op_id: u64,
