@@ -13,10 +13,10 @@ fn name_matches_only_target() {
     b.set_entry_region(region).expect("entry");
     b.set_region(region);
     let _ = b
-        .build_call_other("cpuid", 1, &[], None)
+        .build_call_other_modeled(1, "cpuid", &[], None, &[], &[], &[])
         .expect("cpuid");
     let _ = b
-        .build_call_other("rdtsc", 2, &[], None)
+        .build_call_other_modeled(2, "rdtsc", &[], None, &[], &[], &[])
         .expect("rdtsc");
     b.build_return(None, &[]).expect("return");
     let fg = b.build().expect("build");

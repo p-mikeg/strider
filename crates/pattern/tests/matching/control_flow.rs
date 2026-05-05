@@ -274,7 +274,7 @@ fn if_node_branch_walks_through_control_state_when_flag_set() {
 fn graph_call_other(user_op_id: u64) -> ir::BuiltFunctionGraph {
     let mut t = Tb::empty();
     let arg = t.u64(7);
-    t.call_other("cpuid", user_op_id, &[arg], Some(ir::node::NodeOutputType::U64));
+    t.call_other("cpuid", user_op_id, &[arg], Some(ir::node::NodeOutputType::U64), &[], &[]);
     t.ret_nothing()
 }
 

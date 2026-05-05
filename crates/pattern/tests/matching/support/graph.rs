@@ -319,25 +319,41 @@ impl Tb {
         self.fb.build_call(addr).expect("call");
     }
 
-    /// Emits a `CallOther(user_op_id)` node with `args` and (optional) ret
-    /// type.  Returns the ret-value output when `ret_ty` is `Some`.
-    /// `name` must be a known Opaque user-op in
-    /// `target::user_ops::classify`; tests typically pass `"cpuid"`.
+    /// Emits a `CallOther(user_op_id)` node via the v2 modeled API.
+    /// Returns the ret-value output when `ret_ty` is `Some`.
+    /// `implicit_writes` lists the Vns this op clobbers; the resulting
+    /// CallOther gets one clobber output slot per Vn (matching its
+    /// width).  Tests that don't care about clobbers pass `&[]`.
     pub fn call_other(
         &mut self,
         name: &str,
         user_op_id: u64,
         args: &[NodeOutputId],
         ret_ty: Option<NodeOutputType>,
+        implicit_reads: &[NodeOutputId],
+        implicit_writes: &[rsleigh::Vn],
     ) -> Option<NodeOutputId> {
-        match self
+        let implicit_write_kinds: Vec<ir::node::NodeOutputKind> = implicit_writes
+            .iter()
+            .map(|vn| {
+                ir::node::NodeOutputKind::OutputType(
+                    vn.size.try_into().expect("vn size -> output type"),
+                )
+            })
+            .collect();
+        let (_node, value, _clobber_outs) = self
             .fb
-            .build_call_other(name, user_op_id, args, ret_ty)
-            .expect("call_other")
-        {
-            ir::CallOtherOutcome::Built { value, .. } => value,
-            other => panic!("expected Built outcome, got {other:?}"),
-        }
+            .build_call_other_modeled(
+                user_op_id,
+                name,
+                args,
+                ret_ty,
+                implicit_reads,
+                implicit_writes,
+                &implicit_write_kinds,
+            )
+            .expect("call_other");
+        value
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────
