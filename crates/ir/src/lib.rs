@@ -55,7 +55,7 @@ pub mod validate;
 pub mod walk;
 
 pub use crate::error::Result;
-pub use builder::{CallOtherOutcome, FunctionBuilder, VarId};
+pub use builder::{FunctionBuilder, VarId};
 pub use ops::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,

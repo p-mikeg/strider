@@ -6,32 +6,6 @@ use crate::error::Result;
 use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use crate::ops::IntBinaryOp;
 
-/// Outcome of [`FunctionBuilder::build_call_other`].
-#[derive(Debug)]
-#[must_use]
-pub enum CallOtherOutcome {
-    /// Classification was [`target::user_ops::UserOpClass::NoOp`].
-    /// No IR node emitted; control / memory unchanged.
-    NoOp,
-
-    /// Classification was [`target::user_ops::UserOpClass::NoReturn`].
-    /// A `NodeKind::CallOther` node was emitted with control + memory
-    /// inputs only (no clobber outputs, no value output); its outputs
-    /// dangle.  The cfg has already terminated the region on this
-    /// CallOther (see `RegionTerminator::NoReturn`), so the per-region
-    /// IR walk has nothing left to process.
-    NoReturn,
-
-    /// Classification was [`target::user_ops::UserOpClass::Call`]
-    /// (v1-compat shim: ignores the ABI and uses the conservative
-    /// every-tracked-variable-except-SP clobber set).  Removed in
-    /// Task 6 once all callers migrate to `build_call_other_modeled`.
-    Built {
-        node: crate::node::NodeId,
-        value: Option<crate::node::NodeOutputId>,
-    },
-}
-
 impl FunctionBuilder {
     /// Terminates the current region with a `Call` node, using the
     /// function-default calling convention.  Equivalent to
@@ -179,25 +153,6 @@ impl FunctionBuilder {
         Ok(call)
     }
 
-    /// Internal: emit a CallOther node with the conservative clobber
-    /// set (every tracked variable except SP).  Used by the v1
-    /// `build_call_other` for any classified call shape.
-    pub(crate) fn build_call_other_opaque(
-        &mut self,
-        user_op_id: u64,
-        args: &[NodeOutputId],
-        output_ty: Option<NodeOutputType>,
-    ) -> Result<(NodeId, Option<NodeOutputId>)> {
-        let stack_ptr_vn = self.stack_ptr_vn;
-        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = self
-            .variables
-            .values()
-            .copied()
-            .filter(|v| Some(*v) != stack_ptr_vn)
-            .collect();
-        self.build_call_other_with_clobbers(user_op_id, args, output_ty, &clobber_vars)
-    }
-
     /// Emit a CallOther node intended as a region terminator (Linux
     /// `BUG_ON`-class trap).  Has only ctrl + memory inputs and
     /// ctrl + memory outputs — no clobbers, no value, no args.  The
@@ -341,113 +296,4 @@ impl FunctionBuilder {
         Ok((node, value_output, clobber_outputs))
     }
 
-    /// Classified CallOther construction.  Looks up `name` in
-    /// [`target::user_ops::classify`] and dispatches to the matching
-    /// builder shape.
-    ///
-    /// # Errors
-    /// Returns [`crate::error::UnknownUserOpError`] (via `anyhow`) if
-    /// `name` has no entry in the classification table.
-    pub fn build_call_other(
-        &mut self,
-        name: &str,
-        user_op_id: u64,
-        args: &[NodeOutputId],
-        output_ty: Option<NodeOutputType>,
-    ) -> Result<CallOtherOutcome> {
-        use target::user_ops::{UserOpClass, classify};
-        let class = classify(name).ok_or_else(|| crate::error::UnknownUserOpError {
-            name: name.to_string(),
-        })?;
-        match class {
-            UserOpClass::NoOp => Ok(CallOtherOutcome::NoOp),
-            UserOpClass::NoReturn => {
-                let _node = self.build_call_other_terminal(user_op_id, name)?;
-                Ok(CallOtherOutcome::NoReturn)
-            }
-            // v1-compat shim: any Call(abi) classification falls back to the
-            // conservative-clobber Opaque path.  v2's strider routes through
-            // the new build_call_other_modeled and bypasses this method
-            // entirely.  This shim only keeps v1 callers (legacy tests still
-            // calling build_call_other) compiling until Tasks 6-10 migrate
-            // them out.
-            UserOpClass::Call(_) => {
-                let (node, value) =
-                    self.build_call_other_opaque(user_op_id, args, output_ty)?;
-                self.body_mut()
-                    .graph
-                    .set_call_other_name(node, name.to_string());
-                Ok(CallOtherOutcome::Built { node, value })
-            }
-        }
-    }
-
-    /// Internal helper for [`Self::build_call_other_opaque`]: emits a
-    /// CallOther with an explicit `clobber_vars` slice.  All callers
-    /// now go through the classified [`Self::build_call_other`] entry
-    /// point — this helper is `pub(crate)` and used only by
-    /// [`Self::build_call_other_opaque`].
-    ///
-    /// # Errors
-    ///
-    /// Same set as [`Self::build_call_other`].
-    pub(crate) fn build_call_other_with_clobbers(
-        &mut self,
-        user_op_id: u64,
-        args: &[NodeOutputId],
-        output_ty: Option<NodeOutputType>,
-        clobber_vars: &[rsleigh::Vn],
-    ) -> Result<(NodeId, Option<NodeOutputId>)> {
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
-
-        self.validate_value_inputs(args)?;
-
-        let clobber_vars: SmallVec<[rsleigh::Vn; 8]> = clobber_vars.iter().copied().collect();
-
-        // Read each clobbered variable to validate it has a kind we
-        // can express.  Same defensive check as `build_call`.
-        let mut clobber_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
-        for var in &clobber_vars {
-            let out = self.read_variable(var)?;
-            let k = self.graph().output_kind(out);
-            if !k.is_value() {
-                return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
-            }
-            clobber_kinds.push(k);
-        }
-
-        let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
-        output_kinds.push(NodeOutputKind::Control);
-        output_kinds.push(NodeOutputKind::Memory);
-        if let Some(ty) = output_ty {
-            output_kinds.push(NodeOutputKind::OutputType(ty));
-        }
-        output_kinds.extend(clobber_kinds);
-
-        let inputs = [ctrl, memory].into_iter().chain(args.iter().copied());
-        let node = self.create_node(NodeKind::CallOther { user_op_id }, inputs, output_kinds);
-        let outputs: SmallVec<[NodeOutputId; 8]> =
-            self.graph().node_outputs(node).into_iter().collect();
-        self.advance_cur_region_ctrl(outputs[0])?;
-        self.advance_cur_region_memory(outputs[1])?;
-
-        // Optional value output sits at slot 2 when present; clobber
-        // outputs follow at slot 2 (value-less) or slot 3 (with value).
-        let (value_output, clobber_start_slot) = if output_ty.is_some() {
-            (Some(outputs[2]), 3usize)
-        } else {
-            (None, 2usize)
-        };
-
-        // Rebind each clobbered variable to its CallOther output.
-        for (var, out) in core::iter::zip(
-            clobber_vars.iter(),
-            outputs.iter().skip(clobber_start_slot),
-        ) {
-            self.write_variable(var, *out)?;
-        }
-
-        Ok((node, value_output))
-    }
 }

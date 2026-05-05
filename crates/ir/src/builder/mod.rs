@@ -15,8 +15,6 @@ mod nodes;
 mod tests;
 mod vars;
 
-pub use call::CallOtherOutcome;
-
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VarId(u32);
