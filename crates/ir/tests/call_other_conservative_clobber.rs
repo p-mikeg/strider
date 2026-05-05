@@ -3,9 +3,24 @@
 
 #![allow(clippy::unwrap_used)]
 
-use ir::FunctionBuilder;
 use ir::node::NodeOutputType;
+use ir::{CallOtherOutcome, FunctionBuilder};
 use target::{CallingConvention, SleighArch};
+
+fn opaque_call_other(
+    b: &mut FunctionBuilder,
+    user_op_id: u64,
+    args: &[ir::Value],
+    output_ty: Option<NodeOutputType>,
+) -> (ir::node::NodeId, Option<ir::Value>) {
+    match b
+        .build_call_other("cpuid", user_op_id, args, output_ty)
+        .unwrap()
+    {
+        CallOtherOutcome::Built { node, value } => (node, value),
+        other => panic!("expected Built outcome, got {other:?}"),
+    }
+}
 
 fn x86_64_strider_setup() -> (rsleigh::SleighRegs, target::BuiltCallingConvention) {
     let arch = SleighArch::x86_64();
@@ -25,7 +40,7 @@ fn build_call_other_no_value_emits_clobber_per_tracked_var() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
 
-    let (call_other_id, value_out) = b.build_call_other(7, &[], None).unwrap();
+    let (call_other_id, value_out) = opaque_call_other(&mut b, 7, &[], None);
     assert!(value_out.is_none());
 
     let g = &b.body().graph;
@@ -51,9 +66,8 @@ fn build_call_other_with_value_keeps_value_in_slot_2_clobber_starts_at_3() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
 
-    let (call_other_id, value_out) = b
-        .build_call_other(7, &[], Some(NodeOutputType::U32))
-        .unwrap();
+    let (call_other_id, value_out) =
+        opaque_call_other(&mut b, 7, &[], Some(NodeOutputType::U32));
     assert!(value_out.is_some());
 
     let g = &b.body().graph;
@@ -78,7 +92,7 @@ fn build_call_other_rebinds_tracked_variables() {
     // Snapshot rax's pre-CallOther producer.
     let pre_rax_value = b.read_variable(&rax).unwrap();
 
-    let (call_other_id, _) = b.build_call_other(7, &[], None).unwrap();
+    let (call_other_id, _) = opaque_call_other(&mut b, 7, &[], None);
 
     // Post-CallOther rax is bound to the CallOther's clobber slot.
     let post_rax_value = b.read_variable(&rax).unwrap();
