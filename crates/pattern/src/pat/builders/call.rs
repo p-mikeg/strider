@@ -4,6 +4,8 @@
 //!
 //! Use [`crate::pat::IntoPat::capture`] to bind the matched call node id.
 
+use std::sync::Arc;
+
 use ir::node::NodeKind;
 
 use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, OutputsSpec};
@@ -92,17 +94,30 @@ impl From<CallPat> for Pat {
 /// Builder for `CallOther` node patterns.  Created by [`crate::pat::call_other`].
 pub struct CallOtherPat {
     user_op_id: Option<u64>,
+    name: Option<String>,
     args: Vec<(usize, Pat)>,
 }
 
 impl CallOtherPat {
     pub(crate) fn new() -> Self {
-        Self { user_op_id: None, args: Vec::new() }
+        Self {
+            user_op_id: None,
+            name: None,
+            args: Vec::new(),
+        }
     }
     /// Constrain the matched node to a specific user-op id.
     #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
         self.user_op_id = Some(v);
+        self
+    }
+    /// Constrain the matched node's user-op name (read from
+    /// [`ir::Graph::call_other_name`]) to equal `n`.  Combinable
+    /// with [`Self::user_op_id`] (both must match) and [`Self::arg`].
+    #[must_use]
+    pub fn name(mut self, n: impl Into<String>) -> Self {
+        self.name = Some(n.into());
         self
     }
     /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
@@ -114,7 +129,7 @@ impl CallOtherPat {
 
 impl From<CallOtherPat> for Pat {
     fn from(b: CallOtherPat) -> Pat {
-        let CallOtherPat { user_op_id, args } = b;
+        let CallOtherPat { user_op_id, name, args } = b;
         // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), ...].
         let indexed_inputs: Vec<(usize, Pat)> =
             args.into_iter().map(|(i, p)| (2 + i, p)).collect();
@@ -125,6 +140,15 @@ impl From<CallOtherPat> for Pat {
                 matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
             }),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs)).into_pat()
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs));
+        if let Some(want) = name {
+            pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
+                ctx.graph
+                    .graph
+                    .call_other_name(node)
+                    .is_some_and(|s| s == want.as_str())
+            }));
+        }
+        pat.into_pat()
     }
 }
