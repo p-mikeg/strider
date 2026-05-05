@@ -50,20 +50,38 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
         "setISAMode" => Some(UserOpClass::NoOp),
 
         // ── Noreturn traps (Linux BUG_ON / WARN-class) ──
-        "invalidInstructionException" => Some(UserOpClass::NoReturn),
-        "SoftwareBreakpoint" => Some(UserOpClass::NoReturn),
+        "SoftwareBreakpoint" => Some(UserOpClass::NoReturn), // aarch64 brk #imm
+        "UndefinedInstructionException" => Some(UserOpClass::NoReturn), // ARM 32-bit UDF
+        "invalidInstructionException" => Some(UserOpClass::NoReturn), // x86/x86_64 ud2
 
         // ── Opaque (test-required + initial real-world set) ──
+        "CallHyperVisor" => Some(UserOpClass::Opaque),
+        "CallSecureMonitor" => Some(UserOpClass::Opaque),
+        "DC_CVAC" => Some(UserOpClass::Opaque),
+        "DataMemoryBarrier" => Some(UserOpClass::Opaque),
+        "DataSynchronizationBarrier" => Some(UserOpClass::Opaque),
         "ExclusiveMonitorPass" => Some(UserOpClass::Opaque),
         "ExclusiveMonitorsStatus" => Some(UserOpClass::Opaque),
+        "Hint_Prefetch" => Some(UserOpClass::Opaque),
+        "InstructionSynchronizationBarrier" => Some(UserOpClass::Opaque),
         "LOCK" => Some(UserOpClass::Opaque),
+        "MP_INT_ABS" => Some(UserOpClass::Opaque),
         "NEON_rev64" => Some(UserOpClass::Opaque),
+        "NEON_sqshl" => Some(UserOpClass::Opaque),
         "NEON_uaddlv" => Some(UserOpClass::Opaque),
+        "SVE_fnmla" => Some(UserOpClass::Opaque),
         "UNLOCK" => Some(UserOpClass::Opaque),
+        "UnkSytemRegRead" => Some(UserOpClass::Opaque),
+        "Yield" => Some(UserOpClass::Opaque),
         "cpuid" => Some(UserOpClass::Opaque),
+        "in" => Some(UserOpClass::Opaque),
+        "out" => Some(UserOpClass::Opaque),
+        "rdpkru_u32" => Some(UserOpClass::Opaque),
         "rdtsc" => Some(UserOpClass::Opaque),
+        "swapgs" => Some(UserOpClass::Opaque),
         "swi" => Some(UserOpClass::Opaque),
         "syscall" => Some(UserOpClass::Opaque),
+        "sysret" => Some(UserOpClass::Opaque),
         "trap" => Some(UserOpClass::Opaque),
 
         _ => None,
@@ -88,6 +106,10 @@ mod tests {
         );
         assert_eq!(
             classify("SoftwareBreakpoint"),
+            Some(UserOpClass::NoReturn),
+        );
+        assert_eq!(
+            classify("UndefinedInstructionException"),
             Some(UserOpClass::NoReturn),
         );
     }
