@@ -129,6 +129,13 @@ def test_call_other_pat_capture_finalises():
     assert isinstance(p, Pat)
 
 
+def test_call_other_pat_name_smoke():
+    # builder accepts name and converts to a Pat without error
+    p = call_other().name("cpuid")
+    assert p is not None
+    assert isinstance(p.into_pat(), Pat)
+
+
 # ── LoadPat / StorePat ───────────────────────────────────────────────
 
 

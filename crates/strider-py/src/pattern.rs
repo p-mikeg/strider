@@ -1325,11 +1325,13 @@ pub fn call(at: Option<u64>) -> PyCallPat {
 
 /// Typed builder for `CallOther` node patterns.  Mirrors
 /// `pattern::CallOtherPat` — chain `.user_op_id(v)` to constrain the
-/// user-op id (e.g. ARM `setISAMode`'s id) and `.arg(idx, p)` to
-/// constrain a specific argument.
+/// user-op id (e.g. ARM `setISAMode`'s id), `.name(s)` to constrain
+/// the user-op name (read from `Graph::call_other_name`), and
+/// `.arg(idx, p)` to constrain a specific argument.
 #[pyclass(name = "CallOtherPat", module = "strider.pattern")]
 pub struct PyCallOtherPat {
     user_op_id: std::cell::RefCell<Option<u64>>,
+    name: std::cell::RefCell<Option<String>>,
     args: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
 }
 
@@ -1337,6 +1339,7 @@ impl PyCallOtherPat {
     fn new() -> Self {
         Self {
             user_op_id: std::cell::RefCell::new(None),
+            name: std::cell::RefCell::new(None),
             args: std::cell::RefCell::new(Vec::new()),
         }
     }
@@ -1344,6 +1347,9 @@ impl PyCallOtherPat {
         let mut b = pattern::call_other();
         if let Some(id) = *self.user_op_id.borrow() {
             b = b.user_op_id(id);
+        }
+        if let Some(n) = self.name.borrow().clone() {
+            b = b.name(n);
         }
         for (idx, p) in self.args.borrow().iter().cloned() {
             b = b.arg(idx, p);
@@ -1356,6 +1362,10 @@ impl PyCallOtherPat {
 impl PyCallOtherPat {
     fn user_op_id(slf: Py<Self>, py: Python<'_>, v: u64) -> Py<Self> {
         slf.borrow(py).user_op_id.replace(Some(v));
+        slf
+    }
+    fn name(slf: Py<Self>, py: Python<'_>, n: String) -> Py<Self> {
+        slf.borrow(py).name.replace(Some(n));
         slf
     }
     fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
