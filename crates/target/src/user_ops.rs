@@ -114,11 +114,100 @@ pub fn classify(name: &str) -> Option<UserOpClass> {
             memory_edge: true,
         })),
 
-        // x86 CPUID — Sleigh emits CALLOTHER(cpuid, EAX) with no output.
+        // x86 CPUID — Sleigh's actual lift selects one of cpuid /
+        // cpuid_* (one per known leaf id) based on EAX, returns a
+        // tmpptr, then EMITS Loads for EAX/EBX/EDX/ECX from
+        // tmpptr+{0,4,8,12}.  The IR-level "writes" therefore appear
+        // as ordinary Load nodes - the user-op itself takes EAX as
+        // pcode-explicit input (no implicit reads) and produces a
+        // pointer (no implicit writes).  All cpuid_* siblings share
+        // this empty-channel ABI.  memory_edge is true so the post-
+        // cpuid Loads see the ordering effect (the ABI doesn't clobber
+        // RAM but the user-op itself is opaque w.r.t. memory state).
         "cpuid" => Some(UserOpClass::Call(UserOpAbi {
-            implicit_reads: &["ECX"],
-            implicit_writes: &["EAX", "EBX", "ECX", "EDX"],
-            memory_edge: false,
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_basic_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Version_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_cache_tlb_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_serial_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Deterministic_Cache_Parameters_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_MONITOR_MWAIT_Features_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Thermal_Power_Management_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Extended_Feature_Enumeration_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Direct_Cache_Access_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Architectural_Performance_Monitoring_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Extended_Topology_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Processor_Extended_States_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_Quality_of_Service_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_brand_part1_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_brand_part2_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
+        })),
+        "cpuid_brand_part3_info" => Some(UserOpClass::Call(UserOpAbi {
+            implicit_reads: &[],
+            implicit_writes: &[],
+            memory_edge: true,
         })),
 
         // x86 RDTSC — no inputs, writes EDX:EAX.
@@ -266,14 +355,39 @@ mod tests {
     }
 
     #[test]
-    fn cpuid_has_implicit_writes_to_four_regs() {
-        let class = classify("cpuid").expect("cpuid classified");
-        let UserOpClass::Call(abi) = class else {
-            panic!("expected Call, got {class:?}")
-        };
-        assert_eq!(abi.implicit_reads, &["ECX"]);
-        assert_eq!(abi.implicit_writes, &["EAX", "EBX", "ECX", "EDX"]);
-        assert!(!abi.memory_edge);
+    fn cpuid_family_uses_empty_abi_with_memory_edge() {
+        // Sleigh's cpuid lift selects one of cpuid / cpuid_* based on
+        // EAX, returns a tmpptr, then emits Loads for EAX/EBX/EDX/ECX
+        // from the returned pointer.  The user-op itself has no
+        // implicit channel; memory_edge is true so the post-cpuid
+        // Loads see the ordering effect.
+        for n in [
+            "cpuid",
+            "cpuid_basic_info",
+            "cpuid_Version_info",
+            "cpuid_cache_tlb_info",
+            "cpuid_serial_info",
+            "cpuid_Deterministic_Cache_Parameters_info",
+            "cpuid_MONITOR_MWAIT_Features_info",
+            "cpuid_Thermal_Power_Management_info",
+            "cpuid_Extended_Feature_Enumeration_info",
+            "cpuid_Direct_Cache_Access_info",
+            "cpuid_Architectural_Performance_Monitoring_info",
+            "cpuid_Extended_Topology_info",
+            "cpuid_Processor_Extended_States_info",
+            "cpuid_Quality_of_Service_info",
+            "cpuid_brand_part1_info",
+            "cpuid_brand_part2_info",
+            "cpuid_brand_part3_info",
+        ] {
+            let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
+            let UserOpClass::Call(abi) = class else {
+                panic!("{n}: expected Call")
+            };
+            assert!(abi.implicit_reads.is_empty(), "{n}");
+            assert!(abi.implicit_writes.is_empty(), "{n}");
+            assert!(abi.memory_edge, "{n}");
+        }
     }
 
     #[test]
