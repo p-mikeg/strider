@@ -136,7 +136,8 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             }
 
             target::user_ops::UserOpClass::Call(abi) => {
-                // 1. Resolve pcode-explicit inputs (args).
+                // 1. Resolve pcode-explicit inputs (args) via the
+                //    aliasing-aware value lifter.
                 let args: Vec<ir::Value> = if insn.inputs.len() > 1 {
                     insn.inputs[1..]
                         .iter()
@@ -168,28 +169,51 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
                 let implicit_reads_vns = resolve(abi.implicit_reads)?;
                 let implicit_writes_vns = resolve(abi.implicit_writes)?;
 
-                // 3. Build the precise CallOther node.
+                // 3. Read implicit-read register values via the
+                //    aliasing-aware value lifter (so EAX correctly
+                //    reads the low 4 bytes of the RAX-tracked variable).
+                let implicit_read_values: Vec<ir::Value> = implicit_reads_vns
+                    .iter()
+                    .map(|vn| self.read_vn(vn))
+                    .collect::<Result<_>>()?;
+
+                // 4. Derive the slot kind for each implicit-write from
+                //    the Vn's size (clobber slots match the written
+                //    register's exact width — strider's write_vn below
+                //    inserts any necessary insert/extract for aliasing).
+                let implicit_write_kinds: Vec<ir::node::NodeOutputKind> =
+                    implicit_writes_vns
+                        .iter()
+                        .map(|vn| -> Result<ir::node::NodeOutputKind> {
+                            Ok(ir::node::NodeOutputKind::OutputType(vn.size.try_into()?))
+                        })
+                        .collect::<Result<_>>()?;
+
+                // 5. Build the precise CallOther node.
                 let (node, value, clobber_outs) = self.builder.build_call_other_modeled(
                     user_op_id,
                     name,
                     &args,
                     output_ty,
-                    &implicit_reads_vns,
+                    &implicit_read_values,
                     &implicit_writes_vns,
+                    &implicit_write_kinds,
                 )?;
 
-                // 4. Memory edge: strider decides whether to advance.
+                // 6. Memory edge: strider decides whether to advance.
                 if abi.memory_edge {
                     let mem_out = self.builder.body().graph.node_outputs(node)[1];
                     self.builder.advance_cur_region_memory(mem_out)?;
                 }
 
-                // 5. Rebind tracked variables.
+                // 7. Rebind tracked variables via the aliasing-aware
+                //    write_vn (so EAX clobber updates RAX-tracked
+                //    variable through the appropriate insert/extract).
                 if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
                     self.write_vn(out_vn, val)?;
                 }
                 for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
-                    self.builder.write_variable(vn, slot)?;
+                    self.write_vn(vn, slot)?;
                 }
 
                 Ok(())

@@ -231,7 +231,7 @@ impl FunctionBuilder {
     /// Emit a CallOther with the precise per-op ABI shape.
     ///
     /// Inputs of the resulting node:
-    ///   `[ctrl_in, mem_in, *args, *implicit_read_values]`
+    ///   `[ctrl_in, mem_in, *args, *implicit_reads]`
     ///
     /// Outputs of the resulting node:
     ///   `[ctrl_out, mem_out, value?, *clobber_per_implicit_write]`
@@ -240,69 +240,62 @@ impl FunctionBuilder {
     /// `ctrl_out` but **does not** advance the memory token — the
     /// strider layer is responsible for calling
     /// `advance_cur_region_memory(mem_out)` IFF the ABI's
-    /// `memory_edge` is true.  Similarly the strider layer rebinds
-    /// each `implicit_writes_vns` Vn to its corresponding
-    /// `clobber_outputs` slot via `write_variable`.
+    /// `memory_edge` is true.  Similarly the strider layer is
+    /// responsible for rebinding each implicit-write Vn to its
+    /// corresponding clobber slot via the aliasing-aware
+    /// `pcode_lift::ValueLifter::write_vn`.
     ///
-    /// Stamps `name` on `Graph::call_other_names`.  Records a per-
-    /// CallOther override on `Graph::call_clobbered_overrides` so that
-    /// `pattern::Match::get_vn` recovers the correct varnode for each
-    /// clobber slot directly from `implicit_writes_vns`.
+    /// Both `implicit_reads` and `implicit_write_kinds` are slices of
+    /// pre-resolved values: the strider caller does the
+    /// aliasing-aware `read_vn` for reads (so EAX → RAX-extract works)
+    /// and resolves the slot kind for each write (typically by looking
+    /// at the Vn's size).  `implicit_writes_vns` is recorded in the
+    /// per-CallOther clobber override side-table so
+    /// `pattern::Match::get_vn` can recover the original Vn names.
+    ///
+    /// Stamps `name` on `Graph::call_other_names`.
     ///
     /// Returns `(node, value_output, clobber_outputs)`.
     /// `value_output.is_some() == output_ty.is_some()`.
-    /// `clobber_outputs.len() == implicit_writes_vns.len()`.
+    /// `clobber_outputs.len() == implicit_write_kinds.len() == implicit_writes_vns.len()`.
     ///
     /// # Errors
     ///
-    /// Returns an error when any `args` entry is not a value edge,
-    /// when an implicit-read or implicit-write Vn is not a tracked
-    /// variable, or when the resulting node fails to advance the
-    /// active region's control token.
+    /// Returns an error when any `args` or `implicit_reads` entry is
+    /// not a value edge, when `implicit_write_kinds` and
+    /// `implicit_writes_vns` differ in length, when any
+    /// implicit-write kind is not a value kind, or when the resulting
+    /// node fails to advance the active region's control token.
     pub fn build_call_other_modeled(
         &mut self,
         user_op_id: u64,
         name: &str,
         args: &[NodeOutputId],
         output_ty: Option<NodeOutputType>,
-        implicit_reads_vns: &[rsleigh::Vn],
+        implicit_reads: &[NodeOutputId],
         implicit_writes_vns: &[rsleigh::Vn],
+        implicit_write_kinds: &[NodeOutputKind],
     ) -> Result<(NodeId, Option<NodeOutputId>, Vec<NodeOutputId>)> {
+        if implicit_writes_vns.len() != implicit_write_kinds.len() {
+            return Err(anyhow!(
+                "build_call_other_modeled({name:?}): implicit_writes_vns.len() = {} \
+                 but implicit_write_kinds.len() = {}",
+                implicit_writes_vns.len(),
+                implicit_write_kinds.len()
+            ));
+        }
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
         self.validate_value_inputs(args)?;
+        self.validate_value_inputs(implicit_reads)?;
 
-        // Read each implicit-read register through the variable
-        // machinery — gives the current SSA value for that register
-        // (including any aliasing fixups).  Width must be a value edge.
-        let mut implicit_read_values: SmallVec<[NodeOutputId; 8]> = SmallVec::new();
-        for vn in implicit_reads_vns {
-            let out = self.read_variable(vn)?;
-            let k = self.graph().output_kind(out);
+        for (i, k) in implicit_write_kinds.iter().enumerate() {
             if !k.is_value() {
                 return Err(anyhow!(
-                    "implicit_read for user-op {name:?}: output {out:?} \
-                     is not a value edge (got {k:?})"
+                    "implicit_write_kinds[{i}] for user-op {name:?} is not a value kind: {k:?}"
                 ));
             }
-            implicit_read_values.push(out);
-        }
-
-        // Read each implicit-write register's *kind* so we can declare
-        // the correct output slot type.  The value itself is irrelevant
-        // here — we just need the kind.
-        let mut implicit_write_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
-        for vn in implicit_writes_vns {
-            let out = self.read_variable(vn)?;
-            let k = self.graph().output_kind(out);
-            if !k.is_value() {
-                return Err(anyhow!(
-                    "implicit_write for user-op {name:?}: output {out:?} \
-                     is not a value edge (got {k:?})"
-                ));
-            }
-            implicit_write_kinds.push(k);
         }
 
         let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
@@ -311,12 +304,12 @@ impl FunctionBuilder {
         if let Some(ty) = output_ty {
             output_kinds.push(NodeOutputKind::OutputType(ty));
         }
-        output_kinds.extend(implicit_write_kinds);
+        output_kinds.extend(implicit_write_kinds.iter().copied());
 
         let inputs = [ctrl, memory]
             .into_iter()
             .chain(args.iter().copied())
-            .chain(implicit_read_values.iter().copied());
+            .chain(implicit_reads.iter().copied());
 
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
