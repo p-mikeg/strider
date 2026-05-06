@@ -118,6 +118,11 @@ fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) 
             Some(m) => m,
             None => return Ok(false),
         };
+        // `match_at` succeeded above, and the rule's `lhs` always
+        // captures `cap_a` at a value-producing position; the matcher
+        // contract guarantees `output(cap_a)` returns `Some` whenever
+        // the capture appears in a successful match.
+        #[allow(clippy::expect_used)]
         let a = m
             .output(rule.cap_a)
             .expect("Capture a must bind to a value output");
@@ -148,6 +153,11 @@ fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOu
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
     );
     graph.extend_asm_fingerprint_from(n, root);
+    // `IntCmpOp` is constructed above with exactly one
+    // `NodeOutputKind::OutputType(Bool)`; `node_outputs_exact::<1>`
+    // enforces and returns that single output.  The expect cannot
+    // fire short of an internal `create_node` invariant violation.
+    #[allow(clippy::expect_used)]
     let [out] = graph.node_outputs_exact::<1>(n).expect("IntCmpOp produces 1 output");
     out
 }
@@ -159,6 +169,9 @@ fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> NodeO
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
     );
     graph.extend_asm_fingerprint_from(n, root);
+    // Same invariant as `build_int_cmp` — single Bool output by
+    // construction.
+    #[allow(clippy::expect_used)]
     let [out] = graph.node_outputs_exact::<1>(n).expect("BoolNeg produces 1 output");
     out
 }

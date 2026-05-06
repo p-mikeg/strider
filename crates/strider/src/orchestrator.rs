@@ -291,7 +291,7 @@ where
                     .per_address_ccs
                     .iter()
                     .map(|(addr, cc)| {
-                        cc.clone()
+                        (*cc)
                             .build(&sleigh_regs)
                             .map(|built| (*addr, built))
                             .map_err(|e| {
@@ -617,17 +617,17 @@ fn apply_in_place_edit(
             // recover the right varnode for each clobber slot.  The
             // spliced node is the freshly-created Call adjacent to
             // `new_return`'s ctrl predecessor.
-            if let Some(cc) = override_cc {
-                if let Some(call_id) = locate_spliced_call(graph, new_return) {
-                    let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-                    let clobber_vars: Vec<rsleigh::Vn> = graph
-                        .variables
-                        .values()
-                        .copied()
-                        .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
-                        .collect();
-                    graph.graph.set_call_clobbered_override(call_id, clobber_vars);
-                }
+            if let Some(cc) = override_cc
+                && let Some(call_id) = locate_spliced_call(graph, new_return)
+            {
+                let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+                let clobber_vars: Vec<rsleigh::Vn> = graph
+                    .variables
+                    .values()
+                    .copied()
+                    .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
+                    .collect();
+                graph.graph.set_call_clobbered_override(call_id, clobber_vars);
             }
             Ok(())
         }

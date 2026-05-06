@@ -140,9 +140,15 @@ impl BuiltFunctionGraph {
     /// returned remap (or drop them).
     pub fn compact(&mut self) -> crate::graph::NodeIdRemap {
         let remap = self.graph.retain_reachable(self.entry);
-        self.entry = remap
+        // `retain_reachable` walks forward from `entry`; the entry node
+        // is reachable from itself by definition, so it is always in
+        // the remap.  The expect cannot fire short of an internal
+        // invariant violation in `retain_reachable`.
+        #[allow(clippy::expect_used)]
+        let new_entry = remap
             .node_old_to_new(self.entry)
             .expect("entry must survive its own compaction");
+        self.entry = new_entry;
         remap
     }
 

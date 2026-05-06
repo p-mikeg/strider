@@ -107,6 +107,13 @@ impl Graph {
 
         // 4. Second pass: copy inputs (rewrite output_id through remap).
         for &old_node_id in &reachable {
+            // Pass 1 (above) installed every reachable node into
+            // `remap.nodes`; we are iterating the same `reachable` set,
+            // so the lookup cannot return None.  Same logic applies to
+            // `remap.outputs[old_input.output_id]` below: every input's
+            // output producer is reachable iff the input's owning node
+            // is reachable, which it is here by construction.
+            #[allow(clippy::expect_used)]
             let new_node_id = remap.nodes[old_node_id]
                 .expect("just installed in pass 1");
             let old_input_ids: Vec<NodeInputId> = self.nodes[old_node_id]
@@ -116,6 +123,7 @@ impl Graph {
             let mut new_input_ids: Vec<NodeInputId> = Vec::with_capacity(old_input_ids.len());
             for old_input_id in old_input_ids {
                 let old_input = &self.inputs[old_input_id];
+                #[allow(clippy::expect_used)]
                 let new_output_id = remap.outputs[old_input.output_id].expect(
                     "input references an output whose producing node was unreachable",
                 );
