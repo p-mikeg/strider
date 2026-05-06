@@ -30,21 +30,11 @@ def test_sub(arch_id, fixtures_dir):
 
 
 def test_mul(arch_id, fixtures_dir):
-    if arch_id in ("mips32le", "mips32be"):
-        # Per the Rust suite docstring: MIPS `MULT` writes HI/LO via a
-        # unique varnode that the lifter doesn't translate to
-        # `IntBinaryOp::Mul`.  Skip on those arches — the Rust test
-        # would fail there too if we asserted Mul presence.
-        import pytest
-        pytest.skip("MIPS MULT lowers via unique varnode, not IntBinaryOp::Mul")
     g = analyze(arch_id, "arithmetic", "mul", fixtures_dir=fixtures_dir)
     assert count_int_binop(g, "Mul") >= 1
 
 
 def test_udiv(arch_id, fixtures_dir):
-    if arch_id in ("mips32le", "mips32be"):
-        import pytest
-        pytest.skip("MIPS DIV/DIVU panics in CFG build (analyzer-known-issues)")
     g = analyze(arch_id, "arithmetic", "udiv", fixtures_dir=fixtures_dir)
     # ARM soft-float lowers udiv to a library call.  Either Div or Call
     # counts as evidence the lifter found the operation.
@@ -52,9 +42,6 @@ def test_udiv(arch_id, fixtures_dir):
 
 
 def test_umod(arch_id, fixtures_dir):
-    if arch_id in ("mips32le", "mips32be"):
-        import pytest
-        pytest.skip("MIPS DIV/DIVU panics in CFG build")
     g = analyze(arch_id, "arithmetic", "umod", fixtures_dir=fixtures_dir)
     assert (
         count_int_binop(g, "Rem") >= 1
@@ -64,17 +51,11 @@ def test_umod(arch_id, fixtures_dir):
 
 
 def test_sdiv(arch_id, fixtures_dir):
-    if arch_id in ("mips32le", "mips32be"):
-        import pytest
-        pytest.skip("MIPS DIV panics in CFG build")
     g = analyze(arch_id, "arithmetic", "sdiv", fixtures_dir=fixtures_dir)
     assert count_int_binop(g, "Sdiv") >= 1 or count_calls(g) >= 1
 
 
 def test_smod(arch_id, fixtures_dir):
-    if arch_id in ("mips32le", "mips32be"):
-        import pytest
-        pytest.skip("MIPS DIV panics in CFG build")
     g = analyze(arch_id, "arithmetic", "smod", fixtures_dir=fixtures_dir)
     assert (
         count_int_binop(g, "Srem") >= 1
