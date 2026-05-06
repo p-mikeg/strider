@@ -17,14 +17,21 @@ use crate::pat::node_pat::{InputsSpec, KindSpec, NodeKindCheck, NodePat};
 // ── LoadPat ───────────────────────────────────────────────────────────────────
 
 /// Builder for `Load` node patterns.  Created by [`crate::pat::load`].
+///
+/// Note: `Load` is a single-output node (the loaded value at outputs[0]).
+/// It does not produce a memory edge, so there is no `.next_mem(p)` method
+/// on `LoadPat` — only `.mem_in(p)` for the backward-walk constraint and
+/// `.bit_width(n)` for the value-width filter.
 pub struct LoadPat {
     space: Option<rsleigh::VnSpace>,
     addr: Option<Pat>,
+    mem_in: Option<Pat>,
+    bit_width: Option<u32>,
 }
 
 impl LoadPat {
     pub(crate) fn new() -> Self {
-        Self { space: None, addr: None }
+        Self { space: None, addr: None, mem_in: None, bit_width: None }
     }
     /// Restrict the match to loads in address space `s`.
     #[must_use]
@@ -32,18 +39,36 @@ impl LoadPat {
         self.space = Some(s);
         self
     }
-    /// Constrain the load's address operand.
+    /// Constrain the load's address operand (inputs[1]).
     pub fn addr(mut self, p: impl Into<Pat>) -> Self {
         self.addr = Some(p.into());
+        self
+    }
+    /// Constrain the load's memory predecessor (inputs[0]).  The
+    /// pattern walks back from the input edge to its producer in the
+    /// standard data-flow direction.
+    pub fn mem_in(mut self, p: impl Into<Pat>) -> Self {
+        self.mem_in = Some(p.into());
+        self
+    }
+    /// Restrict the match to loads whose value output (outputs[0]) is
+    /// `n` bits wide.  Matches both integer and float types of the
+    /// same width (e.g. `bit_width(32)` matches U32 and F32).
+    #[must_use]
+    pub fn bit_width(mut self, n: u32) -> Self {
+        self.bit_width = Some(n);
         self
     }
 }
 
 impl From<LoadPat> for Pat {
     fn from(b: LoadPat) -> Pat {
-        let LoadPat { space, addr } = b;
-        // Load inputs = [mem(0), addr(1)].
+        let LoadPat { space, addr, mem_in, bit_width } = b;
+        // Load inputs = [mem(0), addr(1)]; outputs = [value(0)] (single output).
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
+        if let Some(p) = mem_in {
+            indexed.push((0, p));
+        }
         if let Some(addr_pat) = addr {
             indexed.push((1, addr_pat));
         }
@@ -54,7 +79,24 @@ impl From<LoadPat> for Pat {
                 move |k| matches!(k, NodeKind::Load(actual) if *actual == s),
             ),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
+
+        // Bit-width post-match: outputs[0] is the value (Load is a
+        // single-output node — see node_signature::expected_signature).
+        if let Some(want) = bit_width {
+            pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
+                let outs = ctx.graph.graph.node_outputs(node);
+                let Some(&value_out) = outs.get(0) else {
+                    return false;
+                };
+                let Some(ty) = ctx.graph.graph.output_kind(value_out).as_value() else {
+                    return false;
+                };
+                ty.bit_width() == want as usize
+            }));
+        }
+
+        pat.into_pat()
     }
 }
 
