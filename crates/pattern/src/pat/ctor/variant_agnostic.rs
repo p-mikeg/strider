@@ -194,5 +194,5 @@ impl_variant_any!(
 impl_variant_any!(
     cmp, float_cmp_any, FloatCmpOp, ir::FloatCmpOp::Equal,
     is_commutative_float_cmp_op, bool_ty(), "float_cmp_any",
-    "Matches **any** float comparison and binds the matched node to `c`.\n\nCommutative comparisons (`Equal`, `NotEqual`) try both operand orderings automatically.  Recover the op via `Match::get_float_cmp_op(c, &graph)`."
+    "Matches **any** float comparison and binds the matched node to `c`.\n\n`Equal` is commutative and tries both operand orderings automatically.  `NotEqual` and `LessEqual` are not IR primitives — they are lowered at lift time; use the `float_ne` / `float_le` aliases to match those shapes.  Recover the op via `Match::get_float_cmp_op(c, &graph)`."
 );

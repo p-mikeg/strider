@@ -36,7 +36,11 @@ pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 // ── Phi nodes ─────────────────────────────────────────────────────────────────
 
-/// Starts building a `VarPhi` pattern.  Matches any phi node.
+/// Starts building a `VarPhi` pattern.  Matches `VarPhi` nodes only.
+///
+/// Note: only `VarPhi` is matched.  `MemPhi` and `ValuePhi` are not
+/// currently exposed via dedicated pattern constructors (TODO: add
+/// `mem_phi()` / `value_phi()` when a use case appears).
 #[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
@@ -120,11 +124,12 @@ pub fn ret() -> RetPat {
 /// Starts building an `If` pattern.  Chain `.cond()`, `.true_branch()`,
 /// `.false_branch()` to add constraints.
 ///
-/// **Symmetric matching.**  When `.cond(C)` is set, the matcher also tries
-/// the compiler-inverted layout: input `Not(C)` with branches swapped.
-/// This makes a pattern written from the source-level POV match both
-/// `if (c) A else B` and the equivalent `if (!c) B else A` that compilers
-/// commonly emit.  Without `.cond()`, only the direct layout is tried.
+/// **Direct layout only.**  By the time the matcher runs, every `If` node
+/// in the graph is in canonical direct layout — the [`opt::IfCondInversion`]
+/// pass eagerly rewrites `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and
+/// `ConstantFold` collapses double negations first).  Patterns are
+/// matched against the canonical direct layout only; write the pattern
+/// from the source-level POV (non-negated condition).
 #[must_use]
 pub fn if_node() -> IfPat {
     IfPat::new()
