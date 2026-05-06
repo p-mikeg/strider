@@ -29,6 +29,7 @@ mod memory;
 mod phi;
 mod ret;
 mod unary_op;
+pub(crate) mod walk_helpers;
 
 pub use binary_op::{BinaryOpPat, BoolBinaryOpPat, FloatBinaryOpPat, IntBinaryOpPat};
 pub use branch::IfPat;
