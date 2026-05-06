@@ -67,6 +67,11 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// SVC/SWI and x86 INT instruction).  When OS-specific syscall ABI
 /// distinctions surface (e.g., Linux vs FreeBSD x86_64 syscall
 /// register usage), they slot in here too.
+//
+// `match_same_arms`: each (preset, name) pair is a separate diffable
+// entry with its own justification comment — combining via `|` would
+// defeat the table's per-line property.
+#[allow(clippy::match_same_arms)]
 #[must_use]
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     match (preset, name) {
@@ -134,6 +139,37 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
             implicit_writes: &["EAX", "EDX"],
             memory_edge:     false,
         })),
+
+        // x86 RDMSR — read model-specific register.  Sleigh emits
+        //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
+        // so ECX is an explicit pcode arg and the EDX/EAX writes are
+        // separate downstream pcode ops.  Nothing implicit; no memory
+        // edge (an MSR read doesn't observe RAM).
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "rdmsr") => PURE,
+
+        // x86 WRMSR — write model-specific register.  Sleigh emits
+        //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
+        // so ECX/tmp (and transitively EDX/EAX) are all explicit pcode
+        // operands of upstream ops feeding this CALLOTHER.  Memory
+        // edge: a WRMSR can change TSC, FSBASE, etc., so subsequent
+        // loads must observe the write.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "wrmsr") => PURE_WITH_MEM_EDGE,
+
+        // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a
+        // GPR.  Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
+        // (destination is the explicit pcode output, no inputs).
+        // Nothing implicit; no memory edge.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "readfsbase" | "readgsbase") => PURE,
+
+        // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh
+        // emits `writefsbase(r64)` (or `zext(r32)`) with the source
+        // register as the explicit pcode arg.  Memory edge: subsequent
+        // FS:/GS:-based loads depend on the new base.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "writefsbase" | "writegsbase") => PURE_WITH_MEM_EDGE,
 
         // x86's INT instruction also lifts to "swi" in some Sleigh
         // contexts.  We don't have a global model (the vector is in
@@ -495,6 +531,43 @@ mod tests {
         // Non-x86 presets must NOT resolve.
         assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
         assert_eq!(classify(crate::ArchPreset::Arm, "rdpkru_u32"), None);
+    }
+
+    #[test]
+    fn msr_and_segment_base_ops_classify_pure_or_pure_with_mem_edge() {
+        // Sleigh emits these x86 / x86_64 ops with every register
+        // operand on the explicit pcode chain — there is no implicit
+        // register channel to model.  Reads (`rdmsr`, `readfsbase`,
+        // `readgsbase`) are PURE; writes (`wrmsr`, `writefsbase`,
+        // `writegsbase`) carry a memory edge so opt passes don't
+        // forward across them.
+        let pure_ops    = ["rdmsr", "readfsbase", "readgsbase"];
+        let edge_ops    = ["wrmsr", "writefsbase", "writegsbase"];
+        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+            for n in pure_ops {
+                let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
+                let CallOtherClass::Call(abi) = class else {
+                    panic!("{preset:?}/{n}: expected Call")
+                };
+                assert_eq!(abi, empty_abi(), "{preset:?}/{n}");
+                assert!(!abi.memory_edge, "{preset:?}/{n}");
+            }
+            for n in edge_ops {
+                let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
+                let CallOtherClass::Call(abi) = class else {
+                    panic!("{preset:?}/{n}: expected Call")
+                };
+                assert_eq!(abi.implicit_reads, &[] as &[&str], "{preset:?}/{n}");
+                assert_eq!(abi.implicit_writes, &[] as &[&str], "{preset:?}/{n}");
+                assert!(abi.memory_edge, "{preset:?}/{n}");
+            }
+        }
+        // Non-x86 presets must NOT resolve these names — the encoded
+        // instructions only exist on x86/x86_64.
+        for n in pure_ops.iter().chain(edge_ops.iter()) {
+            assert_eq!(classify(crate::ArchPreset::Aarch64, n), None, "{n} on aarch64");
+            assert_eq!(classify(crate::ArchPreset::Arm, n), None, "{n} on arm");
+        }
     }
 
     #[test]
