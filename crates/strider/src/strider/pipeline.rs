@@ -304,7 +304,8 @@ impl Strider {
         cfg: &cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
     ) -> Result<AnalyzeOutcome> {
-        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, &std::collections::HashMap::new())
+        let empty = std::collections::HashMap::new();
+        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, &empty)
     }
 
     /// Translates a complete CFG into an [`AnalyzeOutcome`] with
@@ -344,10 +345,7 @@ impl Strider {
             target::BuiltCallingConvention,
         >,
     ) -> Result<AnalyzeOutcome> {
-        let mut ir_strider = IrStrider::new(self, cfg, all_vns)?;
-        if !per_address_built_ccs.is_empty() {
-            ir_strider.set_per_address_ccs(per_address_built_ccs);
-        }
+        let mut ir_strider = IrStrider::new(self, cfg, all_vns, per_address_built_ccs)?;
         ir_strider.builder.build_entry()?;
 
         // Map every CFG region id to its newly-allocated IR region id.

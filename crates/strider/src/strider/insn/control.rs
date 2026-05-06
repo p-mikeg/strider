@@ -242,9 +242,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
-        let override_cc = self
-            .per_address_ccs
-            .and_then(|m| m.get(&target_addr));
+        let override_cc = self.per_address_ccs.get(&target_addr);
         self.builder
             .build_call_with_cc(call_address, override_cc)
             .map(|_| ())?;
@@ -277,9 +275,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             .builder
             .build_int_const(target, space_info.addr_size().try_into()?)?;
         // Per-address CC override applies to lift-time tail calls too.
-        let override_cc = self
-            .per_address_ccs
-            .and_then(|m| m.get(&target));
+        let override_cc = self.per_address_ccs.get(&target);
         self.builder
             .build_call_with_cc(call_address, override_cc)
             .map(|_| ())?;

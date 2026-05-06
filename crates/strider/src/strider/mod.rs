@@ -21,11 +21,12 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift
     /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
     pub(crate) unresolved_branches: Vec<(cfg::PcodeInsnAddr, ir::Value)>,
-    /// Per-target-address CC override map.  `None` (the default) means
-    /// every direct Call uses the function-default.  Set by
-    /// [`Strider::analyze_cfg_with_vns_and_overrides`].
+    /// Per-target-address CC override map.  Defaults to a process-wide
+    /// empty map (`pipeline::EMPTY_PER_ADDRESS_CCS`); set to a real map
+    /// at constructor time when the caller has overrides.  Lookup is a
+    /// single `HashMap::get` regardless.
     pub(crate) per_address_ccs:
-        Option<&'a std::collections::HashMap<u64, target::BuiltCallingConvention>>,
+        &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
 }
 
 impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
@@ -34,14 +35,14 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
     /// references, sorted by `pcode_lift::vn_sort_key` for stable
-    /// `VarId` numbering).  When the caller has a cached vn list
-    /// (e.g. the orchestrator across rebuild iterations) it can pass
-    /// it directly; the convenience [`Self::new_scanning`] does the
-    /// scan in-place.
+    /// `VarId` numbering).  `per_address_ccs` is the lift-time CC
+    /// override map; pass `&EMPTY_PER_ADDRESS_CCS` (or an empty
+    /// `HashMap`) when the caller has no overrides.
     pub(crate) fn new(
         strider: &'a Strider,
         cfg: &'a cfg::Cfg<R>,
         all_vns: Vec<rsleigh::Vn>,
+        per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
     ) -> Result<Self> {
         let builder = ir::FunctionBuilder::new(all_vns, &strider.calling_convention)?;
         Ok(Self {
@@ -49,16 +50,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             builder,
             cfg,
             unresolved_branches: Vec::new(),
-            per_address_ccs: None,
+            per_address_ccs,
         })
     }
-
-    /// Replaces the per-target-address CC override map with `map`.
-    pub(crate) fn set_per_address_ccs(
-        &mut self,
-        map: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
-    ) {
-        self.per_address_ccs = Some(map);
-    }
-
 }
