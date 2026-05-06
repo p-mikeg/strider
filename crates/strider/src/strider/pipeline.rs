@@ -1,6 +1,16 @@
+use std::sync::LazyLock;
+
 use anyhow::{anyhow, Result};
 
 use super::IrStrider;
+
+/// Process-wide empty `per_address_ccs` map.  Borrowed by
+/// [`AnalyzeOptions::default`] so the default options bag has a real
+/// `&'static` reference (not `Option`) and the per-call lookup site
+/// stays a single `HashMap::get` with no `Option`-dance.
+pub(crate) static EMPTY_PER_ADDRESS_CCS: LazyLock<
+    std::collections::HashMap<u64, target::BuiltCallingConvention>,
+> = LazyLock::new(std::collections::HashMap::new);
 
 /// Per-region IR-handle snapshot, captured during lift before
 /// `FunctionBuilder::build()` consumes the builder's region map.  Used
@@ -69,6 +79,38 @@ impl std::fmt::Display for AnalyzeOutcome {
             self.unresolved_branches.len(),
             self.region_handles.len(),
         )
+    }
+}
+
+/// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
+/// defaults match the legacy `analyze_cfg(cfg)` behaviour: the
+/// orchestrator uses this with both fields set; strider-py's
+/// custom-pipeline path uses it with `per_address_ccs` set.
+pub struct AnalyzeOptions<'a> {
+    /// Pre-computed varnode set.  When `None`, `Strider` calls
+    /// [`Strider::find_all_unique_vns`] itself.  When `Some`, must be
+    /// sorted by `pcode_lift::vn_sort_key` and must include every
+    /// varnode any instruction in `cfg` references.  Under-tracking
+    /// drops pcode reads; over-tracking is safe but allocates one
+    /// extra `InitialVar` per superfluous vn.  The orchestrator passes
+    /// `Some(cached_vns)` so it shares one vn table across rebuild
+    /// iterations.
+    pub all_vns: Option<Vec<rsleigh::Vn>>,
+
+    /// Per-target-address CC override map.  Keys are direct-call
+    /// target addresses; values are CCs already resolved against the
+    /// same Sleigh register table the function-default CC was built
+    /// against.  Empty by default — every direct `Call` uses the
+    /// function-default CC.
+    pub per_address_ccs: &'a std::collections::HashMap<u64, target::BuiltCallingConvention>,
+}
+
+impl Default for AnalyzeOptions<'_> {
+    fn default() -> Self {
+        Self {
+            all_vns: None,
+            per_address_ccs: &EMPTY_PER_ADDRESS_CCS,
+        }
     }
 }
 
@@ -263,6 +305,26 @@ impl Strider {
         all_vns: Vec<rsleigh::Vn>,
     ) -> Result<AnalyzeOutcome> {
         self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, &std::collections::HashMap::new())
+    }
+
+    /// Translates a complete CFG into an [`AnalyzeOutcome`] with
+    /// caller-supplied [`AnalyzeOptions`].
+    ///
+    /// Equivalent to [`Strider::analyze_cfg`] when given
+    /// `AnalyzeOptions::default()`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::analyze_cfg`].
+    pub fn analyze_cfg_with<R: rsleigh::MemReader>(
+        &self,
+        cfg: &cfg::Cfg<R>,
+        opts: AnalyzeOptions<'_>,
+    ) -> Result<AnalyzeOutcome> {
+        let all_vns = opts
+            .all_vns
+            .unwrap_or_else(|| self.find_all_unique_vns(cfg));
+        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, opts.per_address_ccs)
     }
 
     /// Variant of [`Self::analyze_cfg_with_vns`] that accepts a

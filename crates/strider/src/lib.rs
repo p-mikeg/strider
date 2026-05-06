@@ -42,5 +42,5 @@ pub mod rewrite;
 pub use errors::UnresolvedIndirectBranch;
 pub use orchestrator::{run, RunConfig};
 pub use rewrite::GraphRewriter;
-pub use strider::{AnalyzeOutcome, RegionLiftHandles, Strider};
+pub use strider::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
 pub use target::{BuiltCallingConvention, CallingConvention, Endianness, SleighArch};
