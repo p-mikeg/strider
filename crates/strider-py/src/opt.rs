@@ -56,19 +56,29 @@ impl PipelineState {
         // Re-create the default pipeline by reconstructing each pass
         // individually rather than calling opt::default_pipeline()
         // (which returns an OptimizerPipeline whose Box<dyn Optimizer>
-        // entries are not externally re-extractable).
+        // entries are not externally re-extractable).  Pass list and
+        // order MUST mirror `opt::default_pipeline()` — drift here
+        // silently produces graphs that look different from the
+        // orchestrator path's, e.g. flag-cmp shapes the lifter emits
+        // never get canonicalised and pattern queries miss them.
         let mut s = Self::new();
         s.passes.push(Box::new(opt::ConstantFold));
         s.passes.push(Box::new(opt::KnownBits));
+        s.passes.push(Box::new(opt::FlagCmpCanonicalize));
+        s.passes.push(Box::new(opt::IfCondInversion));
         s.passes.push(Box::new(opt::RedundantPhis));
         s.passes.push(Box::new(opt::DeadBranchElimination));
         s
     }
 
     fn from_stable_default() -> Self {
+        // Mirrors `opt::stable_default_pipeline()` — see `from_default`
+        // for why drift here is dangerous.
         let mut s = Self::new();
         s.passes.push(Box::new(opt::ConstantFold));
         s.passes.push(Box::new(opt::KnownBits));
+        s.passes.push(Box::new(opt::FlagCmpCanonicalize));
+        s.passes.push(Box::new(opt::IfCondInversion));
         s
     }
 
@@ -262,6 +272,22 @@ impl PyDeadBranchElim {
     fn new() -> Self { Self }
 }
 
+#[pyclass(name = "FlagCmpCanonicalize", module = "strider.opt")]
+pub struct PyFlagCmpCanonicalize;
+#[pymethods]
+impl PyFlagCmpCanonicalize {
+    #[new]
+    fn new() -> Self { Self }
+}
+
+#[pyclass(name = "IfCondInversion", module = "strider.opt")]
+pub struct PyIfCondInversion;
+#[pymethods]
+impl PyIfCondInversion {
+    #[new]
+    fn new() -> Self { Self }
+}
+
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
 // Each takes (sleigh, cc) — or (sleigh, cc, arch) — at construction
@@ -407,6 +433,10 @@ pub enum PyOptPass<'py> {
     RedundantPhis(Bound<'py, PyRedundantPhis>),
     #[allow(dead_code)]
     DeadBranchElim(Bound<'py, PyDeadBranchElim>),
+    #[allow(dead_code)]
+    FlagCmpCanonicalize(Bound<'py, PyFlagCmpCanonicalize>),
+    #[allow(dead_code)]
+    IfCondInversion(Bound<'py, PyIfCondInversion>),
     StackStoreDetect(Bound<'py, PyStackStoreDetect>),
     StackLoadForward(Bound<'py, PyStackLoadForward>),
     FunctionArgDetect(Bound<'py, PyFunctionArgDetect>),
@@ -421,6 +451,8 @@ impl PyOptPass<'_> {
             PyOptPass::KnownBits(_) => Box::new(opt::KnownBits),
             PyOptPass::RedundantPhis(_) => Box::new(opt::RedundantPhis),
             PyOptPass::DeadBranchElim(_) => Box::new(opt::DeadBranchElimination),
+            PyOptPass::FlagCmpCanonicalize(_) => Box::new(opt::FlagCmpCanonicalize),
+            PyOptPass::IfCondInversion(_) => Box::new(opt::IfCondInversion),
             PyOptPass::StackStoreDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::StackLoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
@@ -439,6 +471,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyKnownBits>()?;
     m.add_class::<PyRedundantPhis>()?;
     m.add_class::<PyDeadBranchElim>()?;
+    m.add_class::<PyFlagCmpCanonicalize>()?;
+    m.add_class::<PyIfCondInversion>()?;
     m.add_class::<PyStackStoreDetect>()?;
     m.add_class::<PyStackLoadForward>()?;
     m.add_class::<PyFunctionArgDetect>()?;

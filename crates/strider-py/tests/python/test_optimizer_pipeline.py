@@ -33,6 +33,56 @@ def test_add_pure_pass():
     assert pipe.pass_count() == 4
 
 
+def test_flag_cmp_canonicalize_pass_exposed():
+    """`FlagCmpCanonicalize` must be addable from Python.
+
+    Without this pass, `Equal(Add(a, Neg(b)), 0)` flag-cmp shapes left
+    by the lifter never collapse to `Equal(a, b)`, which breaks pattern
+    queries that match on the canonical compare shape (e.g.
+    `int_eq(load(<base>+K), add(<base>, K))` for `list_empty`-style
+    loops).  The pass is in the Rust `opt::default_pipeline()`; the
+    Python wrapper must mirror it.
+    """
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.FlagCmpCanonicalize())
+    assert pipe.pass_count() == 1
+
+
+def test_if_cond_inversion_pass_exposed():
+    """`IfCondInversion` must be addable from Python.
+
+    Required for `IfPat` to match — that pattern depends on every `If`
+    being in canonical (non-`BoolNeg`) form.
+    """
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.IfCondInversion())
+    assert pipe.pass_count() == 1
+
+
+def test_default_pipeline_mirrors_rust_default():
+    """`OptimizerPipeline.default()` must include every pass that the
+    Rust `opt::default_pipeline()` does.
+
+    Today's Rust default: `ConstantFold`, `KnownBits`,
+    `FlagCmpCanonicalize`, `IfCondInversion`, `RedundantPhis`,
+    `DeadBranchElimination` — six passes.  An out-of-sync Python
+    wrapper silently produces a graph that doesn't canonicalise
+    flag-cmp shapes, so pattern queries that work under the orchestrator
+    path (which uses the Rust default) fail under the custom-pipeline
+    path.
+    """
+    assert strider.OptimizerPipeline.default().pass_count() == 6
+
+
+def test_stable_default_pipeline_mirrors_rust():
+    """`OptimizerPipeline.stable_default()` must mirror Rust.
+
+    Rust's `stable_default_pipeline()`: `ConstantFold`, `KnownBits`,
+    `FlagCmpCanonicalize`, `IfCondInversion` — four passes.
+    """
+    assert strider.OptimizerPipeline.stable_default().pass_count() == 4
+
+
 def test_cc_aware_passes_construct(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()

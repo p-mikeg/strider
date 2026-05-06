@@ -96,6 +96,12 @@ pub use stack_store::{CallStackArgCollect, StackStoreDetect};
 ///    folded successors.
 /// 2. [`KnownBits`] — annotation-driven; recomputes from current phi
 ///    inputs on each run.
+/// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp`
+///    rewrite; runs after `ConstantFold` so `BoolNeg(BoolNeg(_))`
+///    has collapsed first.
+/// 4. [`IfCondInversion`] — canonicalises `If(BoolNeg(C))` into
+///    `If(C)` with branches swapped; runs after `FlagCmpCanonicalize`
+///    so the cond it sees is at most one `BoolNeg`-deep.
 #[must_use]
 pub fn stable_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -167,8 +173,10 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// Passes included (in order):
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
-/// 3. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
-/// 4. [`DeadBranchElimination`] — `If(const)` branch pruning
+/// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite
+/// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
+/// 5. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
+/// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
 ///
 /// CallOther no-op handling is now done at construction time in
 /// `target::call_other_abi::classify` — the pre-existing `CallOtherElide`
