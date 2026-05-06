@@ -104,18 +104,13 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
             memory_edge:     true,
         })),
 
-        // ARM SMCCC for HVC and SMC: X0..X7 in, X0..X3 out.  Both
-        // little- and big-endian aarch64 share the convention.  Arch-
-        // specific because `x0..x7` only resolve on aarch64's Sleigh
-        // register table (arm-32 has `r0..r12`).
+        // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor):
+        // X0..X7 in, X0..X3 out.  Both little- and big-endian aarch64
+        // share the convention.  Arch-specific because `x0..x7` only
+        // resolve on aarch64's Sleigh register table (arm-32 has
+        // `r0..r12`).
         (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
-         "CallHyperVisor") => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            implicit_writes: &["x0", "x1", "x2", "x3"],
-            memory_edge:     true,
-        })),
-        (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
-         "CallSecureMonitor") => Some(CallOtherClass::Call(CallOtherAbi {
+         "CallHyperVisor" | "CallSecureMonitor") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
             memory_edge:     true,

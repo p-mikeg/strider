@@ -277,10 +277,10 @@ fn fmt_vn<R: MemReader>(sleigh: &Sleigh<R>, regs: &SleighRegs, vn: Vn) -> String
     if vn.addr_space == VnSpace::CONST {
         return format!("#{:#x}:{}", vn.addr_off, vn.size);
     }
-    if vn.addr_space == VnSpace::REGISTER {
-        if let Some(name) = regs.vn_to_name(vn) {
-            return format!("{name}:{}", vn.size);
-        }
+    if vn.addr_space == VnSpace::REGISTER
+        && let Some(name) = regs.vn_to_name(vn)
+    {
+        return format!("{name}:{}", vn.size);
     }
     if let Some(info) = sleigh.space_info(vn.addr_space) {
         let label = info.name().unwrap_or("?");

@@ -1,7 +1,7 @@
 //! Indirect branch that resolves to `Single(fentry_addr)` as a tail
 //! call: the spliced Call must be built with the per-address override.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::HashMap;
 
