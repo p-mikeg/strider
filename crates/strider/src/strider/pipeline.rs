@@ -266,9 +266,10 @@ impl Strider {
 
     /// Translates a complete control-flow graph into an [`AnalyzeOutcome`].
     ///
-    /// Callers that only need the graph use `outcome.graph` directly.
-    /// Tier-2-aware callers read `outcome.unresolved_branches` and
-    /// `outcome.region_handles`.
+    /// Equivalent to [`Self::analyze_cfg_with`] with default
+    /// [`AnalyzeOptions`] — empty override map, scans `cfg` for varnodes.
+    /// Callers that need either knob (the orchestrator's cached vn table,
+    /// or strider-py's per-address CC override map) use `analyze_cfg_with`.
     ///
     /// # Errors
     ///
@@ -279,18 +280,22 @@ impl Strider {
         &self,
         cfg: &cfg::Cfg<R>,
     ) -> Result<AnalyzeOutcome> {
-        self.analyze_cfg_with_vns(cfg, self.find_all_unique_vns(cfg))
+        self.analyze_cfg_with(cfg, AnalyzeOptions::default())
     }
 
-    /// Variant of [`Self::analyze_cfg`] that takes a pre-computed
-    /// vn set — used by the orchestrator to share its
-    /// [`super::super::orchestrator`] vn cache across rebuild
-    /// iterations.  The supplied `all_vns` must be sorted by
+    /// Translates a complete CFG into an [`AnalyzeOutcome`] with
+    /// caller-supplied [`AnalyzeOptions`].
+    ///
+    /// Equivalent to [`Self::analyze_cfg`] when given
+    /// `AnalyzeOptions::default()`.  When [`AnalyzeOptions::all_vns`]
+    /// is `Some`, the supplied `all_vns` must be sorted by
     /// `pcode_lift::vn_sort_key` (otherwise downstream `VarId`
     /// numbering loses determinism) and must include every varnode
     /// any instruction in `cfg` references — under-tracking would
     /// drop pcode reads.  Over-tracking is safe but allocates one
-    /// extra `InitialVar` per superfluous vn.
+    /// extra `InitialVar` per superfluous vn.  Direct Calls whose
+    /// target is in [`AnalyzeOptions::per_address_ccs`] are built via
+    /// [`ir::FunctionBuilder::build_call_with_cc`] with the override.
     ///
     /// # Errors
     ///
@@ -299,24 +304,6 @@ impl Strider {
     /// translation (`pcode-lift` value-producer failures, control-op
     /// routing, calling-convention plumbing), and final
     /// `FunctionBuilder::build`'s `ir::validate::validate` pass.
-    pub fn analyze_cfg_with_vns<R: rsleigh::MemReader>(
-        &self,
-        cfg: &cfg::Cfg<R>,
-        all_vns: Vec<rsleigh::Vn>,
-    ) -> Result<AnalyzeOutcome> {
-        let empty = std::collections::HashMap::new();
-        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, &empty)
-    }
-
-    /// Translates a complete CFG into an [`AnalyzeOutcome`] with
-    /// caller-supplied [`AnalyzeOptions`].
-    ///
-    /// Equivalent to [`Strider::analyze_cfg`] when given
-    /// `AnalyzeOptions::default()`.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::analyze_cfg`].
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
         cfg: &cfg::Cfg<R>,
@@ -325,27 +312,7 @@ impl Strider {
         let all_vns = opts
             .all_vns
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
-        self.analyze_cfg_with_vns_and_overrides(cfg, all_vns, opts.per_address_ccs)
-    }
-
-    /// Variant of [`Self::analyze_cfg_with_vns`] that accepts a
-    /// per-target-address calling-convention override map.  Direct
-    /// Calls whose target is in the map are built via
-    /// [`ir::FunctionBuilder::build_call_with_cc`] with the override.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::analyze_cfg_with_vns`].
-    pub fn analyze_cfg_with_vns_and_overrides<R: rsleigh::MemReader>(
-        &self,
-        cfg: &cfg::Cfg<R>,
-        all_vns: Vec<rsleigh::Vn>,
-        per_address_built_ccs: &std::collections::HashMap<
-            u64,
-            target::BuiltCallingConvention,
-        >,
-    ) -> Result<AnalyzeOutcome> {
-        let mut ir_strider = IrStrider::new(self, cfg, all_vns, per_address_built_ccs)?;
+        let mut ir_strider = IrStrider::new(self, cfg, all_vns, opts.per_address_ccs)?;
         ir_strider.builder.build_entry()?;
 
         // Map every CFG region id to its newly-allocated IR region id.
