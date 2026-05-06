@@ -46,7 +46,15 @@ pub fn classify_anchor_with_rom_and_sp(
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    let known = opt::analyze_known_bits(graph).ok()?;
+    let known = match opt::analyze_known_bits(graph) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!(
+                "strider: classify_anchor_with_rom_and_sp: analyze_known_bits failed: {e:?}"
+            );
+            return None;
+        }
+    };
     opt::classify_anchor_with_rom_and_sp(
         graph,
         anchor_output,

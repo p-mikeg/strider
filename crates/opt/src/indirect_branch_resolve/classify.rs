@@ -51,7 +51,17 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> Option<ResolvedTargets> {
-    let known = crate::analyze_known_bits(fg).ok()?;
+    let known = match crate::analyze_known_bits(fg) {
+        Ok(k) => k,
+        Err(e) => {
+            // Surface the diagnostic — analyze_known_bits returns Err only
+            // on Kb::merge contradiction (incompatible constants reaching
+            // the same output), which signals a real IR-level bug we want
+            // visible rather than silently treated as "no classification".
+            eprintln!("strider: classify_anchor: analyze_known_bits failed: {e:?}");
+            return None;
+        }
+    };
     classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, None, None, &known)
 }
 
@@ -75,7 +85,13 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> Option<ResolvedTargets> {
-    let known = crate::analyze_known_bits(fg).ok()?;
+    let known = match crate::analyze_known_bits(fg) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("strider: classify_anchor_with_rom: analyze_known_bits failed: {e:?}");
+            return None;
+        }
+    };
     classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None, &known)
 }
 
