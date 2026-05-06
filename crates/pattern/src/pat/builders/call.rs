@@ -118,6 +118,8 @@ pub struct CallOtherPat {
     name: Option<String>,
     inputs: Vec<(usize, Pat)>,
     outputs: Vec<(usize, Pat)>,
+    next_ctrl: Option<Pat>,
+    next_mem: Option<Pat>,
 }
 
 impl CallOtherPat {
@@ -127,6 +129,8 @@ impl CallOtherPat {
             name: None,
             inputs: Vec::new(),
             outputs: Vec::new(),
+            next_ctrl: None,
+            next_mem: None,
         }
     }
 
@@ -184,11 +188,36 @@ impl CallOtherPat {
     pub fn mem_out(self, p: impl Into<Pat>) -> Self {
         self.ret(1, p)
     }
+
+    /// Match `p` against the unique consumer of the CallOther's control
+    /// output (outputs[0]) — forward walk via
+    /// [`super::walk_helpers::match_unique_output_consumer`].  Returns
+    /// no match if the output has zero or multiple consumers.
+    pub fn next_ctrl(mut self, p: impl Into<Pat>) -> Self {
+        self.next_ctrl = Some(p.into());
+        self
+    }
+
+    /// Match `p` against the unique consumer of the CallOther's memory
+    /// output (outputs[1]).  Returns no match if the output has zero or
+    /// multiple consumers.  Dangles (and so always fails to match) when
+    /// the matched op's ABI has `memory_edge: false`.
+    pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
+        self.next_mem = Some(p.into());
+        self
+    }
 }
 
 impl From<CallOtherPat> for Pat {
     fn from(b: CallOtherPat) -> Pat {
-        let CallOtherPat { user_op_id, name, inputs, outputs } = b;
+        let CallOtherPat {
+            user_op_id,
+            name,
+            inputs,
+            outputs,
+            next_ctrl,
+            next_mem,
+        } = b;
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = match user_op_id {
             None => KindSpec::variant(&exemplar),
@@ -200,12 +229,35 @@ impl From<CallOtherPat> for Pat {
         if !outputs.is_empty() {
             pat = pat.with_outputs(OutputsSpec::Indexed(outputs));
         }
-        if let Some(want) = name {
-            pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
-                ctx.graph
-                    .graph
-                    .call_other_name(node)
-                    .is_some_and(|s| s == want.as_str())
+        // Combined post-match: name AND next_ctrl AND next_mem.
+        // `with_post_match` replaces the previous closure (single slot),
+        // so all three checks must live in one callback.
+        if name.is_some() || next_ctrl.is_some() || next_mem.is_some() {
+            let want_name = name;
+            let nc = next_ctrl;
+            let nm = next_mem;
+            pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
+                if let Some(ref want) = want_name {
+                    let ok = ctx
+                        .graph
+                        .graph
+                        .call_other_name(node)
+                        .is_some_and(|s| s == want.as_str());
+                    if !ok {
+                        return false;
+                    }
+                }
+                if let Some(ref p) = nc
+                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 0, p, b)
+                {
+                    return false;
+                }
+                if let Some(ref p) = nm
+                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 1, p, b)
+                {
+                    return false;
+                }
+                true
             }));
         }
         pat.into_pat()
