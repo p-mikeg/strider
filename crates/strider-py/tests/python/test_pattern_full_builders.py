@@ -440,3 +440,37 @@ def test_sleigh_reg_returns_vn_or_none():
     assert eax.size == 4
     # Unknown name → None (not an exception).
     assert sleigh.reg("DEFINITELY_NOT_A_REG") is None
+
+
+# ── new mem-walk + bit-width API ─────────────────────────────────────
+
+
+def test_load_mem_in_chain_compiles():
+    p = load().addr(int_const(0x100)).mem_in(store().addr(int_const(0x200)))
+    assert isinstance(p.into_pat(), Pat)
+
+
+def test_load_bit_width_compiles():
+    p = load().addr(int_const(0x100)).bit_width(32)
+    assert isinstance(p.into_pat(), Pat)
+
+
+def test_store_mem_in_next_mem_bit_width_chain_compiles():
+    p = (
+        store()
+        .addr(int_const(0x100))
+        .mem_in(load().addr(int_const(0x200)))
+        .next_mem(store().addr(int_const(0x300)))
+        .bit_width(64)
+    )
+    assert isinstance(p.into_pat(), Pat)
+
+
+def test_callother_next_ctrl_next_mem_compile():
+    p = (
+        call_other()
+        .name("LOCK")
+        .next_ctrl(load().addr(int_const(0x100)))
+        .next_mem(store().addr(int_const(0x200)))
+    )
+    assert isinstance(p.into_pat(), Pat)

@@ -957,16 +957,25 @@ pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
 pub struct PyLoadPat {
     addr: std::cell::RefCell<Option<pattern::Pat>>,
     space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+    mem_in: std::cell::RefCell<Option<pattern::Pat>>,
+    bit_width: std::cell::RefCell<Option<u32>>,
 }
 
 impl PyLoadPat {
     fn new() -> Self {
-        Self { addr: std::cell::RefCell::new(None), space: std::cell::RefCell::new(None) }
+        Self {
+            addr: std::cell::RefCell::new(None),
+            space: std::cell::RefCell::new(None),
+            mem_in: std::cell::RefCell::new(None),
+            bit_width: std::cell::RefCell::new(None),
+        }
     }
     pub(crate) fn finalise(&self) -> pattern::Pat {
         let mut b = pattern::load();
         if let Some(s) = *self.space.borrow() { b = b.space(s); }
         if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
+        if let Some(p) = self.mem_in.borrow().clone() { b = b.mem_in(p); }
+        if let Some(n) = *self.bit_width.borrow() { b = b.bit_width(n); }
         b.into()
     }
 }
@@ -980,6 +989,18 @@ impl PyLoadPat {
     }
     fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
         slf.borrow(py).space.replace(Some(s.inner));
+        slf
+    }
+    /// Constrain the load's memory predecessor (inputs[0]).
+    fn mem_in(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).mem_in.replace(Some(pat));
+        Ok(slf)
+    }
+    /// Filter loads by value width in bits (matches U32 and F32 on
+    /// bit_width(32), etc.).
+    fn bit_width(slf: Py<Self>, py: Python<'_>, n: u32) -> Py<Self> {
+        slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
     fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
@@ -1013,6 +1034,9 @@ pub struct PyStorePat {
     addr: std::cell::RefCell<Option<pattern::Pat>>,
     data: std::cell::RefCell<Option<pattern::Pat>>,
     space: std::cell::RefCell<Option<rsleigh::VnSpace>>,
+    mem_in: std::cell::RefCell<Option<pattern::Pat>>,
+    next_mem: std::cell::RefCell<Option<pattern::Pat>>,
+    bit_width: std::cell::RefCell<Option<u32>>,
 }
 
 impl PyStorePat {
@@ -1021,6 +1045,9 @@ impl PyStorePat {
             addr: std::cell::RefCell::new(None),
             data: std::cell::RefCell::new(None),
             space: std::cell::RefCell::new(None),
+            mem_in: std::cell::RefCell::new(None),
+            next_mem: std::cell::RefCell::new(None),
+            bit_width: std::cell::RefCell::new(None),
         }
     }
     pub(crate) fn finalise(&self) -> pattern::Pat {
@@ -1028,6 +1055,9 @@ impl PyStorePat {
         if let Some(s) = *self.space.borrow() { b = b.space(s); }
         if let Some(p) = self.addr.borrow().clone() { b = b.addr(p); }
         if let Some(p) = self.data.borrow().clone() { b = b.data(p); }
+        if let Some(p) = self.mem_in.borrow().clone() { b = b.mem_in(p); }
+        if let Some(p) = self.next_mem.borrow().clone() { b = b.next_mem(p); }
+        if let Some(n) = *self.bit_width.borrow() { b = b.bit_width(n); }
         b.into()
     }
 }
@@ -1046,6 +1076,25 @@ impl PyStorePat {
     }
     fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
         slf.borrow(py).space.replace(Some(s.inner));
+        slf
+    }
+    /// Constrain the store's memory predecessor (inputs[0]).
+    fn mem_in(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).mem_in.replace(Some(pat));
+        Ok(slf)
+    }
+    /// Match against the unique consumer of the store's memory output
+    /// (outputs[0]).  No match if zero or multiple consumers.
+    fn next_mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).next_mem.replace(Some(pat));
+        Ok(slf)
+    }
+    /// Filter stores by data width in bits (matches U32 and F32 on
+    /// bit_width(32), etc.).
+    fn bit_width(slf: Py<Self>, py: Python<'_>, n: u32) -> Py<Self> {
+        slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
     fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
@@ -1334,6 +1383,8 @@ pub struct PyCallOtherPat {
     name: std::cell::RefCell<Option<String>>,
     inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
     outputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+    next_ctrl: std::cell::RefCell<Option<pattern::Pat>>,
+    next_mem: std::cell::RefCell<Option<pattern::Pat>>,
 }
 
 impl PyCallOtherPat {
@@ -1343,6 +1394,8 @@ impl PyCallOtherPat {
             name: std::cell::RefCell::new(None),
             inputs: std::cell::RefCell::new(Vec::new()),
             outputs: std::cell::RefCell::new(Vec::new()),
+            next_ctrl: std::cell::RefCell::new(None),
+            next_mem: std::cell::RefCell::new(None),
         }
     }
     pub(crate) fn finalise(&self) -> pattern::Pat {
@@ -1358,6 +1411,12 @@ impl PyCallOtherPat {
         }
         for (idx, p) in self.outputs.borrow().iter().cloned() {
             b = b.ret(idx, p);
+        }
+        if let Some(p) = self.next_ctrl.borrow().clone() {
+            b = b.next_ctrl(p);
+        }
+        if let Some(p) = self.next_mem.borrow().clone() {
+            b = b.next_mem(p);
         }
         b.into()
     }
@@ -1405,6 +1464,21 @@ impl PyCallOtherPat {
     /// the ABI's `memory_edge` is `false`).
     fn mem_out(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
         Self::ret(slf, py, 1, p)
+    }
+    /// Match against the unique consumer of the CallOther's control
+    /// output (outputs[0]).  No match if zero or multiple consumers.
+    fn next_ctrl(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).next_ctrl.replace(Some(pat));
+        Ok(slf)
+    }
+    /// Match against the unique consumer of the CallOther's memory
+    /// output (outputs[1]).  No match if zero or multiple consumers,
+    /// or when the ABI's `memory_edge` is `false`.
+    fn next_mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).next_mem.replace(Some(pat));
+        Ok(slf)
     }
     fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
         use pattern::IntoPat;
