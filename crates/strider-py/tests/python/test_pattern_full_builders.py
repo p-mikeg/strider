@@ -119,7 +119,10 @@ def test_if_pat_finds_branches_in_real_graph():
 
 
 def test_call_other_pat_chain_compiles():
-    p = call_other().user_op_id(7).arg(0, int_const(42))
+    # CallOtherPat.arg(i) addresses raw inputs[i]: i=0 ctrl, i=1 mem,
+    # i>=2 pcode args + implicit reads.  This compiles a chain
+    # constraining arg position 2 (= first pcode-explicit arg).
+    p = call_other().user_op_id(7).arg(2, int_const(42))
     assert isinstance(p.into_pat(), Pat)
 
 

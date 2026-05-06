@@ -1332,7 +1332,8 @@ pub fn call(at: Option<u64>) -> PyCallPat {
 pub struct PyCallOtherPat {
     user_op_id: std::cell::RefCell<Option<u64>>,
     name: std::cell::RefCell<Option<String>>,
-    args: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+    outputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
 }
 
 impl PyCallOtherPat {
@@ -1340,7 +1341,8 @@ impl PyCallOtherPat {
         Self {
             user_op_id: std::cell::RefCell::new(None),
             name: std::cell::RefCell::new(None),
-            args: std::cell::RefCell::new(Vec::new()),
+            inputs: std::cell::RefCell::new(Vec::new()),
+            outputs: std::cell::RefCell::new(Vec::new()),
         }
     }
     pub(crate) fn finalise(&self) -> pattern::Pat {
@@ -1351,8 +1353,11 @@ impl PyCallOtherPat {
         if let Some(n) = self.name.borrow().clone() {
             b = b.name(n);
         }
-        for (idx, p) in self.args.borrow().iter().cloned() {
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
             b = b.arg(idx, p);
+        }
+        for (idx, p) in self.outputs.borrow().iter().cloned() {
+            b = b.ret(idx, p);
         }
         b.into()
     }
@@ -1368,10 +1373,38 @@ impl PyCallOtherPat {
         slf.borrow(py).name.replace(Some(n));
         slf
     }
+    /// Constrain raw `inputs[idx]` of the matched CallOther.
+    /// `idx=0` is ctrl, `idx=1` is mem, `idx>=2` are pcode-explicit
+    /// args followed by ABI implicit reads.
     fn arg(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
         let pat = p.into_pat()?;
-        slf.borrow(py).args.borrow_mut().push((idx, pat));
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
         Ok(slf)
+    }
+    /// Constrain raw `outputs[idx]` of the matched CallOther.
+    /// `idx=0` is ctrl, `idx=1` is mem, `idx=2` is the pcode-explicit
+    /// value (when present), `idx>=2+has_value` are ABI clobbers.
+    fn ret(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).outputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    /// Convenience: match `inputs[0]` (control predecessor).
+    fn ctrl(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        Self::arg(slf, py, 0, p)
+    }
+    /// Convenience: match `inputs[1]` (memory predecessor).
+    fn mem(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        Self::arg(slf, py, 1, p)
+    }
+    /// Convenience: match `outputs[0]` (control output).
+    fn ctrl_out(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        Self::ret(slf, py, 0, p)
+    }
+    /// Convenience: match `outputs[1]` (memory output; dangles when
+    /// the ABI's `memory_edge` is `false`).
+    fn mem_out(slf: Py<Self>, py: Python<'_>, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        Self::ret(slf, py, 1, p)
     }
     fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
         use pattern::IntoPat;

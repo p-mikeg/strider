@@ -92,10 +92,32 @@ impl From<CallPat> for Pat {
 // ── CallOtherPat ──────────────────────────────────────────────────────────────
 
 /// Builder for `CallOther` node patterns.  Created by [`crate::pat::call_other`].
+///
+/// Slot conventions (post v2 precise-ABI lifting):
+///
+/// **Inputs** — addressed by [`Self::arg`] using the raw `inputs[i]` index:
+///   * `arg(0, p)` → control predecessor
+///   * `arg(1, p)` → memory predecessor
+///   * `arg(2 + k, p)` → pcode-explicit arg `k` (matches Sleigh's
+///     `inputs[1..]` after the user-op id)
+///   * `arg(2 + N + k, p)` → implicit-read `k` (matches
+///     `abi.implicit_reads[k]`; depends on the matched node's ABI)
+///
+/// **Outputs** — addressed by [`Self::ret`] using the raw `outputs[i]`
+/// index:
+///   * `ret(0, p)` → control output
+///   * `ret(1, p)` → memory output (dangles when `abi.memory_edge=false`)
+///   * `ret(2, p)` → pcode-explicit value output (when present)
+///   * `ret(2 + has_value + k, p)` → clobber output `k`
+///     (matches `abi.implicit_writes[k]`)
+///
+/// Convenience aliases for the well-known slots:
+/// [`Self::ctrl`], [`Self::mem`], [`Self::ctrl_out`], [`Self::mem_out`].
 pub struct CallOtherPat {
     user_op_id: Option<u64>,
     name: Option<String>,
-    args: Vec<(usize, Pat)>,
+    inputs: Vec<(usize, Pat)>,
+    outputs: Vec<(usize, Pat)>,
 }
 
 impl CallOtherPat {
@@ -103,36 +125,70 @@ impl CallOtherPat {
         Self {
             user_op_id: None,
             name: None,
-            args: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
         }
     }
+
     /// Constrain the matched node to a specific user-op id.
     #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
         self.user_op_id = Some(v);
         self
     }
+
     /// Constrain the matched node's user-op name (read from
     /// [`ir::Graph::call_other_name`]) to equal `n`.  Combinable
-    /// with [`Self::user_op_id`] (both must match) and [`Self::arg`].
+    /// with [`Self::user_op_id`] and [`Self::arg`].
     #[must_use]
     pub fn name(mut self, n: impl Into<String>) -> Self {
         self.name = Some(n.into());
         self
     }
-    /// Constrain argument at position `idx` (0-based, after ctrl and mem inputs).
+
+    /// Constrain `inputs[idx]` of the matched CallOther.  Unlike
+    /// `CallPat::arg` (which skips `ctrl`/`mem`), this addresses the
+    /// raw input slot so callers can match on control / memory /
+    /// pcode-args / implicit-reads uniformly.  See the type-level docs
+    /// for the slot layout.
     pub fn arg(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.args.push((idx, p.into()));
+        self.inputs.push((idx, p.into()));
         self
+    }
+
+    /// Constrain `outputs[idx]` of the matched CallOther.  See the
+    /// type-level docs for the slot layout (ctrl / mem / value? /
+    /// clobbers).
+    pub fn ret(mut self, idx: usize, p: impl Into<Pat>) -> Self {
+        self.outputs.push((idx, p.into()));
+        self
+    }
+
+    /// Convenience: match the control input (`inputs[0]`).
+    pub fn ctrl(self, p: impl Into<Pat>) -> Self {
+        self.arg(0, p)
+    }
+
+    /// Convenience: match the memory input (`inputs[1]`).
+    pub fn mem(self, p: impl Into<Pat>) -> Self {
+        self.arg(1, p)
+    }
+
+    /// Convenience: match the control output (`outputs[0]`).
+    pub fn ctrl_out(self, p: impl Into<Pat>) -> Self {
+        self.ret(0, p)
+    }
+
+    /// Convenience: match the memory output (`outputs[1]`).  Dangles
+    /// (no consumers) when the ABI's `memory_edge` is `false`.
+    pub fn mem_out(self, p: impl Into<Pat>) -> Self {
+        self.ret(1, p)
     }
 }
 
 impl From<CallOtherPat> for Pat {
     fn from(b: CallOtherPat) -> Pat {
-        let CallOtherPat { user_op_id, name, args } = b;
-        // CallOther inputs: [ctrl(0), mem(1), arg0(2), arg1(3), ...].
-        let indexed_inputs: Vec<(usize, Pat)> =
-            args.into_iter().map(|(i, p)| (2 + i, p)).collect();
+        let CallOtherPat { user_op_id, name, inputs, outputs } = b;
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = match user_op_id {
             None => KindSpec::variant(&exemplar),
@@ -140,7 +196,10 @@ impl From<CallOtherPat> for Pat {
                 matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
             }),
         };
-        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed_inputs));
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(inputs));
+        if !outputs.is_empty() {
+            pat = pat.with_outputs(OutputsSpec::Indexed(outputs));
+        }
         if let Some(want) = name {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
                 ctx.graph
