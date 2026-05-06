@@ -256,6 +256,71 @@ fn process_insn_falls_through_into_existing_region_start() {
     assert_eq!(ft_count, 1);
 }
 
+/// Bug fix regression: when `process_insn` encounters an
+/// already-explored region's start while `self.insns` is still empty
+/// — the case AArch64 NOP / `paciasp` / `autiasp` create when they
+/// lift to zero pcode ops and the cfg-builder's outer loop walks
+/// across them before reaching an explored successor — the empty
+/// fall-through must hot-wire the parent edge straight into the
+/// existing region.  Pre-fix this hit `add_region`'s non-empty
+/// invariant ("has no instructions").
+#[test]
+fn process_insn_empty_insns_fall_through_hot_wires_parent_edge() {
+    let base = 0x1000u64;
+    let bytes = vec![0x31u8, 0xc0, 0xc3]; // xor eax,eax; ret (lift content doesn't matter here)
+    let lift = lift_at(bytes.clone(), base, base);
+    let mut b = make_builder_with_bytes(bytes, base);
+
+    let parent = test_api::add_region(&mut b, make_region(&[(0x0ff8, 0)])).unwrap();
+    let existing = test_api::add_region(&mut b, make_region(&[(0x1004, 0)])).unwrap();
+
+    let mut rb = test_api::TestRegionBuilder::with_parent_edge(
+        &mut b,
+        addr(base, 0),
+        (parent, RegionEdgeKind::Branch),
+    );
+    // No push_insn — insns is empty when we hit the fall-through.
+
+    let dummy = lift.insns[0].clone();
+    let res = rb.process_insn(&dummy, addr(0x1004, 0), &lift).unwrap();
+    assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+    drop(rb);
+
+    // Parent's edge kind is preserved on the hot-wired direct edge.
+    let direct: Vec<_> = test_api::graph(&b)
+        .edge_references()
+        .filter(|e| e.source() == parent && e.target() == existing)
+        .collect();
+    assert_eq!(direct.len(), 1, "expected parent→existing direct edge");
+    assert_eq!(*direct[0].weight(), RegionEdgeKind::Branch);
+
+    // No empty intermediate region was created.
+    assert_eq!(test_api::graph(&b).node_count(), 2, "no intermediate region");
+}
+
+/// Variant of the above with no parent edge: the entry-region case where
+/// the first machine instruction(s) lift to zero pcode and the outer
+/// loop walks straight into an already-explored region.  Without a
+/// parent edge there is nothing to wire, so the call must succeed
+/// silently — still no empty-region creation.
+#[test]
+fn process_insn_empty_insns_fall_through_without_parent_succeeds() {
+    let base = 0x1000u64;
+    let bytes = vec![0x31u8, 0xc0, 0xc3];
+    let lift = lift_at(bytes.clone(), base, base);
+    let mut b = make_builder_with_bytes(bytes, base);
+    let _existing = test_api::add_region(&mut b, make_region(&[(0x1004, 0)])).unwrap();
+
+    let mut rb = make_region_builder(&mut b, addr(base, 0));
+    let dummy = lift.insns[0].clone();
+    let res = rb.process_insn(&dummy, addr(0x1004, 0), &lift).unwrap();
+    assert_eq!(res, ProcessInsnRes::FinishedProcessing);
+    drop(rb);
+
+    // Only the pre-registered region exists.
+    assert_eq!(test_api::graph(&b).node_count(), 1);
+}
+
 // ── finish_current_region ────────────────────────────────────────────────────
 
 #[test]

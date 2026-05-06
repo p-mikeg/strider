@@ -36,15 +36,34 @@ impl<R: rsleigh::MemReader> Builder<R> {
             .graph
             .node_weight_mut(region_id)
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        let split_index = second_region
+        // Round-down fallback for split addresses that fall in a
+        // zero-pcode-op hole.  When `addr` doesn't match any recorded
+        // insn (because intervening machine instructions lifted to zero
+        // pcode ops — AArch64 `paciasp` / `autiasp`, ARM `bti`, etc.),
+        // split after the largest insn whose address is ≤ `addr`.  The
+        // second region keeps the requested `addr` as its `start_addr`
+        // so future lookups for that exact address resolve to it.
+        // Below-every-insn (no `rposition` match) is unreachable from
+        // the cfg builder's normal call path — the caller's
+        // `contains_addr` check rules it out — but the API is exposed
+        // via `test_api`, so a clean error beats a panic.
+        let split_index = match second_region
             .insns
             .iter()
             .position(|insn| insn.addr == addr)
-            .ok_or_else(|| {
-                anyhow!(
-                    "split address {addr:?} not found in region {region_id:?}'s instruction list"
-                )
-            })?;
+        {
+            Some(idx) => idx,
+            None => second_region
+                .insns
+                .iter()
+                .rposition(|insn| insn.addr <= addr)
+                .map(|i| i + 1)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "split address {addr:?} not found in region {region_id:?}'s instruction list"
+                    )
+                })?,
+        };
 
         if split_index == 0 {
             return Ok(region_id);

@@ -111,14 +111,64 @@ fn split_rewires_incoming_edges_to_first_half() {
     assert!(second_branch_incoming.is_empty());
 }
 
+/// Bug fix regression: when `split_addr` falls *between* two recorded
+/// insns — the case AArch64 PAC instructions (`paciasp`, `autiasp`)
+/// create when they lift to zero pcode ops, leaving a hole in the
+/// per-region address range — the split must round down to the
+/// largest insn whose address is ≤ `split_addr`.  The second region
+/// keeps the requested `split_addr` as its `start_addr` so future
+/// lookups for that exact address resolve correctly.
 #[test]
-fn split_addr_not_in_region_insns_returns_failed_splitting_region() {
-    // Region has insns at 0x1000 and 0x1010 only — nothing at 0x1008.
-    // split_region expects `addr` to match an exact insn addr.
+fn split_addr_in_zero_pcode_hole_rounds_down_to_largest_le() {
+    // Region [(0x1000), (0x1004), (0x100c)] — note the hole between
+    // 0x1004 and 0x100c that 0x1008 falls into.
+    let mut b = make_builder(0x1000);
+    let original = test_api::add_region(
+        &mut b,
+        make_region(&[(0x1000, 0), (0x1004, 0), (0x100c, 0)]),
+    )
+    .unwrap();
+
+    let second = test_api::split_region(&mut b, original, addr(0x1008, 0)).unwrap();
+
+    // Second half retains original NodeIndex.
+    assert_eq!(second, original);
+    // Second half's start_addr is the requested split addr (not the
+    // first insn's addr), so future lookups for 0x1008 resolve to it.
+    assert_eq!(test_api::graph(&b)[original].start_addr, addr(0x1008, 0));
+    assert_eq!(test_api::graph(&b)[original].insns.len(), 1);
+    assert_eq!(
+        test_api::graph(&b)[original].insns[0].addr,
+        addr(0x100c, 0),
+    );
+
+    // First half holds insns up to and including the rounded-down
+    // boundary (0x1004).
+    let first_id = test_api::start_addr_to_region_id(&b)[&addr(0x1000, 0)];
+    assert_eq!(test_api::graph(&b)[first_id].insns.len(), 2);
+    assert_eq!(
+        test_api::graph(&b)[first_id].insns.last().unwrap().addr,
+        addr(0x1004, 0),
+    );
+
+    // start_addr_to_region_id maps the requested split addr to the
+    // second half.
+    let map = test_api::start_addr_to_region_id(&b);
+    assert_eq!(map[&addr(0x1008, 0)], original);
+}
+
+/// Defensive: `split_addr` strictly less than every recorded insn is
+/// unreachable from the cfg builder's normal call path
+/// (`contains_addr` would have returned false), but the `split_region`
+/// API is exposed publicly via `test_api` — keep it surfacing an
+/// error rather than panicking on the empty `rposition`.  The typed
+/// `cfg::SplitAddressNotFoundError` downcast is added separately by
+/// the typed-errors fix (see `tests/typed_errors.rs`).
+#[test]
+fn split_addr_below_every_insn_returns_error() {
     let mut b = make_builder(0x1000);
     let id = test_api::add_region(&mut b, make_region(&[(0x1000, 0), (0x1010, 0)])).unwrap();
-    let err = test_api::split_region(&mut b, id, addr(0x1008, 0)).unwrap_err();
+    let err = test_api::split_region(&mut b, id, addr(0x0ff0, 0)).unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("not found in region"), "got: {msg}");
-    assert!(msg.contains(&format!("{:?}", addr(0x1008, 0))), "got: {msg}");
+    assert!(msg.contains("not found"), "got: {msg}");
 }

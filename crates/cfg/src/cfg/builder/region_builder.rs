@@ -550,6 +550,18 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// region: the current region is finalised and a
     /// [`RegionEdgeKind::Fallthrough`] edge is added to the existing region.
     /// Otherwise delegates to [`process_new_insn`](Self::process_new_insn).
+    ///
+    /// **Zero-pcode-op stretch case.**  When the outer `build` loop walks
+    /// across one or more machine instructions that lift to zero pcode
+    /// ops (AArch64 `nop` / `paciasp` / `autiasp`, ARM `bti`, etc.),
+    /// `self.insns` is still empty by the time fall-through into an
+    /// already-explored region fires.  Creating an empty intermediate
+    /// region would violate `add_region`'s non-empty invariant.
+    /// Instead, the parent edge is hot-wired straight into the existing
+    /// region with the parent's original edge kind preserved.  The
+    /// effect on the resulting CFG is the same as if the empty stretch
+    /// were a one-region pass-through: the parent's classification
+    /// flows directly to the explored successor.
     fn process_insn(
         &mut self,
         insn: &rsleigh::Insn,
@@ -559,6 +571,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         // If `addr` is the start of an already-explored region, the current region
         // fell through to it: finalise the current region and add a Fallthrough edge.
         if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
+            if self.insns.is_empty() {
+                if let Some((parent_id, edge_kind)) = self.parent_edge {
+                    self.builder
+                        .graph
+                        .add_edge(parent_id, existing_region_id, edge_kind);
+                }
+                return Ok(ProcessInsnRes::FinishedProcessing);
+            }
             let region = self.finish_current_region(RegionTerminator::Fallthrough)?;
             self.builder
                 .graph

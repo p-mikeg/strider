@@ -44,8 +44,39 @@ mod run;
 mod sleigh;
 mod strider_cls;
 
+/// Forces anyhow to capture a Rust backtrace at every error
+/// construction site, so the `StriderError` raised on the Python side
+/// always carries source-location frames — independent of whether
+/// the caller remembered to set `RUST_LIB_BACKTRACE` / `RUST_BACKTRACE`.
+///
+/// Anyhow checks `RUST_LIB_BACKTRACE` first and falls back to
+/// `RUST_BACKTRACE`; a value of `0` disables capture.  We seed
+/// `RUST_LIB_BACKTRACE=1` only when **neither** variable is set, so
+/// an explicit `RUST_LIB_BACKTRACE=0` (or `RUST_BACKTRACE=0` with no
+/// `RUST_LIB_BACKTRACE`) the user picked deliberately is still
+/// honoured.  Setting only `RUST_LIB_BACKTRACE` keeps the panic-time
+/// `RUST_BACKTRACE` semantics untouched.
+fn force_anyhow_backtrace_capture() {
+    if std::env::var_os("RUST_LIB_BACKTRACE").is_none()
+        && std::env::var_os("RUST_BACKTRACE").is_none()
+    {
+        // SAFETY: called from `#[pymodule]` init, which Python's
+        // import lock serialises across Python threads.  Concurrent
+        // *Rust* threads spawned by other already-loaded native
+        // extensions are theoretically possible — the GIL doesn't
+        // gate them — but env-var mutation at import time is the
+        // contract every Python native binding follows, and the
+        // worst case here is a missing backtrace on a racing reader,
+        // not memory unsafety.  Not worth wrapping in a Mutex.
+        unsafe {
+            std::env::set_var("RUST_LIB_BACKTRACE", "1");
+        }
+    }
+}
+
 #[pymodule]
 fn strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    force_anyhow_backtrace_capture();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     errors::register(py, m)?;
     arch::register(py, m)?;
