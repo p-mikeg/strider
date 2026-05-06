@@ -107,11 +107,21 @@ pub struct StorePat {
     space: Option<rsleigh::VnSpace>,
     addr: Option<Pat>,
     data: Option<Pat>,
+    mem_in: Option<Pat>,
+    next_mem: Option<Pat>,
+    bit_width: Option<u32>,
 }
 
 impl StorePat {
     pub(crate) fn new() -> Self {
-        Self { space: None, addr: None, data: None }
+        Self {
+            space: None,
+            addr: None,
+            data: None,
+            mem_in: None,
+            next_mem: None,
+            bit_width: None,
+        }
     }
     /// Restrict the match to stores in address space `s`.
     #[must_use]
@@ -119,23 +129,54 @@ impl StorePat {
         self.space = Some(s);
         self
     }
-    /// Constrain the store's address operand.
+    /// Constrain the store's address operand (inputs[1]).
     pub fn addr(mut self, p: impl Into<Pat>) -> Self {
         self.addr = Some(p.into());
         self
     }
-    /// Constrain the value being stored.
+    /// Constrain the value being stored (inputs[2]).
     pub fn data(mut self, p: impl Into<Pat>) -> Self {
         self.data = Some(p.into());
+        self
+    }
+    /// Constrain the store's memory predecessor (inputs[0]).  The
+    /// pattern walks back from the input edge to its producer.
+    pub fn mem_in(mut self, p: impl Into<Pat>) -> Self {
+        self.mem_in = Some(p.into());
+        self
+    }
+    /// Match `p` against the unique consumer of the store's memory
+    /// output (outputs[0]).  Returns no match if the output has zero
+    /// or multiple consumers (deterministic; no arbitrary pick).
+    pub fn next_mem(mut self, p: impl Into<Pat>) -> Self {
+        self.next_mem = Some(p.into());
+        self
+    }
+    /// Restrict the match to stores whose data input (inputs[2]) is
+    /// `n` bits wide.  Matches both integer and float types of the
+    /// same width (e.g. `bit_width(32)` matches U32 and F32).
+    #[must_use]
+    pub fn bit_width(mut self, n: u32) -> Self {
+        self.bit_width = Some(n);
         self
     }
 }
 
 impl From<StorePat> for Pat {
     fn from(b: StorePat) -> Pat {
-        let StorePat { space, addr, data } = b;
-        // Store inputs = [mem(0), addr(1), data(2)].
+        let StorePat {
+            space,
+            addr,
+            data,
+            mem_in,
+            next_mem,
+            bit_width,
+        } = b;
+        // Store inputs = [mem(0), addr(1), data(2)]; outputs = [mem(0)].
         let mut indexed: Vec<(usize, Pat)> = Vec::new();
+        if let Some(p) = mem_in {
+            indexed.push((0, p));
+        }
         if let Some(addr_pat) = addr {
             indexed.push((1, addr_pat));
         }
@@ -149,7 +190,39 @@ impl From<StorePat> for Pat {
                 move |k| matches!(k, NodeKind::Store(actual) if *actual == s),
             ),
         };
-        NodePat::matcher(kind, InputsSpec::Indexed(indexed)).into_pat()
+        let mut pat = NodePat::matcher(kind, InputsSpec::Indexed(indexed));
+
+        // Combined post-match closure: bit_width AND next_mem checks.
+        // `with_post_match` replaces the existing closure (single slot),
+        // so both checks must live in one callback.
+        if bit_width.is_some() || next_mem.is_some() {
+            let want_width = bit_width;
+            let next_mem_pat = next_mem;
+            pat = pat.with_post_match(Arc::new(move |ctx, node, b| {
+                if let Some(w) = want_width {
+                    // Store's data input is at inputs[2]; its producer's
+                    // output type tells us the width.
+                    let inputs = ctx.graph.graph.node_inputs(node);
+                    let Some(&data_in) = inputs.get(2) else {
+                        return false;
+                    };
+                    let Some(ty) = ctx.graph.graph.output_kind(data_in).as_value() else {
+                        return false;
+                    };
+                    if ty.bit_width() != w as usize {
+                        return false;
+                    }
+                }
+                if let Some(ref p) = next_mem_pat
+                    && !super::walk_helpers::match_unique_output_consumer(ctx, node, 0, p, b)
+                {
+                    return false;
+                }
+                true
+            }));
+        }
+
+        pat.into_pat()
     }
 }
 
