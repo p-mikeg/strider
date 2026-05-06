@@ -168,12 +168,18 @@ impl FunctionBuilder {
         user_op_id: u64,
         name: &str,
     ) -> Result<NodeId> {
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
+        // Snapshot the region's ctrl/mem edges and mark the region
+        // terminated, mirroring `build_return` / `build_branch` /
+        // `build_indirect_branch`.  Subsequent `build_*` calls into this
+        // region will now correctly fail with `RegionTerminated` instead
+        // of silently producing IR after a NoReturn terminator.
+        let res = self.terminate_cur_region()?;
+        self.require_control_kind(res.control)?;
+        self.require_memory_kind(res.memory)?;
         let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
         output_kinds.push(NodeOutputKind::Memory);
-        let inputs = [ctrl, memory];
+        let inputs = [res.control, res.memory];
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
             inputs,
@@ -182,8 +188,8 @@ impl FunctionBuilder {
         self.body_mut()
             .graph
             .set_call_other_name(node, name.to_string());
-        // Intentionally DO NOT call advance_cur_region_ctrl /
-        // advance_cur_region_memory — outputs dangle.
+        // Outputs intentionally dangle — no link_region.  The cfg layer
+        // already terminates the region with `RegionTerminator::NoReturn`.
         Ok(node)
     }
 

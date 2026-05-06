@@ -555,6 +555,22 @@ fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
 }
 
 #[test]
+fn build_call_other_terminal_closes_region() -> Result<()> {
+    // Regression: build_call_other_terminal must terminate the region so
+    // subsequent region-bound builder calls correctly fail.  Mirrors the
+    // pattern of build_return / build_branch / build_indirect_branch
+    // which all call terminate_cur_region().
+    let mut b = builder_with_region()?;
+    b.build_call_other_terminal(0, "ud2")?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "cur_region_control must fail after build_call_other_terminal terminates the region; got: {ctrl:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_segment_op_produces_pure_node() -> Result<()> {
     let mut b = builder_with_region()?;
     let seg = b.build_int_const(0x10u64, NodeOutputType::U16)?;
