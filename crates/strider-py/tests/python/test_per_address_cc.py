@@ -51,3 +51,88 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
 def test_x86_64_all_preserving_classmethod_exists():
     cc = CallingConvention.x86_64_all_preserving()
     assert cc.name() == "x86_64_all_preserving"
+
+
+import pytest
+
+from strider import OptimizerPipeline, opt
+from strider.pattern import call, function_arg
+
+
+def _x86_64_arg_thru_hook_to_sink_bytes():
+    """Layout at 0x1000:
+        0x1000  48 89 ff           mov rdi, rdi  ; force RDI tracked
+        0x1003  e8 f8 0f 00 00     call 0x2000   ; "hook" (clobbers rdi by default)
+        0x1008  e8 f3 1f 00 00     call 0x3000   ; "sink" — we match its arg0
+        0x100d  c3                 ret
+    """
+    return bytes(
+        [
+            0x48, 0x89, 0xFF,                    # mov rdi, rdi
+            0xE8, 0xF8, 0x0F, 0x00, 0x00,        # call 0x2000
+            0xE8, 0xF3, 0x1F, 0x00, 0x00,        # call 0x3000
+            0xC3,                                 # ret
+        ]
+    )
+
+
+def _build_default_equivalent_pipeline(sleigh, sl, cc, mem):
+    """Mirrors `Strider::build_optimizer_pipeline` from the Rust side
+    (the passes `strider.run(pipeline=None)` runs internally).  Used to
+    pin the bug: this pipeline must produce the same matches as the
+    None default once the per_address_ccs plumbing is fixed."""
+    pipe = OptimizerPipeline.empty()
+    pipe.add(opt.ConstantFold())
+    pipe.add(opt.KnownBits())
+    pipe.add(opt.RedundantPhis())
+    pipe.add(opt.DeadBranchElim())
+    pipe.add(opt.LoadReadOnly(mem))
+    pipe.add(opt.StackStoreDetect(sl, cc))
+    pipe.add(opt.StackLoadForward(sl, cc, sleigh))
+    pipe.add_post(opt.FunctionArgDetect(sl, cc))
+    pipe.add_post(opt.CallStackArgCollect(sl, cc))
+    return pipe
+
+
+@pytest.mark.parametrize(
+    "use_custom_pipeline,with_override,expected_hits",
+    [
+        (False, False, 0),  # default pipeline, no override → hook clobbers rdi
+        (False, True, 1),   # default pipeline, override     → rdi flows through
+        (True, False, 0),   # custom pipeline,  no override  → same as default
+        (True, True, 1),    # custom pipeline,  override     → BUG: today this is 0
+    ],
+)
+def test_per_address_ccs_honoured_in_both_pipeline_paths(
+    use_custom_pipeline, with_override, expected_hits
+):
+    arch = SleighArch.x86_64()
+    cc = CallingConvention.x86_64_systemv_abi()
+    mem = MemoryMap()
+    mem.add_region(0x1000, _x86_64_arg_thru_hook_to_sink_bytes())
+    sl = strider.Sleigh(arch, mem)
+
+    overrides = (
+        {0x2000: CallingConvention.x86_64_all_preserving()} if with_override else {}
+    )
+    pipeline = (
+        _build_default_equivalent_pipeline(arch, sl, cc, mem)
+        if use_custom_pipeline
+        else None
+    )
+
+    res = strider.run(
+        arch=arch,
+        cc=cc,
+        mem=mem,
+        rom=mem,
+        entry=0x1000,
+        per_address_ccs=overrides,
+        pipeline=pipeline,
+    )
+    pat = call().at(0x3000).arg(0, function_arg(0))
+    hits = res.graph.find_all(pat)
+    assert len(hits) == expected_hits, (
+        f"use_custom_pipeline={use_custom_pipeline} "
+        f"with_override={with_override}: got {len(hits)} hits, expected {expected_hits}"
+    )

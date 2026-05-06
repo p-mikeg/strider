@@ -67,6 +67,7 @@ pub fn run(
     compact: bool,
     per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
 ) -> PyResult<PyRunResult> {
+    let per_address_ccs = per_address_ccs.unwrap_or_default();
     match pipeline {
         Some(p) => run_with_custom_pipeline(
             py,
@@ -79,6 +80,7 @@ pub fn run(
             allow_code_before_start_addr,
             function_max_size,
             compact,
+            per_address_ccs,
         ),
         None => run_via_orchestrator(
             py,
@@ -90,7 +92,7 @@ pub fn run(
             allow_code_before_start_addr,
             function_max_size,
             compact,
-            per_address_ccs.unwrap_or_default(),
+            per_address_ccs,
         ),
     }
 }
@@ -175,8 +177,9 @@ fn run_via_orchestrator(
 }
 
 /// Custom-pipeline path — preserves the v1 contract: lift once via
-/// `analyze_cfg`, then apply the user's pipeline.  Indirect branches
-/// are not resolved on this path.
+/// `analyze_cfg_with`, then apply the user's pipeline.  Indirect
+/// branches are not resolved on this path.  `per_address_ccs` is
+/// honoured at lift time the same way as on the orchestrator path.
 #[allow(clippy::too_many_arguments)]
 fn run_with_custom_pipeline(
     py: Python<'_>,
@@ -189,6 +192,7 @@ fn run_with_custom_pipeline(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
     compact: bool,
+    per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
     let _ = rom; // custom pipeline owns its own pass list
     let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;
@@ -208,10 +212,41 @@ fn run_with_custom_pipeline(
         )?,
     )?;
 
+    // Resolve per-address CCs against the same Sleigh register table
+    // the function-default CC was built against — mirrors the
+    // orchestrator's `LoopState::new` behaviour so both pipeline paths
+    // honour `per_address_ccs` identically.
+    let per_address_built_ccs: std::collections::HashMap<u64, target::BuiltCallingConvention> =
+        if per_address_ccs_py.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            let regs = sleigh.borrow(py).regs.clone();
+            per_address_ccs_py
+                .into_iter()
+                .map(|(addr, py_cc)| {
+                    py_cc
+                        .inner
+                        .build(&regs)
+                        .map(|built| (addr, built))
+                        .map_err(|e| {
+                            into_lift_err(anyhow::anyhow!(
+                                "per-address CC at {addr:#x} unresolved: {e:?}"
+                            ))
+                        })
+                })
+                .collect::<Result<_, _>>()?
+        };
+
     let strider_borrow = strider_obj.borrow(py);
     let outcome = strider_borrow
         .inner
-        .analyze_cfg(&cfg_obj.borrow(py).inner)
+        .analyze_cfg_with(
+            &cfg_obj.borrow(py).inner,
+            strider::AnalyzeOptions {
+                per_address_ccs: &per_address_built_ccs,
+                ..strider::AnalyzeOptions::default()
+            },
+        )
         .map_err(into_lift_err)?;
     let graph = outcome.graph;
     drop(strider_borrow);
