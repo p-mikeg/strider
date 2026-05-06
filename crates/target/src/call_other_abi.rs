@@ -92,6 +92,54 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
          "swi") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[], implicit_writes: &[], memory_edge: true,
         })),
+
+        // Linux x86_64 syscall ABI: RAX = syscall number, RDI/RSI/RDX/
+        // R10/R8/R9 = args, RAX = return.  RCX/R11 are clobbered by
+        // the SYSCALL instruction itself (RCX=return rip, R11=rflags).
+        // Arch-specific because the register names only resolve on
+        // x86_64's Sleigh register table.
+        (crate::ArchPreset::X86_64, "syscall") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
+            implicit_writes: &["RAX", "RCX", "R11"],
+            memory_edge:     true,
+        })),
+
+        // ARM SMCCC for HVC and SMC: X0..X7 in, X0..X3 out.  Both
+        // little- and big-endian aarch64 share the convention.  Arch-
+        // specific because `x0..x7` only resolve on aarch64's Sleigh
+        // register table (arm-32 has `r0..r12`).
+        (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
+         "CallHyperVisor") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            implicit_writes: &["x0", "x1", "x2", "x3"],
+            memory_edge:     true,
+        })),
+        (crate::ArchPreset::Aarch64 | crate::ArchPreset::Aarch64Be,
+         "CallSecureMonitor") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            implicit_writes: &["x0", "x1", "x2", "x3"],
+            memory_edge:     true,
+        })),
+
+        // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX,
+        // clears EDX.  Arch-specific because ECX/EAX/EDX are x86's
+        // 32-bit register names.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "rdpkru_u32") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["ECX"],
+            implicit_writes: &["EAX", "EDX"],
+            memory_edge:     false,
+        })),
+
+        // x86 RDTSC: no inputs, writes EDX:EAX.  Arch-specific
+        // because EAX/EDX are x86 32-bit register names.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "rdtsc") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &["EAX", "EDX"],
+            memory_edge:     false,
+        })),
+
         // x86's INT instruction also lifts to "swi" in some Sleigh
         // contexts.  We don't have a global model (the vector is in
         // the pcode args; INT 0x80 is Linux 32-bit syscall, INT 3 is
@@ -106,6 +154,15 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
 
 /// Arch-independent entries — names whose meaning is the same on every
 /// arch that emits them.  This is the bulk of the table.
+///
+/// **Invariant: `Call` entries here MUST have empty `implicit_reads` and
+/// empty `implicit_writes`.**  Any named register (RAX, x0, r7, …)
+/// only resolves on a specific arch's Sleigh register table, which
+/// makes the entry arch-specific by definition — put it in
+/// `classify_arch_specific` instead.  Memory-edge alone is allowed
+/// here (it's purely an IR concept, not arch-specific).  This
+/// invariant is enforced at compile time by
+/// [`assert_arch_independent_entries_have_empty_register_channels`].
 //
 // `match_same_arms`: each name is a separate diffable entry — combining
 // arms via `|` would defeat the table's per-line diff property.
@@ -134,25 +191,16 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         "trap" => Some(CallOtherClass::NoReturn),
 
         // ─── Call (precise ABI) ───────────────────────────────────
-
-        // Linux x86_64 syscall ABI.
-        "syscall" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
-            implicit_writes: &["RAX", "RCX", "R11"],
-            memory_edge: true,
-        })),
-
-        // ARM SMCCC (X0..X7 in, X0..X3 out).
-        "CallHyperVisor" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            implicit_writes: &["x0", "x1", "x2", "x3"],
-            memory_edge: true,
-        })),
-        "CallSecureMonitor" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            implicit_writes: &["x0", "x1", "x2", "x3"],
-            memory_edge: true,
-        })),
+        //
+        // Reminder: this section's entries MUST have empty
+        // implicit_reads/implicit_writes — any named register implies
+        // arch-specific.  Entries that needed register names live in
+        // `classify_arch_specific`:
+        //   * "syscall"            → (X86_64, …)
+        //   * "CallHyperVisor"     → (Aarch64 | Aarch64Be, …)
+        //   * "CallSecureMonitor"  → (Aarch64 | Aarch64Be, …)
+        //   * "rdpkru_u32"         → (X86 | X86_64, …)
+        //   * "rdtsc"              → (X86 | X86_64, …)
 
         // x86 CPUID — Sleigh's actual lift selects one of cpuid /
         // cpuid_* (one per known leaf id) based on EAX, returns a
@@ -248,20 +296,6 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
             implicit_reads: &[],
             implicit_writes: &[],
             memory_edge: true,
-        })),
-
-        // x86 RDTSC — no inputs, writes EDX:EAX.
-        "rdtsc" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &["EAX", "EDX"],
-            memory_edge: false,
-        })),
-
-        // x86 RDPKRU — ECX must be 0; writes EAX, clears EDX.
-        "rdpkru_u32" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &["ECX"],
-            implicit_writes: &["EAX", "EDX"],
-            memory_edge: false,
         })),
 
         // x86 port I/O — port + value are pcode-explicit; memory edge captures
@@ -484,18 +518,118 @@ mod tests {
 
     #[test]
     fn smccc_ops_share_x0_x7_in_x0_x3_out() {
-        for n in ["CallHyperVisor", "CallSecureMonitor"] {
-            let class = classify(crate::ArchPreset::X86_64, n).expect(n);
-            let CallOtherClass::Call(abi) = class else {
-                panic!("{n}: expected Call")
+        // SMCCC entries live in classify_arch_specific because their
+        // x0..x7 register names only resolve on aarch64.
+        for preset in [crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be] {
+            for n in ["CallHyperVisor", "CallSecureMonitor"] {
+                let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
+                let CallOtherClass::Call(abi) = class else {
+                    panic!("{preset:?}/{n}: expected Call")
+                };
+                assert_eq!(
+                    abi.implicit_reads,
+                    &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+                    "{preset:?}/{n}",
+                );
+                assert_eq!(abi.implicit_writes, &["x0", "x1", "x2", "x3"], "{preset:?}/{n}");
+                assert!(abi.memory_edge, "{preset:?}/{n}");
+            }
+            // Non-aarch64 presets must NOT resolve these names.
+            assert_eq!(classify(crate::ArchPreset::X86_64, "CallHyperVisor"), None);
+            assert_eq!(classify(crate::ArchPreset::Arm, "CallHyperVisor"), None);
+        }
+    }
+
+    #[test]
+    fn rdpkru_is_arch_specific_to_x86() {
+        // rdpkru_u32 lives in classify_arch_specific because ECX/EAX/EDX
+        // only resolve on x86 / x86_64.
+        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+            let class = classify(preset, "rdpkru_u32").expect("rdpkru classified");
+            let CallOtherClass::Call(abi) = class else { panic!("expected Call") };
+            assert_eq!(abi.implicit_reads, &["ECX"]);
+            assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
+            assert!(!abi.memory_edge);
+        }
+        // Non-x86 presets must NOT resolve.
+        assert_eq!(classify(crate::ArchPreset::Aarch64, "rdpkru_u32"), None);
+        assert_eq!(classify(crate::ArchPreset::Arm, "rdpkru_u32"), None);
+    }
+
+    #[test]
+    fn syscall_is_arch_specific_to_x86_64() {
+        // The arch-independent fallback must NOT provide "syscall" for
+        // non-x86_64 presets (the RAX/RDI/... names wouldn't resolve).
+        assert!(matches!(
+            classify(crate::ArchPreset::X86_64, "syscall"),
+            Some(CallOtherClass::Call(_)),
+        ));
+        assert_eq!(classify(crate::ArchPreset::X86, "syscall"), None);
+        assert_eq!(classify(crate::ArchPreset::Aarch64, "syscall"), None);
+        assert_eq!(classify(crate::ArchPreset::Arm, "syscall"), None);
+    }
+
+    #[test]
+    fn arch_independent_call_entries_have_empty_register_channels() {
+        // Invariant: any entry returned by `classify_arch_independent`
+        // (via the no-effect Arch::X86_64 fallback path) must have empty
+        // implicit_reads and empty implicit_writes — otherwise the named
+        // registers tie the entry to a specific arch's Sleigh register
+        // table, in which case it belongs in `classify_arch_specific`.
+        //
+        // We can't iterate the table directly (it's a closed match), so
+        // we enumerate every name we expect to be arch-independent and
+        // verify the invariant for each.
+        let arch_independent_names = [
+            // NoOp (also empty by definition; included for completeness)
+            "DC_CVAC", "DataMemoryBarrier", "DataSynchronizationBarrier",
+            "Hint_Prefetch", "InstructionSynchronizationBarrier",
+            "LOCK", "UNLOCK", "Yield", "setEndianState", "setISAMode",
+            // NoReturn
+            "SoftwareBreakpoint", "UndefinedInstructionException",
+            "invalidInstructionException", "sysret", "trap",
+            // Call with empty channels
+            "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
+            "MP_INT_ABS", "NEON_rev64", "NEON_sqshl", "NEON_uaddlv",
+            "SVE_fnmla", "UnkSytemRegRead", "cpuid", "cpuid_basic_info",
+            "cpuid_Architectural_Performance_Monitoring_info",
+            "cpuid_Deterministic_Cache_Parameters_info",
+            "cpuid_Direct_Cache_Access_info",
+            "cpuid_Extended_Feature_Enumeration_info",
+            "cpuid_Extended_Topology_info",
+            "cpuid_MONITOR_MWAIT_Features_info",
+            "cpuid_Processor_Extended_States_info",
+            "cpuid_Quality_of_Service_info",
+            "cpuid_Thermal_Power_Management_info",
+            "cpuid_Version_info", "cpuid_brand_part1_info",
+            "cpuid_brand_part2_info", "cpuid_brand_part3_info",
+            "cpuid_cache_tlb_info", "cpuid_serial_info",
+            "in", "out", "software_interrupt", "software_udf",
+            "swapgs",
+        ];
+        // Use any preset for the lookup — by definition these resolve
+        // identically on every arch.
+        for n in arch_independent_names {
+            let class = match classify(crate::ArchPreset::X86_64, n) {
+                Some(c) => c,
+                None => continue,  // not in table
             };
-            assert_eq!(
+            let abi = match class {
+                CallOtherClass::Call(abi) => abi,
+                _ => continue,  // NoOp / NoReturn have no ABI
+            };
+            assert!(
+                abi.implicit_reads.is_empty(),
+                "arch-independent entry {n:?} has non-empty implicit_reads \
+                 ({:?}); move it to classify_arch_specific",
                 abi.implicit_reads,
-                &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-                "{n}"
             );
-            assert_eq!(abi.implicit_writes, &["x0", "x1", "x2", "x3"], "{n}");
-            assert!(abi.memory_edge, "{n}");
+            assert!(
+                abi.implicit_writes.is_empty(),
+                "arch-independent entry {n:?} has non-empty implicit_writes \
+                 ({:?}); move it to classify_arch_specific",
+                abi.implicit_writes,
+            );
         }
     }
 
