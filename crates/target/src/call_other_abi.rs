@@ -152,17 +152,52 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
     }
 }
 
+// ── Shared classification constants ──────────────────────────────────
+//
+// `Option<CallOtherClass>` shorthand for the three repeated shapes
+// every entry below uses.  Lets each table arm be a single line.
+
+/// Empty-ABI Call, **does not** advance the IR memory edge.  Use for
+/// pure compute (cpuid, NEON, SVE, ...) and standalone hints
+/// (Hint_Prefetch, Yield, ExclusiveMonitor*) that don't touch RAM
+/// or pair with a Store.
+const PURE: Option<CallOtherClass> = Some(CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[],
+    memory_edge: false,
+}));
+
+/// Empty-ABI Call that **does** advance the IR memory edge — for ops
+/// that act as memory-chain markers (LOCK / UNLOCK brackets, standalone
+/// barriers DMB / DSB / ISB / DC_CVAC) so patterns walking the memory
+/// chain can find them, plus ops that may actually write external
+/// state (port I/O, syscall, software_interrupt).
+///
+/// Tradeoff: opt passes that walk the memory chain (e.g.
+/// `StackLoadForward`) cannot forward across these, since the IR
+/// can't prove they don't write RAM.  In practice the affected
+/// patterns target prologue/epilogue field reads, far from atomics.
+const PURE_WITH_MEM_EDGE: Option<CallOtherClass> = Some(CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[],
+    memory_edge: true,
+}));
+
+const NO_OP: Option<CallOtherClass> = Some(CallOtherClass::NoOp);
+const NO_RETURN: Option<CallOtherClass> = Some(CallOtherClass::NoReturn);
+
 /// Arch-independent entries — names whose meaning is the same on every
 /// arch that emits them.  This is the bulk of the table.
 ///
-/// **Invariant: `Call` entries here MUST have empty `implicit_reads` and
-/// empty `implicit_writes`.**  Any named register (RAX, x0, r7, …)
+/// **Invariant: `Call` entries here MUST have empty `implicit_reads`
+/// and empty `implicit_writes`.**  Any named register (RAX, x0, r7, …)
 /// only resolves on a specific arch's Sleigh register table, which
 /// makes the entry arch-specific by definition — put it in
 /// `classify_arch_specific` instead.  Memory-edge alone is allowed
-/// here (it's purely an IR concept, not arch-specific).  This
-/// invariant is enforced at compile time by
-/// [`assert_arch_independent_entries_have_empty_register_channels`].
+/// here (it's purely an IR concept, not arch-specific).  Enforced by
+/// the `arch_independent_call_entries_have_empty_register_channels`
+/// test — using `PURE` / `PURE_WITH_MEM_EDGE` exclusively here makes
+/// the invariant trivially true at the syntactic level.
 //
 // `match_same_arms`: each name is a separate diffable entry — combining
 // arms via `|` would defeat the table's per-line diff property.
@@ -171,221 +206,97 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     // ASCII-sorted within each group for diffability.
     match name {
-        // ─── NoOp ─────────────────────────────────────────────────
-        "DC_CVAC" => Some(CallOtherClass::NoOp),
-        "DataMemoryBarrier" => Some(CallOtherClass::NoOp),
-        "DataSynchronizationBarrier" => Some(CallOtherClass::NoOp),
-        "Hint_Prefetch" => Some(CallOtherClass::NoOp),
-        "InstructionSynchronizationBarrier" => Some(CallOtherClass::NoOp),
-        "LOCK" => Some(CallOtherClass::NoOp),
-        "UNLOCK" => Some(CallOtherClass::NoOp),
-        "Yield" => Some(CallOtherClass::NoOp),
-        "setEndianState" => Some(CallOtherClass::NoOp),
-        "setISAMode" => Some(CallOtherClass::NoOp),
+        // ─── Truly invisible (Sleigh decoder context only) ────────
+        "setEndianState" => NO_OP,
+        "setISAMode"     => NO_OP,
 
-        // ─── NoReturn ─────────────────────────────────────────────
-        "SoftwareBreakpoint" => Some(CallOtherClass::NoReturn),
-        "UndefinedInstructionException" => Some(CallOtherClass::NoReturn),
-        "invalidInstructionException" => Some(CallOtherClass::NoReturn),
-        "sysret" => Some(CallOtherClass::NoReturn),
-        "trap" => Some(CallOtherClass::NoReturn),
+        // ─── NoReturn (traps; control flow ends here) ─────────────
+        "SoftwareBreakpoint"            => NO_RETURN,
+        "UndefinedInstructionException" => NO_RETURN,
+        "invalidInstructionException"   => NO_RETURN,
+        "sysret"                        => NO_RETURN,
+        "trap"                          => NO_RETURN,
 
-        // ─── Call (precise ABI) ───────────────────────────────────
-        //
-        // Reminder: this section's entries MUST have empty
-        // implicit_reads/implicit_writes — any named register implies
-        // arch-specific.  Entries that needed register names live in
-        // `classify_arch_specific`:
-        //   * "syscall"            → (X86_64, …)
-        //   * "CallHyperVisor"     → (Aarch64 | Aarch64Be, …)
-        //   * "CallSecureMonitor"  → (Aarch64 | Aarch64Be, …)
-        //   * "rdpkru_u32"         → (X86 | X86_64, …)
-        //   * "rdtsc"              → (X86 | X86_64, …)
+        // ─── PURE: visible markers / pure compute, no memory edge ─
 
-        // x86 CPUID — Sleigh's actual lift selects one of cpuid /
-        // cpuid_* (one per known leaf id) based on EAX, returns a
-        // tmpptr, then EMITS Loads for EAX/EBX/EDX/ECX from
-        // tmpptr+{0,4,8,12}.  The IR-level "writes" therefore appear
-        // as ordinary Load nodes - the user-op itself takes EAX as
-        // pcode-explicit input (no implicit reads) and produces a
-        // pointer (no implicit writes).  All cpuid_* siblings share
-        // this empty-channel ABI.  memory_edge is true so the post-
-        // cpuid Loads see the ordering effect (the ABI doesn't clobber
-        // RAM but the user-op itself is opaque w.r.t. memory state).
-        "cpuid" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_basic_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Version_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_cache_tlb_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_serial_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Deterministic_Cache_Parameters_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_MONITOR_MWAIT_Features_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Thermal_Power_Management_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Extended_Feature_Enumeration_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Direct_Cache_Access_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Architectural_Performance_Monitoring_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Extended_Topology_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Processor_Extended_States_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_Quality_of_Service_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_brand_part1_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_brand_part2_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "cpuid_brand_part3_info" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
+        // ARM exclusive-monitor primitives — pair with LDREX/STREX which
+        // already emit pcode loads/stores.  The monitor flag is synthetic.
+        "ExclusiveMonitorPass"     => PURE,
+        "ExclusiveMonitorsStatus"  => PURE,
 
-        // x86 port I/O — port + value are pcode-explicit; memory edge captures
-        // the external port-state effect.
-        "in" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
-        "out" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
+        // CPU hints — non-paired, no memory effect.
+        "Hint_Prefetch" => PURE,
+        "Yield"         => PURE,
 
-        // x86 SWAPGS — touches the synthetic GS_base MSR; no general-reg
-        // effect, no memory edge (kernel-mode register swap).
-        "swapgs" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
+        // x86 CPUID family — Sleigh's lift returns a tmpptr; the
+        // EAX/EBX/ECX/EDX writes appear as ordinary Loads from
+        // tmpptr+{0,4,8,12} in subsequent pcode.  The CallOther itself
+        // doesn't touch RAM, so memory edge stays put — opt passes can
+        // forward through it.
+        "cpuid"                                           => PURE,
+        "cpuid_Architectural_Performance_Monitoring_info" => PURE,
+        "cpuid_Deterministic_Cache_Parameters_info"       => PURE,
+        "cpuid_Direct_Cache_Access_info"                  => PURE,
+        "cpuid_Extended_Feature_Enumeration_info"         => PURE,
+        "cpuid_Extended_Topology_info"                    => PURE,
+        "cpuid_MONITOR_MWAIT_Features_info"               => PURE,
+        "cpuid_Processor_Extended_States_info"            => PURE,
+        "cpuid_Quality_of_Service_info"                   => PURE,
+        "cpuid_Thermal_Power_Management_info"             => PURE,
+        "cpuid_Version_info"                              => PURE,
+        "cpuid_basic_info"                                => PURE,
+        "cpuid_brand_part1_info"                          => PURE,
+        "cpuid_brand_part2_info"                          => PURE,
+        "cpuid_brand_part3_info"                          => PURE,
+        "cpuid_cache_tlb_info"                            => PURE,
+        "cpuid_serial_info"                               => PURE,
 
-        // ARM exclusive-monitor primitives — synthetic monitor flag,
-        // pcode-handled.  LDREX/STREX themselves emit pcode loads/stores.
-        "ExclusiveMonitorPass" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
-        "ExclusiveMonitorsStatus" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
+        // NEON / SVE / multi-precision — Sleigh's pcode carries operand
+        // regs; the user-op itself is pure compute.
+        "MP_INT_ABS"  => PURE,
+        "NEON_rev64"  => PURE,
+        "NEON_sqshl"  => PURE,
+        "NEON_uaddlv" => PURE,
+        "SVE_fnmla"   => PURE,
 
         // ARM unmodelled sysreg read — pcode-explicit encoding constant
-        // and destination.  Empty ABI per c1 (lift succeeds; opaque value).
-        "UnkSytemRegRead" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
+        // and destination; opaque value, no RAM effect.
+        "UnkSytemRegRead" => PURE,
 
-        // ARM software_udf - permanently undefined instruction.  Sleigh
-        // returns a target and emits `goto [target]` after; the indirect
-        // branch resolver may classify it as a tail call to the trap
-        // handler, or leave it unresolved.  Empty ABI; not NoReturn at
-        // the user-op level (Sleigh emits a real branch target).
-        "software_udf" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
+        // x86 SWAPGS — swaps a synthetic GS_base MSR; no general-reg or
+        // RAM effect.
+        "swapgs" => PURE,
 
-        // ARM software_interrupt - SVC/SWI raised by an immediate; Sleigh
-        // emits CALLOTHER(software_interrupt, imm).  No implicit channel
-        // (the kernel side touches everything; we model it opaquely).
-        "software_interrupt" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: true,
-        })),
+        // ARM permanently-undefined instruction — Sleigh emits
+        // CALLOTHER + a branch to the trap handler; the user-op itself
+        // doesn't touch state.
+        "software_udf" => PURE,
 
-        // NEON / SVE / multi-precision — Sleigh's pcode is fully sufficient.
-        "MP_INT_ABS" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
-        "NEON_rev64" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
-        "NEON_sqshl" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
-        "NEON_uaddlv" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
-        "SVE_fnmla" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
-            memory_edge: false,
-        })),
+        // ─── PURE_WITH_MEM_EDGE: memory-chain markers + side-effecting
+
+        // x86 LOCK / UNLOCK — bracket an atomic memory operation.  On
+        // the memory chain so patterns walking mem from a Store inside
+        // the bracket can find LOCK / UNLOCK as predecessors /
+        // successors.
+        "LOCK"   => PURE_WITH_MEM_EDGE,
+        "UNLOCK" => PURE_WITH_MEM_EDGE,
+
+        // ARM standalone memory / cache barriers — explicit ordering
+        // markers with no accompanying Store; the only way they're
+        // visible to the IR is by being on the memory chain.
+        "DC_CVAC"                           => PURE_WITH_MEM_EDGE,
+        "DataMemoryBarrier"                 => PURE_WITH_MEM_EDGE,
+        "DataSynchronizationBarrier"        => PURE_WITH_MEM_EDGE,
+        "InstructionSynchronizationBarrier" => PURE_WITH_MEM_EDGE,
+
+        // x86 port I/O — port + value pcode-explicit; the user-op
+        // itself affects external (port) state.
+        "in"  => PURE_WITH_MEM_EDGE,
+        "out" => PURE_WITH_MEM_EDGE,
+
+        // ARM SVC / SWI raised by an immediate — possible syscall path,
+        // kernel can do anything to memory.
+        "software_interrupt" => PURE_WITH_MEM_EDGE,
 
         _ => None,
     }
@@ -404,20 +315,54 @@ mod tests {
     }
 
     #[test]
-    fn known_noop_classifies_as_noop() {
+    fn truly_invisible_decoder_context_classifies_as_noop() {
+        // Only Sleigh-decoder-context user-ops are NoOp.  Memory
+        // markers (LOCK / UNLOCK / barriers) and CPU hints are
+        // promoted to Call so patterns can find them.
+        for n in ["setEndianState", "setISAMode"] {
+            assert_eq!(
+                classify(crate::ArchPreset::X86_64, n),
+                Some(CallOtherClass::NoOp),
+                "{n}",
+            );
+        }
+    }
+
+    #[test]
+    fn memory_chain_markers_classify_as_pure_with_mem_edge() {
+        // LOCK / UNLOCK and standalone barriers must be on the IR
+        // memory chain so patterns walking mem can find them.  Tradeoff:
+        // StackLoadForward stops at these (acceptable — they appear in
+        // sync code, not in bsdfinder's offset patterns).
         for n in [
-            "setEndianState",
-            "setISAMode",
-            "DataMemoryBarrier",
-            "DataSynchronizationBarrier",
-            "DC_CVAC",
-            "Hint_Prefetch",
-            "InstructionSynchronizationBarrier",
-            "LOCK",
-            "UNLOCK",
-            "Yield",
+            "LOCK", "UNLOCK",
+            "DataMemoryBarrier", "DataSynchronizationBarrier",
+            "InstructionSynchronizationBarrier", "DC_CVAC",
         ] {
-            assert_eq!(classify(crate::ArchPreset::X86_64, n), Some(CallOtherClass::NoOp), "{n}");
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            assert!(abi.implicit_reads.is_empty(), "{n}");
+            assert!(abi.implicit_writes.is_empty(), "{n}");
+            assert!(abi.memory_edge, "{n}: must advance mem edge for chain visibility");
+        }
+    }
+
+    #[test]
+    fn pure_compute_and_hints_classify_as_pure_no_mem_edge() {
+        // Pure compute (cpuid, NEON, SVE) and non-paired hints
+        // (Hint_Prefetch, Yield) — visible markers but don't advance
+        // the memory token (so opt passes can forward through).
+        for n in [
+            "Hint_Prefetch", "Yield",
+            "cpuid", "NEON_rev64", "SVE_fnmla", "MP_INT_ABS",
+            "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
+            "swapgs", "UnkSytemRegRead", "software_udf",
+        ] {
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
+            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            assert!(abi.implicit_reads.is_empty(), "{n}");
+            assert!(abi.implicit_writes.is_empty(), "{n}");
+            assert!(!abi.memory_edge, "{n}: must NOT advance mem edge (opt passes need to forward)");
         }
     }
 
@@ -449,12 +394,13 @@ mod tests {
     }
 
     #[test]
-    fn cpuid_family_uses_empty_abi_with_memory_edge() {
+    fn cpuid_family_uses_empty_abi_no_memory_edge() {
         // Sleigh's cpuid lift selects one of cpuid / cpuid_* based on
         // EAX, returns a tmpptr, then emits Loads for EAX/EBX/EDX/ECX
-        // from the returned pointer.  The user-op itself has no
-        // implicit channel; memory_edge is true so the post-cpuid
-        // Loads see the ordering effect.
+        // from the returned pointer.  The user-op itself doesn't touch
+        // RAM, so memory_edge stays at false — opt passes can forward
+        // through.  (The post-cpuid Loads on the tmpptr advance mem
+        // themselves; cpuid doesn't need to.)
         for n in [
             "cpuid",
             "cpuid_basic_info",
@@ -480,7 +426,7 @@ mod tests {
             };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(abi.memory_edge, "{n}");
+            assert!(!abi.memory_edge, "{n}: cpuid doesn't touch RAM");
         }
     }
 
@@ -693,11 +639,20 @@ mod tests {
             crate::ArchPreset::Arm,
             crate::ArchPreset::Aarch64,
         ] {
+            // setISAMode is the only true NoOp now (Sleigh decoder bit).
             assert_eq!(
-                classify(arch, "DataMemoryBarrier"),
+                classify(arch, "setISAMode"),
                 Some(CallOtherClass::NoOp),
                 "arch={arch:?}",
             );
+            // DMB is a memory-chain marker — Call with memory_edge=true.
+            let dmb = classify(arch, "DataMemoryBarrier")
+                .unwrap_or_else(|| panic!("arch={arch:?}: DataMemoryBarrier"));
+            let CallOtherClass::Call(abi) = dmb else {
+                panic!("arch={arch:?}: DMB expected Call, got {dmb:?}")
+            };
+            assert!(abi.memory_edge, "arch={arch:?}: DMB must advance mem edge");
+            // Trap is NoReturn on every arch.
             assert_eq!(
                 classify(arch, "invalidInstructionException"),
                 Some(CallOtherClass::NoReturn),
