@@ -7,6 +7,37 @@ pub enum Endianness {
     Big,
 }
 
+/// Architecture-preset discriminator used as a key for
+/// [`crate::call_other_abi::classify`].  One variant per [`SleighArch`]
+/// preset constructor — this gives full granularity, so Arm-32 vs
+/// Arm-32 big-endian vs Arm Thumb-mode (which use the same `ARM8` SLA
+/// spec but different `pspec`s and could in principle have different
+/// CallOther semantics) are distinguishable.
+///
+/// In `call_other_abi::classify_arch_specific`, sets of presets that
+/// share semantics use `|` alternation in the match: e.g. all three
+/// 32-bit ARM variants share the Linux SVC/SWI ABI, so they alternate
+/// in one arm.  When a future divergence appears (e.g. a Thumb-only
+/// pcodeop), the alternation splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArchPreset {
+    X86,
+    X86_64,
+    Arm,
+    ArmBe,
+    ArmThumb,
+    Aarch64,
+    Aarch64Be,
+    MipsBe32,
+    MipsLe32,
+    MipsBe64,
+    MipsLe64,
+    Ppc32Be,
+    Ppc32Le,
+    Ppc64Be,
+    Ppc64Le,
+}
+
 /// A collection of Sleigh configuration items that together describe a
 /// specific target architecture.
 ///
@@ -24,6 +55,10 @@ pub struct SleighArch {
     pub pspec: rsleigh::pspec::PSpec,
     /// The byte order of this architecture.
     pub endianness: Endianness,
+    /// Architecture-preset discriminator — used by
+    /// [`crate::call_other_abi::classify`] to dispatch arch-specific
+    /// user-op ABIs.  Set by each preset constructor; not user-overridable.
+    pub preset: ArchPreset,
 }
 
 impl SleighArch {
@@ -34,6 +69,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64,
             pspec: rsleigh::pspec::PSPEC_X86_64,
             endianness: Endianness::Little,
+            preset: ArchPreset::X86_64,
         }
     }
 
@@ -44,6 +80,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86,
             pspec: rsleigh::pspec::PSPEC_X86,
             endianness: Endianness::Little,
+            preset: ArchPreset::X86,
         }
     }
 
@@ -54,6 +91,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE,
             pspec: rsleigh::pspec::PSPEC_MIPS32,
             endianness: Endianness::Big,
+            preset: ArchPreset::MipsBe32,
         }
     }
 
@@ -64,6 +102,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE,
             pspec: rsleigh::pspec::PSPEC_MIPS32,
             endianness: Endianness::Little,
+            preset: ArchPreset::MipsLe32,
         }
     }
 
@@ -78,6 +117,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
             pspec: rsleigh::pspec::PSPEC_ARM_V45,
             endianness: Endianness::Little,
+            preset: ArchPreset::Arm,
         }
     }
 
@@ -88,6 +128,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64,
             pspec: rsleigh::pspec::PSPEC_AARCH64,
             endianness: Endianness::Little,
+            preset: ArchPreset::Aarch64,
         }
     }
 
@@ -98,6 +139,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
             pspec: rsleigh::pspec::PSPEC_AARCH64,
             endianness: Endianness::Big,
+            preset: ArchPreset::Aarch64Be,
         }
     }
 
@@ -109,6 +151,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64BE,
             pspec: rsleigh::pspec::PSPEC_MIPS64,
             endianness: Endianness::Big,
+            preset: ArchPreset::MipsBe64,
         }
     }
 
@@ -120,6 +163,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64LE,
             pspec: rsleigh::pspec::PSPEC_MIPS64,
             endianness: Endianness::Little,
+            preset: ArchPreset::MipsLe64,
         }
     }
 
@@ -131,6 +175,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
             pspec: rsleigh::pspec::PSPEC_PPC_32,
             endianness: Endianness::Big,
+            preset: ArchPreset::Ppc32Be,
         }
     }
 
@@ -143,6 +188,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
             pspec: rsleigh::pspec::PSPEC_PPC_32,
             endianness: Endianness::Little,
+            preset: ArchPreset::Ppc32Le,
         }
     }
 
@@ -158,6 +204,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_BE,
             pspec: rsleigh::pspec::PSPEC_PPC_64,
             endianness: Endianness::Big,
+            preset: ArchPreset::Ppc64Be,
         }
     }
 
@@ -171,6 +218,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_LE,
             pspec: rsleigh::pspec::PSPEC_PPC_64,
             endianness: Endianness::Little,
+            preset: ArchPreset::Ppc64Le,
         }
     }
 
@@ -186,6 +234,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
             pspec: rsleigh::pspec::PSPEC_ARMCORTEX,
             endianness: Endianness::Little,
+            preset: ArchPreset::ArmThumb,
         }
     }
 
@@ -206,6 +255,7 @@ impl SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_BE,
             pspec: rsleigh::pspec::PSPEC_ARM_V45,
             endianness: Endianness::Big,
+            preset: ArchPreset::ArmBe,
         }
     }
 

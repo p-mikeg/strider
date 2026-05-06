@@ -410,7 +410,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     Err(_) => return Ok(ProcessInsnRes::DidntFinishProcessing),
                 };
                 let name = self.builder.sleigh.user_op_name(id_u32);
-                let class = name.and_then(target::call_other_abi::classify);
+                let preset = self.builder.preset;
+                let class = name.and_then(|n| target::call_other_abi::classify(preset, n));
                 if matches!(class, Some(target::call_other_abi::CallOtherClass::NoReturn)) {
                     // CallOther is already in self.insns from the
                     // process_new_insn prologue push; finish_current_region

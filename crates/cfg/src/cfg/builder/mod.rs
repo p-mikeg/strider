@@ -60,6 +60,14 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// [`Self::new`]; callers that analyse big-endian binaries should
     /// use [`Self::with_endianness`] instead.
     pub(super) endianness: target::Endianness,
+    /// Coarse architecture family.  Consulted by
+    /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
+    /// arm to pass the right `arch` to
+    /// [`target::call_other_abi::classify`].  Defaults to
+    /// [`target::Arch::X86_64`] when constructed via [`Self::new`] /
+    /// [`Self::with_endianness`]; callers that analyse non-x86_64
+    /// binaries should set it via [`Self::with_arch`].
+    pub(super) preset: target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
     /// Maps each region's `start_addr` to its [`NodeIndex`].
@@ -102,11 +110,22 @@ impl<R: rsleigh::MemReader> Builder<R> {
             start_addr: start_addr.into(),
             options,
             endianness,
+            preset: target::ArchPreset::X86_64,
             graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
             decode_cache: None,
         }
+    }
+
+    /// Sets the [`target::Arch`] used by the `Opcode::CallOther` arm
+    /// in [`super::region_builder`] when consulting
+    /// [`target::call_other_abi::classify`].  Defaults to
+    /// [`target::Arch::X86_64`]; override for non-x86_64 targets.
+    #[must_use]
+    pub fn with_preset(mut self, preset: target::ArchPreset) -> Self {
+        self.preset = preset;
+        self
     }
 
     /// Attaches a Sleigh-decode cache to this builder.  When set,

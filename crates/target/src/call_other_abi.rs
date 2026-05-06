@@ -48,18 +48,70 @@ pub enum CallOtherClass {
     Call(CallOtherAbi),
 }
 
-/// Look up a user-op name in the classification table.
+/// Look up a user-op name's classification, scoped to the given
+/// architecture.  Tries the arch-specific table first (which holds
+/// entries whose ABI varies by arch — currently `swi` only), then
+/// falls back to the arch-independent table (everything else).
 ///
 /// Strict-on-emission policy: the ir layer (`build_call_other_modeled`'s
 /// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
+#[must_use]
+pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+    classify_arch_specific(preset, name).or_else(|| classify_arch_independent(name))
+}
+
+/// Arch-specific entries — names whose ABI depends on which arch
+/// emitted them.  Currently just `swi` (collides between ARM Linux
+/// SVC/SWI and x86 INT instruction).  When OS-specific syscall ABI
+/// distinctions surface (e.g., Linux vs FreeBSD x86_64 syscall
+/// register usage), they slot in here too.
+#[must_use]
+fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
+    match (preset, name) {
+        // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
+        // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
+        // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
+        // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
+        // (up to 7), r0 = return value.  All three 32-bit ARM presets
+        // share this ABI; if Thumb ever needs a different one, split the
+        // alternation into separate arms.
+        (crate::ArchPreset::Arm | crate::ArchPreset::ArmBe | crate::ArchPreset::ArmThumb,
+         "swi") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
+            implicit_writes: &["r0"],
+            memory_edge:     true,
+        })),
+        // x86 INT instruction also lifts to "swi" in some Sleigh contexts.
+        // Empty ABI + memory_edge for now: sound stub until a future spec
+        // models per-(arch, INT-vector, OS) syscall conventions.  Without
+        // this entry, any x86 lift containing an INT instruction would
+        // error with UnknownCallOtherError (e.g. INT3 padding bytes).
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "swi") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &[], implicit_writes: &[], memory_edge: true,
+        })),
+        // x86's INT instruction also lifts to "swi" in some Sleigh
+        // contexts.  We don't have a global model (the vector is in
+        // the pcode args; INT 0x80 is Linux 32-bit syscall, INT 3 is
+        // a debugger trap, INT 0x2E was Windows' legacy syscall, etc).
+        // No entry here = arch_independent fallback returns None for
+        // (X86, "swi") = lift errors with UnknownCallOtherError, which
+        // is the right strict behaviour until a future spec adds a
+        // (vector, OS) keyed model.
+        _ => None,
+    }
+}
+
+/// Arch-independent entries — names whose meaning is the same on every
+/// arch that emits them.  This is the bulk of the table.
 //
 // `match_same_arms`: each name is a separate diffable entry — combining
 // arms via `|` would defeat the table's per-line diff property.
 #[allow(clippy::match_same_arms)]
 #[must_use]
-pub fn classify(name: &str) -> Option<CallOtherClass> {
+fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     // ASCII-sorted within each group for diffability.
     match name {
         // ─── NoOp ─────────────────────────────────────────────────
@@ -87,18 +139,6 @@ pub fn classify(name: &str) -> Option<CallOtherClass> {
         "syscall" => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
-            memory_edge: true,
-        })),
-
-        // "swi" — name collides between ARM (svc/swi syscall: r7 in,
-        // r0..r6 args, r0 out) and x86 INT instruction (any imm8;
-        // INT3 trap; INT 0x80 is Linux 32-bit syscall).  Spec keeps
-        // the table arch-blind, so we use an empty ABI + memory_edge:
-        // sound for both arches but loses ARM syscall arg precision.
-        // A future per-arch keying spec can restore the ARM precision.
-        "swi" => Some(CallOtherClass::Call(CallOtherAbi {
-            implicit_reads: &[],
-            implicit_writes: &[],
             memory_edge: true,
         })),
 
@@ -343,7 +383,7 @@ mod tests {
             "UNLOCK",
             "Yield",
         ] {
-            assert_eq!(classify(n), Some(CallOtherClass::NoOp), "{n}");
+            assert_eq!(classify(crate::ArchPreset::X86_64, n), Some(CallOtherClass::NoOp), "{n}");
         }
     }
 
@@ -356,13 +396,13 @@ mod tests {
             "sysret",
             "trap",
         ] {
-            assert_eq!(classify(n), Some(CallOtherClass::NoReturn), "{n}");
+            assert_eq!(classify(crate::ArchPreset::X86_64, n), Some(CallOtherClass::NoReturn), "{n}");
         }
     }
 
     #[test]
     fn syscall_has_linux_x86_64_abi() {
-        let class = classify("syscall").expect("syscall classified");
+        let class = classify(crate::ArchPreset::X86_64, "syscall").expect("syscall classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
@@ -400,7 +440,7 @@ mod tests {
             "cpuid_brand_part2_info",
             "cpuid_brand_part3_info",
         ] {
-            let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -412,7 +452,7 @@ mod tests {
 
     #[test]
     fn rdtsc_writes_edx_eax_no_memory_edge() {
-        let class = classify("rdtsc").expect("rdtsc classified");
+        let class = classify(crate::ArchPreset::X86_64, "rdtsc").expect("rdtsc classified");
         let CallOtherClass::Call(abi) = class else {
             panic!("expected Call, got {class:?}")
         };
@@ -434,7 +474,7 @@ mod tests {
             "ExclusiveMonitorPass",
             "ExclusiveMonitorsStatus",
         ] {
-            let class = classify(n).unwrap_or_else(|| panic!("{n} classified"));
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -445,7 +485,7 @@ mod tests {
     #[test]
     fn smccc_ops_share_x0_x7_in_x0_x3_out() {
         for n in ["CallHyperVisor", "CallSecureMonitor"] {
-            let class = classify(n).expect(n);
+            let class = classify(crate::ArchPreset::X86_64, n).expect(n);
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -462,7 +502,7 @@ mod tests {
     #[test]
     fn port_io_has_memory_edge_no_implicit_regs() {
         for n in ["in", "out"] {
-            let class = classify(n).expect(n);
+            let class = classify(crate::ArchPreset::X86_64, n).expect(n);
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -474,7 +514,84 @@ mod tests {
 
     #[test]
     fn unknown_returns_none() {
-        assert_eq!(classify("nonexistent_op_xyzzy_abc"), None);
+        assert_eq!(classify(crate::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"), None);
+    }
+
+    #[test]
+    fn swi_on_arm_family_returns_linux_arm_abi() {
+        // All three 32-bit ARM presets share the Linux SVC/SWI ABI.
+        for preset in [
+            crate::ArchPreset::Arm,
+            crate::ArchPreset::ArmBe,
+            crate::ArchPreset::ArmThumb,
+        ] {
+            let class = classify(preset, "swi").unwrap_or_else(|| panic!("{preset:?}/swi"));
+            let CallOtherClass::Call(abi) = class else {
+                panic!("{preset:?}/swi: expected Call, got {class:?}")
+            };
+            assert_eq!(
+                abi.implicit_reads,
+                &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
+                "{preset:?}",
+            );
+            assert_eq!(abi.implicit_writes, &["r0"], "{preset:?}");
+            assert!(abi.memory_edge, "{preset:?}");
+        }
+    }
+
+    #[test]
+    fn swi_on_x86_returns_empty_call_stub() {
+        // (X86, "swi") and (X86_64, "swi") use an empty-ABI Call as a
+        // sound stub until per-INT-vector / per-OS modelling lands.
+        let empty = CallOtherClass::Call(CallOtherAbi {
+            implicit_reads: &[], implicit_writes: &[], memory_edge: true,
+        });
+        assert_eq!(classify(crate::ArchPreset::X86, "swi"), Some(empty));
+        assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(empty));
+    }
+
+    #[test]
+    fn arch_independent_entries_resolve_on_every_arch() {
+        // Spot-check that the fallback works regardless of arch.
+        for arch in [
+            crate::ArchPreset::X86,
+            crate::ArchPreset::X86_64,
+            crate::ArchPreset::Arm,
+            crate::ArchPreset::Aarch64,
+        ] {
+            assert_eq!(
+                classify(arch, "DataMemoryBarrier"),
+                Some(CallOtherClass::NoOp),
+                "arch={arch:?}",
+            );
+            assert_eq!(
+                classify(arch, "invalidInstructionException"),
+                Some(CallOtherClass::NoReturn),
+                "arch={arch:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn sleigh_arch_presets_set_distinct_preset_discriminators() {
+        // One ArchPreset per preset constructor — full granularity so
+        // Arm-32 LE / BE / Thumb are distinguishable.
+        use crate::SleighArch;
+        assert_eq!(SleighArch::x86_64().preset, crate::ArchPreset::X86_64);
+        assert_eq!(SleighArch::x86().preset, crate::ArchPreset::X86);
+        assert_eq!(SleighArch::arm().preset, crate::ArchPreset::Arm);
+        assert_eq!(SleighArch::arm_be().preset, crate::ArchPreset::ArmBe);
+        assert_eq!(SleighArch::arm_thumb().preset, crate::ArchPreset::ArmThumb);
+        assert_eq!(SleighArch::aarch64().preset, crate::ArchPreset::Aarch64);
+        assert_eq!(SleighArch::aarch64be().preset, crate::ArchPreset::Aarch64Be);
+        assert_eq!(SleighArch::mipsbe32().preset, crate::ArchPreset::MipsBe32);
+        assert_eq!(SleighArch::mipsle32().preset, crate::ArchPreset::MipsLe32);
+        assert_eq!(SleighArch::mipsbe64().preset, crate::ArchPreset::MipsBe64);
+        assert_eq!(SleighArch::mipsle64().preset, crate::ArchPreset::MipsLe64);
+        assert_eq!(SleighArch::ppc32be().preset, crate::ArchPreset::Ppc32Be);
+        assert_eq!(SleighArch::ppc32le().preset, crate::ArchPreset::Ppc32Le);
+        assert_eq!(SleighArch::ppc64be().preset, crate::ArchPreset::Ppc64Be);
+        assert_eq!(SleighArch::ppc64le().preset, crate::ArchPreset::Ppc64Le);
     }
 
     #[test]
@@ -482,7 +599,7 @@ mod tests {
         // Compile-time guard: every variant of CallOtherClass is matched
         // exhaustively here, so adding/removing a variant fails compile.
         for n in ["setISAMode", "invalidInstructionException", "cpuid"] {
-            let class = classify(n).unwrap();
+            let class = classify(crate::ArchPreset::X86_64, n).unwrap();
             match class {
                 CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
             }
