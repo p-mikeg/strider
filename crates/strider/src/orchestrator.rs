@@ -824,10 +824,12 @@ where
     let mut all_vns: Vec<rsleigh::Vn> = vn_cache.iter().copied().collect();
     all_vns.sort_unstable_by_key(pcode_lift::vn_sort_key);
 
-    let outcome = opts.strider.analyze_cfg_with_vns_and_overrides(
+    let outcome = opts.strider.analyze_cfg_with(
         &cfg,
-        all_vns,
-        &opts.per_address_built_ccs,
+        crate::AnalyzeOptions {
+            all_vns: Some(all_vns),
+            per_address_ccs: &opts.per_address_built_ccs,
+        },
     )?;
     let region_index = RegionIndex::from_handles(&outcome.region_handles);
     let mut graph = outcome.graph;
