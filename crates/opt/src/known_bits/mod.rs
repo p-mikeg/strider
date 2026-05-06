@@ -264,6 +264,41 @@ pub fn node_known_bits(
             }
         }
 
+        NodeKind::Extend(ExtendOp::SignExtend) => {
+            // Upper bits replicate the input's sign bit.  When the sign bit
+            // is statically known, the entire upper region is determined;
+            // otherwise we still pass the lower bits through.
+            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.graph.output_kind(input);
+            let input_ty = input_kind.as_value_or_err()?;
+            let Some(input_mask) = u64_type_mask(input_ty) else {
+                return Ok(None);
+            };
+            let kb = known.get(&input).copied().unwrap_or_default();
+            // Sign bit = highest bit of the input width.
+            let sign_bit = (input_mask >> 1) + 1;
+            let upper_mask = type_mask & !input_mask;
+            if kb.ones & sign_bit != 0 {
+                // Sign bit known 1 → upper bits all known 1.
+                Kb {
+                    ones: (kb.ones & input_mask) | upper_mask,
+                    zeros: kb.zeros & input_mask,
+                }
+            } else if kb.zeros & sign_bit != 0 {
+                // Sign bit known 0 → upper bits all known 0.
+                Kb {
+                    ones: kb.ones & input_mask,
+                    zeros: (kb.zeros & input_mask) | upper_mask,
+                }
+            } else {
+                // Sign bit unknown → keep only the lower bits' knowledge.
+                Kb {
+                    ones: kb.ones & input_mask,
+                    zeros: kb.zeros & input_mask,
+                }
+            }
+        }
+
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;

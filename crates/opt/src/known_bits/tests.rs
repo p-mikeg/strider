@@ -3,7 +3,7 @@ use crate::test_support::make_fn;
 use super::*;
 use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
-use ir::{FunctionBuilder, IntBinaryOp};
+use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg
@@ -423,3 +423,61 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     Ok(())
 }
 
+
+// ── SignExtend propagation ────────────────────────────────────────────────────
+//
+// `extend_if_needed` folds an `IntConst` input at builder level (coerce.rs:185),
+// so to exercise the KnownBits SignExtend path we feed it a non-IntConst Or-of-
+// constants whose result is fully known but whose node kind isn't IntConst.
+// KnownBits Phase 2 first folds the Or to IntConst; the surrounding `while
+// changed` loop then re-runs `analyze`, and only then does the SignExtend node's
+// arm fire (or fail to fire, before the fix).
+
+/// `SignExtend((0u8 | 0x7Fu8) : U8 → U64)` — MSB of the inner Or is known 0,
+/// so the upper 56 bits of the SignExtend result must be zero.  Without the
+/// SignExtend arm in `node_known_bits`, the SignExtend stays as a node;
+/// with it, the entire chain folds to `IntConst(0x7F)`.
+#[test]
+fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let zero = b.build_int_const(0u64, NodeOutputType::U8).unwrap();
+        let c = b.build_int_const(0x7Fu64, NodeOutputType::U8).unwrap();
+        let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, NodeOutputType::U8)?;
+        b.extend_if_needed(or_, NodeOutputType::U64, ExtendOp::SignExtend)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0x7Fu128),
+        "SignExtend of (0|0x7F) (MSB=0) must fold to IntConst(0x7F) once \
+         the SignExtend arm propagates known bits"
+    );
+    Ok(())
+}
+
+/// `SignExtend((0u8 | 0x80u8) : U8 → U64)` — MSB of the inner Or is known 1,
+/// so the upper 56 bits of the SignExtend result must be one.  Result must
+/// fold to `IntConst(0xFFFF_FFFF_FFFF_FF80)`.
+#[test]
+fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let zero = b.build_int_const(0u64, NodeOutputType::U8).unwrap();
+        let c = b.build_int_const(0x80u64, NodeOutputType::U8).unwrap();
+        let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, NodeOutputType::U8)?;
+        b.extend_if_needed(or_, NodeOutputType::U64, ExtendOp::SignExtend)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
+    }
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(0xFFFF_FFFF_FFFF_FF80u128),
+        "SignExtend of (0|0x80) (MSB=1) must fold to all-ones upper bits \
+         once the SignExtend arm propagates known bits"
+    );
+    Ok(())
+}
