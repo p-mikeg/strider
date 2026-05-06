@@ -5,7 +5,7 @@
 //! (which calls `analyze_cfg_with` instead of running the orchestrator)
 //! gets the same override behaviour.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::HashMap;
 
