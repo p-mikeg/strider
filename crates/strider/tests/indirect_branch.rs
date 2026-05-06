@@ -210,7 +210,7 @@ fn indirect_branch_resolved_aarch64() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64);
 }
 #[test]
-#[ignore = "aarch64-be lifter emits Or-as-Add for SP+offset and Truncate-wrapped stored values; F3 stack-array arm matches Add only"]
+#[ignore = "aarch64-be: stack-array dispatch unresolved — lifter emits Or(SP,K) instead of Add(SP,K) and wraps stored labels in Truncate; resolver matches Add(SP,K)+raw-IntConst only"]
 fn indirect_branch_resolved_aarch64be() {
     assert_no_unresolved_indirect_branch(Arch::Aarch64Be);
 }
@@ -235,32 +235,32 @@ fn indirect_branch_resolved_mips32be() {
     assert_no_unresolved_indirect_branch(Arch::Mips32be);
 }
 #[test]
-#[ignore = "mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
+#[ignore = "mips64-le PIC: GOT-indirect dispatch unresolved — table values lift as Add(Load[gp+off], const), not raw IntConst; resolver has no GOT-indirect arm yet"]
 fn indirect_branch_resolved_mips64le() {
     assert_no_unresolved_indirect_branch(Arch::Mips64le);
 }
 #[test]
-#[ignore = "mips64 PIC dispatch is Add(Load[gp+off], const) — F3 stack-array arm enumerates direct IntConst stored values only"]
+#[ignore = "mips64-be PIC: GOT-indirect dispatch unresolved — table values lift as Add(Load[gp+off], const), not raw IntConst; resolver has no GOT-indirect arm yet"]
 fn indirect_branch_resolved_mips64be() {
     assert_no_unresolved_indirect_branch(Arch::Mips64be);
 }
 #[test]
-#[ignore = "ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc32-be: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc32be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32be);
 }
 #[test]
-#[ignore = "ppc32 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc32-le: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc32le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc32le);
 }
 #[test]
-#[ignore = "ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc64-be: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64be() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64be);
 }
 #[test]
-#[ignore = "ppc64 lifter shape needs additional analysis — F3 stack-array arm doesn't match the dispatch yet"]
+#[ignore = "ppc64-le: stack-array dispatch unresolved — lifter shape not yet characterised; needs a one-shot pcode trace to identify which classifier arm is missing"]
 fn indirect_branch_resolved_ppc64le() {
     assert_no_unresolved_indirect_branch(Arch::Ppc64le);
 }

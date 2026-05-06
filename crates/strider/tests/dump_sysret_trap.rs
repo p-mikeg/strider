@@ -8,7 +8,7 @@
 use rsleigh::{Opcode, mem_readers::BufMemReader};
 
 #[test]
-#[ignore]
+#[ignore = "diagnostic — dumps Sleigh-emitted pcode for x86-64 SYSRET (REX.W) so a human can read the CallOther user-op name; run via `cargo test -- --ignored`"]
 fn dump_x86_64_sysret_pcode() {
     let arch = strider::SleighArch::x86_64();
     // SYSRET REX.W = 0x48 0x0F 0x07 (return-to-user 64-bit)
@@ -31,7 +31,7 @@ fn dump_x86_64_sysret_pcode() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "diagnostic — dumps Sleigh-emitted pcode for ARM-32 UDF #0 (trap) so a human can read the CallOther user-op name; run via `cargo test -- --ignored`"]
 fn dump_arm_trap_pcode() {
     let arch = strider::SleighArch::arm();
     // ARM-32 UDF #0 -> 0xE7F000F0 LE = F0 00 F0 E7
