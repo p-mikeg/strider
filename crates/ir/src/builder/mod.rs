@@ -121,6 +121,11 @@ pub struct FunctionBuilder {
     /// pointer.  0 on link-register ISAs, pointer size on stack-push ISAs.
     /// Ignored when `stack_ptr_vn` is `None`.
     pub(crate) ret_stack_pop: i64,
+    /// Function-default value of [`target::CallingConvention::no_memory_clobber`].
+    /// When `true`, [`Self::build_call_with_cc`] suppresses the `Memory`
+    /// output on the resulting `Call` node and does not advance the region's
+    /// memory chain.  Per-call `override_cc` may override this.
+    pub(crate) no_memory_clobber: bool,
     /// Lazy `tracked_vn → its largest containing tracked-vn` map.
     /// Populated on first call to [`Self::largest_container_for`];
     /// the variable set is fixed at construction so caching is safe.
@@ -228,14 +233,18 @@ impl FunctionBuilder {
         );
         combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
         combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
-        Self::new_raw(
+        let mut builder = Self::new_raw(
             all_used_variables,
             &cc.arg_passing_regs,
             &cc.callee_saved_regs,
             &combined_ret_vars,
             Some(cc.stack_ptr_vn),
             cc.ret_stack_pop,
-        )
+        )?;
+        // Carry the function-default no_memory_clobber from the CC; per-call
+        // override_cc can still override on individual Call sites.
+        builder.no_memory_clobber = cc.no_memory_clobber;
+        Ok(builder)
     }
 
     /// Builds an "empty" function: no tracked variables, no calling-convention
@@ -361,6 +370,10 @@ impl FunctionBuilder {
             call_clobbered_variables,
             stack_ptr_vn,
             ret_stack_pop,
+            // Default: synthetic builders don't preserve memory.  Production
+            // code path goes through `new()` which copies the field from the
+            // user-supplied CC after `new_raw` returns.
+            no_memory_clobber: false,
             largest_container: std::cell::OnceCell::new(),
             lift_addr: None,
         };

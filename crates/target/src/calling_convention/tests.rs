@@ -459,6 +459,7 @@ fn build_returns_error_for_unknown_register_name() {
             ret_stack_pop: 0,
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -485,6 +486,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         syscall_number_reg_name: None,
+        no_memory_clobber: false,
     };
     assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
 }
@@ -706,6 +708,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         ret_stack_pop: 0,
         link_register_reg_name: None,
         syscall_number_reg_name: None,
+        no_memory_clobber: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
@@ -746,4 +749,42 @@ println!("=== mips32le ===");
 try_resolve(crate::arch::SleighArch::mipsle32(), &[
     "f0", "f1", "f2", "f3", "f12", "F0", "F12",
 ]);
+}
+
+// ── no_memory_clobber field ──────────────────────────────────────────────────
+
+#[test]
+fn x86_64_all_preserving_has_no_memory_clobber_true() {
+    // The "all-preserving" CC (used for __fentry__ / mcount-style hooks)
+    // promises zero observable side-effects.  The Call's memory output must
+    // be suppressible at IR-build time so LoadReadOnly / StackLoadForward
+    // can forward across these calls.
+    assert!(
+        CallingConvention::x86_64_all_preserving().no_memory_clobber(),
+        "x86_64_all_preserving must declare no_memory_clobber = true"
+    );
+}
+
+#[test]
+fn standard_presets_have_no_memory_clobber_false() {
+    // Every standard preset must keep the default no_memory_clobber = false
+    // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
+    // opts out.
+    let presets: &[(&str, CallingConvention)] = &[
+        ("x86_64_systemv_abi", CallingConvention::x86_64_systemv_abi()),
+        ("x86_cdecl", CallingConvention::x86_cdecl()),
+        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
+        ("arm_aapcs", CallingConvention::arm_aapcs()),
+        ("mips_o32", CallingConvention::mips_o32()),
+        ("mips_n64", CallingConvention::mips_n64()),
+        ("powerpc_sysv32", CallingConvention::powerpc_sysv32()),
+        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1()),
+        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2()),
+    ];
+    for (name, cc) in presets {
+        assert!(
+            !cc.no_memory_clobber(),
+            "{name}: standard presets must have no_memory_clobber = false"
+        );
+    }
 }

@@ -120,7 +120,19 @@ impl FunctionBuilder {
             _ => None,
         };
 
+        // Per-call effective `no_memory_clobber`: the override CC, if any,
+        // takes precedence; otherwise fall back to the function-default.
+        let no_memory_clobber = override_cc
+            .map(|cc| cc.no_memory_clobber)
+            .unwrap_or(self.no_memory_clobber);
+
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
+        // The Call node's signature always includes a Memory output (validator
+        // Layer A enforces `[Control, Memory, *clobbers]`).  When the CC
+        // declares no_memory_clobber, we keep the Memory output but leave it
+        // dangling — the region's memory chain is NOT advanced, so subsequent
+        // loads see the pre-call memory edge.  LoadReadOnly / StackLoadForward
+        // can therefore forward through the call.
         let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
             .into_iter()
             .chain(clobbered_kinds);
@@ -128,7 +140,9 @@ impl FunctionBuilder {
         let call_outputs: Vec<_> = self.graph().node_outputs(call).into_iter().collect();
 
         self.advance_cur_region_ctrl(call_outputs[0])?;
-        self.advance_cur_region_memory(call_outputs[1])?;
+        if !no_memory_clobber {
+            self.advance_cur_region_memory(call_outputs[1])?;
+        }
         for (variable, new_val) in core::iter::zip(&clobber_vars, call_outputs.iter().skip(2)) {
             self.write_variable(variable, *new_val)?;
         }

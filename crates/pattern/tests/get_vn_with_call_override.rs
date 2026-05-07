@@ -38,6 +38,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         ret_stack_pop: 0,
         link_register_vn: None,
         syscall_number_vn: None,
+        no_memory_clobber: false,
     };
     let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();

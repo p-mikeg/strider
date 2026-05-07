@@ -78,6 +78,18 @@ pub struct CallingConvention {
     /// Resolved into [`BuiltCallingConvention::syscall_number_vn`] by
     /// [`Self::build`].  Set on the `*_linux_syscall` presets only.
     syscall_number_reg_name: Option<&'static str>,
+    /// `true` if calls under this convention preserve **all** observable
+    /// state, including memory.  When set, [`build_call_with_cc`](
+    /// `ir::FunctionBuilder::build_call_with_cc`) skips emitting a Memory
+    /// output on the resulting Call node and does not advance the region's
+    /// memory chain — so passes like `LoadReadOnly` and `StackLoadForward`
+    /// can forward loads across the call.
+    ///
+    /// `false` for every standard ABI; `true` only on
+    /// [`Self::x86_64_all_preserving`] and analogous "transparent hook"
+    /// presets (e.g. Linux-kernel `__fentry__` / `mcount` callbacks that
+    /// preserve all caller state).
+    no_memory_clobber: bool,
 }
 
 /// A calling convention whose register names have been resolved to concrete
@@ -137,9 +149,22 @@ pub struct BuiltCallingConvention {
     /// "no syscall semantics" sentinel and is checked by the
     /// `*_linux_syscall` preset tests.
     pub syscall_number_vn: Option<rsleigh::Vn>,
+    /// Mirrors [`CallingConvention::no_memory_clobber`] — `true` when calls
+    /// under this convention preserve memory.  Consumed by the IR builder's
+    /// `build_call_with_cc` to suppress the Call's Memory output (so
+    /// `LoadReadOnly` / `StackLoadForward` can forward across the call).
+    pub no_memory_clobber: bool,
 }
 
 impl CallingConvention {
+    /// Returns `true` if calls under this convention preserve memory
+    /// across the call (i.e. the IR's Call node should NOT advance the
+    /// memory chain).  See the [`Self::no_memory_clobber`](field) docs.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.no_memory_clobber
+    }
+
     /// Returns the x86-64 System V ABI calling convention.
     ///
     /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
@@ -167,6 +192,7 @@ impl CallingConvention {
             // is no architectural link register.
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -199,6 +225,10 @@ impl CallingConvention {
             ret_stack_pop: 0,
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            // The defining property of "all-preserving": memory is also
+            // preserved.  build_call_with_cc skips the Memory output so
+            // LoadReadOnly / StackLoadForward forward across the call.
+            no_memory_clobber: true,
         }
     }
 
@@ -235,6 +265,7 @@ impl CallingConvention {
             // register table only registers `x30`.
             link_register_reg_name: Some("x30"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -272,6 +303,7 @@ impl CallingConvention {
             // Sleigh registers it under the lowercase `lr` name.
             link_register_reg_name: Some("lr"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -311,6 +343,7 @@ impl CallingConvention {
             // (`$31`); Sleigh's mips32 register table uses lowercase `ra`.
             link_register_reg_name: Some("ra"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -340,6 +373,7 @@ impl CallingConvention {
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -371,6 +405,7 @@ impl CallingConvention {
             // Sleigh's PPC register table uses uppercase `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -407,6 +442,7 @@ impl CallingConvention {
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -440,6 +476,7 @@ impl CallingConvention {
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -479,6 +516,7 @@ impl CallingConvention {
             // is no architectural link register.
             link_register_reg_name: None,
             syscall_number_reg_name: None,
+            no_memory_clobber: false,
         }
     }
 
@@ -524,6 +562,7 @@ impl CallingConvention {
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn,
             syscall_number_vn,
+            no_memory_clobber: self.no_memory_clobber,
         })
     }
 }
