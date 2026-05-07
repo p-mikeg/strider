@@ -508,6 +508,20 @@ where
             .graph
             .as_mut()
             .ok_or_else(|| anyhow!("orchestrator: graph not initialised"))?;
+        // Build the InitialVar lookup ONCE per iteration and pass it
+        // through to every apply_in_place_edit so per-edit cost drops
+        // from O(N) (a full all_node_ids scan inside
+        // build_anchor_calling_context) to O(1) per varnode read.
+        // read_or_init_var inserts new entries as it creates fresh
+        // InitialVar nodes, so the index stays consistent across edits.
+        let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
+        for nid in graph.graph.all_node_ids() {
+            if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
+                && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
+            {
+                initial_var_index.insert(*existing, out);
+            }
+        }
         for (placeholder, resolved) in in_place_edits {
             apply_in_place_edit(
                 graph,
@@ -516,6 +530,7 @@ where
                 *placeholder,
                 resolved,
                 per_address_built_ccs,
+                &mut initial_var_index,
             )?;
         }
         Ok(())
@@ -570,6 +585,7 @@ fn apply_in_place_edit(
     placeholder: NodeId,
     resolved: &ResolvedTargets,
     per_address_built_ccs: &HashMap<u64, target::BuiltCallingConvention>,
+    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> Result<()> {
     match resolved {
         ResolvedTargets::LinkRegister => {
@@ -579,6 +595,7 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 None,
+                initial_var_index,
             );
             apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
             Ok(())
@@ -591,6 +608,7 @@ fn apply_in_place_edit(
                 strider,
                 region_index,
                 override_cc,
+                initial_var_index,
             );
             let new_return = apply_tail_call(
                 graph,
@@ -658,6 +676,7 @@ fn build_anchor_calling_context(
     strider: &Strider,
     region_index: &RegionIndex,
     override_cc: Option<&target::BuiltCallingConvention>,
+    initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
 ) -> opt::AnchorCallingContext {
     // When an override is supplied, route arg-passing / ret-val /
     // clobber computation through the override CC instead of the
@@ -667,19 +686,12 @@ fn build_anchor_calling_context(
     let region = region_index.region_for_placeholder(graph, placeholder);
     let mut ctx = opt::AnchorCallingContext::default();
 
-    // Build a per-call `vn → InitialVar.output` lookup so each
-    // `read_or_init_var` is O(1) instead of an arena scan.
-    let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-    for nid in graph.graph.all_node_ids() {
-        if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
-            && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
-        {
-            initial_var_index.insert(*existing, out);
-        }
-    }
+    // `initial_var_index` is built once per orchestrator iteration (in
+    // `apply_in_place_edits`) and threaded through.  Per-edit cost is
+    // O(arg_count) instead of the previous O(N) arena scan.
 
     for vn in &cc.arg_passing_regs {
-        if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
+        if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
             ctx.arg_passing_outputs.push(out);
         }
     }
@@ -707,7 +719,7 @@ fn build_anchor_calling_context(
             .push(ir::node::NodeOutputKind::OutputType(ty));
     }
     for vn in &cc.ret_val_regs {
-        if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
+        if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
             ctx.ret_val_outputs.push(out);
         }
     }
