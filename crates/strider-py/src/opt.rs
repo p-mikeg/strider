@@ -176,6 +176,23 @@ impl PyOptimizerPipeline {
         }
         Ok(pipe)
     }
+
+    /// Prepend a `LoadReadOnly` pass to the front of the pipeline's
+    /// pass list.  Used by `run_with_custom_pipeline` to wire a
+    /// user-supplied `rom` into the pipeline before draining it
+    /// (otherwise the rom is silently discarded).
+    pub(crate) fn prepend_load_read_only(
+        &self,
+        rom: std::sync::Arc<dyn opt::ReadOnlyMemory>,
+    ) -> PyResult<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        let pass: ErasedPass = Box::new(opt::LoadReadOnly(rom));
+        state.passes.insert(0, pass);
+        Ok(())
+    }
 }
 
 #[pymethods]

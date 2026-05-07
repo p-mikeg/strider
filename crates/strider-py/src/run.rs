@@ -194,7 +194,15 @@ fn run_with_custom_pipeline(
     compact: bool,
     per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
-    let _ = rom; // custom pipeline owns its own pass list
+    // Wire the user-supplied rom into the pipeline by prepending a
+    // LoadReadOnly pass.  Previously the rom was silently discarded on
+    // this path — users with custom pipelines who passed `rom=mem`
+    // expecting LoadReadOnly to fold loads got no folding at all.
+    // Pass `rom=None` to opt out.
+    if let Some(rom_input) = rom {
+        let rom_arc = rom_input.into_arc();
+        pipeline.prepend_load_read_only(rom_arc)?;
+    }
     let reader: AnyMemReader = mem.into_any().map_err(into_lift_err)?;
     let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
 
