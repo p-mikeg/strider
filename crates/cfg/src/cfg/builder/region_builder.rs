@@ -379,6 +379,27 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                                 .work_queue
                                 .push((Some((region, RegionEdgeKind::Branch)), in_range));
                         } else {
+                            // Single-instruction region: cannot pop the
+                            // CondBranch (would leave an empty region,
+                            // violating add_region's non-empty
+                            // invariant).  Fall back to TailCall to the
+                            // in-range target.  This drops the OOB
+                            // edge entirely AND treats the in-range
+                            // address as a tail call rather than a
+                            // local branch — incorrect for control-flow
+                            // analysis if the in-range successor is
+                            // genuinely intra-function.  Log so the
+                            // case is at least visible (it was silent
+                            // before).  See `reviews/round7-correctness.md`
+                            // finding C3 for the proper fix sketch.
+                            eprintln!(
+                                "strider/cfg: single-insn CondBranch with one OOB successor — \
+                                 emitting fallback TailCall to in-range {:#x}; \
+                                 in-range edge is lost from the CFG. \
+                                 (This degenerate case loses analysis fidelity; \
+                                 see reviews/round7-correctness.md C3.)",
+                                in_range.machine_addr.addr,
+                            );
                             self.finish_current_region(RegionTerminator::TailCall {
                                 target: in_range.machine_addr.addr,
                             })?;
