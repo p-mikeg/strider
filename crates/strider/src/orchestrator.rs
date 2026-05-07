@@ -323,10 +323,27 @@ where
     /// Iteration 0: build the CFG, lift, run stable opt, snapshot the
     /// region index.
     fn build_iter_0(&mut self) -> Result<()> {
+        self.lift_and_seat("build_iter_0")?;
+        self.pending_at_iter_0 = self.unresolved.len();
+        // Allow an in-place-only stall for at most `pending_at_iter_0`
+        // iterations: each in-place edit must remove at least one
+        // placeholder, so we can't legitimately stall that many times
+        // in a row without making progress.
+        self.stall_budget = self.pending_at_iter_0;
+        Ok(())
+    }
+
+    /// Drive `build_lift_stable` once and seat the resulting graph,
+    /// region index, and unresolved-branch list onto `self`.  Shared
+    /// helper between [`Self::build_iter_0`] (initial lift) and
+    /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` names the
+    /// caller for the error message when the Sleigh handle is
+    /// missing.
+    fn lift_and_seat(&mut self, phase: &'static str) -> Result<()> {
         let sleigh = self
             .sleigh
             .take()
-            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at build_iter_0"))?;
+            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at {phase}"))?;
         let (graph, unresolved, region_index, sleigh) = build_lift_stable(
             sleigh,
             &self.opts,
@@ -338,12 +355,6 @@ where
         self.sleigh = Some(sleigh);
         self.region_index = region_index;
         self.graph = Some(graph);
-        self.pending_at_iter_0 = unresolved.len();
-        // Allow an in-place-only stall for at most `pending_at_iter_0`
-        // iterations: each in-place edit must remove at least one
-        // placeholder, so we can't legitimately stall that many times
-        // in a row without making progress.
-        self.stall_budget = self.pending_at_iter_0;
         self.unresolved = unresolved;
         Ok(())
     }
@@ -416,23 +427,7 @@ where
     /// Rebuild the CFG with the updated `known_targets` map and
     /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
     fn rebuild(&mut self) -> Result<()> {
-        let sleigh = self
-            .sleigh
-            .take()
-            .ok_or_else(|| anyhow!("orchestrator: sleigh handle missing at rebuild"))?;
-        let (graph, unresolved, region_index, sleigh) = build_lift_stable(
-            sleigh,
-            &self.opts,
-            &self.known_targets,
-            &self.decode_cache,
-            &mut self.vn_cache,
-            &mut self.vn_cache_region_count,
-        )?;
-        self.sleigh = Some(sleigh);
-        self.region_index = region_index;
-        self.graph = Some(graph);
-        self.unresolved = unresolved;
-        Ok(())
+        self.lift_and_seat("rebuild")
     }
 
     /// Run the destructive subset and consume `self`, returning the
