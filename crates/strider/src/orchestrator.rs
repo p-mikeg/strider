@@ -127,28 +127,21 @@ struct RunOpts<'a> {
 /// region's exit `vn_to_value` table — what
 /// [`build_anchor_calling_context`] needs to thread ABI varnodes
 /// through an in-place edit.
-struct RegionIndex {
-    by_exit_control: HashMap<NodeOutputId, RegionExitInfo>,
-}
+/// Maps a region's exit-control `NodeOutputId` to the region's exit
+/// `vn_to_value` table.  The map is `Arc`-shared with each
+/// [`RegionLiftHandles::exit_vn_to_value`] entry — never mutated
+/// post-build, so shared ownership is safe.
+type ExitVnToValue = std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>;
 
-struct RegionExitInfo {
-    /// Shared with the source `RegionLiftHandles::exit_vn_to_value`
-    /// — `Arc::clone` here saves a deep `HashMap` clone per region
-    /// per iteration.  The map is never mutated post-build, so
-    /// shared ownership is safe.
-    exit_vn_to_value: std::sync::Arc<HashMap<rsleigh::Vn, NodeOutputId>>,
+struct RegionIndex {
+    by_exit_control: HashMap<NodeOutputId, ExitVnToValue>,
 }
 
 impl RegionIndex {
     fn from_handles(handles: &[RegionLiftHandles]) -> Self {
         let mut by_exit_control = HashMap::with_capacity(handles.len());
         for h in handles {
-            by_exit_control.insert(
-                h.exit_control,
-                RegionExitInfo {
-                    exit_vn_to_value: std::sync::Arc::clone(&h.exit_vn_to_value),
-                },
-            );
+            by_exit_control.insert(h.exit_control, std::sync::Arc::clone(&h.exit_vn_to_value));
         }
         Self { by_exit_control }
     }
@@ -157,7 +150,7 @@ impl RegionIndex {
         &self,
         graph: &ir::BuiltFunctionGraph,
         placeholder: NodeId,
-    ) -> Option<&RegionExitInfo> {
+    ) -> Option<&ExitVnToValue> {
         let inputs: Vec<_> = graph.graph.node_inputs(placeholder).into_iter().collect();
         let ctrl_in = *inputs.first()?;
         self.by_exit_control.get(&ctrl_in)
@@ -695,37 +688,28 @@ fn build_anchor_calling_context(
             ctx.arg_passing_outputs.push(out);
         }
     }
-    // Clobber list: when an override is supplied, recompute from the
-    // override's callee_saved set against the function's tracked
-    // variables.  Without an override, fall back to the function-
-    // default `BuiltFunctionGraph::call_clobbered` (existing
-    // behaviour).
-    if override_cc.is_some() {
-        let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-        for vn in graph.variables.values() {
-            if cc.callee_saved_regs.contains(vn) || Some(*vn) == stack_ptr_vn {
-                continue;
-            }
-            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-                continue;
-            };
-            ctx.clobbered_kinds
-                .push(ir::node::NodeOutputKind::OutputType(ty));
-        }
+    // Clobber list: with an override, recompute from the override's
+    // callee_saved set against the function's tracked variables; without,
+    // use the precomputed `BuiltFunctionGraph::call_clobbered` shape.
+    // Both arms walk a Vec<rsleigh::Vn>; pick the source once then run
+    // the same projection over it.
+    let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
+    let clobber_iter: Box<dyn Iterator<Item = &rsleigh::Vn>> = if override_cc.is_some() {
+        Box::new(
+            graph
+                .variables
+                .values()
+                .filter(|vn| !cc.callee_saved_regs.contains(vn) && Some(**vn) != stack_ptr_vn),
+        )
     } else {
-        // Emit one clobbered slot per `BuiltFunctionGraph::call_clobbered`
-        // entry — the canonical shape `FunctionBuilder::build_call`
-        // produces.  Pattern queries index directly into `call_clobbered`
-        // to recover varnodes; iterating `cc.callee_saved_regs` here would
-        // emit the OPPOSITE set (preserved-across-call regs) with the
-        // wrong count.
-        for vn in graph.call_clobbered.iter() {
-            let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-                continue;
-            };
-            ctx.clobbered_kinds
-                .push(ir::node::NodeOutputKind::OutputType(ty));
-        }
+        Box::new(graph.call_clobbered.iter())
+    };
+    for vn in clobber_iter {
+        let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
+            continue;
+        };
+        ctx.clobbered_kinds
+            .push(ir::node::NodeOutputKind::OutputType(ty));
     }
     for vn in &cc.ret_val_regs {
         if let Some(out) = read_or_init_var(graph, region, &mut initial_var_index, *vn) {
@@ -741,12 +725,12 @@ fn build_anchor_calling_context(
 /// `None` when the varnode's byte size has no matching `NodeOutputType`.
 fn read_or_init_var(
     graph: &mut ir::BuiltFunctionGraph,
-    region: Option<&RegionExitInfo>,
+    region: Option<&ExitVnToValue>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     vn: rsleigh::Vn,
 ) -> Option<NodeOutputId> {
     if let Some(r) = region
-        && let Some(&out) = r.exit_vn_to_value.get(&vn)
+        && let Some(&out) = r.get(&vn)
     {
         return Some(out);
     }
