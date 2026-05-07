@@ -508,11 +508,33 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             return None;
         }
         Python::with_gil(|py| -> Option<u64> {
-            let result = self.py_obj.call_method1(py, "read", (addr, size)).ok()?;
+            // Surface Python exceptions on stderr instead of silently
+            // converting them to None — otherwise a buggy user override
+            // (raises ValueError, returns wrong type, …) shows up as
+            // "no fold" in LoadReadOnly with no diagnostic.  The
+            // contract is still `Option<u64>` (we can't propagate
+            // through this trait) but the user gets a visible warning.
+            let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!(
+                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"
+                    );
+                    return None;
+                }
+            };
             if result.is_none(py) {
                 return None;
             }
-            result.extract::<u64>(py).ok()
+            match result.extract::<u64>(py) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    eprintln!(
+                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) did not return int: {e}"
+                    );
+                    None
+                }
+            }
         })
     }
 }
