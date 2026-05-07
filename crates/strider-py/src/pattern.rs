@@ -17,8 +17,8 @@
 //! family dispatchers (`int_binary`, `bool_binary`, `float_binary`),
 //! `.when` predicate guards, `.ordered()` overrides, and the
 //! variant-agnostic `*_any` constructors that bind the matched op
-//! variant to a `Capture` for later inspection via `Match.*_op` (TODO:
-//! op-variant accessors are not yet exposed on the Python `Match`).
+//! variant to a `Capture` for later inspection via `Match.*_op`
+//! (`int_binary_op`, `bool_binary_op`, `float_binary_op`, etc.).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

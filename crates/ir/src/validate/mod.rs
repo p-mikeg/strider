@@ -174,13 +174,6 @@ pub enum ValidationError {
         actual: NodeOutputKind,
     },
 
-    #[error("node {node:?} input[{input_idx}] references missing output {output:?}")]
-    InputPointsToMissingOutput {
-        node: NodeId,
-        input_idx: usize,
-        output: NodeOutputId,
-    },
-
     #[error(
         "node {node:?} input[{input_idx}] references output {output:?} \
          but is not in that output's use-list"

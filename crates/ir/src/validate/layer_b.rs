@@ -40,13 +40,6 @@ pub(super) fn check_layer_b(graph: &Graph, errs: &mut Vec<ValidationError>) {
     // producer's use-list" failure mode (covered by the
     // `layer_b_input_missing_from_use_list` test, which simulates a
     // corrupted graph via `test_only_clear_first_use`).
-    //
-    // NOTE: `InputPointsToMissingOutput` is defined in the spec for
-    // completeness but is not checked here — the public `Graph` API only
-    // hands out live `NodeOutputId`s from its `PrimaryMap`, so fabricating
-    // a dangling id via safe code is not possible.  Leaving the variant on
-    // the enum keeps the shape documented for any future API that can
-    // produce such ids (e.g. a raw-FFI or serialization path).
     for node in graph.nodes.keys() {
         let input_count = graph.node_inputs(node).len();
         for idx in 0..input_count {

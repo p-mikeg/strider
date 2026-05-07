@@ -20,15 +20,6 @@ pub struct PyCfg {
     pub(crate) inner: cfg::Cfg<AnyMemReader>,
 }
 
-impl PyCfg {
-    /// Borrow the inner `cfg::Cfg` for downstream consumers
-    /// (`Strider::analyze_cfg`, `dot::GraphDot::new`).
-    #[allow(dead_code)]
-    pub(crate) fn inner(&self) -> &cfg::Cfg<AnyMemReader> {
-        &self.inner
-    }
-}
-
 #[pyfunction(signature = (sleigh, entry, allow_code_before_start_addr=false, function_max_size=None))]
 pub fn build_cfg(
     py: Python<'_>,

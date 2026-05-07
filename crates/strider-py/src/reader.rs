@@ -13,7 +13,7 @@
 //! pipeline twice.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
@@ -682,11 +682,6 @@ impl ReaderInputClone {
         }
     }
 }
-
-// Suppress an unused-warning for a Mutex import that's only used by
-// downstream wrappers.
-#[allow(dead_code)]
-fn _unused_marker(_: Mutex<()>) {}
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryMap>()?;
