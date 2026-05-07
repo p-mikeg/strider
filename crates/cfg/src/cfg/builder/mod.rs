@@ -118,6 +118,33 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
     }
 
+    /// Creates a new `Builder` whose endianness AND `ArchPreset` are
+    /// derived atomically from `arch`.  The preferred constructor for
+    /// callers outside `strider::run` — [`Self::new`] silently defaults
+    /// to LE + x86_64, so a non-x86_64 / big-endian caller who forgot
+    /// to chain [`Self::with_endianness`] and [`Self::with_preset`]
+    /// would silently misclassify CallOthers and decode bytes with the
+    /// wrong byte order.
+    #[must_use]
+    pub fn for_arch(
+        arch: &target::SleighArch,
+        sleigh: rsleigh::Sleigh<R>,
+        start_addr: u64,
+        options: Options,
+    ) -> Self {
+        Self {
+            sleigh,
+            start_addr: start_addr.into(),
+            options,
+            endianness: arch.endianness,
+            preset: arch.preset,
+            graph: RegionGraph::new(),
+            start_addr_to_region_id: BTreeMap::new(),
+            work_queue: Vec::new(),
+            decode_cache: None,
+        }
+    }
+
     /// Sets the [`target::Arch`] used by the `Opcode::CallOther` arm
     /// in [`super::region_builder`] when consulting
     /// [`target::call_other_abi::classify`].  Defaults to
