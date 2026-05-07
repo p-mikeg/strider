@@ -103,6 +103,13 @@ pub struct PyMemoryMap {
     /// `object::File<'static>` borrows from a leaked byte slice (see
     /// `reader::load_elf`), so storing it here is sound.
     elfs: Arc<RwLock<Vec<object::File<'static>>>>,
+    /// Byte order used by `ReadOnlyMemory::read` when assembling
+    /// multi-byte words from the underlying buffer.  Defaults to
+    /// [`target::Endianness::Little`]; auto-set from the ELF header in
+    /// `add_region_from_elf`, or set explicitly via
+    /// [`Self::set_endianness`].  Stored behind an Arc/RwLock so a
+    /// `PyMemoryMap` clone shares the same setting.
+    endianness: Arc<RwLock<target::Endianness>>,
 }
 
 impl PyMemoryMap {
@@ -145,7 +152,37 @@ impl PyMemoryMap {
             inner: Arc::new(RwLock::new(Vec::new())),
             table: Arc::new(RwLock::new(None)),
             elfs: Arc::new(RwLock::new(Vec::new())),
+            // Default to LE; overridden by add_region_from_elf or
+            // set_endianness once the user supplies a real arch.
+            endianness: Arc::new(RwLock::new(target::Endianness::Little)),
         }
+    }
+
+    /// Set the byte order used by `ReadOnlyMemory::read` when reading
+    /// multi-byte words.  Use `"little"` or `"big"` (case-insensitive).
+    ///
+    /// Auto-set by `add_region_from_elf` from the ELF header; explicit
+    /// calls are useful only when constructing a MemoryMap from raw
+    /// bytes for a big-endian target.
+    ///
+    /// # Errors
+    /// Raises `ReaderError` for unrecognised endianness strings.
+    fn set_endianness(&self, endianness: &str) -> PyResult<()> {
+        let parsed = match endianness.to_ascii_lowercase().as_str() {
+            "little" | "le" => target::Endianness::Little,
+            "big" | "be" => target::Endianness::Big,
+            other => {
+                return Err(into_reader_err(anyhow::anyhow!(
+                    "unknown endianness {other:?}; use \"little\" or \"big\""
+                )));
+            }
+        };
+        let mut slot = self
+            .endianness
+            .write()
+            .map_err(|_| into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned")))?;
+        *slot = parsed;
+        Ok(())
     }
 
     fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
@@ -204,6 +241,20 @@ impl PyMemoryMap {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_region_from_elf(&self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = reader::load_elf(path).map_err(into_reader_err)?;
+        // Auto-set the byte order from the ELF header so subsequent
+        // ReadOnlyMemory::read calls assemble multi-byte words in the
+        // right order (big-endian targets like MIPS-BE / PowerPC-BE
+        // would otherwise byte-swap their LoadReadOnly constants).
+        let elf_endian = match object::Object::endianness(&obj) {
+            object::Endianness::Little => target::Endianness::Little,
+            object::Endianness::Big => target::Endianness::Big,
+        };
+        {
+            let mut slot = self.endianness.write().map_err(|_| {
+                into_reader_err(anyhow::anyhow!("MemoryMap endianness lock poisoned"))
+            })?;
+            *slot = elf_endian;
+        }
         // When apply_relocations=True we widen the section coverage
         // to include `.data.rel.ro`, `.got`, …  Without the widening
         // a `R_*_RELATIVE` relocation against a writable-but-
@@ -582,10 +633,12 @@ impl rsleigh::MemReader for PyMemoryMapReader {
     }
 }
 
-/// `ReadOnlyMemory` impl reading 1/2/4/8-byte little-endian words from
-/// any space — same pattern as `reader::ElfFileMemReader`, less the
-/// endianness flip (for the data-only path the user supplies bytes
-/// directly so the host endian convention dominates).
+/// `ReadOnlyMemory` impl reading 1/2/4/8-byte words from any space.
+/// Mirrors `reader::ElfFileMemReader`'s endianness-aware decoding so
+/// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
+/// `LoadReadOnly` constants.  Endianness is auto-set by
+/// `add_region_from_elf` (or explicitly via `set_endianness`); defaults
+/// to little for raw-bytes-only construction.
 impl ReadOnlyMemory for PyMemoryMap {
     fn read(&self, _space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
         if size == 0 || size > 8 {
@@ -597,7 +650,24 @@ impl ReadOnlyMemory for PyMemoryMap {
         if n != size {
             return None;
         }
-        Some(u64::from_le_bytes(buf))
+        // The bytes occupy buf[..size] in target memory order; we need
+        // to interpret them as a little-endian or big-endian integer
+        // based on the configured arch.  For big-endian, place the
+        // bytes at the high end of buf so from_be_bytes recovers the
+        // intended value (analogous to ElfFileMemReader's path).
+        let endianness = *self.endianness.read().ok()?;
+        match endianness {
+            target::Endianness::Little => Some(u64::from_le_bytes(buf)),
+            target::Endianness::Big => {
+                // Move the size-byte payload from buf[..size] to the
+                // high end of buf[8-size..].  This matches the layout
+                // a real BE memory load would produce when widened to
+                // 8 bytes.
+                let mut be_buf = [0u8; 8];
+                be_buf[8 - size..].copy_from_slice(&buf[..size]);
+                Some(u64::from_be_bytes(be_buf))
+            }
+        }
     }
 }
 
