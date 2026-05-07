@@ -138,14 +138,24 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// lookup transparently distinguishes pre- and post-split halves.
     #[must_use]
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
-        for rid in self.graph.node_indices() {
-            if let Some(region) = self.graph.node_weight(rid)
-                && region.start_addr.machine_addr == addr
-            {
-                return Some(rid);
-            }
-        }
-        None
+        // O(log R) range query instead of an O(R) graph scan: locate the
+        // greatest start_addr ≤ (addr, pcode=u64::MAX), then verify it
+        // matches the requested machine address exactly.  The BTreeMap
+        // was promoted from the Builder at construction time.
+        use std::collections::Bound;
+        let lower = super::types::PcodeInsnAddr {
+            machine_addr: addr,
+            insn_index: 0,
+        };
+        let upper = super::types::PcodeInsnAddr {
+            machine_addr: addr,
+            insn_index: u64::MAX,
+        };
+        let mut range = self
+            .start_addr_to_region_id
+            .range((Bound::Included(lower), Bound::Included(upper)));
+        let (_, &rid) = range.next()?;
+        Some(rid)
     }
 }
 

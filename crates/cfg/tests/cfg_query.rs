@@ -79,6 +79,7 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
         sleigh: make_sleigh(),
         graph,
         entry: src,
+        start_addr_to_region_id: std::collections::BTreeMap::new(),
     };
 
     let err = cfg.region_branch(src).unwrap_err();
@@ -139,6 +140,7 @@ fn duplicate_if_case_true_is_detected_by_region_if() {
         sleigh: make_sleigh(),
         graph,
         entry: src,
+        start_addr_to_region_id: std::collections::BTreeMap::new(),
     };
 
     let err = cfg

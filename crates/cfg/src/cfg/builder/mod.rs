@@ -263,6 +263,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
             graph: self.graph,
             sleigh: self.sleigh,
             entry: starting_region,
+            start_addr_to_region_id: self.start_addr_to_region_id,
         })
     }
 }
