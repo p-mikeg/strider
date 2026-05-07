@@ -14,6 +14,6 @@ cranelift-entity.workspace = true
 workspace = true
 
 [dev-dependencies]
+cranelift-entity.workspace = true
 expect-test.workspace = true
-graphmock.workspace = true
 itertools.workspace = true
