@@ -294,9 +294,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // and destination; opaque value, no RAM effect.
         "UnkSytemRegRead" => PURE,
 
-        // x86 SWAPGS — swaps a synthetic GS_base MSR; no general-reg or
-        // RAM effect.
-        "swapgs" => PURE,
+        // x86 SWAPGS — exchanges IA32_GS_BASE ↔ IA32_KERNEL_GS_BASE.
+        // No general-reg or RAM effect on its own, but every subsequent
+        // %gs:-relative load/store depends on the new base, so it must be
+        // on the memory chain or forwarding passes will reorder %gs:-loads
+        // across the swap.  Analogous to wr{fs,gs}base above.
+        "swapgs" => PURE_WITH_MEM_EDGE,
 
         // ARM permanently-undefined instruction — Sleigh emits
         // CALLOTHER + a branch to the trap handler; the user-op itself
@@ -387,7 +390,7 @@ mod tests {
             "Hint_Prefetch", "Yield",
             "cpuid", "NEON_rev64", "SVE_fnmla", "MP_INT_ABS",
             "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
-            "swapgs", "UnkSytemRegRead", "software_udf",
+            "UnkSytemRegRead", "software_udf",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
             let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
@@ -395,6 +398,21 @@ mod tests {
             assert!(abi.implicit_writes.is_empty(), "{n}");
             assert!(!abi.memory_edge, "{n}: must NOT advance mem edge (opt passes need to forward)");
         }
+    }
+
+    #[test]
+    fn swapgs_is_memory_chain_marker() {
+        // SWAPGS exchanges IA32_GS_BASE ↔ IA32_KERNEL_GS_BASE.  Subsequent
+        // %gs:-relative loads/stores depend on the new base, so swapgs must
+        // be on the IR memory chain — analogous to wr{fs,gs}base, which use
+        // PURE_WITH_MEM_EDGE.  Without memory_edge=true, StackLoadForward /
+        // LoadReadOnly could incorrectly forward across swapgs in kernel
+        // entry/exit code.
+        let cls = classify(crate::ArchPreset::X86_64, "swapgs").unwrap();
+        let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
+        assert!(abi.implicit_reads.is_empty());
+        assert!(abi.implicit_writes.is_empty());
+        assert!(abi.memory_edge, "swapgs must advance memory edge (kernel GS base swap)");
     }
 
     #[test]
@@ -474,6 +492,8 @@ mod tests {
 
     #[test]
     fn empty_abi_ops_use_call_with_empty_abi() {
+        // swapgs intentionally excluded — it has memory_edge=true and is
+        // covered by `swapgs_is_memory_chain_marker` instead.
         for n in [
             "NEON_rev64",
             "NEON_sqshl",
@@ -481,7 +501,6 @@ mod tests {
             "SVE_fnmla",
             "MP_INT_ABS",
             "UnkSytemRegRead",
-            "swapgs",
             "ExclusiveMonitorPass",
             "ExclusiveMonitorsStatus",
         ] {
