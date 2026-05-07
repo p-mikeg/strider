@@ -509,14 +509,11 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // `_nocheck` is sufficient: `at_machine_start` pins
                 // `insn_index == 0`, so the validating variant has
                 // nothing to validate.
-                if self.is_branch_tail_call_nocheck(target_addr) {
-                    self.finish_current_region(RegionTerminator::TailCall { target })?;
-                } else {
-                    let region = self.finish_current_region(RegionTerminator::Branch)?;
-                    self.builder
-                        .work_queue
-                        .push((Some((region, RegionEdgeKind::Branch)), target_addr));
-                }
+                self.finish_branch_or_tail_call(
+                    target_addr,
+                    RegionEdgeKind::Branch,
+                    self.is_branch_tail_call_nocheck(target_addr),
+                )?;
             }
             super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
                 // `Multiple` is exclusively a tier-2 feedback shape;
@@ -562,6 +559,31 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.builder.graph.add_edge(parent_id, region, edge_kind);
         }
         Ok(region)
+    }
+
+    /// Either finishes the current region with `RegionTerminator::TailCall`
+    /// (when `is_tail_call`) or with `RegionTerminator::Branch` plus an
+    /// outgoing `edge_kind` edge to `target_addr` enqueued for further
+    /// exploration.  Shared between the `Branch` opcode arm and
+    /// `process_branch_indirect`'s `Single` path — both classify a single
+    /// jump target the same way (intra-function vs OOB).
+    fn finish_branch_or_tail_call(
+        &mut self,
+        target_addr: PcodeInsnAddr,
+        edge_kind: RegionEdgeKind,
+        is_tail_call: bool,
+    ) -> Result<()> {
+        if is_tail_call {
+            self.finish_current_region(RegionTerminator::TailCall {
+                target: target_addr.machine_addr.addr,
+            })?;
+        } else {
+            let region = self.finish_current_region(RegionTerminator::Branch)?;
+            self.builder
+                .work_queue
+                .push((Some((region, edge_kind)), target_addr));
+        }
+        Ok(())
     }
 
     /// Processes `insn` at `addr`, first checking whether `addr` is already
