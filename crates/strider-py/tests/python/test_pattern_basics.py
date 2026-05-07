@@ -114,3 +114,21 @@ def test_pattern_submodule_dir():
                  "if_", "phi", "var", "any_", "int_const",
                  "bool_const", "Capture", "Pat"]:
         assert hasattr(p, name), name
+
+
+def test_capture_hash_distinct_for_first_100_ids():
+    """Regression: PyCapture.__hash__ used to be `len(repr(...))`, which
+    collapsed every same-decimal-digit-count id (10..99 → 11, 100..999 → 12,
+    etc.) to one bucket — breaking any dict/set keyed on Capture.  The fix
+    hashes the underlying u32 id directly."""
+    captures = [Capture() for _ in range(100)]
+    hashes = {hash(c) for c in captures}
+    assert len(hashes) == 100, (
+        f"hash collision: only {len(hashes)} distinct hashes for 100 captures"
+    )
+
+
+def test_capture_usable_as_dict_key():
+    captures = [Capture() for _ in range(50)]
+    d = {c: i for i, c in enumerate(captures)}
+    assert len(d) == 50, f"dict key collision: only {len(d)} entries for 50 captures"

@@ -50,8 +50,10 @@ impl PyCapture {
     }
 
     fn __hash__(&self) -> isize {
-        // pattern::Capture wraps a u32; safe to expose as a hash.
-        format!("{:?}", self.inner).len() as isize
+        // The Capture's globally-unique u32 id is the stable hash key.
+        // (Earlier this used `format!("{:?}", self.inner).len()` which
+        // collapsed every same-decimal-digit-count id to one bucket.)
+        self.inner.id() as isize
     }
 }
 
