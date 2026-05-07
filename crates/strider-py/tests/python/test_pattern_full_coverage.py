@@ -74,12 +74,11 @@ def test_float_unary_ops_return_pat(ctor):
     assert isinstance(ctor(var(Capture())), Pat)
 
 
-def test_float_is_nan_raises_until_ir_support():
-    # IR has no FloatIsNan node kind yet; the constructor stub raises
-    # so users get a clear message.  Remove this test once IR + pattern
-    # crate ship a real `float_is_nan`.
-    with pytest.raises(strider.errors.PatternError):
-        float_is_nan(var(Capture()))
+def test_float_is_nan_returns_pat():
+    # float_is_nan(x) is implemented as the IEEE-754 self-inequality
+    # `x != x` — same IR shape the pcode lifter produces for FLOAT_NAN.
+    p = float_is_nan(var(Capture()))
+    assert isinstance(p, Pat)
 
 
 # ── Float comparisons ─────────────────────────────────────────────────

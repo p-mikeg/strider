@@ -131,12 +131,16 @@ def test_field_offset_recovery_via_find_all_requirements():
     k_call = Capture()
     k_load = Capture()
 
+    # `add()` is the commutative free constructor; the prior `.ordered()`
+    # call here was a silent no-op (now raises PatternError).  Both
+    # operand orderings of `Add(InitialVar(ESP), IntConst)` are matched
+    # automatically — the captures still bind to the IntConst leg.
     results = g.find_all_requirements([
         # call(at=external_take_ptr).arg(0, lea esp+K1)
         call().target(strider.pattern.int_const(take_ptr))
-            .arg(0, add(initial_var_for(esp), any_int_const(k_call)).ordered()),
+            .arg(0, add(initial_var_for(esp), any_int_const(k_call))),
         # any load at esp+K2 — the return-value load of `local`
-        load().addr(add(initial_var_for(esp), any_int_const(k_load)).ordered()),
+        load().addr(add(initial_var_for(esp), any_int_const(k_load))),
     ])
     # We expect at least one joined match where the load is the
     # post-call read of `local` — same stack slot, so K2 == K1

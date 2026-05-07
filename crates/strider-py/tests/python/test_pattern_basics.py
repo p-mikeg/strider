@@ -132,3 +132,20 @@ def test_capture_usable_as_dict_key():
     captures = [Capture() for _ in range(50)]
     d = {c: i for i, c in enumerate(captures)}
     assert len(d) == 50, f"dict key collision: only {len(d)} entries for 50 captures"
+
+
+def test_float_is_nan_constructs_pattern():
+    """float_is_nan(x) used to raise NotImplementedError; it now produces
+    a valid Pat via the IEEE-754 self-inequality (x != x) which matches
+    the same IR shape Sleigh's FLOAT_NAN lowering produces at lift time."""
+    from strider.pattern import float_is_nan, any_
+    p = float_is_nan(any_())
+    assert isinstance(p, Pat)
+
+
+def test_pyat_ordered_on_finalized_pat_raises():
+    """Pat.ordered() on a finalized Pat (e.g. add(...)) used to silently
+    return self; it now raises PatternError, pointing users to the typed
+    builder (int_binary(...).ordered())."""
+    with pytest.raises(strider.errors.PatternError):
+        add(var(Capture()), var(Capture())).ordered()

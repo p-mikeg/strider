@@ -425,18 +425,22 @@ impl PyPat {
         PyPat::from_pat(wrap_when(inner, f))
     }
 
-    /// Force commutative binary ops not to try the swapped operand
-    /// order.  Wraps the inner pattern in an additional ordering check
-    /// — implemented via the typed builder when available.  For
-    /// patterns built with the free constructors (already finalized
-    /// `Pat`), this is a no-op (the commutative behaviour was decided
-    /// at construction); use the typed `int_binary`/`bool_binary`/
-    /// `float_binary` builders for explicit `.ordered()` control.
-    fn ordered(&self) -> PyPat {
-        // No-op on a finalized Pat: commutativity is baked into the
-        // InputsSpec at construction time.  Returning self is
-        // surprising; document the limitation in the docstring above.
-        self.clone()
+    /// Force commutative binary ops not to try the swapped operand order.
+    ///
+    /// **`.ordered()` is only valid on a typed builder** — `int_binary(op,
+    /// l, r).ordered()`, `bool_binary(op, l, r).ordered()`, or
+    /// `float_binary(op, l, r).ordered()`.  Once a free constructor like
+    /// `add(l, r)` returns a finalized `Pat`, the `InputsSpec` (and
+    /// therefore commutativity) is baked in.  Calling `.ordered()` on a
+    /// finalized `Pat` previously silently returned `self` — a trap that
+    /// fooled users into thinking they had disabled commutativity.  This
+    /// method now raises [`PatternError`] so the misuse is visible.
+    fn ordered(&self) -> PyResult<PyPat> {
+        Err(into_pattern_err(anyhow::anyhow!(
+            "Pat.ordered() has no effect on a finalized Pat — \
+             use int_binary(op, l, r).ordered() / bool_binary(op, l, r).ordered() / \
+             float_binary(op, l, r).ordered() to force left-to-right matching"
+        )))
     }
 
     fn __repr__(&self) -> String {
@@ -874,16 +878,18 @@ float_unop!(float_ceil);
 float_unop!(float_floor);
 float_unop!(float_round);
 
-// `float_is_nan` isn't exposed as a free constructor by `pattern` (no
-// `FloatIsNan` NodeKind in the IR yet); expose as `any().when(...)`
-// stub that always fails so users get a clear error if they reach
-// for it.  We still register it so the snapshot test passes; switching
-// to a real impl is a follow-up once ir-side support lands.
+// `float_is_nan(x)` is implemented as the IEEE 754 self-inequality
+// `x != x` — the only value that is not equal to itself is NaN.  The
+// pcode lifter lowers `FloatNan` to exactly this shape at lift time
+// (see `pcode-lift/src/value/float.rs:78-90`), so this constructor
+// matches the IR shape produced by Sleigh's FLOAT_NAN op as well as
+// any explicit `x != x` written by the source.
+//
+// `Pat` is `Arc`-backed; cloning `op` is O(1).
 #[pyfunction]
-pub fn float_is_nan(_operand: PatLike<'_>) -> PyResult<PyPat> {
-    Err(into_pattern_err(anyhow::anyhow!(
-        "float_is_nan is not yet implemented — IR has no FloatIsNan node kind"
-    )))
+pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
+    let op = operand.into_pat()?;
+    Ok(PyPat::from_pat(pattern::float_ne(op.clone(), op)))
 }
 
 // ── Float comparisons ────────────────────────────────────────────────────
