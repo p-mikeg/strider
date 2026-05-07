@@ -122,9 +122,8 @@ impl FunctionBuilder {
 
         // Per-call effective `no_memory_clobber`: the override CC, if any,
         // takes precedence; otherwise fall back to the function-default.
-        let no_memory_clobber = override_cc
-            .map(|cc| cc.no_memory_clobber)
-            .unwrap_or(self.no_memory_clobber);
+        let no_memory_clobber =
+            override_cc.map_or(self.no_memory_clobber, |cc| cc.no_memory_clobber);
 
         let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
         // The Call node's signature always includes a Memory output (validator
