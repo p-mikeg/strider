@@ -656,6 +656,62 @@ pub fn apply_elf_relocations(
     Ok(stats)
 }
 
+/// Shared body of [`apply_elf_relocations`] and
+/// [`apply_elf_relocations_autoload`]: walks the dynamic relocation
+/// table once to find sites not yet covered by any region, queries
+/// `extender` for each missing site, appends every returned
+/// [`MemRegion`] to `regions`, then delegates to the patch loop.
+///
+/// The non-autoload variant passes an extender that always returns
+/// `Ok(None)` (so `regions` is never grown and uncovered sites
+/// increment `skipped_no_region` inside the patch loop); the autoload
+/// variant passes an extender that returns the `SHF_ALLOC`
+/// file-backed section containing the site, if any.
+///
+/// Sections are appended in iteration order of `obj.dynamic_relocations()`,
+/// and the per-site dedup check covers both the pre-existing `regions`
+/// and the in-progress staged set, so a single staged `MemRegion`
+/// satisfies every later site that falls inside it.
+///
+/// # Errors
+///
+/// Returns any error the extender produces, plus the same set of
+/// errors as the underlying [`apply_elf_relocations`] patch loop.
+pub fn apply_elf_relocations_with_extender<F>(
+    regions: &mut Vec<MemRegion>,
+    obj: &object::File<'_>,
+    mut extender: F,
+) -> Result<RelocationStats>
+where
+    F: FnMut(u64, &object::File<'_>) -> Result<Option<MemRegion>>,
+{
+    let Some(dyn_relocs) = obj.dynamic_relocations() else {
+        return Ok(RelocationStats::default());
+    };
+
+    // Pass 1 — collect site addresses not yet covered, ask `extender`
+    // to materialise the owning region for each, and stage them.  We
+    // never mutate `regions` here so an extender error mid-pass leaves
+    // it untouched.
+    let mut staged: Vec<MemRegion> = Vec::new();
+    for (site_addr, _reloc) in dyn_relocs {
+        let already_covered = regions
+            .iter()
+            .chain(staged.iter())
+            .any(|r| r.contains(site_addr));
+        if already_covered {
+            continue;
+        }
+        if let Some(region) = extender(site_addr, obj)? {
+            staged.push(region);
+        }
+    }
+    regions.extend(staged);
+
+    // Pass 2 — the patch loop.
+    apply_elf_relocations(regions, obj)
+}
+
 /// Like [`apply_elf_relocations`], but pre-walks the dynamic
 /// relocation table and lazily extends `regions` with any
 /// `SHF_ALLOC` file-backed section from `obj` that contains a
@@ -696,35 +752,16 @@ pub fn apply_elf_relocations_autoload(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
 ) -> Result<RelocationStats> {
-    let Some(dyn_relocs) = obj.dynamic_relocations() else {
-        return Ok(RelocationStats::default());
-    };
-
-    // Pass 1 — collect site addresses not yet covered, look up
-    // their owning section, and stage one MemRegion per unique
-    // missing section.  We never mutate `regions` here so an
-    // error mid-pass leaves it untouched.
-    let mut staged: Vec<MemRegion> = Vec::new();
-    for (site_addr, _reloc) in dyn_relocs {
-        let already_covered = regions
-            .iter()
-            .chain(staged.iter())
-            .any(|r| r.contains(site_addr));
-        if already_covered {
-            continue;
-        }
+    apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
         let Some(sec) = find_loadable_section_containing(obj, site_addr) else {
-            continue;
+            return Ok(None);
         };
         let data = sec.data().context("failed to parse ELF")?;
         if data.is_empty() {
-            continue;
+            return Ok(None);
         }
-        staged.push(MemRegion::new(sec.address(), data.to_vec())?);
-    }
-
-    regions.extend(staged);
-    apply_elf_relocations(regions, obj)
+        Ok(Some(MemRegion::new(sec.address(), data.to_vec())?))
+    })
 }
 
 /// Returns the first section in `obj` that contains `addr` and is
