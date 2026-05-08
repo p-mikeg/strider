@@ -99,7 +99,7 @@ impl StackStoreDetect {
     /// supplied calling convention.
     #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
-        Self::new(cc.stack_ptr_vn)
+        Self::new(cc.stack_ptr_vn())
     }
 }
 

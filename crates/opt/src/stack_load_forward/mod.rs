@@ -53,7 +53,7 @@ impl StackLoadForward {
         cc: &target::BuiltCallingConvention,
         arch: &target::SleighArch,
     ) -> Self {
-        Self::new(cc.stack_ptr_vn, arch.endianness)
+        Self::new(cc.stack_ptr_vn(), arch.endianness)
     }
 }
 

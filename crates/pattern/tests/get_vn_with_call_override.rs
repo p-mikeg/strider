@@ -8,7 +8,7 @@ use ir::FunctionBuilder;
 use ir::Graph;
 use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
 use pattern::{Binding, Bindings, Capture};
-use target::{BuiltCallingConvention, CallingConvention, SleighArch};
+use target::{BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch};
 
 #[test]
 fn build_call_with_cc_override_records_empty_clobber_list() {
@@ -28,7 +28,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
-    let override_cc = BuiltCallingConvention {
+    let override_cc = BuiltCallingConvention::from_parts(BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![rax, rdx, xmm0, xmm1],
         ret_val_regs: vec![],
@@ -39,7 +39,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         link_register_vn: None,
         syscall_number_vn: None,
         no_memory_clobber: false,
-    };
+    });
     let addr = b.build_int_const(0xdead_u64, NodeOutputType::U64).unwrap();
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
     let ret_regs: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();

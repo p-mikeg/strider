@@ -37,7 +37,7 @@ fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
 fn arg_reg_names(cc: CallingConvention, regs: &rsleigh::SleighRegs) -> Vec<String> {
     cc.build(regs)
         .expect("build")
-        .arg_passing_regs
+        .arg_passing_regs()
         .iter()
         .map(|vn| {
             regs.vn_to_name(*vn)
@@ -56,7 +56,7 @@ fn x86_linux_kernel_args_are_eax_edx_ecx() {
     assert_eq!(names, vec!["EAX", "EDX", "ECX"]);
     let built = CallingConvention::x86_linux_kernel().build(&regs).unwrap();
     assert!(
-        built.syscall_number_vn.is_none(),
+        built.syscall_number_vn().is_none(),
         "kernel-internal CC must not declare a syscall-number register"
     );
 }
@@ -73,7 +73,7 @@ fn x86_64_linux_kernel_aliases_systemv() {
         CallingConvention::x86_64_linux_kernel()
             .build(&regs)
             .unwrap()
-            .syscall_number_vn
+            .syscall_number_vn()
             .is_none()
     );
 }
@@ -89,7 +89,7 @@ fn aarch64_linux_kernel_aliases_aapcs64() {
         CallingConvention::aarch64_linux_kernel()
             .build(&regs)
             .unwrap()
-            .syscall_number_vn
+            .syscall_number_vn()
             .is_none()
     );
 }
@@ -132,10 +132,10 @@ fn x86_linux_syscall_args_and_syscall_number() {
         vec!["EBX", "ECX", "EDX", "ESI", "EDI", "EBP"]
     );
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("EAX")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("EAX")).unwrap();
     assert_eq!(sn_name, "EAX");
-    assert!(built.link_register_vn.is_none());
-    assert_eq!(built.ret_stack_pop, 0);
+    assert!(built.link_register_vn().is_none());
+    assert_eq!(built.ret_stack_pop(), 0);
 }
 
 #[test]
@@ -149,9 +149,9 @@ fn x86_64_linux_syscall_uses_r10_not_rcx() {
         "syscall ABI must replace RCX with R10 (RCX is clobbered by `syscall`)"
     );
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("RAX")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("RAX")).unwrap();
     assert_eq!(sn_name, "RAX");
-    assert!(built.link_register_vn.is_none());
+    assert!(built.link_register_vn().is_none());
 }
 
 #[test]
@@ -163,9 +163,9 @@ fn aarch64_linux_syscall_args_x0_x5_and_syscall_x8() {
         vec!["x0", "x1", "x2", "x3", "x4", "x5"]
     );
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("x8")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("x8")).unwrap();
     assert_eq!(sn_name, "x8");
-    assert!(built.link_register_vn.is_none());
+    assert!(built.link_register_vn().is_none());
 }
 
 #[test]
@@ -177,9 +177,9 @@ fn arm_linux_syscall_args_r0_r6_and_syscall_r7() {
         vec!["r0", "r1", "r2", "r3", "r4", "r5", "r6"]
     );
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("r7")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("r7")).unwrap();
     assert_eq!(sn_name, "r7");
-    assert!(built.link_register_vn.is_none());
+    assert!(built.link_register_vn().is_none());
 }
 
 #[test]
@@ -188,9 +188,9 @@ fn mips_linux_syscall_o32_uses_v0_for_syscall_number() {
     let cc = CallingConvention::mips_linux_syscall_o32();
     assert_eq!(arg_reg_names(cc, &regs), vec!["a0", "a1", "a2", "a3"]);
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("v0")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("v0")).unwrap();
     assert_eq!(sn_name, "v0");
-    assert!(built.link_register_vn.is_none());
+    assert!(built.link_register_vn().is_none());
 }
 
 #[test]
@@ -204,6 +204,6 @@ fn mips_linux_syscall_n64_extends_args_to_six() {
     assert_eq!(names.len(), 6);
     assert_eq!(&names[..4], &["a0", "a1", "a2", "a3"]);
     let built = cc.build(&regs).unwrap();
-    let sn_name = regs.vn_to_name(built.syscall_number_vn.expect("v0")).unwrap();
+    let sn_name = regs.vn_to_name(built.syscall_number_vn().expect("v0")).unwrap();
     assert_eq!(sn_name, "v0");
 }

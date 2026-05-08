@@ -50,7 +50,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
     let rax = regs.name_to_vn("RAX").unwrap();
     let rdi = regs.name_to_vn("RDI").unwrap();
     let rsp = regs.name_to_vn("RSP").unwrap();
-    // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx) and
+    // FunctionBuilder::new auto-adds the cc.ret_val_regs() (rax, rdx) and
     // ret_val_regs_float (xmm0, xmm1) into the tracked set even if the
     // caller's `all_used_variables` doesn't list them.  An "all-preserving"
     // override needs to mark those callee-saved too or they'll appear as
@@ -64,7 +64,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
     b.set_region(region);
 
     // Override CC: every tracked variable is callee-saved → 0 clobbers.
-    let override_cc = BuiltCallingConvention {
+    let override_cc = BuiltCallingConvention::from_parts(target::BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![rax, rdi, rdx, xmm0, xmm1],
         ret_val_regs: vec![],
@@ -75,7 +75,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
         link_register_vn: None,
         syscall_number_vn: None,
         no_memory_clobber: false,
-    };
+    });
 
     let addr = b
         .build_int_const(0xdead_beef_u64, NodeOutputType::U64)
@@ -129,7 +129,7 @@ fn build_call_with_no_memory_clobber_preserves_memory_chain() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
 
-    let override_cc = BuiltCallingConvention {
+    let override_cc = BuiltCallingConvention::from_parts(target::BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
@@ -141,7 +141,7 @@ fn build_call_with_no_memory_clobber_preserves_memory_chain() {
         syscall_number_vn: None,
         // The defining flag — Call should NOT advance memory.
         no_memory_clobber: true,
-    };
+    });
 
     let addr = b
         .build_int_const(0xdead_beef_u64, NodeOutputType::U64)

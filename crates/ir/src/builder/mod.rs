@@ -222,7 +222,7 @@ impl FunctionBuilder {
         // connected to the Return node — without this step `q0` would not be
         // in the variable set, and the analyzer's register-aliasing logic
         // would never widen the s0 write into a q0 store visible to Return.
-        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+        for v in cc.ret_val_regs().iter().chain(cc.ret_val_regs_float().iter()) {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
             }
@@ -232,21 +232,21 @@ impl FunctionBuilder {
         // ret slot; new queries can use `ret_val(N)` where N >= int-count to
         // reach float ret slots.
         let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
-            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
+            cc.ret_val_regs().len() + cc.ret_val_regs_float().len(),
         );
-        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
-        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs().iter().copied());
+        combined_ret_vars.extend(cc.ret_val_regs_float().iter().copied());
         let mut builder = Self::new_raw(
             all_used_variables,
-            &cc.arg_passing_regs,
-            &cc.callee_saved_regs,
+            cc.arg_passing_regs(),
+            cc.callee_saved_regs(),
             &combined_ret_vars,
-            Some(cc.stack_ptr_vn),
-            cc.ret_stack_pop,
+            Some(cc.stack_ptr_vn()),
+            cc.ret_stack_pop(),
         )?;
         // Carry the function-default no_memory_clobber from the CC; per-call
         // override_cc can still override on individual Call sites.
-        builder.no_memory_clobber = cc.no_memory_clobber;
+        builder.no_memory_clobber = cc.no_memory_clobber();
         Ok(builder)
     }
 

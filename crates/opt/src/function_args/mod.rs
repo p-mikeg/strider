@@ -10,13 +10,13 @@
 //! # Detection rules
 //!
 //! * **Register args** (no contiguity constraint).  For each register
-//!   `R = cc.arg_passing_regs[i]`, if `InitialVar(R)` has live uses in the
+//!   `R = cc.arg_passing_regs()[i]`, if `InitialVar(R)` has live uses in the
 //!   graph, emit one `FunctionArg { Register(R), i }` and rewire every use
 //!   of `InitialVar(R)`'s output to point at the new node.
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
 //!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
-//!   `InitialVar(sp) + K` with `K == cc.stack_arg_offsets[j]`.  Reject any
+//!   `InitialVar(sp) + K` with `K == cc.stack_arg_offsets()[j]`.  Reject any
 //!   whose memory input is reachable backward from a shadowing store — the
 //!   walk is a DFS through memory predecessors that treats `MemPhi` as a
 //!   fork where every predecessor must be non-disqualifying.  Disqualifying
@@ -82,9 +82,9 @@ impl FunctionArgDetect {
     #[must_use]
     pub fn from_convention(cc: &target::BuiltCallingConvention) -> Self {
         Self::new(
-            cc.arg_passing_regs.clone(),
-            cc.stack_ptr_vn,
-            cc.stack_arg_offsets.clone(),
+            cc.arg_passing_regs().to_vec(),
+            cc.stack_ptr_vn(),
+            cc.stack_arg_offsets().to_vec(),
         )
     }
 }

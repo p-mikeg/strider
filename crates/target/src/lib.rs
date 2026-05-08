@@ -19,7 +19,9 @@ pub mod calling_convention;
 pub mod call_other_abi;
 
 pub use arch::{ArchPreset, Endianness, SleighArch};
-pub use calling_convention::{BuiltCallingConvention, CallingConvention};
+pub use calling_convention::{
+    BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention,
+};
 
 /// Crate-level `Result` alias.  Every fallible function in `target` returns
 /// this type.

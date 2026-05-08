@@ -268,8 +268,8 @@ where
     R: rsleigh::MemReader,
 {
     fn new(config: RunConfig<'a, R>) -> Result<Self> {
-        let lr_vn = config.strider.calling_convention().link_register_vn;
-        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn);
+        let lr_vn = config.strider.calling_convention().link_register_vn();
+        let sp_vn = Some(config.strider.calling_convention().stack_ptr_vn());
         // Pre-resolve per-address CC overrides against the same Sleigh
         // register table the function-default CC was built against.
         let per_address_built_ccs: HashMap<u64, target::BuiltCallingConvention> =
@@ -700,7 +700,7 @@ fn build_anchor_calling_context(
     // `apply_in_place_edits`) and threaded through.  Per-edit cost is
     // O(arg_count) instead of the previous O(N) arena scan.
 
-    for vn in &cc.arg_passing_regs {
+    for vn in cc.arg_passing_regs() {
         if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
             ctx.arg_passing_outputs.push(out);
         }
@@ -724,7 +724,7 @@ fn build_anchor_calling_context(
         ctx.clobbered_kinds
             .push(ir::node::NodeOutputKind::OutputType(ty));
     }
-    for vn in &cc.ret_val_regs {
+    for vn in cc.ret_val_regs() {
         if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
             ctx.ret_val_outputs.push(out);
         }
@@ -749,12 +749,12 @@ fn override_clobber_vars<'a>(
     cc: &'a target::BuiltCallingConvention,
     strider: &'a Strider,
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
+    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn();
     graph
         .variables
         .values()
         .copied()
-        .filter(move |v| !cc.callee_saved_regs.contains(v) && *v != stack_ptr_vn)
+        .filter(move |v| !cc.callee_saved_regs().contains(v) && *v != stack_ptr_vn)
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.
@@ -810,7 +810,7 @@ where
     if let Some(rom) = opts.rom.clone() {
         opts_builder = opts_builder.set_read_only_memory(rom);
     }
-    if let Some(lr) = opts.strider.calling_convention().link_register_vn {
+    if let Some(lr) = opts.strider.calling_convention().link_register_vn() {
         opts_builder = opts_builder.set_link_register(lr);
     }
     if let Some(max) = opts.fn_max_size {

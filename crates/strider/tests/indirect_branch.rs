@@ -84,7 +84,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let mut cfg_opts_b = cfg::OptionsBuilder::new()
         .allow_code_before_start_addr()
         .set_read_only_memory(rom_for_cfg);
-    if let Some(lr) = ana.calling_convention().link_register_vn {
+    if let Some(lr) = ana.calling_convention().link_register_vn() {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
@@ -126,8 +126,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     p.run(&mut graph.graph.graph, graph.graph.entry)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
-    let lr_vn = ana.calling_convention().link_register_vn;
-    let sp_vn = Some(ana.calling_convention().stack_ptr_vn);
+    let lr_vn = ana.calling_convention().link_register_vn();
+    let sp_vn = Some(ana.calling_convention().stack_ptr_vn());
     let rom_for_classify: std::sync::Arc<dyn opt::ReadOnlyMemory> = std::sync::Arc::new(
         reader::ElfFileMemReader::from_object(&obj).expect("rom reader (classify)"),
     );

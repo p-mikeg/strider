@@ -344,32 +344,32 @@ fn assert_disjoint(
 fn presets_resolve_correct_register_sets() {
     for c in cases() {
         let (built, _) = build_case(&c);
-        assert_eq!(built.arg_passing_regs.len(), c.arg_count, "{}: args", c.name);
+        assert_eq!(built.arg_passing_regs().len(), c.arg_count, "{}: args", c.name);
         assert_eq!(
-            built.callee_saved_regs.len(),
+            built.callee_saved_regs().len(),
             c.callee_saved_count,
             "{}: callee-saved",
             c.name
         );
         assert_eq!(
-            built.ret_val_regs.len(),
+            built.ret_val_regs().len(),
             c.ret_count,
             "{}: return values",
             c.name
         );
-        assert_all_distinct(&built.arg_passing_regs, c.name);
-        assert_all_distinct(&built.callee_saved_regs, c.name);
-        assert_all_distinct(&built.ret_val_regs, c.name);
+        assert_all_distinct(built.arg_passing_regs(), c.name);
+        assert_all_distinct(built.callee_saved_regs(), c.name);
+        assert_all_distinct(built.ret_val_regs(), c.name);
         assert_disjoint(
-            &built.arg_passing_regs,
-            &built.callee_saved_regs,
+            built.arg_passing_regs(),
+            built.callee_saved_regs(),
             "arg_passing_regs",
             "callee_saved_regs",
             c.name,
         );
         assert_disjoint(
-            &built.ret_val_regs,
-            &built.callee_saved_regs,
+            built.ret_val_regs(),
+            built.callee_saved_regs(),
             "ret_val_regs",
             "callee_saved_regs",
             c.name,
@@ -387,11 +387,11 @@ fn presets_resolved_registers_have_expected_size() {
     for c in cases() {
         let (built, _) = build_case(&c);
         for vn in built
-            .arg_passing_regs
+            .arg_passing_regs()
             .iter()
-            .chain(&built.callee_saved_regs)
-            .chain(&built.ret_val_regs)
-            .chain(std::iter::once(&built.stack_ptr_vn))
+            .chain(built.callee_saved_regs())
+            .chain(built.ret_val_regs())
+            .chain(std::iter::once(&built.stack_ptr_vn()))
         {
             assert_eq!(
                 vn.size, c.reg_size_bytes,
@@ -417,26 +417,26 @@ fn presets_stack_pointer_and_arg_offsets() {
         let sp = regs
             .name_to_vn(c.stack_ptr_name)
             .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_ptr_vn, sp, "{}: stack_ptr_vn", c.name);
+        assert_eq!(built.stack_ptr_vn(), sp, "{}: stack_ptr_vn", c.name);
         for (label, set) in [
-            ("arg_passing_regs", &built.arg_passing_regs),
-            ("callee_saved_regs", &built.callee_saved_regs),
-            ("ret_val_regs", &built.ret_val_regs),
+            ("arg_passing_regs", built.arg_passing_regs()),
+            ("callee_saved_regs", built.callee_saved_regs()),
+            ("ret_val_regs", built.ret_val_regs()),
         ] {
             assert!(
-                !set.contains(&built.stack_ptr_vn),
+                !set.contains(&built.stack_ptr_vn()),
                 "{}: stack pointer must not appear in {label}",
                 c.name,
             );
         }
         assert_eq!(
-            built.stack_arg_offsets,
+            built.stack_arg_offsets(),
             c.stack_arg_offsets.to_vec(),
             "{}: stack_arg_offsets",
             c.name,
         );
         assert_eq!(
-            built.ret_stack_pop, c.ret_stack_pop,
+            built.ret_stack_pop(), c.ret_stack_pop,
             "{}: ret_stack_pop",
             c.name,
         );
@@ -638,7 +638,7 @@ fn link_register_vn_set_for_link_register_presets() {
             )
         });
         assert_eq!(
-            built.link_register_vn,
+            built.link_register_vn(),
             Some(expected_vn),
             "{}: link_register_vn must be the {:?} varnode",
             c.name,
@@ -661,10 +661,10 @@ fn link_register_vn_none_for_stack_push_presets() {
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
-            built.link_register_vn.is_none(),
+            built.link_register_vn().is_none(),
             "{}: link_register_vn must be None on stack-push ISAs, got {:?}",
             c.name,
-            built.link_register_vn,
+            built.link_register_vn(),
         );
     }
 }
@@ -683,11 +683,11 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
     let lr_vn = regs
         .name_to_vn("lr")
         .unwrap_or_else(|| panic!("ARM AAPCS: 'lr' must resolve"));
-    assert_eq!(built.link_register_vn, Some(lr_vn));
+    assert_eq!(built.link_register_vn(), Some(lr_vn));
     assert!(
-        built.callee_saved_regs.contains(&lr_vn),
+        built.callee_saved_regs().contains(&lr_vn),
         "ARM AAPCS: 'lr' must also be present in callee_saved_regs, got {:?}",
-        built.callee_saved_regs,
+        built.callee_saved_regs(),
     );
 }
 
