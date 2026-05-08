@@ -104,6 +104,22 @@ impl Tb {
     pub fn int_of(&mut self, v: u64, ty: NodeOutputType) -> NodeOutputId {
         self.fb.build_int_const(v, ty).unwrap()
     }
+    pub fn u256(&mut self, limbs: [u64; 4]) -> NodeOutputId {
+        self.fb
+            .build_int_const_wide(
+                ir::wide_const::WideConstStorage::U256(limbs),
+                NodeOutputType::U256,
+            )
+            .unwrap()
+    }
+    pub fn u512(&mut self, limbs: [u64; 8]) -> NodeOutputId {
+        self.fb
+            .build_int_const_wide(
+                ir::wide_const::WideConstStorage::U512(limbs),
+                NodeOutputType::U512,
+            )
+            .unwrap()
+    }
     pub fn boolean(&mut self, v: bool) -> NodeOutputId {
         self.fb.build_boolean_const(v)
     }

@@ -154,6 +154,13 @@ impl Graph {
             self.link_input_to_output_list(input_id);
         }
 
+        // 6b. GC the wide-const side-table BEFORE rebuilding the dedup
+        // cache.  The dedup cache keys on `Node` (which carries the
+        // `NodeKind`, including `IntConstWide(WideConstId)`); rewriting
+        // wide-const ids must happen first so the cache is built over
+        // the post-GC payloads.
+        self.gc_wide_consts();
+
         // 7. Rebuild the dedup cache from scratch.
         self.node_to_id.clear();
         let all_node_ids: Vec<NodeId> = self.nodes.keys().collect();
@@ -221,5 +228,64 @@ impl Graph {
         self.call_clobbered_overrides = new_call_clobbered_overrides;
 
         remap
+    }
+
+    /// Rebuilds [`Self::wide_consts`] + [`Self::wide_const_dedup`] over
+    /// only the values referenced by surviving `IntConstWide` nodes.
+    /// Each `IntConstWide(old_id)` in the arena is rewritten in place
+    /// to carry the new id assigned by the rebuilt side-table.
+    ///
+    /// Called from [`Self::retain_reachable`] after the node arena
+    /// remap has settled; safe to call standalone in tests / direct
+    /// mutators that want to drop unreferenced wide values.
+    pub(crate) fn gc_wide_consts(&mut self) {
+        use crate::node::NodeKind;
+        use crate::wide_const::{WideConstId, WideConstStorage};
+
+        // Build the live-id set + collect every IntConstWide node's old id.
+        let mut live_old_ids: Vec<WideConstId> = Vec::new();
+        let mut wide_nodes: Vec<crate::node::NodeId> = Vec::new();
+        for node in self.nodes.keys() {
+            if let NodeKind::IntConstWide(id) = self.nodes[node].kind {
+                wide_nodes.push(node);
+                live_old_ids.push(id);
+            }
+        }
+        if live_old_ids.is_empty() && self.wide_consts.is_empty() {
+            return;
+        }
+
+        // Rebuild the side-table + dedup map over only live values.
+        let mut new_consts: cranelift_entity::PrimaryMap<WideConstId, WideConstStorage> =
+            cranelift_entity::PrimaryMap::new();
+        let mut new_dedup: rustc_hash::FxHashMap<WideConstStorage, WideConstId> =
+            rustc_hash::FxHashMap::default();
+        let mut old_to_new: rustc_hash::FxHashMap<WideConstId, WideConstId> =
+            rustc_hash::FxHashMap::default();
+        for old_id in live_old_ids {
+            if old_to_new.contains_key(&old_id) {
+                continue;
+            }
+            let value = self.wide_consts[old_id].clone();
+            let new_id = if let Some(&existing) = new_dedup.get(&value) {
+                existing
+            } else {
+                let id = new_consts.push(value.clone());
+                new_dedup.insert(value, id);
+                id
+            };
+            old_to_new.insert(old_id, new_id);
+        }
+        self.wide_consts = new_consts;
+        self.wide_const_dedup = new_dedup;
+
+        // Rewrite the surviving IntConstWide nodes' payloads in place.
+        for node in wide_nodes {
+            if let NodeKind::IntConstWide(ref mut id) = self.nodes[node].kind {
+                if let Some(&new_id) = old_to_new.get(id) {
+                    *id = new_id;
+                }
+            }
+        }
     }
 }

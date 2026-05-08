@@ -1656,3 +1656,53 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
     Ok(())
 }
+
+#[test]
+fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
+    use crate::wide_const::WideConstStorage;
+    let mut b = builder_with_region()?;
+    let _live = b.build_int_const_wide(WideConstStorage::U256([1; 4]), NodeOutputType::U256)?;
+    // Build an additional wide const that we'll never wire into the
+    // reachable graph — `compact()` should drop it.
+    let _zombie =
+        b.build_int_const_wide(WideConstStorage::U256([2; 4]), NodeOutputType::U256)?;
+    // Zombie isn't referenced by `_live` and the only Return walk-spine
+    // visits `_live` (we wire it through Return to keep it reachable).
+    let mem_node = b
+        .body()
+        .graph
+        .all_node_ids()
+        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .unwrap();
+    let mem_out = b
+        .body()
+        .graph
+        .node_outputs(mem_node)
+        .into_iter()
+        .next()
+        .unwrap();
+    let entry_ctrl = b
+        .body()
+        .graph
+        .node_outputs(b.body().entry)
+        .into_iter()
+        .next()
+        .unwrap();
+    let _ret = b
+        .body_mut()
+        .graph
+        .create_node(NodeKind::Return, [entry_ctrl, mem_out, _live], []);
+
+    let pre = b.body().graph.wide_consts.len();
+    assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
+
+    let mut bfg = b.build()?;
+    bfg.compact();
+
+    let post = bfg.graph.wide_consts.len();
+    assert_eq!(
+        post, 1,
+        "compact must drop the unreferenced zombie wide const; got {post} entries"
+    );
+    Ok(())
+}

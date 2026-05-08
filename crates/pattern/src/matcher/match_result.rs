@@ -304,6 +304,20 @@ impl Match {
         }
     }
 
+    /// If the node bound to `c` is an [`ir::node::NodeKind::IntConstWide`],
+    /// returns the raw little-endian bytes of its stored value (32 bytes
+    /// for `U256`, 64 for `U512`).  Returns `None` for unbound captures
+    /// or non-`IntConstWide` producers — narrow constants go through
+    /// [`Self::get_uint`] / [`Self::get_int`] instead.
+    #[must_use]
+    pub fn get_wide_bytes(&self, c: Capture, graph: &ir::Graph) -> Option<Vec<u8>> {
+        let node = self.bindings.get_node(c)?;
+        match graph.node_kind(node) {
+            ir::node::NodeKind::IntConstWide(id) => Some(graph.wide_const(*id).to_le_bytes()),
+            _ => None,
+        }
+    }
+
     /// Returns an owned copy of the full [`Bindings`] captured by this match.
     /// Used by the rewrite-rule interpreter (drops the `Matcher` borrow
     /// before mutating the graph) and by tests.
