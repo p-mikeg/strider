@@ -148,24 +148,35 @@ fn run_via_orchestrator(
 
     let rom_arc = rom.map(|r| r.into_arc());
 
-    let strider_borrow = strider_obj.borrow(py);
+    // Snapshot the Strider out of the PyRef so we can release the GIL
+    // across the long-running strider::run call.  Strider is cheap to
+    // clone (three Clone fields), and detaching the borrow lets other
+    // Python threads run during the lift / fixed-point loop.  Callback
+    // readers (PyMemReaderAdapter::read) re-acquire the GIL via
+    // Python::with_gil per-call, so Cb readers stay correct.
+    let strider_owned: strider::Strider = {
+        let borrow = strider_obj.borrow(py);
+        borrow.inner.clone()
+    };
     let per_address_ccs: std::collections::HashMap<u64, target::CallingConvention> =
         per_address_ccs_py
             .into_iter()
             .map(|(addr, py_cc)| (addr, py_cc.inner))
             .collect();
-    let config = strider::RunConfig {
-        strider: &strider_borrow.inner,
-        start_addr: entry,
-        sleigh: orch_sleigh,
-        rom: rom_arc,
-        fn_max_size: function_max_size,
-        allow_code_before_start_addr,
-        compact,
-        per_address_ccs,
-    };
-    let graph = strider::run(config).map_err(into_strider_err)?;
-    drop(strider_borrow);
+    let graph = py.allow_threads(|| {
+        let config = strider::RunConfig {
+            strider: &strider_owned,
+            start_addr: entry,
+            sleigh: orch_sleigh,
+            rom: rom_arc,
+            fn_max_size: function_max_size,
+            allow_code_before_start_addr,
+            compact,
+            per_address_ccs,
+        };
+        strider::run(config)
+    })
+    .map_err(into_strider_err)?;
 
     let py_graph = Py::new(py, PyGraph::new(graph, cfg_obj.clone_ref(py)))?;
 

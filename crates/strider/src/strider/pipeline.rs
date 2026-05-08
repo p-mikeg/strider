@@ -120,6 +120,13 @@ impl Default for AnalyzeOptions<'_> {
 /// Holds the target architecture description and the resolved calling
 /// convention.  Create one `Strider` per architecture/ABI combination and
 /// reuse it to analyse multiple functions.
+///
+/// `Clone` is cheap: every field is itself `Clone`/`Copy`.  The strider-py
+/// `run` path uses this to detach a `Strider` snapshot from a `PyRef` so
+/// it can release the GIL across `strider::run` (otherwise Python threads
+/// would be unable to make progress while a long lift / fixed-point loop
+/// runs).
+#[derive(Clone)]
 pub struct Strider {
     pub(super) calling_convention: crate::BuiltCallingConvention,
     pub(super) arch: crate::SleighArch,
