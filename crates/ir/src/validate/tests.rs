@@ -60,7 +60,7 @@ fn layer_b_input_missing_from_use_list() {
 
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
     let c = graph.create_node(
         NodeKind::IntConst(3),
@@ -69,7 +69,7 @@ fn layer_b_input_missing_from_use_list() {
     );
     let c_out = graph.node_outputs(c).into_iter().next().unwrap();
 
-    let _neg = graph.create_node(
+    let neg = graph.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
         [c_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
@@ -79,6 +79,14 @@ fn layer_b_input_missing_from_use_list() {
     // pointer.  The op's input is still recorded, but the producer no
     // longer admits it as a consumer.
     graph.test_only_clear_first_use(c_out);
+
+    // Layer B is reachability-scoped (matches Layer A and
+    // check_layer_c_phis), so wire `neg` onto the reachable spine via
+    // a Return that consumes Control + Memory + the value output.
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    let neg_out = graph.node_outputs(neg).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, neg_out], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
@@ -97,7 +105,7 @@ fn layer_b_stale_input_in_use_list() {
 
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
     let a = graph.create_node(
         NodeKind::IntConst(1),
@@ -125,6 +133,21 @@ fn layer_b_stale_input_in_use_list() {
     let input_id = graph.node_input_id_at(neg, 0).unwrap();
     graph.test_only_retarget_input(input_id, b_out);
 
+    // Layer B is reachability-scoped; wire `neg` AND `a` onto the
+    // reachable spine.  `a_out` must be reachable so the use-list sweep
+    // visits its (now-stale) head; otherwise the forward check on
+    // `neg`'s input fires first as InputMissingFromUseList instead of
+    // the intended UseListContainsStaleInput.  Threading both through
+    // a 2-value Return keeps both producers in the reachable set.
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    let neg_out = graph.node_outputs(neg).into_iter().next().unwrap();
+    let _ret = graph.create_node(
+        NodeKind::Return,
+        [entry_ctrl, mem_out, neg_out, a_out],
+        [],
+    );
+
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
         errs.0
@@ -144,7 +167,7 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
 
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
 
     let a = graph.create_node(
         NodeKind::IntConst(11),
@@ -161,7 +184,7 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
     let b_out = graph.node_outputs(b).into_iter().next().unwrap();
 
     // Add(a, b) — a at slot 0, b at slot 1.
-    let _add = graph.create_node(
+    let add = graph.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
@@ -170,6 +193,13 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
     // Corrupt only b's use-list head, leaving a's intact.  Only the
     // slot-1 input should be flagged as missing.
     graph.test_only_clear_first_use(b_out);
+
+    // Layer B is reachability-scoped; wire `add` onto the reachable
+    // spine via Return[Ctrl, Memory, add_out].
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    let add_out = graph.node_outputs(add).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, add_out], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     let missing: Vec<_> = errs
@@ -185,6 +215,45 @@ fn layer_b_forward_check_catches_missing_at_non_zero_slot() {
         vec![1],
         "only slot-1 input must be flagged; got: {errs:?}"
     );
+}
+
+#[test]
+fn layer_b_skips_unreachable_zombie_node() {
+    // Pin Layer B's reachability scoping (matches Layer A and
+    // check_layer_c_phis): a corrupted use-list on a node that's
+    // unreachable from the entry must NOT trip Layer B.  Opt passes
+    // (RedundantPhis, DeadBranchElimination) detach unreachable
+    // subgraphs but leave the zombie nodes in the arena; surfacing
+    // their use-list inconsistencies is noise, not real bugs.
+    use crate::node::NodeOutputType;
+    use crate::ops::IntUnaryOp;
+
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+
+    // Detached / unreachable producer + consumer pair.  Corrupt their
+    // use-list link so that, were Layer B graph-wide, it would fire.
+    let c = graph.create_node(
+        NodeKind::IntConst(7),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let c_out = graph.node_outputs(c).into_iter().next().unwrap();
+    let _zombie_consumer = graph.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::BitNot),
+        [c_out],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    graph.test_only_clear_first_use(c_out); // Would fire Layer B graph-wide.
+
+    // Minimal reachable spine — entry + memory + a Return that takes
+    // no values.  Neither `c` nor `_zombie_consumer` is reachable.
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+
+    validate(&graph, entry).expect("validator must skip unreachable use-list inconsistencies");
 }
 
 #[test]

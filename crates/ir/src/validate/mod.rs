@@ -92,7 +92,7 @@ pub fn validate_with_options(
         check_layer_a(graph, node, &mut errs);
     }
 
-    check_layer_b(graph, &mut errs);
+    check_layer_b(graph, &reachable, &mut errs);
 
     check_layer_c_uniqueness(graph, &mut errs);
 
