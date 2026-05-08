@@ -1523,3 +1523,50 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     ));
     Ok(())
 }
+
+#[test]
+fn lift_at_scopes_lift_addr_and_restores_on_exit() -> Result<()> {
+    // FB-3 type-design: pin lift_at's restore-on-exit contract.  After
+    // the closure returns, the lift_addr must be back to whatever it
+    // was before — even if the closure left it set on the way in.
+    let mut b = builder_with_region()?;
+    assert_eq!(b.lift_addr(), None);
+    let inner = b.lift_at(0x100, |b| {
+        assert_eq!(b.lift_addr(), Some(0x100));
+        b.lift_addr()
+    });
+    assert_eq!(inner, Some(0x100));
+    assert_eq!(b.lift_addr(), None, "lift_at must restore prior addr");
+
+    // Nested: outer lift_at(0xA), inner lift_at(0xB), closure must see
+    // both in turn and return to outer.
+    b.set_lift_addr(Some(0x200));
+    let mid = b.lift_at(0xA, |b| {
+        b.lift_at(0xB, |b| b.lift_addr());
+        b.lift_addr()
+    });
+    assert_eq!(mid, Some(0xA));
+    assert_eq!(b.lift_addr(), Some(0x200));
+    Ok(())
+}
+
+#[test]
+fn lift_at_attributes_node_to_inner_addr_only() -> Result<()> {
+    // The closure-form scope-guard's primary observable: a node
+    // created inside the closure picks up the inner addr, and a node
+    // created after the closure picks up whatever was set before.
+    let mut b = builder_with_region()?;
+    b.set_lift_addr(Some(0x10));
+    let outside_pre = b.build_int_const(1u64, NodeOutputType::U64)?;
+    let inside = b.lift_at(0xC0DE, |b| b.build_int_const(2u64, NodeOutputType::U64))?;
+    let outside_post = b.build_int_const(3u64, NodeOutputType::U64)?;
+
+    let pre_node = b.body().graph.get_node_from_output(outside_pre);
+    let in_node = b.body().graph.get_node_from_output(inside);
+    let post_node = b.body().graph.get_node_from_output(outside_post);
+
+    assert_eq!(b.body().graph.asm_fingerprint(pre_node), &[0x10]);
+    assert_eq!(b.body().graph.asm_fingerprint(in_node), &[0xC0DE]);
+    assert_eq!(b.body().graph.asm_fingerprint(post_node), &[0x10]);
+    Ok(())
+}

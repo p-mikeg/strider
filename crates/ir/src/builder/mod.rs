@@ -10,10 +10,13 @@ use crate::region::Region;
 
 mod call;
 mod coerce;
+mod lift_addr;
 mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
+
+pub use lift_addr::LiftAddrGuard;
 
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,6 +399,30 @@ impl FunctionBuilder {
     #[must_use]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
+    }
+
+    /// Run `body` with the lift-addr set to `Some(addr)` for its
+    /// duration, then restore the previous value (typically `None` or
+    /// the address of an enclosing insn).
+    ///
+    /// The previous value is restored on `body`'s normal return —
+    /// both `Ok(_)` and `Err(_)`.  A panic inside `body` leaks `addr`
+    /// into the outer scope (no RAII restore — the borrow checker
+    /// rejects the standard `Drop`-guard form because the closure also
+    /// borrows `self`); strider lifters propagate failure through
+    /// `Result` rather than `panic!`, so this is acceptable in
+    /// practice.  See [`LiftAddrGuard`] for the RAII alternative when
+    /// the caller can give up the entire `&mut FunctionBuilder` borrow
+    /// for the guard's duration.
+    pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let prev = self.lift_addr;
+        self.lift_addr = Some(addr);
+        let out = body(self);
+        self.lift_addr = prev;
+        out
     }
 
     /// Creates a node in the graph with the given kind, inputs, and
