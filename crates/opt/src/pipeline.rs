@@ -97,7 +97,7 @@ pub(crate) fn with_built<R>(
     f: impl FnOnce(&mut ir::BuiltFunctionGraph) -> R,
 ) -> R {
     let stolen = std::mem::take(graph);
-    let mut tmp = ir::BuiltFunctionGraph::from_graph_and_entry(stolen, entry);
+    let mut tmp = ir::BuiltFunctionGraph::from_graph_and_entry_for_rewrite(stolen, entry);
     let r = f(&mut tmp);
     *graph = tmp.graph;
     r

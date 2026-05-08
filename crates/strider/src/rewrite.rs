@@ -128,7 +128,7 @@ impl<'a> GraphRewriter<'a> {
         // `*self.graph = ...` slot.
         for node in candidates {
             let stolen = std::mem::take(&mut *self.graph);
-            let mut tmp = BuiltFunctionGraph::from_graph_and_entry(stolen, self.entry);
+            let mut tmp = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(stolen, self.entry);
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an

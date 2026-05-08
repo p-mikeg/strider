@@ -83,15 +83,25 @@ impl BuiltFunctionGraph {
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
     /// empty `variables` / `call_clobbered` / `ret_val_regs`.
     ///
-    /// Used by `opt::with_built` to bridge `(&mut Graph, NodeId)` callers
-    /// to `&mut BuiltFunctionGraph`-typed helpers (the `pattern` crate's
-    /// rewrite machinery is typed against `BuiltFunctionGraph`). The dummy
-    /// fields are safe because opt impls only read `graph` and `entry`;
-    /// they never touch the calling-convention metadata. Not appropriate
-    /// for downstream consumers that need that metadata - use
-    /// [`crate::FunctionBuilder::build`] for those.
+    /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
+    /// fields.**  Used by `opt::with_built` and `strider::rewrite::
+    /// GraphRewriter` to bridge `(&mut Graph, NodeId)` callers to
+    /// `&mut BuiltFunctionGraph`-typed helpers (the `pattern` crate's
+    /// rewrite machinery is typed against `BuiltFunctionGraph`).
+    ///
+    /// # Contract — caller responsibility
+    ///
+    /// The returned `BuiltFunctionGraph` has **empty** `variables`,
+    /// `call_clobbered`, `ret_val_regs`, and `call_other_clobbered`.
+    /// Callers MUST pass it only to consumers that touch `graph` and
+    /// `entry`; consulting any other field returns a meaningless
+    /// empty value silently.  The `pattern::rewrite_rule` machinery
+    /// and the `opt::Optimizer` trait are vetted to honour this
+    /// contract.  Bespoke callers must verify by inspection.
+    ///
+    /// For real CC metadata use [`crate::FunctionBuilder::build`].
     #[must_use]
-    pub fn from_graph_and_entry(graph: crate::graph::Graph, entry: NodeId) -> Self {
+    pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
         Self {
             graph,
             entry,
@@ -100,6 +110,19 @@ impl BuiltFunctionGraph {
             ret_val_regs: Box::new([]),
             call_other_clobbered: Box::new([]),
         }
+    }
+
+    /// Deprecated alias for [`Self::from_graph_and_entry_for_rewrite`].
+    /// The `_for_rewrite` suffix names the contract — callers expecting
+    /// CC metadata silently get empty fields.  Kept temporarily for
+    /// backward compatibility.
+    #[must_use]
+    #[deprecated(
+        since = "0.1.0",
+        note = "use from_graph_and_entry_for_rewrite — name documents the empty-CC-fields contract"
+    )]
+    pub fn from_graph_and_entry(graph: crate::graph::Graph, entry: NodeId) -> Self {
+        Self::from_graph_and_entry_for_rewrite(graph, entry)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
