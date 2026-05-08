@@ -640,7 +640,16 @@ impl rsleigh::MemReader for PyMemoryMapReader {
 /// `add_region_from_elf` (or explicitly via `set_endianness`); defaults
 /// to little for raw-bytes-only construction.
 impl ReadOnlyMemory for PyMemoryMap {
-    fn read(&self, _space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, space: rsleigh::VnSpace, addr: u64, size: usize) -> Option<u64> {
+        // PyMemoryMap models RAM only — it has no backing for REGISTER /
+        // CONST / UNIQUE / OTHER spaces.  Reject non-RAM reads up front
+        // so a misrouted read (e.g. a Load whose space is REGISTER but
+        // whose address happens to fall inside a loaded RAM region)
+        // doesn't return RAM bytes.  Mirrors `PyReadOnlyMemoryAdapter::read`
+        // which gates on space at the FFI boundary.
+        if space != rsleigh::VnSpace::RAM {
+            return None;
+        }
         if size == 0 || size > 8 {
             return None;
         }

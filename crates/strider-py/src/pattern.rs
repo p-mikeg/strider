@@ -270,9 +270,16 @@ impl PyPartialMatch {
     }
 
     fn clear_graph_ptr(&self) {
-        if let Ok(mut g) = self.graph_ptr.lock() {
-            *g = None;
-        }
+        // On a poisoned mutex we still need to clear the pointer —
+        // leaving a stale `Some(*const _)` in the proxy would let a
+        // delayed Python reference dereference freed memory.  Recover
+        // by taking the inner value via PoisonError; the *correctness*
+        // is identical to the unpoisoned path.
+        let mut g = self
+            .graph_ptr
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *g = None;
     }
 
     /// Borrow the graph pointer for a closure call.  Returns `None` if

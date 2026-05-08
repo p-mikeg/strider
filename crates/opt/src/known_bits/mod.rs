@@ -35,14 +35,21 @@ pub struct Kb {
 }
 
 impl Kb {
-    fn from_const(val: u128, ty: NodeOutputType) -> Self {
-        let masked = ty.get_unsigned_int(val).unwrap_or(0);
-        let type_mask = u64_type_mask(ty).unwrap_or(0);
-        let masked_u64 = u64::try_from(masked).unwrap_or(0);
-        Kb {
+    /// Build the `Kb` for an integer constant.  Returns `None` for
+    /// types this analysis doesn't track (`Bool`, floats, U128, U256):
+    /// the caller treats `None` as "fully unknown" and skips
+    /// propagation, which is the correct sound behaviour for a
+    /// 64-bit-bound bit-tracker.  Previously this collapsed to
+    /// all-ones-zeros (i.e. `ones=0, zeros=0`) silently — same effect
+    /// as "unknown" but indistinguishable from a deliberate zero.
+    fn from_const(val: u128, ty: NodeOutputType) -> Option<Self> {
+        let type_mask = u64_type_mask(ty)?;
+        let masked = ty.get_unsigned_int(val)?;
+        let masked_u64 = u64::try_from(masked).ok()?;
+        Some(Kb {
             ones: masked_u64,
             zeros: type_mask ^ masked_u64,
-        }
+        })
     }
 
     /// Returns `Ok(true)` if merging `other` into `self` changed anything.
@@ -118,7 +125,12 @@ pub fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(v) => Kb::from_const(v, ty),
+        NodeKind::IntConst(v) => match Kb::from_const(v, ty) {
+            Some(kb) => kb,
+            // Untracked type (Bool, float, U128, U256) — defer to default
+            // "fully unknown" via the worklist's missing-entry path.
+            None => return Ok(None),
+        },
 
         NodeKind::IntBinaryOp(op) => {
             let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;

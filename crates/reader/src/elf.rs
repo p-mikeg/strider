@@ -726,8 +726,21 @@ fn find_loadable_section_containing<'data, 'a>(
         if sh_flags & u64::from(object::elf::SHF_ALLOC) == 0 {
             return false;
         }
-        if sec.data().map(|d| d.is_empty()).unwrap_or(true) {
-            return false;
+        // SHT_NOBITS sections (BSS) and sections whose data fails to
+        // parse both yield no usable bytes — treat them identically as
+        // "skip this section for site-coverage", but distinguish the
+        // parse-failure case in the eprintln so a malformed ELF doesn't
+        // hide silently inside autoload search.
+        match sec.data() {
+            Ok(d) if d.is_empty() => return false,
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!(
+                    "strider: ELF section {:?} data parse failed: {e}; skipping for site-coverage",
+                    sec.name().unwrap_or("?"),
+                );
+                return false;
+            }
         }
         let lo = sec.address();
         let hi = lo.saturating_add(sec.size());
