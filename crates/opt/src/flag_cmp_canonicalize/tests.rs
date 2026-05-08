@@ -212,6 +212,30 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
 }
 
 #[test]
+fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
+    // C2 regression — pin Rule 2 (HI) shared-capture against the
+    // production pipeline order.  `default_pipeline()` runs `ConstantFold`
+    // before `FlagCmpCanonicalize`, so this test runs them in the same
+    // order and asserts the rewrite still fires.
+    //
+    // The shared-capture concern: Rule 2's LHS reads `var(a)` / `var(b)`
+    // in two subtrees (`IntLess(a, b)` and `Add(a, Neg(b))`).  Both
+    // bindings must agree across subtrees.  IR node dedup and
+    // ConstantFold's algebraic-only rewrites preserve that agreement —
+    // this test pins the contract.
+    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
+        let neg_zr = fb.build_boolean_unary_operation(zr, ir::BoolUnaryOp::Neg)?;
+        fb.build_boolean_operation(cy, neg_zr, ir::BoolBinaryOp::And)
+    })?;
+
+    crate::ConstantFold.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    assert!(r.changed(), "HI rewrite must survive a prior ConstantFold pass");
+    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    Ok(())
+}
+
+#[test]
 fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     // AArch64 `b.ls` cond is `BoolOr(BoolNeg(CY), ZR)`.  After CY's
     // canonical form (`BoolNeg(IntLess(a, b))`) cancels the BoolNeg via
