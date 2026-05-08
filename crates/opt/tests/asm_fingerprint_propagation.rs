@@ -7,6 +7,8 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::{BTreeSet, HashMap};
+
 use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::test_utils::make_empty_fn;
 use ir::IntBinaryOp;
@@ -156,4 +158,57 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         fp.contains(&0x510),
         "outer-And's 0x510 must survive in the surviving value's fingerprint: {fp:?}"
     );
+}
+
+/// O2 — Asm-fingerprint shrink-prevention across the full default pipeline.
+///
+/// Snapshots the fingerprint set of every reachable node *before* running
+/// `default_pipeline`, then re-checks every still-reachable node *after* the
+/// pipeline runs and asserts each retained `NodeId`'s post-set is a superset
+/// of its pre-set (the no-shrink contract).  Nodes that the pipeline detaches
+/// (passes such as `RedundantPhis` / `DeadBranchElimination` may leave them
+/// as zombies in the arena) are excluded from the post-walk by virtue of
+/// using `preorder()` reachability — which is exactly the contract the
+/// fingerprint design promises.
+#[test]
+fn default_pipeline_never_shrinks_asm_fingerprints() {
+    // `IntConst(3)@0x100 + IntConst(4)@0x104 → ret`.  The pipeline folds
+    // this to `IntConst(7)`, exercising the constant-fold path's
+    // fingerprint preservation; the pre-set on the original Add node is
+    // not reachable post-fold and is therefore correctly excluded by
+    // the reachability filter.
+    let mut fg = make_empty_fn(|b| {
+        b.set_lift_addr(Some(0x100));
+        let c3 = b.build_int_const(3u64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x104));
+        let c4 = b.build_int_const(4u64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x108));
+        let add = b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, NodeOutputType::U64)?;
+        b.set_lift_addr(None);
+        Ok(add)
+    })
+    .unwrap();
+
+    // Snapshot every reachable node's fingerprint set (as a BTreeSet).
+    let pre: HashMap<NodeId, BTreeSet<u64>> = fg
+        .preorder()
+        .map(|n| (n, fg.graph.asm_fingerprint(n).iter().copied().collect()))
+        .collect();
+
+    opt::default_pipeline()
+        .run(&mut fg.graph, fg.entry)
+        .expect("default_pipeline runs cleanly on the synthetic graph");
+
+    // For every node still reachable after the pipeline, its post-set must
+    // contain every address from its pre-set — the no-shrink invariant.
+    for n in fg.preorder() {
+        if let Some(pre_set) = pre.get(&n) {
+            let post_set: BTreeSet<u64> =
+                fg.graph.asm_fingerprint(n).iter().copied().collect();
+            assert!(
+                post_set.is_superset(pre_set),
+                "node {n:?} fingerprint shrank: pre={pre_set:?} post={post_set:?}",
+            );
+        }
+    }
 }
