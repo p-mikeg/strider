@@ -542,6 +542,41 @@ fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
 }
 
 #[test]
+fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
+    // C2 (strider): pin Graph::memory_output_of as the named accessor
+    // for what handle_call_other previously read as `node_outputs[1]`.
+    let mut b = builder_with_region()?;
+    let (node, _, _) = b.build_call_other_modeled(
+        4,
+        "cpuid",
+        &[],
+        Some(NodeOutputType::U32),
+        &[],
+        &[],
+        &[],
+    )?;
+    let mem_out = b.graph().memory_output_of(node)?;
+    assert_eq!(b.graph().output_kind(mem_out), NodeOutputKind::Memory);
+    Ok(())
+}
+
+#[test]
+fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let c = b.build_int_const(7u64, NodeOutputType::U32)?;
+    let int_node = b.graph().get_node_from_output(c);
+    let err = b
+        .graph()
+        .memory_output_of(int_node)
+        .expect_err("IntConst has no Memory output");
+    assert!(
+        err.to_string().contains("no Memory output"),
+        "got: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;

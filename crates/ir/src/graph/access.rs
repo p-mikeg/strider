@@ -101,6 +101,38 @@ impl Graph {
         self.outputs[output_id].source_id
     }
 
+    /// Returns the single [`NodeOutputId`] of `node_id` whose kind is
+    /// [`NodeOutputKind::Memory`].
+    ///
+    /// Replaces the magic-index pattern `node_outputs(node)[1]` at sites
+    /// that pull the memory token out of a `CallOther` (modeled) or
+    /// `Load` node.  Failing kind-aware lookup over a brittle positional
+    /// access also catches downstream signature drift — if a future
+    /// `node_signature` change reorders outputs, this returns
+    /// `MissingMemoryOutput` instead of silently returning the
+    /// (now-wrong) Control or Value slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `node_id` has no `Memory` output, or has
+    /// more than one (no current node kind does, but the explicit check
+    /// keeps the contract auditable).
+    #[inline]
+    pub fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<NodeOutputId> {
+        let mut found: Option<NodeOutputId> = None;
+        for out in self.node_outputs(node_id) {
+            if matches!(self.output_kind(out), NodeOutputKind::Memory) {
+                if found.is_some() {
+                    return Err(anyhow!(
+                        "node {node_id:?} has more than one Memory output"
+                    ));
+                }
+                found = Some(out);
+            }
+        }
+        found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
+    }
+
     /// Returns the [`NodeKind`] of the node that produces `output_id`.
     ///
     /// Shorthand for `node_kind(get_node_from_output(output_id))` — the
