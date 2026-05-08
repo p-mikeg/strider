@@ -136,8 +136,8 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 /// multi-pcode-op instruction (e.g. `lock cmpxchg` with intra-insn
 /// CONST branches), `decode_branch_target`'s CONST arm produced a
 /// `PcodeInsnAddr { machine_addr: <OOB>, insn_index: <nonzero> }`,
-/// which `is_branch_tail_call` rejected with
-/// "invalid tail call at opcode ...".
+/// which the `Branch` / `CondBranch` arms' inlined `insn_index == 0`
+/// validation rejected with "invalid tail call at opcode ...".
 ///
 /// Fix: at the top of every `RegionBuilder::build()` iteration, if the
 /// (already-advanced) `cur_addr` is past `start + fn_max_size`, finish

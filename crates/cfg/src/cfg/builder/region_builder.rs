@@ -212,6 +212,12 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
     /// method is the cfg-builder convenience wrapper that pulls
     /// `start_addr` / `fn_max_size` / `allow_code_before_start_addr` from
     /// the builder's options.
+    ///
+    /// Callers that need to enforce the well-formedness rule "a tail call
+    /// may only target the first pcode instruction of a machine
+    /// instruction" should inline that `insn_index == 0` validation
+    /// themselves at the use site (see the `Branch` and `CondBranch` arms
+    /// of [`Self::process_new_insn`]).
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
@@ -219,27 +225,6 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
             self.builder.options.fn_max_size,
             self.builder.options.allow_code_before_start_addr,
         )
-    }
-
-    /// Determines whether `branch_target_addr` is a tail call, validating the
-    /// pcode insn index.
-    ///
-    /// A well-formed tail call must target the *first* pcode instruction of a
-    /// machine instruction (`insn_index == 0`).  A branch whose address bounds
-    /// indicate a tail call but whose `insn_index != 0` is malformed and
-    /// returns an error.
-    pub(super) fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
-        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-
-        if is_tail_call {
-            // Tail calls may only jump to the start of a machine insn. They
-            // cannot target a specific pcode op inside a machine insn.
-            if branch_target_addr.insn_index != 0 {
-                bail!("invalid tail call at opcode {branch_target_addr:?}");
-            }
-        }
-
-        Ok(is_tail_call)
     }
 
     /// Processes `insn` as a fresh instruction (not already in any region).
@@ -267,7 +252,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                     .first()
                     .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
                 let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-                let is_tail_call = self.is_branch_tail_call(branch_target_addr)?;
+                let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
+                if is_tail_call && branch_target_addr.insn_index != 0 {
+                    bail!("invalid tail call at opcode {branch_target_addr:?}");
+                }
                 // clang at -O0 (used for the aarch64be / ppc32le
                 // fixtures, where no Debian gcc cross exists) emits
                 // explicit unconditional `b <next-instr>` between
@@ -325,7 +313,10 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 // bytes happen to be zero-pcode-op insns (e.g. NOP padding)
                 // the inner lift loop never appends to `self.insns`, so the
                 // upper-bound truncation in `build()` never fires.
-                let true_oob = self.is_branch_tail_call(target_addr)?;
+                let true_oob = self.is_branch_tail_call_nocheck(target_addr);
+                if true_oob && target_addr.insn_index != 0 {
+                    bail!("invalid tail call at opcode {target_addr:?}");
+                }
                 let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
                 match (true_oob, false_oob) {
@@ -772,12 +763,6 @@ pub mod test_api {
         #[must_use]
         pub fn is_branch_tail_call_nocheck(&self, target: PcodeInsnAddr) -> bool {
             self.inner.is_branch_tail_call_nocheck(target)
-        }
-
-        /// # Errors
-        /// Propagates errors from the underlying tail-call check.
-        pub fn is_branch_tail_call(&self, target: PcodeInsnAddr) -> Result<bool> {
-            self.inner.is_branch_tail_call(target)
         }
 
         /// # Errors

@@ -1,7 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! Tests for `RegionBuilder::is_branch_tail_call_nocheck` and
-//! `RegionBuilder::is_branch_tail_call`.
+//! Tests for `RegionBuilder::is_branch_tail_call_nocheck`.
 
 mod common;
 use common::{addr, make_builder, make_builder_opts, make_region_builder};
@@ -69,28 +68,6 @@ fn nocheck_at_fn_max_size_boundary() {
     // Contract: target at exactly start + max_size is a tail call (inclusive boundary).
     assert!(rb.is_branch_tail_call_nocheck(addr(0x1100, 0)));
     assert!(!rb.is_branch_tail_call_nocheck(addr(0x10ff, 0)));
-}
-
-#[test]
-fn check_valid_insn_index_zero_is_tail_call() {
-    let mut b = make_builder(0x1000);
-    let rb = make_region_builder(&mut b, addr(0x1000, 0));
-    assert!(matches!(rb.is_branch_tail_call(addr(0x0800, 0)), Ok(true)));
-}
-
-#[test]
-fn check_invalid_insn_index_nonzero_returns_error() {
-    let mut b = make_builder(0x1000);
-    let rb = make_region_builder(&mut b, addr(0x1000, 0));
-    let err = rb.is_branch_tail_call(addr(0x0800, 3)).unwrap_err();
-    assert!(err.to_string().contains("invalid tail call"), "got: {err}");
-}
-
-#[test]
-fn check_inside_function_any_insn_index_is_not_tail_call() {
-    let mut b = make_builder(0x1000);
-    let rb = make_region_builder(&mut b, addr(0x1000, 0));
-    assert!(matches!(rb.is_branch_tail_call(addr(0x1200, 7)), Ok(false)));
 }
 
 /// Pinned contract: when `start_addr + fn_max_size` would overflow u64,

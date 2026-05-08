@@ -555,6 +555,37 @@ fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
 }
 
 #[test]
+fn create_node_attributed_unions_contributor_fingerprints() -> Result<()> {
+    // Pin the contract: create_node_attributed unions every contributor's
+    // asm-fingerprint into the resulting node, so opt-pass synthesised
+    // nodes carry a superset of their contributors' attribution.
+    let mut b = builder_with_region()?;
+    // Seed two IntConsts under different lift_addrs.
+    b.set_lift_addr(Some(0x100));
+    let l = b.build_int_const(5u64, NodeOutputType::U8)?;
+    let l_node = b.body().graph.get_node_from_output(l);
+    b.set_lift_addr(Some(0x104));
+    let r = b.build_int_const(7u64, NodeOutputType::U8)?;
+    let r_node = b.body().graph.get_node_from_output(r);
+    // Synthesise a fresh Or node attributing both.  Use the IR graph's
+    // create_node_attributed directly (rather than going through the
+    // builder) to test the helper in isolation.
+    b.set_lift_addr(None);
+    let or_node = b.body_mut().graph.create_node_attributed(
+        NodeKind::IntBinaryOp(IntBinaryOp::Or),
+        [l, r],
+        [crate::node::NodeOutputKind::OutputType(NodeOutputType::U8)],
+        &[l_node, r_node],
+    );
+    let fp = b.body().graph.asm_fingerprint(or_node);
+    assert!(
+        fp.contains(&0x100) && fp.contains(&0x104),
+        "create_node_attributed must union both contributors' fingerprints; got {fp:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
     // Pin the asm-fingerprint contract: when create_node hits the
     // dedup cache (returning a previously-built equivalent NodeId),

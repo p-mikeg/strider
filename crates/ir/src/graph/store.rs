@@ -231,6 +231,34 @@ impl Graph {
         node_id
     }
 
+    /// Same as [`Self::create_node`] plus unions the asm-fingerprint of
+    /// every node in `contributors` into the resulting node.  Use this
+    /// in opt-pass rewrites that synthesise a fresh node from existing
+    /// ones — the contract is that the new node's fingerprint must be
+    /// a superset of every contributor's, so passes that emit nodes
+    /// without this absorption silently drop attribution.
+    ///
+    /// Cache-hit semantics match `create_node`: when the new node
+    /// dedups to an existing `NodeId`, contributors are still unioned
+    /// into the cached node's fingerprint (the
+    /// [`Self::extend_asm_fingerprint_from`] call below is unconditional).
+    ///
+    /// Idempotent on `contributors == []` (equivalent to plain
+    /// `create_node`).
+    pub fn create_node_attributed(
+        &mut self,
+        kind: NodeKind,
+        inputs: impl IntoIterator<Item = NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        contributors: &[NodeId],
+    ) -> NodeId {
+        let node_id = self.create_node(kind, inputs, output_kinds);
+        for &src in contributors {
+            self.extend_asm_fingerprint_from(node_id, src);
+        }
+        node_id
+    }
+
     /// Removes `node_id` from the dedup cache (using its *current* inputs and
     /// output kinds as the key) when its kind is cacheable. No-op for
     /// non-cacheable kinds, which were never inserted in the first place.
