@@ -362,39 +362,23 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         // edge entirely, but it is essentially unobserved
                         // in real binaries.
                         let in_range = if true_oob { next_insn_addr } else { target_addr };
-                        if self.insns.len() > 1 {
-                            self.insns.pop();
-                            let region =
-                                self.finish_current_region(RegionTerminator::Branch)?;
-                            self.builder
-                                .work_queue
-                                .push((Some((region, RegionEdgeKind::Branch)), in_range));
-                        } else {
-                            // Single-instruction region: cannot pop the
-                            // CondBranch (would leave an empty region,
-                            // violating add_region's non-empty
-                            // invariant).  Fall back to TailCall to the
-                            // in-range target.  This drops the OOB
-                            // edge entirely AND treats the in-range
-                            // address as a tail call rather than a
-                            // local branch — incorrect for control-flow
-                            // analysis if the in-range successor is
-                            // genuinely intra-function.  Log so the
-                            // case is at least visible (it was silent
-                            // before).  See `reviews/round7-correctness.md`
-                            // finding C3 for the proper fix sketch.
-                            eprintln!(
-                                "strider/cfg: single-insn CondBranch with one OOB successor — \
-                                 emitting fallback TailCall to in-range {:#x}; \
-                                 in-range edge is lost from the CFG. \
-                                 (This degenerate case loses analysis fidelity; \
-                                 see reviews/round7-correctness.md C3.)",
-                                in_range.machine_addr.addr,
-                            );
-                            self.finish_current_region(RegionTerminator::TailCall {
-                                target: in_range.machine_addr.addr,
-                            })?;
-                        }
+                        // Pop the trailing CondBranch from `self.insns`
+                        // so the IR's per-region loop does not re-route
+                        // it through `handle_cond_branch` (which would
+                        // fail looking up the missing OOB edge).  Even
+                        // when this leaves the region empty
+                        // (single-instruction case), `add_region` now
+                        // accepts empty regions terminated with Branch.
+                        // The IR-layer per-region driver iterates
+                        // `region.insns` (a no-op for empty insns) and
+                        // handles the Branch terminator + outgoing edge
+                        // separately, so the in-range successor is
+                        // preserved as a regular intra-function branch.
+                        self.insns.pop();
+                        let region = self.finish_current_region(RegionTerminator::Branch)?;
+                        self.builder
+                            .work_queue
+                            .push((Some((region, RegionEdgeKind::Branch)), in_range));
                     }
                 }
                 Ok(ProcessInsnRes::FinishedProcessing)

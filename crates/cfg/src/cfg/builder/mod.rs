@@ -170,10 +170,22 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// lookup map.  Returns the assigned [`NodeIndex`].
     ///
     /// # Errors
-    /// Returns an error when `region.insns` is empty.
+    /// Returns an error when `region.insns` is empty AND `region.terminator`
+    /// is not [`super::types::RegionTerminator::Branch`].  Empty regions
+    /// terminating with `Branch` are explicitly allowed: they arise from
+    /// the single-instruction CondBranch-with-OOB-successor case, where
+    /// popping the trailing CondBranch leaves no body but the in-range
+    /// edge must still be preserved.  The IR-layer per-region driver
+    /// iterates `region.insns` (a no-op for empty insns) and handles the
+    /// terminator separately.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
-        if region.insns.is_empty() {
-            bail!("region at {:?} has no instructions", region.start_addr);
+        if region.insns.is_empty()
+            && !matches!(region.terminator, super::types::RegionTerminator::Branch)
+        {
+            bail!(
+                "region at {:?} has no instructions and terminator is {:?} (only Branch is permitted for empty regions)",
+                region.start_addr, region.terminator,
+            );
         }
 
         let start_addr = region.start_addr;
