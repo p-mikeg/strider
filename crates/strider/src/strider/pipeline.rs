@@ -380,7 +380,7 @@ impl Strider {
             ir_strider.builder.set_lift_addr(term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
-                    Some(SpecialTerm::Unresolved(target_vn, addr)) => {
+                    Some(SpecialTerm::PendingIndirect { target_vn, addr }) => {
                         ir_strider.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets, target_value)) => {
@@ -488,10 +488,13 @@ impl Strider {
 /// to skip the terminator p-code insn so the post-loop dispatch can
 /// lift it via a dedicated handler.
 enum SpecialTerm {
-    /// Tier-2 placeholder: lifts to `Return(target_value)` and pushes
-    /// the (addr, target_value) pair onto `unresolved_branches`.  Skip
-    /// the trailing `BranchIndirect`.
-    Unresolved(rsleigh::Vn, cfg::PcodeInsnAddr),
+    /// IR-level indirect-branch resolver placeholder: lifts to
+    /// `Return(target_value)` and pushes the (addr, target_value) pair
+    /// onto `unresolved_branches`.  Skip the trailing `BranchIndirect`.
+    PendingIndirect {
+        target_vn: rsleigh::Vn,
+        addr: cfg::PcodeInsnAddr,
+    },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
     Switch(rsleigh::Vn, Vec<u64>, Option<ir::Value>),
@@ -507,7 +510,10 @@ impl SpecialTerm {
     fn from_terminator(t: &cfg::RegionTerminator) -> Option<Self> {
         match t {
             cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
-                Some(SpecialTerm::Unresolved(*target_vn, *addr))
+                Some(SpecialTerm::PendingIndirect {
+                    target_vn: *target_vn,
+                    addr: *addr,
+                })
             }
             cfg::RegionTerminator::Switch {
                 target_vn,
@@ -525,10 +531,11 @@ impl SpecialTerm {
 
     /// Returns true when the per-region per-insn loop should skip
     /// `opcode` because the post-loop dispatcher will lift it via a
-    /// dedicated handler.  `Unresolved`/`Switch` skip `BranchIndirect`;
-    /// `TailCall` skips both `Branch` (the standard direct-tail-call
-    /// case) AND `CondBranch` (the `cfg::RegionBuilder` collapse path
-    /// for a conditional jump whose successors all leave the function).
+    /// dedicated handler.  `PendingIndirect`/`Switch` skip
+    /// `BranchIndirect`; `TailCall` skips both `Branch` (the standard
+    /// direct-tail-call case) AND `CondBranch` (the
+    /// `cfg::RegionBuilder` collapse path for a conditional jump whose
+    /// successors all leave the function).
     ///
     /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
     /// finishes a region the moment ANY control-flow opcode (`Branch`,
@@ -539,7 +546,7 @@ impl SpecialTerm {
     /// terminator, never an inner pcode op.
     fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
         match self {
-            SpecialTerm::Unresolved(..) | SpecialTerm::Switch(..) => {
+            SpecialTerm::PendingIndirect { .. } | SpecialTerm::Switch(..) => {
                 opcode == rsleigh::Opcode::BranchIndirect
             }
             SpecialTerm::TailCall(..) => matches!(

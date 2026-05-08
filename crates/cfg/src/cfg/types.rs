@@ -100,9 +100,7 @@ pub enum RegionTerminator {
     /// [`RegionEdgeKind::IfCaseTrue`] / [`RegionEdgeKind::IfCaseFalse`]
     /// edges.
     CondBranch,
-    /// `Return` opcode (or, in the legacy mapping retained until the
-    /// indirect-branch resolver lands, a `BranchIndirect`).  No
-    /// outgoing edge.
+    /// `Return` opcode.  No outgoing edge.
     Return,
     /// Region terminates with no successor.  Emitted by
     /// `cfg::region_builder::process_new_insn` when a CallOther's

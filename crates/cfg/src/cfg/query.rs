@@ -28,16 +28,19 @@ pub fn is_addr_tail_call(
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
 ) -> bool {
+    // Compute lower / upper bounds once, then test membership in the
+    // half-open `[lower, upper)` window.  `lower == 0` disables the
+    // lower-bound check (caller permits code before start_addr in the
+    // unbounded case); `upper = None` disables the upper-bound check
+    // (caller didn't supply a function size).
     let lower_bound_strict = fn_max_size.is_some() || !allow_code_before_start_addr;
-    if target < start_addr && lower_bound_strict {
+    let lower = if lower_bound_strict { start_addr } else { 0 };
+    if target < lower {
         return true;
     }
-    if let Some(fn_max_size) = fn_max_size {
-        // Half-open range: targets at or above `end_exclusive` are tail
-        // calls.  `saturating_add` caps at `u64::MAX` so the boundary
-        // case `target == u64::MAX` is still classified correctly.
-        let end_exclusive = start_addr.saturating_add(fn_max_size);
-        if end_exclusive <= target {
+    if let Some(sz) = fn_max_size {
+        let upper = start_addr.saturating_add(sz);
+        if target >= upper {
             return true;
         }
     }
