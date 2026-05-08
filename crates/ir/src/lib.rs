@@ -53,6 +53,8 @@ mod region;
 pub mod test_utils;
 pub mod validate;
 pub mod walk;
+pub mod wide_const;
+pub use wide_const::{WideConstId, WideConstStorage};
 
 pub use crate::error::Result;
 pub use builder::{FunctionBuilder, LiftAddrGuard, VarId};

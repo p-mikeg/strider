@@ -532,6 +532,7 @@ dependencies = [
  "itertools 0.13.0",
  "proptest",
  "rsleigh",
+ "rustc-hash",
  "smallvec",
  "target",
  "thiserror",

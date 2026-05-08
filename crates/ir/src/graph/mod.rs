@@ -114,6 +114,24 @@ pub struct Graph {
     /// per-NodeId and benefits from the `SecondaryMap`'s O(1) array
     /// lookup with no hashing.
     pub(crate) call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>>,
+    /// Wide-integer constant values (U256, U512) referenced by
+    /// [`crate::node::NodeKind::IntConstWide`].
+    ///
+    /// Wide values don't fit in `IntConst`'s `u128` payload; the IR
+    /// stores them off-side here and the node carries a
+    /// [`crate::wide_const::WideConstId`] index instead.  Interning
+    /// (via [`Self::intern_wide_const`]) dedups by value so two
+    /// `IntConstWide(id)` nodes referencing the same id are
+    /// structurally equal under [`Self::create_node`]'s dedup cache.
+    pub(crate) wide_consts:
+        PrimaryMap<crate::wide_const::WideConstId, crate::wide_const::WideConstStorage>,
+    /// Reverse-dedup index for [`Self::wide_consts`]: value → id.
+    /// Owned by [`Self::intern_wide_const`]; never read directly by
+    /// other code.
+    pub(crate) wide_const_dedup: rustc_hash::FxHashMap<
+        crate::wide_const::WideConstStorage,
+        crate::wide_const::WideConstId,
+    >,
 }
 
 impl Default for Graph {
@@ -137,7 +155,37 @@ impl Graph {
             call_other_names: SecondaryMap::new(),
             asm_fingerprints: SecondaryMap::new(),
             call_clobbered_overrides: SecondaryMap::new(),
+            wide_consts: PrimaryMap::new(),
+            wide_const_dedup: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Interns `value` and returns its [`crate::wide_const::WideConstId`].
+    /// Subsequent calls with an equal value return the same id — the
+    /// dedup invariant the [`Self::create_node`] cache relies on so
+    /// two `IntConstWide(id)` nodes referencing the same logical value
+    /// share a single `NodeId`.
+    pub fn intern_wide_const(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+    ) -> crate::wide_const::WideConstId {
+        if let Some(&id) = self.wide_const_dedup.get(&value) {
+            return id;
+        }
+        let id = self.wide_consts.push(value.clone());
+        self.wide_const_dedup.insert(value, id);
+        id
+    }
+
+    /// Looks up a wide-const value by id.  The id must have been
+    /// produced by [`Self::intern_wide_const`] on this graph; ids
+    /// from other graphs are not portable.
+    #[must_use]
+    pub fn wide_const(
+        &self,
+        id: crate::wide_const::WideConstId,
+    ) -> &crate::wide_const::WideConstStorage {
+        &self.wide_consts[id]
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,
