@@ -1,4 +1,3 @@
-use rustc_hash::FxHashSet;
 
 use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
@@ -199,8 +198,8 @@ fn dead_uses_all_zero_input(
 fn collect_dead_subgraph(
     fg: &BuiltFunctionGraph,
     dead_uses: &[(NodeId, u32)],
-) -> FxHashSet<NodeId> {
-    let mut subgraph = FxHashSet::default();
+) -> entity_utils::DenseEntitySet<NodeId> {
+    let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     let mut worklist: Vec<NodeId> = dead_uses
         .iter()
         .filter(|(n, _)| !matches!(*fg.node_kind(*n), NodeKind::ControlState))
@@ -231,16 +230,16 @@ fn collect_dead_subgraph(
 /// and the still-attached If would fail Layer A's input-count check.
 fn dead_subgraph_has_live_data_consumer(
     fg: &BuiltFunctionGraph,
-    subgraph: &FxHashSet<NodeId>,
+    subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
-    subgraph.iter().any(|&node| {
+    subgraph.iter().any(|node| {
         fg.node_outputs(node).into_iter().any(|out| {
             if fg.output_kind(out).is_control() {
                 return false;
             }
             fg.graph
                 .output_uses(out)
-                .any(|(consumer, _)| !subgraph.contains(&consumer))
+                .any(|(consumer, _)| !subgraph.contains(consumer))
         })
     })
 }

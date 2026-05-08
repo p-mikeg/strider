@@ -1,6 +1,5 @@
-use rustc_hash::FxHashSet;
-
 use anyhow::bail;
+use entity_utils::DenseEntitySet;
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -68,8 +67,8 @@ fn remove_phis(
             // `reachable_ctrl` entry is still recorded so the
             // single-ctrl arm above doesn't fire for what is logically a
             // multi-edge join.
-            let mut reachable_ctrl: FxHashSet<NodeOutputId> = FxHashSet::default();
-            let mut live_values: FxHashSet<NodeOutputId> = FxHashSet::default();
+            let mut reachable_ctrl: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+            let mut live_values: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
             for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
                 if reachable.contains(function.graph.output_definition(ctrl_in).0) {
                     reachable_ctrl.insert(ctrl_in);
@@ -87,7 +86,7 @@ fn remove_phis(
             let mut ctrl_iter = reachable_ctrl.iter();
             let mut value_iter = live_values.iter();
             let simplified = match (ctrl_iter.next(), ctrl_iter.next()) {
-                (Some(&unique_ctrl), None) => {
+                (Some(unique_ctrl), None) => {
                     // Find position j such that ctrl_inputs[j] == unique_ctrl, then
                     // take inputs[j + 1] (skipping the phi_token at inputs[0]).
                     let ctrl_inputs2 = function.graph.node_inputs(control_state_id);
@@ -110,7 +109,7 @@ fn remove_phis(
                     // value: the phi is a no-op.  Replace uses with that single
                     // value.  (The ControlState still has multiple real
                     // predecessors, so we don't touch it here.)
-                    (Some(&value), None) => {
+                    (Some(value), None) => {
                         let [output] = function.graph.node_outputs_exact::<1>(node_id)?;
                         let value_node = function.graph.get_node_from_output(value);
                         function.graph.extend_asm_fingerprint_from(value_node, node_id);
@@ -129,14 +128,14 @@ fn remove_phis(
         }
         NodeKind::ControlState => {
             let node_inputs = function.graph.node_inputs(node_id);
-            let reachable_inputs: FxHashSet<NodeOutputId> = node_inputs
+            let reachable_inputs: DenseEntitySet<NodeOutputId> = node_inputs
                 .into_iter()
                 .filter(|inp| reachable.contains(function.graph.output_definition(*inp).0))
                 .collect();
 
             let mut iter = reachable_inputs.iter();
             let simplified = match (iter.next(), iter.next()) {
-                (Some(&input), None) => {
+                (Some(input), None) => {
                     let [output, _phi_token] =
                         function.graph.node_outputs_exact::<2>(node_id)?;
                     // ControlState is exempt-empty by default; absorb its

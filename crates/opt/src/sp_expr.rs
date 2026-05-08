@@ -15,7 +15,7 @@
 //! `stack_arg_offsets[0] == 0`, a fabricated `offset = 0` would be silently
 //! misclassified as the first stack argument).
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 use ir::{Graph, IntBinaryOp};
@@ -169,7 +169,7 @@ pub(crate) fn step_through_store(
     if inputs.len() < 3 {
         return AliasStep::MayAlias;
     }
-    let mut sp_visiting = FxHashSet::default();
+    let mut sp_visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     match decompose_sp(graph, inputs[1], sp_vn, sp_memo, &mut sp_visiting) {
         // Non-SP-rooted address provably cannot alias the stack-arg byte
         // range — walk through.
@@ -249,7 +249,7 @@ pub fn decompose_sp(
     out: NodeOutputId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut FxHashSet<NodeId>,
+    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
 ) -> Option<SpExpr> {
     if let Some(cached) = memo.get(&out) {
         return cached.clone();
@@ -260,7 +260,7 @@ pub fn decompose_sp(
         return None;
     }
     let result = decompose_sp_inner(g, out, node, sp_vn, memo, visiting);
-    visiting.remove(&node);
+    visiting.remove(node);
     // Cache `Some(_)` results unconditionally — the decomposition is a
     // deterministic function of `out`. Don't cache `None`: it could mean
     // "genuinely not SP-rooted" (safe to recompute) OR "cycle-truncated on
@@ -280,7 +280,7 @@ fn decompose_sp_inner(
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut FxHashSet<NodeId>,
+    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
 ) -> Option<SpExpr> {
     match *g.node_kind(node) {
         NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
@@ -350,7 +350,7 @@ fn decompose_sp_phi(
     node: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visiting: &mut FxHashSet<NodeId>,
+    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
 ) -> Option<SpExpr> {
     let inputs = g.node_inputs(node);
     // A VarPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
@@ -506,7 +506,7 @@ mod tests {
         // sp_val is a VarPhi-of-InitialVar; the phi has 1 predecessor →
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, sp_val, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
@@ -525,7 +525,7 @@ mod tests {
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
@@ -545,7 +545,7 @@ mod tests {
         b.build_return(Some(addr), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, addr, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
         Ok(())
@@ -567,13 +567,13 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let r1 = {
-            let mut v = FxHashSet::default();
+            let mut v: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
             decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
         };
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
         let r2 = {
-            let mut v = FxHashSet::default();
+            let mut v: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
             decompose_sp(&fg.graph, addr, sp, &mut memo, &mut v)
         };
         assert!(matches!((&r1, &r2),
@@ -594,7 +594,7 @@ mod tests {
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         assert!(decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting).is_none());
         Ok(())
     }
@@ -624,7 +624,7 @@ mod tests {
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, s3, sp, &mut memo, &mut visiting);
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
@@ -653,7 +653,7 @@ mod tests {
         b.build_return(Some(c), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, c, sp, &mut memo, &mut visiting);
         assert!(r.is_none());
         assert!(
@@ -710,7 +710,7 @@ mod tests {
         let fg = b.build()?;
 
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, sp_at_c, sp, &mut memo, &mut visiting);
         assert!(
             r.is_none(),
@@ -742,7 +742,7 @@ mod tests {
         b.build_return(Some(aligned), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let r = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
@@ -785,7 +785,7 @@ mod tests {
         b.build_return(Some(post_sub), &[])?;
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let mut visiting = FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
         let aligned_dec = decompose_sp(&fg.graph, aligned, sp, &mut memo, &mut visiting)
             .expect("aligned must decompose");
         let post_sub_dec = decompose_sp(&fg.graph, post_sub, sp, &mut memo, &mut visiting)

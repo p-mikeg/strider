@@ -28,7 +28,7 @@ fn try_detect_stack_store(
     let [memory, addr, data] = fg.node_inputs_exact::<3>(node_id)?;
     let [old_mem_out] = fg.node_outputs_exact::<1>(node_id)?;
 
-    let mut visiting = rustc_hash::FxHashSet::default();
+    let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(expr) = decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };

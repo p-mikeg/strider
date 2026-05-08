@@ -134,7 +134,7 @@ fn collect_stack_args_in_chain_order(
                 }
                 let addr = inputs[1];
                 let prev = inputs[0];
-                let mut visiting = rustc_hash::FxHashSet::default();
+                let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
                 match decompose_sp(&fg.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
                     None => {
                         // Non-aliasing — pass through.

@@ -125,7 +125,8 @@ pub(super) fn check_layer_c_phis(
             continue;
         }
 
-        let inputs: Vec<NodeOutputId> = graph.node_inputs(node).into_iter().collect();
+        let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+            graph.node_inputs(node).into_iter().collect();
         if inputs.is_empty() {
             continue; // Layer A fires a count or kind mismatch for empty-input phis; skip here.
         }

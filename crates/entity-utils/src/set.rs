@@ -53,9 +53,14 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.contains(entity.index())
     }
 
-    /// Inserts `entity` into the set.
-    pub fn insert(&mut self, entity: E) {
+    /// Inserts `entity` into the set.  Returns `true` if `entity` was
+    /// newly inserted, `false` if it was already present — matching
+    /// `std::collections::HashSet::insert`'s contract so callers can
+    /// switch implementations without changing the call shape.
+    pub fn insert(&mut self, entity: E) -> bool {
+        let already = self.bitset.contains(entity.index());
         self.bitset.insert(entity.index());
+        !already
     }
 
     /// Removes `entity` from the set.

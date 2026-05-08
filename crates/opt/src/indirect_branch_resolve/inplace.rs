@@ -110,7 +110,8 @@ pub fn apply_tail_call(
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
-    let inputs: Vec<NodeOutputId> = graph.node_inputs(placeholder).into_iter().collect();
+    let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+        graph.node_inputs(placeholder).into_iter().collect();
     if inputs.len() != 3 {
         // Not a placeholder shape.  Surface as a typed error so
         // callers don't silently mis-apply.

@@ -86,7 +86,7 @@ fn try_forward_load(
         return Ok(OptimizationResult::NoChange);
     };
 
-    let mut visiting = rustc_hash::FxHashSet::default();
+    let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
         decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting)
     else {
@@ -99,7 +99,7 @@ fn try_forward_load(
     // (Truncate / ShiftRight / ValuePhi) to the graph. This prevents
     // partial walks that fail downstream from leaving orphan nodes in
     // the arena.
-    let mut visited = rustc_hash::FxHashSet::default();
+    let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
     let Some(shape) = probe(
         fg,
         mem,
@@ -186,7 +186,7 @@ fn probe(
     load_ty: ir::node::NodeOutputType,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
-    visited: &mut rustc_hash::FxHashSet<NodeOutputId>,
+    visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
 ) -> Option<ResolveShape> {
     struct PhiFrame {
         phi_node: NodeId,

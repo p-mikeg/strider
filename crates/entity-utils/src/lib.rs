@@ -13,3 +13,5 @@ extern crate alloc;
 
 pub mod set;
 pub mod worklist;
+
+pub use set::DenseEntitySet;

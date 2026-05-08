@@ -239,7 +239,7 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i64;
-        let mut visiting = rustc_hash::FxHashSet::default();
+        let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(&fg.graph, addr, sp_vn, &mut memo, &mut visiting)
         else {
@@ -251,7 +251,8 @@ fn detect_stack_args(
         if disqualified.contains(&j) {
             continue;
         }
-        let mut seen: rustc_hash::FxHashSet<NodeOutputId> = Default::default();
+        let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
+            entity_utils::DenseEntitySet::new();
         if mem_chain_is_dirty(
             fg,
             memory,
@@ -398,7 +399,7 @@ fn mem_chain_is_dirty(
     load_size: i64,
     sp_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
-    seen: &mut rustc_hash::FxHashSet<NodeOutputId>,
+    seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
 ) -> bool {
     let key = (mem, offset, load_size);
