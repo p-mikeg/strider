@@ -44,7 +44,7 @@ fn loop_graph() {
 
 fn succs(g: &common::Graph, node: common::NodeId) -> Vec<String> {
     let mut out = Vec::new();
-    let _ = (&*g).try_successors(node, |s| {
+    let _ = g.try_successors(node, |s| {
         out.push(g.name(s).to_owned());
         ControlFlow::Continue(())
     });
@@ -53,7 +53,7 @@ fn succs(g: &common::Graph, node: common::NodeId) -> Vec<String> {
 
 fn preds(g: &common::Graph, node: common::NodeId) -> Vec<String> {
     let mut out = Vec::new();
-    let _ = (&*g).try_predecessors(node, |p| {
+    let _ = g.try_predecessors(node, |p| {
         out.push(g.name(p).to_owned());
         ControlFlow::Continue(())
     });

@@ -112,19 +112,6 @@ impl BuiltFunctionGraph {
         }
     }
 
-    /// Deprecated alias for [`Self::from_graph_and_entry_for_rewrite`].
-    /// The `_for_rewrite` suffix names the contract — callers expecting
-    /// CC metadata silently get empty fields.  Kept temporarily for
-    /// backward compatibility.
-    #[must_use]
-    #[deprecated(
-        since = "0.1.0",
-        note = "use from_graph_and_entry_for_rewrite — name documents the empty-CC-fields contract"
-    )]
-    pub fn from_graph_and_entry(graph: crate::graph::Graph, entry: NodeId) -> Self {
-        Self::from_graph_and_entry_for_rewrite(graph, entry)
-    }
-
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from [`BuiltFunctionGraph::entry`].
     #[must_use]
@@ -208,7 +195,7 @@ mod compact_tests {
             [],
             [NodeOutputKind::OutputType(crate::node::NodeOutputType::U64)],
         );
-        let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+        let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
         let pre_count = bfg.graph.all_node_ids().count();
 
         let _remap = bfg.compact();

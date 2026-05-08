@@ -102,10 +102,12 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
 /// advanced) or some earlier producer (chain preserved through the Call).
 fn return_memory_came_from_call(b: &FunctionBuilder, call_node: NodeId) -> bool {
     let g = &b.body().graph;
-    let ret = g
+    let Some(ret) = g
         .all_node_ids()
         .find(|n| matches!(g.node_kind(*n), NodeKind::Return))
-        .expect("function must end in Return");
+    else {
+        return false;
+    };
     // Return inputs: [ctrl, memory, *ret_vals].  Slot 1 is the memory edge.
     let mem_in = g.node_inputs(ret)[1];
     let mem_producer = g.get_node_from_output(mem_in);

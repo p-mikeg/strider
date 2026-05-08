@@ -31,7 +31,7 @@ fn get_vn_for_callother_clobber_slot_uses_function_default() {
             NodeOutputKind::OutputType(NodeOutputType::U64),
         ],
     );
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
     bfg.call_other_clobbered = Box::new([rax]);
 
     let c = Capture::new();
@@ -66,7 +66,7 @@ fn get_vn_for_callother_with_value_output_skips_value_slot() {
             NodeOutputKind::OutputType(NodeOutputType::U64),
         ],
     );
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
     bfg.call_other_clobbered = Box::new([rax]);
 
     let c = Capture::new();
@@ -109,7 +109,7 @@ fn get_vn_for_callother_clobber_slot_uses_override_when_set() {
         ],
     );
     graph.set_call_clobbered_override(callother, vec![rbx]);
-    let mut bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+    let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
     bfg.call_other_clobbered = Box::new([rax]);
 
     let c = Capture::new();

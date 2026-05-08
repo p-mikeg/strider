@@ -87,7 +87,7 @@ fn get_vn_indexes_override_list_for_overridden_call() {
         ],
     );
     graph.set_call_clobbered_override(call, vec![rax]);
-    let bfg = BuiltFunctionGraph::from_graph_and_entry(graph, entry);
+    let bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
 
     let c = Capture::new();
     let slot2 = bfg.graph.node_outputs(call).into_iter().nth(2).unwrap();
