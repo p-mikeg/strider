@@ -99,8 +99,21 @@ pub(super) fn check_layer_c_control_state(
 /// per-predecessor information lives in the side-table
 /// `Graph::stack_phi_offsets`, not in its inputs, so the per-predecessor
 /// arity rule does not apply to it.
-pub(super) fn check_layer_c_phis(graph: &Graph, errs: &mut Vec<ValidationError>) {
+pub(super) fn check_layer_c_phis(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
     for node in graph.nodes.keys() {
+        // Optimisation passes (`RedundantPhis`, `DeadBranchElimination`)
+        // detach phi inputs and leave the zero-input zombie node in the
+        // arena rather than physically removing it.  Reaching one here
+        // would falsely trip `PhiTokenNotFromControlState` (input[0] is
+        // gone).  Layer A is already reachability-scoped for the same
+        // reason; mirror that.
+        if !reachable.contains(node) {
+            continue;
+        }
         let is_phi = matches!(
             graph.node_kind(node),
             NodeKind::VarPhi(_)

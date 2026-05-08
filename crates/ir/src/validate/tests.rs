@@ -320,11 +320,21 @@ fn layer_c_phi_value_arity_mismatch() {
     let c1_out = graph.node_outputs(c1).into_iter().next().unwrap();
     let c2_out = graph.node_outputs(c2).into_iter().next().unwrap();
     let vn = test_vn();
-    let _phi = graph.create_node(
+    let phi = graph.create_node(
         NodeKind::VarPhi(vn),
         [cs_phi_out, c1_out, c2_out],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+
+    // V-2: layer_c_phis is reachability-scoped, so the phi must be
+    // attached to something reachable from the entry.  Wire its value
+    // output through a Return that consumes the ControlState's Control
+    // output too — this puts the phi on the cfg-reachable spine.
+    let cs_ctrl_out = graph.node_outputs(cs).into_iter().next().unwrap();
+    let phi_val_out = graph.node_outputs(phi).into_iter().next().unwrap();
+    let ret = graph.create_node(NodeKind::Return, [], []);
+    graph.add_node_input(ret, cs_ctrl_out).unwrap();
+    graph.add_node_input(ret, phi_val_out).unwrap();
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
@@ -386,6 +396,39 @@ fn layer_c_stack_store_phi_does_not_fire_arity_mismatch() {
             "StackStorePhi must not trigger PhiValueArityMismatch; got: {errs:?}"
         );
     }
+}
+
+#[test]
+fn layer_c_phis_skips_unreachable_zombie_phi() {
+    // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
+    // detach phi inputs and leave the zero-input zombie node in the
+    // arena.  The validator must not falsely fire
+    // PhiTokenNotFromControlState on these — the phi is no longer on
+    // the reachable spine.  Exercise the contract by creating a
+    // detached VarPhi (zero inputs) alongside an otherwise-valid
+    // function and asserting validate() succeeds.
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    // Return needs Ctrl + Memory inputs (per node_signature: [CTRL, MEM]).
+    let mem_node = graph
+        .nodes
+        .keys()
+        .find(|n| matches!(graph.node_kind(*n), NodeKind::InitialMemory))
+        .unwrap();
+    let mem_out = graph.node_outputs(mem_node).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+
+    // Detached zombie VarPhi with NO inputs.
+    let vn = test_vn();
+    let _zombie = graph.create_node(
+        NodeKind::VarPhi(vn),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+
+    validate(&graph, entry).expect("validator must skip unreachable zombie phis");
 }
 
 #[test]

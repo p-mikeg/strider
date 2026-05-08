@@ -98,7 +98,7 @@ pub fn validate_with_options(
 
     check_layer_c_control_state(graph, &reachable, &mut errs);
 
-    check_layer_c_phis(graph, &mut errs);
+    check_layer_c_phis(graph, &reachable, &mut errs);
 
     check_layer_c_function_arg_uniqueness(graph, &mut errs);
 
