@@ -17,6 +17,7 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
 };
+use crate::worklist::WorkSet;
 
 /// Store-to-load forwarding for SP-relative stack slots.
 ///
@@ -58,12 +59,10 @@ impl StackLoadForward {
 
 impl OptimizerOnBuilt for StackLoadForward {
     fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
-        let loads: Vec<NodeId> = function
-            .preorder_kind(|k| matches!(k, NodeKind::Load(_)))
-            .collect();
+        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        for load in loads {
+        while let Some(load) = work.pop() {
             result |= try_forward_load(function, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)

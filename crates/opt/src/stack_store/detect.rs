@@ -9,6 +9,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputKind};
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
+use crate::worklist::WorkSet;
 
 /// Rewrites one `Store` node into the matching `StackStore` / `StackStorePhi`
 /// form when its address resolves to a known SP offset (or per-branch phi of
@@ -108,12 +109,10 @@ impl OptimizerOnBuilt for StackStoreDetect {
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in
         // `StackLoadForward` and `CallStackArgCollect`.
-        let nodes: Vec<NodeId> = function
-            .preorder_kind(|k| matches!(k, NodeKind::Store(_)))
-            .collect();
+        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Store(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        for node_id in nodes {
+        while let Some(node_id) = work.pop() {
             result |= try_detect_stack_store(function, node_id, self.stack_ptr_vn, &mut memo)?;
         }
         Ok(result)

@@ -3,6 +3,7 @@ use ir::node::NodeKind;
 use reader::ReadOnlyMemory;
 
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::worklist::WorkSet;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
 
@@ -51,12 +52,10 @@ impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.
-        let nodes: Vec<_> = function
-            .preorder_kind(|k| matches!(k, NodeKind::Load(_)))
-            .collect();
+        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Load(_)));
         let mut result = OptimizationResult::NoChange;
 
-        for node_id in nodes {
+        while let Some(node_id) = work.pop() {
             let kind = *function.graph.node_kind(node_id);
             let NodeKind::Load(space) = kind else {
                 continue;

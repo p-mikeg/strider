@@ -40,6 +40,7 @@ use crate::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, step_through_stack_store,
     step_through_stack_store_phi, step_through_store,
 };
+use crate::worklist::WorkSet;
 
 /// Replaces register-passed and stack-passed argument reads with canonical
 /// [`NodeKind::FunctionArg`][ir::node::NodeKind::FunctionArg] nodes.  Intended
@@ -230,8 +231,8 @@ fn detect_stack_args(
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> =
         rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let node_ids: Vec<NodeId> = fg.preorder_kind(|k| matches!(k, NodeKind::Load(_))).collect();
-    for node_id in node_ids {
+    let mut work = WorkSet::seeded_kind(fg, |k| matches!(k, NodeKind::Load(_)));
+    while let Some(node_id) = work.pop() {
         let [memory, addr] = fg.graph.node_inputs_exact::<2>(node_id)?;
         let [load_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
         let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
