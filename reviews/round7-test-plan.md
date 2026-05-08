@@ -35,12 +35,26 @@ The test-plan agent verified these claimed-gap items have existing coverage:
 
 1. **Asm-fingerprint dedup-cache UNION on cache hit** — `ir/src/builder/tests.rs`. Build same `IntConst(42)` twice with different `lift_addr`; verify both addresses present in fingerprint.
 2. **Asm-fingerprint shrink prevention across pipeline** — `opt/tests/asm_fingerprint_propagation.rs`. For every reachable node before/after `default_pipeline.run`, assert `post_len >= pre_len`.
+   <!-- DONE: round-7 follow-up O2 — see opt/tests/asm_fingerprint_propagation.rs::default_pipeline_never_shrinks_asm_fingerprints -->
 3. **vn_io sub-register partial-write with phi-live parent** — new file `pcode-lift/tests/vn_io_partial_write.rs`. `mov al, 0xFF` → `movzx eax, ax` must depend on `InitialVar(rax)` (preserve upper byte).
+   <!-- TODO(round-7-followup): O3 — needs FunctionBuilder fixture with phi-live parent; substantial setup. -->
 4. **`int_const_any_of([])` vacuous fail (Rust)** — `pattern/tests/matching/arithmetic.rs`. Empty + non-matching + matching cases.
 5. **KnownBits `SignExtend` upper-bit propagation** — new file `opt/tests/known_bits_sign_extend.rs`. `SignExtend(IntConst 0x81 : U8 → U64)` should fold to `IntConst(0xFFFFFFFFFFFFFF81)`.
 6. **Python typed errors actually raised** — `strider-py/tests/python/test_smoke.py`. Trigger each typed exception (StriderError, LiftError, ReaderError, PatternError, RewriteError, UnresolvedIndirectBranchError, UnknownCallOtherError) end-to-end.
+   <!-- TODO(round-7-followup): O5 — needs ELF fixtures for each error path. -->
 7. **AArch64 e2e lift produces valid IR** — new file `strider/tests/aarch64_lift.rs`. Synthetic `ret` → `validate(&graph, entry).is_ok()`.
+   <!-- TODO(round-7-followup): O6 — needs an AArch64 fixture binary. -->
 8. **`phi()` matches MemPhi as well as VarPhi** — `pattern/tests/matching/control_flow.rs`. Diamond with both phi kinds; `phi()` must match both (after the fix from Round 1D / R7-pattern #2).
+   <!-- DONE: round-7 follow-up O7 — see pattern/tests/matching/control_flow.rs::{phi_ctor_matches_only_var_phi, mem_phi_ctor_matches_only_mem_phi, value_phi_ctor_matches_only_value_phi}.  Note: the test pins the *current* contract that each ctor matches only its own NodeKind variant — discrimination, not unification. -->
+9. **Pattern alias round-trip — `float_le`** — `pattern/tests/matching/arithmetic.rs`.
+   <!-- DONE: round-7 follow-up O8 — see pattern/tests/matching/arithmetic.rs::float_le_matches_lowered_shape -->
+10. **`StackStoreDetect + StackLoadForward` converge ≤ 2 iters** — `opt/tests/pipeline_with_stack.rs`.
+    <!-- DONE: round-7 follow-up O10 — see opt/tests/pipeline_with_stack.rs::stack_store_detect_and_load_forward_converge_in_two_iters -->
+11. **Stack-array indirect-branch shape end-to-end (O9)**
+    <!-- TODO(round-7-followup): O9 — needs synthesised IR matching a specific stack-array dispatch shape; non-trivial setup. -->
+12. **P4 scaling benchmarks (O12-O15)**
+    <!-- TODO(round-7-followup): O12-O15 — would add Criterion deps and substantial test scaffolding. -->
+
 
 ## Priority 3 — Property / fuzz tests (4 tests)
 
