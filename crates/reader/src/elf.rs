@@ -492,16 +492,7 @@ pub fn apply_elf_relocations(
         // 32-bit on 32-bit).  Without this branch every PIE binary's
         // `dispatch_table[]` slot reads zero post-load.
         if let Some((value, size_bytes)) = image_relative_reloc(&reloc, obj.architecture()) {
-            if let Some(region) = regions
-                .iter_mut()
-                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-            {
-                let off = (site_addr - region.start_addr()) as usize;
-                write_at(region.data_mut(), off, value, size_bytes, endian_le);
-                stats.applied += 1;
-            } else {
-                stats.skipped_no_region += 1;
-            }
+            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
             continue;
         }
 
@@ -549,16 +540,7 @@ pub fn apply_elf_relocations(
                 }
             };
             let value = target_addr.wrapping_add(reloc.addend() as u64);
-            if let Some(region) = regions
-                .iter_mut()
-                .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-            {
-                let off = (site_addr - region.start_addr()) as usize;
-                write_at(region.data_mut(), off, value, size_bytes, endian_le);
-                stats.applied += 1;
-            } else {
-                stats.skipped_no_region += 1;
-            }
+            locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
             continue;
         }
 
@@ -638,19 +620,10 @@ pub fn apply_elf_relocations(
         let size_bytes = (size_bits / 8) as usize;
 
         // Find the region that contains the [site_addr, site_addr +
-        // size_bytes) range.  Linear scan is fine here — relocation
-        // counts are small relative to the per-relocation work.
-        let Some(region) = regions
-            .iter_mut()
-            .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-        else {
-            stats.skipped_no_region += 1;
-            continue;
-        };
-
-        let off = (site_addr - region.start_addr()) as usize;
-        write_at(region.data_mut(), off, value, size_bytes, endian_le);
-        stats.applied += 1;
+        // size_bytes) range.  Linear scan inside `locate_and_write`
+        // is fine — relocation counts are small relative to the
+        // per-relocation work.
+        locate_and_write(regions, site_addr, value, size_bytes, endian_le, &mut stats);
     }
 
     Ok(stats)
@@ -930,6 +903,37 @@ fn got_or_plt_slot_reloc_size(
             Some(4)
         }
         _ => None,
+    }
+}
+
+/// Locates the region in `regions` whose `[start, end)` covers
+/// `[site_addr, site_addr + size_bytes)`, computes the in-region
+/// offset, and writes the low `size_bytes` of `value` there using
+/// `endian_le`.  Increments `stats.applied` on success, or
+/// `stats.skipped_no_region` when no region covers the full
+/// patch range.
+///
+/// Consolidates the three identical "find region / compute offset /
+/// write_at / increment counter" blocks in [`apply_elf_relocations`]
+/// (image-relative, GOT/PLT-slot, generic Absolute/Relative paths)
+/// into a single helper.
+fn locate_and_write(
+    regions: &mut [MemRegion],
+    site_addr: u64,
+    value: u64,
+    size_bytes: usize,
+    endian_le: bool,
+    stats: &mut RelocationStats,
+) {
+    if let Some(region) = regions
+        .iter_mut()
+        .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
+    {
+        let off = (site_addr - region.start_addr()) as usize;
+        write_at(region.data_mut(), off, value, size_bytes, endian_le);
+        stats.applied += 1;
+    } else {
+        stats.skipped_no_region += 1;
     }
 }
 

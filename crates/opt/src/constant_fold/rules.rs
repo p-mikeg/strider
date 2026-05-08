@@ -451,11 +451,21 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             ))
         },
         // 5. ZeroExtend(IntConst(v)) => int_const(v, ty)
+        //
+        // `v: uint` already masks to the IntConst input's width, and
+        // ZeroExtend's output width is by definition >= the input
+        // width, so `v` is already small enough to fit the output.
+        // Mask defensively against the output type anyway: rule 4
+        // (Truncate) does the same thing and the symmetry keeps the
+        // build path safe under future widenings of `IntConst`'s
+        // u128 storage.
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
                 zero_extend(any_int_const(v)),
-                int_const_with!([v: uint] => v),
+                int_const_with!([v: uint, ty] =>
+                    ty.get_unsigned_int(v).ok_or_else(pattern::skip)?
+                ),
             ))
         },
         // 6. SignExtend(IntConst(v)) =>

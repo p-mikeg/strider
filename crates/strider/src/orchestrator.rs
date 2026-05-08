@@ -39,7 +39,7 @@
 //! edit.  Inside-the-function `Single(K)` requires a CFG rebuild
 //! because new code becomes reachable.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{anyhow, bail, Result};
 
@@ -839,38 +839,34 @@ where
 
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
+///
+/// Each edge is `(anchor_addr, target)` where `target = None` denotes a
+/// `LinkRegister` resolution (no successor address — two such anchors at
+/// the same `addr` are equivalent regardless of payload) and
+/// `target = Some(addr)` denotes a `Single`/`Multiple` resolution to that
+/// address.  The `BTreeSet` gives us deterministic sort+dedup in one type
+/// (replaces the `EdgeKind { LinkRegister, Target(u64) }` enum + Vec
+/// sort+dedup pair).
 fn edge_set_of(
     map: &HashMap<PcodeInsnAddr, ResolvedTargets>,
-) -> Vec<(PcodeInsnAddr, EdgeKind)> {
-    let mut edges: Vec<(PcodeInsnAddr, EdgeKind)> = Vec::new();
+) -> BTreeSet<(PcodeInsnAddr, Option<u64>)> {
+    let mut edges: BTreeSet<(PcodeInsnAddr, Option<u64>)> = BTreeSet::new();
     for (addr, resolved) in map {
         match resolved {
             ResolvedTargets::LinkRegister => {
-                edges.push((*addr, EdgeKind::LinkRegister));
+                edges.insert((*addr, None));
             }
             ResolvedTargets::Single(k) => {
-                edges.push((*addr, EdgeKind::Target(*k)));
+                edges.insert((*addr, Some(*k)));
             }
             ResolvedTargets::Multiple(targets) => {
                 for k in targets {
-                    edges.push((*addr, EdgeKind::Target(*k)));
+                    edges.insert((*addr, Some(*k)));
                 }
             }
         }
     }
-    edges.sort();
-    edges.dedup();
     edges
-}
-
-/// Edge kind discriminator for the induced edge set.  `LinkRegister`
-/// is its own kind because two BranchIndirects classified as
-/// `LinkRegister` produce equivalent edges (no successor) regardless
-/// of any address payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum EdgeKind {
-    LinkRegister,
-    Target(u64),
 }
 
 #[cfg(test)]
@@ -923,7 +919,7 @@ mod tests {
         map.insert(pcode_addr(0x1000), ResolvedTargets::LinkRegister);
         let edges = edge_set_of(&map);
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0], (pcode_addr(0x1000), EdgeKind::LinkRegister));
+        assert!(edges.contains(&(pcode_addr(0x1000), None)));
     }
 
     #[test]
@@ -931,7 +927,9 @@ mod tests {
         let mut map: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
         map.insert(pcode_addr(0x1000), ResolvedTargets::Single(0x2000));
         let edges = edge_set_of(&map);
-        assert_eq!(edges, vec![(pcode_addr(0x1000), EdgeKind::Target(0x2000))]);
+        let expected: BTreeSet<(PcodeInsnAddr, Option<u64>)> =
+            std::iter::once((pcode_addr(0x1000), Some(0x2000))).collect();
+        assert_eq!(edges, expected);
     }
 
     #[test]
