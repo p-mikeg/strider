@@ -140,6 +140,17 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
             memory_edge:     false,
         })),
 
+        // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX
+        // MSR's low 32 bits).  Without the ECX clobber, a pattern
+        // reading post-RDTSCP ECX would incorrectly see the pre-call
+        // value.  No memory edge: TSC reads don't observe RAM.
+        (crate::ArchPreset::X86 | crate::ArchPreset::X86_64,
+         "rdtscp") => Some(CallOtherClass::Call(CallOtherAbi {
+            implicit_reads:  &[],
+            implicit_writes: &["EAX", "EDX", "ECX"],
+            memory_edge:     false,
+        })),
+
         // x86 RDMSR — read model-specific register.  Sleigh emits
         //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
         // so ECX is an explicit pcode arg and the EDX/EAX writes are
@@ -487,6 +498,20 @@ mod tests {
         };
         assert_eq!(abi.implicit_reads, &[] as &[&str]);
         assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
+        assert!(!abi.memory_edge);
+    }
+
+    #[test]
+    fn rdtscp_writes_eax_edx_ecx_no_memory_edge() {
+        // RDTSCP differs from RDTSC: writes ECX (= IA32_TSC_AUX MSR low
+        // 32 bits) in addition to EAX/EDX.  Pattern queries reading
+        // post-RDTSCP ECX must see the clobber.
+        let class = classify(crate::ArchPreset::X86_64, "rdtscp").expect("rdtscp classified");
+        let CallOtherClass::Call(abi) = class else {
+            panic!("expected Call, got {class:?}")
+        };
+        assert_eq!(abi.implicit_reads, &[] as &[&str]);
+        assert_eq!(abi.implicit_writes, &["EAX", "EDX", "ECX"]);
         assert!(!abi.memory_edge);
     }
 
