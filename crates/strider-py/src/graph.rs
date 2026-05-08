@@ -215,6 +215,27 @@ impl PyGraph {
         Ok(graph.graph.asm_fingerprint(nid).to_vec())
     }
 
+    /// Returns the raw little-endian bytes of an `IntConstWide` node's
+    /// value (32 bytes for U256, 64 for U512), or `None` for narrow
+    /// `IntConst` and any non-const node kind.
+    ///
+    /// Use this for AVX-2 / AVX-512 register constants whose value
+    /// doesn't fit in `u128`; narrow constants (≤ U128) are accessible
+    /// via `Match.get_uint(c)` instead.
+    fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        match graph.graph.node_kind(nid) {
+            ir::node::NodeKind::IntConstWide(id) => {
+                Ok(Some(graph.graph.wide_const(*id).to_le_bytes()))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Returns the Sleigh user-op name attached to a `CallOther` node,
     /// or `None` for any other node kind.
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
