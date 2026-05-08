@@ -872,7 +872,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 //
 // `find_stack_stored_value_at_offset` walks the memory chain backward from
 // a given `mem` looking for a `StackStore { offset == requested }` whose
-// value type matches the caller's expectation.  Used by the tier-2
+// value type matches the caller's expectation.  Used by the
 // indirect-branch classifier to look up entries of a stack-array of label
 // addresses one offset at a time (computed-goto via local stack
 // array).  These tests pin the helper's contract in isolation, before the
@@ -1167,7 +1167,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
         // The actual load uses a symbolic address, but for THIS helper test we
         // only exercise the "look up by concrete offset" API — the symbolic
         // shape match lives in the classifier (tested separately in
-        // `tier2_classify`).
+        // `indirect_resolve_classify`).
         let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, NodeOutputType::U64)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())

@@ -44,10 +44,10 @@ pub struct Options {
     pub(super) read_only_memory: Option<Arc<dyn ReadOnlyMemory>>,
     /// Pre-classified `BranchIndirect` results to thread back into the
     /// CFG build.  When the cfg builder encounters a `BranchIndirect`
-    /// at one of these pcode addresses, it skips tier 1's mini-graph
+    /// at one of these pcode addresses, it skips the cfg-time mini-graph
     /// resolver and uses the cached classification directly — this is
     /// the feedback loop the strider fixed-point orchestrator uses to
-    /// wire tier-2 results into a CFG rebuild.
+    /// wire IR-level indirect-branch resolver results into a CFG rebuild.
     ///
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].

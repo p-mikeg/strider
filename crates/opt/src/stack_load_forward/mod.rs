@@ -484,7 +484,7 @@ pub type StackStoredValueMemo =
 ///   of decomposing repeated SP expressions.
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
 ///   value_type)`.  Reuse it across multiple per-index lookups in the
-///   tier-2 classifier so shared chain prefixes pay O(1) per node.
+///   indirect-branch classifier so shared chain prefixes pay O(1) per node.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     graph: &ir::Graph,

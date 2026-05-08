@@ -240,13 +240,14 @@ impl<R: rsleigh::MemReader> Builder<R> {
         Ok(())
     }
 
-    /// Threads tier-2 results back into the CFG build.
+    /// Threads IR-level indirect-branch resolver results back into the CFG build.
     ///
     /// When the builder encounters a `BranchIndirect` whose pcode
     /// address is in `known_targets`, it uses the cached classification
-    /// directly instead of invoking tier 1's mini-graph resolver.
+    /// directly instead of invoking the cfg-time mini-graph resolver.
     /// This is the strider fixed-point orchestrator's feedback path:
-    /// after tier 2 resolves an indirect branch, the next iteration's
+    /// after the IR-level indirect-branch resolver resolves an indirect
+    /// branch, the next iteration's
     /// CFG build reads the resolution from `known_targets` and emits
     /// the appropriate `RegionTerminator` (`Branch` / `TailCall` /
     /// `Switch` / `Return`) directly — no re-resolution overhead.

@@ -26,7 +26,7 @@
 //!    - anything else → `Ok(None)`.  Unclassifiable targets are not
 //!      errors at this layer: callers (region_builder) defer the
 //!      branch via [`crate::RegionTerminator::UnresolvedIndirectBranch`]
-//!      and the strider-level fixed-point loop runs tier-2 resolution
+//!      and the strider-level fixed-point loop runs IR-level indirect-branch resolution
 //!      against the optimised IR.  Genuine errors (builder/opt
 //!      failures, malformed graph) still propagate.
 //!
@@ -89,7 +89,7 @@ pub use opt::ResolvedTargets;
 /// an error and returns `Ok(None)` — the caller stamps the offending
 /// pcode address onto a
 /// [`crate::RegionTerminator::UnresolvedIndirectBranch`] so the
-/// strider-level fixed-point loop can attempt tier-2 resolution
+/// strider-level fixed-point loop can attempt IR-level indirect-branch resolution
 /// against the optimised IR.
 pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
@@ -228,7 +228,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
             Ok(Some(ResolvedTargets::LinkRegister))
         }
         // Unclassifiable producer is not an error: defer to the
-        // strider-level outer loop's tier-2 resolver.
+        // strider-level outer loop's indirect-branch resolver.
         _ => Ok(None),
     }
 }

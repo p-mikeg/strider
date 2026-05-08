@@ -120,8 +120,9 @@ pub enum RegionTerminator {
     },
     /// Jump table with N statically-known targets.  Constructed by
     /// the cfg builder from a `ResolvedTargets::Multiple` resolution
-    /// (which only the strider tier-2 fixed-point loop produces; tier
-    /// 1 never returns Multiple).  Strider's `handle_switch` reads
+    /// (which only the strider indirect-resolution fixed-point loop
+    /// produces; the cfg-time mini-graph resolver never returns
+    /// Multiple).  Strider's `handle_switch` reads
     /// `target_vn` at the region exit and emits an If-ladder of
     /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
     /// through the false-branch.
@@ -130,7 +131,7 @@ pub enum RegionTerminator {
     /// dispatch value.  When `Some`, strider's `handle_switch` uses
     /// it directly instead of re-reading `target_vn`, pinning the
     /// soundness contract that the comparison value is the SAME
-    /// value tier 2 classified.  The cfg builder always sets this to
+    /// value the IR-level indirect-branch resolver classified.  The cfg builder always sets this to
     /// `None`; it is plumbing for an incremental-rebuild round that
     /// preserves the previous iteration's IR.
     Switch {
@@ -147,12 +148,12 @@ pub enum RegionTerminator {
         /// instead of re-reading `target_vn`.
         target_value: Option<ir::Value>,
     },
-    /// `BranchIndirect` whose target the cfg-time tier-1 resolver
+    /// `BranchIndirect` whose target the cfg-time mini-graph resolver
     /// (`indirect_resolve::resolve_indirect_target`) could not prove.
     ///
     /// The region was finalised with this terminator instead of an
     /// error; the strider-level fixed-point loop runs the full
-    /// optimizer pipeline over the lifted IR and tier-2 resolution
+    /// optimizer pipeline over the lifted IR and IR-level indirect-branch resolution
     /// inspects the producer of `target_vn` in the optimised graph.
     /// At fixed point any remaining `UnresolvedIndirectBranch` regions
     /// surface as an "unresolved indirect branch" error.

@@ -448,7 +448,7 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
 
     /// Handles a `BranchIndirect` opcode by classifying its target via
     /// the mini-graph resolver (or a cached `known_targets` entry from
-    /// the strider orchestrator's tier-2 feedback path) and finalising
+    /// the strider orchestrator's IR-level indirect-branch resolver feedback path) and finalising
     /// the region with the matching terminator:
     /// - `Single(K)` inside the function range → `Branch` to K
     ///   (enqueue successor for exploration).
@@ -490,10 +490,11 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
         };
         // None means "I can't classify this from the current region's
         // pcode alone" — defer to the strider outer loop, which runs
-        // tier 2 on the optimised IR.  Stamp `target_vn` and `addr`
-        // onto the deferred terminator so the strider lifter can
-        // emit a placeholder `Return(target_value)` anchoring the
-        // value for tier-2 inspection.  No outgoing edge.
+        // the IR-level indirect-branch resolver on the optimised IR.
+        // Stamp `target_vn` and `addr` onto the deferred terminator so
+        // the strider lifter can emit a placeholder
+        // `Return(target_value)` anchoring the value for IR-level
+        // indirect-branch resolver inspection.  No outgoing edge.
         let Some(resolved) = resolved else {
             self.finish_current_region(
                 RegionTerminator::UnresolvedIndirectBranch { target_vn, addr },
@@ -516,9 +517,9 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 )?;
             }
             super::indirect_resolve::ResolvedTargets::Multiple(targets) => {
-                // `Multiple` is exclusively a tier-2 feedback shape;
-                // tier 1's mini-graph resolver only ever returns
-                // Single / LinkRegister / None.
+                // `Multiple` is exclusively an IR-level indirect-branch
+                // resolver feedback shape; the cfg-time mini-graph
+                // resolver only ever returns Single / LinkRegister / None.
                 let any_out_of_range = targets.iter().any(|t| {
                     self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(*t))
                 });

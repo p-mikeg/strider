@@ -241,10 +241,17 @@ fn rhs_thumb_neg_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: N
     build_bool_neg(graph, a, root)
 }
 
-fn rhs_thumb_b(_graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, _root: NodeId) -> NodeOutputId {
+fn rhs_thumb_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> NodeOutputId {
     // Returning `a` directly redirects the root's uses straight to the
-    // captured `b` output — no new node, no fingerprint absorption
-    // needed because the captured node already has its own fingerprint.
+    // captured `a` output.  Per the asm-fingerprint superset contract
+    // (see crate-level doc), every node downstream of root must
+    // include all of root's contributing-asm-instruction addresses —
+    // so we union root's fingerprint into `a`'s before redirecting.
+    // Without this absorption, root's contributing addresses would be
+    // dropped from the fingerprint side-table and a pattern matching
+    // through `a` would miss root's address attribution.
+    let a_node = graph.get_node_from_output(a);
+    graph.extend_asm_fingerprint_from(a_node, root);
     a
 }
 
