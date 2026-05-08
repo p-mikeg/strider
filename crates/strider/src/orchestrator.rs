@@ -426,8 +426,20 @@ where
 
     /// Rebuild the CFG with the updated `known_targets` map and
     /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
+    ///
+    /// Also resets `stall_budget` based on the *post-rebuild*
+    /// unresolved count.  The budget tracks consecutive in-place-only
+    /// iterations that fail to make progress; a Rebuild is by
+    /// definition forward progress (the edge set just grew), so the
+    /// stall counter should restart from a budget proportional to
+    /// what's still pending.  Without the reset, a function with a
+    /// long sequence Rebuild → many in-place edits could trip the
+    /// stall guard prematurely even though every iteration up to that
+    /// point was making progress.
     fn rebuild(&mut self) -> Result<()> {
-        self.lift_and_seat("rebuild")
+        self.lift_and_seat("rebuild")?;
+        self.stall_budget = self.unresolved.len();
+        Ok(())
     }
 
     /// Run the destructive subset and consume `self`, returning the
