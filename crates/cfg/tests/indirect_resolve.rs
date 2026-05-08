@@ -473,7 +473,7 @@ fn malformed_branch_indirect_returns_ok_none() {
 /// `BranchIndirect reg` with no prior write and no link-register
 /// classification).
 #[test]
-fn tier_1_unresolved_returns_ok_none() {
+fn cfg_time_unresolved_returns_ok_none() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![ri(0x1000, 0, branch_indirect(target))];
@@ -495,7 +495,7 @@ fn tier_1_unresolved_returns_ok_none() {
 /// Tier-1 resolved cases return `Ok(Some(ResolvedTargets))`.  Same
 /// input shape as `resolves_direct_const_to_single`.
 #[test]
-fn tier_1_resolved_const_returns_ok_some_single() {
+fn cfg_time_resolved_const_returns_ok_some_single() {
     let sleigh = make_x86_sleigh();
     let target = reg4(0);
     let region = vec![

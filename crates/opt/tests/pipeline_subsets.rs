@@ -11,7 +11,7 @@
 //!   * `default_pipeline()` is shape-equivalent to "stable then destructive".
 //!
 //! The tests don't run the pipelines on real graphs (that's covered by
-//! the per-pass test suites and the strider-side tier2_optimizer_tiers
+//! the per-pass test suites and the strider-side optimizer_pipeline_subsets
 //! tests).  Here we pin the *registration* contract — that the right
 //! passes land in the right buckets, by name.
 

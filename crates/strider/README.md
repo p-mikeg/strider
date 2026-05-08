@@ -103,7 +103,7 @@ post-orchestrator graph-rewriter façade.
 
 Per-feature integration tests in `crates/strider/tests/` (one file per
 concern: `arithmetic.rs`, `calls.rs`, `floats.rs`, `memory.rs`,
-`indirect_branch.rs`, `indirect_resolve_*.rs`, `tier2_orchestrator.rs`,
+`indirect_branch.rs`, `indirect_resolve_*.rs`, `orchestrator_indirect_resolution.rs`,
 `per_address_cc*.rs`, `asm_fingerprints.rs`, `bounded_lift_tail_call.rs`,
 …). Some inline tests in `src/rewrite_tests.rs`. Examples in
 `examples/strider.rs` (the canonical end-to-end demo) and

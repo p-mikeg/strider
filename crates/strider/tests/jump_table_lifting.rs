@@ -260,7 +260,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 }
 
 #[test]
-fn tier_2_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
+fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // End-to-end pin: a CFG that has a `BranchIndirect` resolved
     // to `Multiple([t0, t1])` via `with_known_targets` produces an
     // IR graph containing the F7 If-ladder corresponding to those

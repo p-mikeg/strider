@@ -117,7 +117,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
 }
 
 #[test]
-fn tier_2_classification_robust_to_destructive_subset() {
+fn ir_level_classification_robust_to_destructive_subset() {
     // Classify an anchor on a stable-only optimised graph and on a
     // stable + destructive optimised graph.  Both must produce the
     // same `Option<ResolvedTargets>` — the spec's "Tier 2's

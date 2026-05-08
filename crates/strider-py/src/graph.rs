@@ -27,6 +27,20 @@ pub struct PyGraph {
     pub(crate) cfg: Py<PyCfg>,
 }
 
+/// Convert a Python-supplied `u32` node id into a validated `ir::NodeId`,
+/// returning `StriderError` on lookup failure.
+fn node_id_from_u32(graph: &ir::BuiltFunctionGraph, node_id: u32) -> PyResult<ir::node::NodeId> {
+    let nid = graph
+        .all_node_ids()
+        .find(|n| n.as_u32() == node_id)
+        .ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "no node with id {node_id} in graph"
+            ))
+        })?;
+    Ok(nid)
+}
+
 impl PyGraph {
     pub(crate) fn new(graph: ir::BuiltFunctionGraph, cfg: Py<PyCfg>) -> Self {
         Self {
@@ -157,6 +171,91 @@ impl PyGraph {
             }
         }
         Ok(count)
+    }
+
+    /// Returns a list of all reachable node ids in the graph as raw
+    /// integers.  Useful for iterating from Python without going
+    /// through pattern matching.
+    fn node_ids(&self) -> PyResult<Vec<u32>> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        Ok(graph.all_node_ids().map(|n| n.as_u32()).collect())
+    }
+
+    /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
+    /// a string (e.g. "IntConst", "Call", "VarPhi", "Add", …).  Useful
+    /// for direct graph introspection from Python tests / debug
+    /// scripts.
+    ///
+    /// Raises `StriderError` for an invalid `node_id`.
+    fn node_kind(&self, node_id: u32) -> PyResult<String> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(format!("{:?}", graph.graph.node_kind(nid)))
+    }
+
+    /// Returns the asm-fingerprint addresses recorded on the node at
+    /// `node_id` — a sorted, deduped list of machine-instruction
+    /// addresses whose lift contributed to the node's value.
+    ///
+    /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
+    /// ControlState, FunctionArg) whose existence is synthesised by
+    /// the IR builder rather than tied to a specific asm instruction.
+    fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(graph.graph.asm_fingerprint(nid).to_vec())
+    }
+
+    /// Returns the Sleigh user-op name attached to a `CallOther` node,
+    /// or `None` for any other node kind.
+    fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let nid = node_id_from_u32(&graph, node_id)?;
+        Ok(graph.graph.call_other_name(nid).map(str::to_owned))
+    }
+
+    /// Re-validates the graph and returns `None` on success or a
+    /// human-readable error message on failure.
+    ///
+    /// `check_asm_fingerprints=True` enables the opt-in Layer-C check
+    /// that flags every reachable non-exempt node with an empty
+    /// asm-fingerprint — useful when verifying a fresh opt pass
+    /// preserves the superset contract.
+    #[pyo3(signature = (check_asm_fingerprints = false))]
+    fn validate(&self, check_asm_fingerprints: bool) -> PyResult<Option<String>> {
+        let graph = self
+            .inner
+            .read()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let opts = ir::validate::ValidateOptions { check_asm_fingerprints };
+        match ir::validate::validate_with_options(&graph.graph, graph.entry, opts) {
+            Ok(()) => Ok(None),
+            Err(e) => Ok(Some(format!("{e}"))),
+        }
+    }
+
+    /// Compact the graph arena: drop every node not reachable from
+    /// `entry` via [`ir::walk::walk_graph`].  Mutates in place.
+    /// Pre-compaction node ids become invalid across this call.
+    fn compact(&self) -> PyResult<()> {
+        let mut graph = self
+            .inner
+            .write()
+            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let _remap = graph.compact();
+        Ok(())
     }
 
     /// Apply a `PyOptimizerPipeline` to this graph in place.  Drains
