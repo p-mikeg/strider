@@ -622,17 +622,15 @@ fn apply_in_place_edit(
             // varnodes on the spliced Call so pattern queries can
             // recover the right varnode for each clobber slot.  The
             // spliced node is the freshly-created Call adjacent to
-            // `new_return`'s ctrl predecessor.
+            // `new_return`'s ctrl predecessor.  Reuses
+            // [`override_clobber_vars`] (also called from
+            // [`build_anchor_calling_context`]) so the projection over
+            // `graph.variables` is defined once.
             if let Some(cc) = override_cc
                 && let Some(call_id) = locate_spliced_call(graph, new_return)
             {
-                let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-                let clobber_vars: Vec<rsleigh::Vn> = graph
-                    .variables
-                    .values()
-                    .copied()
-                    .filter(|v| !cc.callee_saved_regs.contains(v) && Some(*v) != stack_ptr_vn)
-                    .collect();
+                let clobber_vars: Vec<rsleigh::Vn> =
+                    override_clobber_vars(graph, cc, strider).collect();
                 graph.graph.set_call_clobbered_override(call_id, clobber_vars);
             }
             Ok(())
@@ -696,18 +694,14 @@ fn build_anchor_calling_context(
         }
     }
     // Clobber list: with an override, recompute from the override's
-    // callee_saved set against the function's tracked variables; without,
-    // use the precomputed `BuiltFunctionGraph::call_clobbered` shape.
-    // Both arms walk a Vec<rsleigh::Vn>; pick the source once then run
-    // the same projection over it.
-    let stack_ptr_vn = Some(strider.calling_convention().stack_ptr_vn);
-    let clobber_iter: Box<dyn Iterator<Item = &rsleigh::Vn>> = if override_cc.is_some() {
-        Box::new(
-            graph
-                .variables
-                .values()
-                .filter(|vn| !cc.callee_saved_regs.contains(vn) && Some(**vn) != stack_ptr_vn),
-        )
+    // callee_saved set against the function's tracked variables (via
+    // the shared [`override_clobber_vars`] helper, which is also reused
+    // by `apply_in_place_edit` after splicing); without, use the
+    // precomputed `BuiltFunctionGraph::call_clobbered` shape.
+    let override_clobbers: Vec<rsleigh::Vn>;
+    let clobber_iter: Box<dyn Iterator<Item = &rsleigh::Vn>> = if let Some(cc) = override_cc {
+        override_clobbers = override_clobber_vars(graph, cc, strider).collect();
+        Box::new(override_clobbers.iter())
     } else {
         Box::new(graph.call_clobbered.iter())
     };
@@ -724,6 +718,31 @@ fn build_anchor_calling_context(
         }
     }
     ctx
+}
+
+/// Iterate the function-tracked varnodes that are *clobbered* under the
+/// per-address override calling convention `cc`.
+///
+/// Mirrors the body of the `override_cc.is_some()` arm of
+/// [`build_anchor_calling_context`]'s clobber computation and the
+/// post-splice clobber rebuild in [`apply_in_place_edit`] — extracted so
+/// the same projection (`!callee_saved && != stack_ptr`) is defined in
+/// exactly one place.
+///
+/// Returns owned `Vn`s for caller flexibility (collect into a `Vec` for
+/// `set_call_clobbered_override`, or iterate directly to feed
+/// `clobbered_kinds`).
+fn override_clobber_vars<'a>(
+    graph: &'a ir::BuiltFunctionGraph,
+    cc: &'a target::BuiltCallingConvention,
+    strider: &'a Strider,
+) -> impl Iterator<Item = rsleigh::Vn> + 'a {
+    let stack_ptr_vn = strider.calling_convention().stack_ptr_vn;
+    graph
+        .variables
+        .values()
+        .copied()
+        .filter(move |v| !cc.callee_saved_regs.contains(v) && *v != stack_ptr_vn)
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.
