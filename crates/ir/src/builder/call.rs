@@ -173,6 +173,19 @@ impl FunctionBuilder {
     /// the region with `RegionTerminator::NoReturn`, so no successor
     /// will read them.  Stamps `name` on `Graph::call_other_names`.
     ///
+    /// # Dispatch via `target::CallOtherClass`
+    ///
+    /// This is the IR builder for the `NoReturn` arm of
+    /// [`target::call_other_abi::classify`] — the strider lift driver
+    /// chooses between this and [`Self::build_call_other_modeled`]
+    /// based on the `CallOtherClass` returned for the user-op name.
+    ///
+    /// There is intentionally **no** `build_call_other_noop` sibling:
+    /// the `NoOp` arm of `CallOtherClass` skips IR emission entirely
+    /// (the lifter discards the pcode op without producing any node).
+    /// Only `NoReturn` (this function) and `Call(abi)`
+    /// ([`Self::build_call_other_modeled`]) emit a `CallOther` node.
+    ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active.
@@ -207,6 +220,19 @@ impl FunctionBuilder {
     }
 
     /// Emit a CallOther with the precise per-op ABI shape.
+    ///
+    /// # Dispatch via `target::CallOtherClass`
+    ///
+    /// This is the IR builder for the `Call(abi)` arm of
+    /// [`target::call_other_abi::classify`] — the strider lift driver
+    /// chooses between this and [`Self::build_call_other_terminal`]
+    /// based on the `CallOtherClass` returned for the user-op name.
+    /// `NoOp` skips IR emission entirely (no sibling builder), so this
+    /// pair (`_terminal` for `NoReturn`, `_modeled` for `Call(abi)`)
+    /// covers every IR-emitting case.  See `target::CallOtherAbi` for
+    /// the implicit-channel description that drives this builder's
+    /// `implicit_reads` / `implicit_writes_vns` / `implicit_write_kinds`
+    /// inputs.
     ///
     /// Inputs of the resulting node:
     ///   `[ctrl_in, mem_in, *args, *implicit_reads]`
