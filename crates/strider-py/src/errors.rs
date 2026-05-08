@@ -46,20 +46,24 @@ pub fn into_lift_err(e: anyhow::Error) -> PyErr {
     LiftError::new_err(format!("{e:?}"))
 }
 
-#[allow(dead_code)]
-pub fn into_reader_err(e: anyhow::Error) -> PyErr {
-    ReaderError::new_err(format!("{e:?}"))
+/// Generate a converter `fn $name(e: anyhow::Error) -> PyErr` that
+/// formats the anyhow chain via `{e:?}` (so RUST_BACKTRACE=1 produces
+/// a backtrace) and wraps it in `$err_ty`.  Used for the converter
+/// boundaries that don't downcast typed errors first
+/// (reader/pattern/rewrite); `into_strider_err` and `into_lift_err`
+/// stay explicit because they prefer typed-error subclasses.
+macro_rules! plain_converter {
+    ($name:ident, $err_ty:ident) => {
+        #[allow(dead_code)]
+        pub fn $name(e: anyhow::Error) -> PyErr {
+            $err_ty::new_err(format!("{e:?}"))
+        }
+    };
 }
 
-#[allow(dead_code)]
-pub fn into_pattern_err(e: anyhow::Error) -> PyErr {
-    PatternError::new_err(format!("{e:?}"))
-}
-
-#[allow(dead_code)]
-pub fn into_rewrite_err(e: anyhow::Error) -> PyErr {
-    RewriteError::new_err(format!("{e:?}"))
-}
+plain_converter!(into_reader_err, ReaderError);
+plain_converter!(into_pattern_err, PatternError);
+plain_converter!(into_rewrite_err, RewriteError);
 
 /// Register the `strider.errors` submodule on the parent module.
 pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
