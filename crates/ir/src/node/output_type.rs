@@ -20,6 +20,10 @@ pub enum NodeOutputType {
     U80,
     U128,
     U256,
+    /// 512-bit unsigned integer (AVX-512 `zmm` registers).  Stored
+    /// off-side via [`crate::wide_const::WideConstStorage::U512`]
+    /// because the value doesn't fit in `IntConst`'s `u128` payload.
+    U512,
     /// 32-bit IEEE 754 single-precision float.
     F32,
     /// 64-bit IEEE 754 double-precision float.
@@ -58,6 +62,7 @@ const TYPE_INFO: &[TypeInfo] = &[
     TypeInfo { name: "u80",  byte_size: 10, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u128", byte_size: 16, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "u256", byte_size: 32, category: NodeOutputTypeCategory::Int   },
+    TypeInfo { name: "u512", byte_size: 64, category: NodeOutputTypeCategory::Int   },
     TypeInfo { name: "f32",  byte_size: 4,  category: NodeOutputTypeCategory::Float },
     TypeInfo { name: "f64",  byte_size: 8,  category: NodeOutputTypeCategory::Float },
     TypeInfo { name: "f80",  byte_size: 10, category: NodeOutputTypeCategory::Float },
@@ -137,6 +142,7 @@ impl NodeOutputType {
             NodeOutputType::U80 | NodeOutputType::F80 => NodeOutputType::U80,
             NodeOutputType::U128 => NodeOutputType::U128,
             NodeOutputType::U256 => NodeOutputType::U256,
+            NodeOutputType::U512 => NodeOutputType::U512,
         }
     }
 
@@ -217,6 +223,7 @@ impl TryFrom<u32> for NodeOutputType {
             10 => Ok(Self::U80),
             16 => Ok(Self::U128),
             32 => Ok(Self::U256),
+            64 => Ok(Self::U512),
             n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
         }
     }

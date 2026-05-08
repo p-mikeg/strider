@@ -102,6 +102,45 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
     }
 
+    /// Builds an integer constant whose value exceeds `u128` — `U256`
+    /// (32 bytes) or `U512` (64 bytes).  Interns `value` via
+    /// [`crate::Graph::intern_wide_const`] so two builds with equal
+    /// values share the same `WideConstId` (and hence the same
+    /// `NodeId` under the dedup cache).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when:
+    /// - `output_type` is not `U256` or `U512` (use [`Self::build_int_const`]
+    ///   for narrower widths).
+    /// - `value.byte_size()` doesn't match `output_type`'s byte size
+    ///   (e.g. `U256` storage with `U512` declared output).
+    pub fn build_int_const_wide(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+        output_type: NodeOutputType,
+    ) -> Result<NodeOutputId> {
+        let expected = match output_type {
+            NodeOutputType::U256 => 32usize,
+            NodeOutputType::U512 => 64usize,
+            other => {
+                return Err(anyhow!(
+                    "build_int_const_wide called with non-wide output type {other:?}; \
+                     use build_int_const for ≤ U128"
+                ));
+            }
+        };
+        if value.byte_size() != expected {
+            return Err(anyhow!(
+                "WideConstStorage byte_size {} does not match output type {output_type:?} \
+                 (expected {expected})",
+                value.byte_size()
+            ));
+        }
+        let id = self.body_mut().graph.intern_wide_const(value);
+        Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
+    }
+
     /// Emits an integer binary operation node with automatic type coercion.
     ///
     /// # Errors

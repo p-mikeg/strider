@@ -128,8 +128,20 @@ pub enum NodeKind {
     StackStorePhi { space: rsleigh::VnSpace },
 
     // ── Integer constants and operations ──────────────────────────────────────
-    /// A compile-time integer constant of value `u128`.
+    /// A compile-time integer constant of value `u128`.  Covers
+    /// `Bool`/`U8`/`U16`/`U32`/`U64`/`U80`/`U128`.  Wider integer types
+    /// (`U256`/`U512`) use [`Self::IntConstWide`] which references
+    /// [`crate::Graph::wide_consts`] off-side.
     IntConst(u128),
+    /// A compile-time integer constant whose value doesn't fit in
+    /// `u128` — `U256` or `U512`.  The actual byte payload lives in
+    /// [`crate::Graph::wide_consts`] and this node carries a
+    /// [`crate::wide_const::WideConstId`] index.
+    ///
+    /// Interning makes structural equality work: two `IntConstWide(id)`
+    /// nodes with the same `id` reference the same value (the
+    /// [`crate::Graph::intern_wide_const`] contract).
+    IntConstWide(crate::wide_const::WideConstId),
     /// Integer unary operation (e.g. bitwise NOT, two's-complement negate).
     IntUnaryOp(crate::ops::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).
@@ -238,7 +250,10 @@ impl NodeKind {
     pub fn is_const(self) -> bool {
         matches!(
             self,
-            Self::BoolConst(..) | Self::IntConst(..) | Self::FloatConst(..)
+            Self::BoolConst(..)
+                | Self::IntConst(..)
+                | Self::IntConstWide(..)
+                | Self::FloatConst(..)
         )
     }
 

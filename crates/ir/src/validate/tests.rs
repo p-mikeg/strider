@@ -977,3 +977,62 @@ fn indirect_branch_with_control_memory_and_value_validates() {
     );
     validate(&graph, entry).expect("IndirectBranch with [ctrl, mem, target] must validate");
 }
+
+#[test]
+fn layer_c_dangling_wide_const_id_detected() {
+    use crate::wide_const::WideConstId;
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    // Construct an IntConstWide pointing at an id that was never interned.
+    let bogus_id = WideConstId::from_u32(99);
+    let bogus = graph.create_node(
+        NodeKind::IntConstWide(bogus_id),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U256)],
+    );
+    let bogus_out = graph.node_outputs(bogus).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, bogus_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0
+            .iter()
+            .any(|e| matches!(e, ValidationError::DanglingWideConstId { .. })),
+        "expected DanglingWideConstId, got: {errs:?}"
+    );
+}
+
+#[test]
+fn layer_c_wide_const_width_mismatch_detected() {
+    use crate::wide_const::WideConstStorage;
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
+    // Intern a U256 storage but assign it to a U512-typed output.
+    let id = graph.intern_wide_const(WideConstStorage::U256([0; 4]));
+    let bad = graph.create_node(
+        NodeKind::IntConstWide(id),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U512)],
+    );
+    let bad_out = graph.node_outputs(bad).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
+
+    let errs = validate(&graph, entry).unwrap_err();
+    assert!(
+        errs.0.iter().any(|e| matches!(
+            e,
+            ValidationError::WideConstWidthMismatch {
+                expected_bytes: 64,
+                actual_bytes: 32,
+                ..
+            }
+        )),
+        "expected WideConstWidthMismatch, got: {errs:?}"
+    );
+}

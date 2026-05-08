@@ -25,6 +25,7 @@ use layer_b::check_layer_b;
 use layer_c::{
     check_layer_c_asm_fingerprints, check_layer_c_control_state,
     check_layer_c_function_arg_uniqueness, check_layer_c_phis, check_layer_c_uniqueness,
+    check_layer_c_wide_consts,
 };
 
 /// Optional checks the validator can opt into.  The default is
@@ -101,6 +102,8 @@ pub fn validate_with_options(
     check_layer_c_phis(graph, &reachable, &mut errs);
 
     check_layer_c_function_arg_uniqueness(graph, &mut errs);
+
+    check_layer_c_wide_consts(graph, &reachable, &mut errs);
 
     if options.check_asm_fingerprints {
         check_layer_c_asm_fingerprints(graph, &reachable, &mut errs);
@@ -255,6 +258,26 @@ pub enum ValidationError {
     MissingAsmFingerprint {
         node: NodeId,
         kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "node {node:?} is `IntConstWide({id:?})` but the wide-const \
+         side-table has no entry for that id"
+    )]
+    DanglingWideConstId {
+        node: NodeId,
+        id: crate::wide_const::WideConstId,
+    },
+
+    #[error(
+        "node {node:?} (`IntConstWide`) stores {actual_bytes}-byte value \
+         but its output type is {output_type:?} ({expected_bytes}-byte)"
+    )]
+    WideConstWidthMismatch {
+        node: NodeId,
+        output_type: NodeOutputType,
+        expected_bytes: usize,
+        actual_bytes: usize,
     },
 }
 

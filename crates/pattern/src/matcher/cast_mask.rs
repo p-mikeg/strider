@@ -70,6 +70,7 @@ pub(crate) const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::StackStore { .. }
         | NodeKind::StackStorePhi { .. }
         | NodeKind::IntConst(_)
+        | NodeKind::IntConstWide(_)
         | NodeKind::IntUnaryOp(_)
         | NodeKind::IntBinaryOp(_)
         | NodeKind::IntCmpOp(_)

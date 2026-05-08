@@ -1570,3 +1570,89 @@ fn lift_at_attributes_node_to_inner_addr_only() -> Result<()> {
     assert_eq!(b.body().graph.asm_fingerprint(post_node), &[0x10]);
     Ok(())
 }
+
+#[test]
+fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0x1234, 0xabcd, 0, 0]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
+    let node = b.body().graph.get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
+        panic!("expected IntConstWide, got {:?}", b.body().graph.node_kind(node));
+    };
+    assert_eq!(b.body().graph.wide_const(*id), &v);
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U512([1, 2, 3, 4, 5, 6, 7, 8]);
+    let out = b.build_int_const_wide(v.clone(), NodeOutputType::U512)?;
+    let node = b.body().graph.get_node_from_output(out);
+    let NodeKind::IntConstWide(id) = b.body().graph.node_kind(node) else {
+        panic!();
+    };
+    assert_eq!(b.body().graph.wide_const(*id), &v);
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([42, 0, 0, 0]);
+    let o1 = b.build_int_const_wide(v.clone(), NodeOutputType::U256)?;
+    let o2 = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    let n1 = b.body().graph.get_node_from_output(o1);
+    let n2 = b.body().graph.get_node_from_output(o2);
+    assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let err = b
+        .build_int_const_wide(v, NodeOutputType::U128)
+        .expect_err("U128 must be rejected — use build_int_const");
+    assert!(err.to_string().contains("non-wide output type"), "got: {err}");
+    Ok(())
+}
+
+#[test]
+fn build_int_const_wide_rejects_storage_byte_size_mismatch() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let v_256 = crate::wide_const::WideConstStorage::U256([0; 4]);
+    let err = b
+        .build_int_const_wide(v_256, NodeOutputType::U512)
+        .expect_err("U256 storage with U512 output must be rejected");
+    assert!(err.to_string().contains("byte_size"), "got: {err}");
+    Ok(())
+}
+
+#[test]
+fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
+    use crate::validate::validate;
+    let mut b = builder_with_region()?;
+    let v = crate::wide_const::WideConstStorage::U256([0x1234_5678, 0, 0, 0]);
+    let out = b.build_int_const_wide(v, NodeOutputType::U256)?;
+    // Wire the wide const into the reachable spine via Return[ctrl, mem, value].
+    let entry_ctrl = b.body().graph.node_outputs(b.body().entry).into_iter().next().unwrap();
+    // Build a minimal Return — needs Memory input; pull it from InitialMemory.
+    let mem_node = b
+        .body()
+        .graph
+        .all_node_ids()
+        .find(|n| matches!(b.body().graph.node_kind(*n), NodeKind::InitialMemory))
+        .unwrap();
+    let mem_out = b.body().graph.node_outputs(mem_node).into_iter().next().unwrap();
+    let _ret = b
+        .body_mut()
+        .graph
+        .create_node(NodeKind::Return, [entry_ctrl, mem_out, out], []);
+    let entry_id = b.body().entry;
+    let g = &b.body().graph;
+    validate(g, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
+    Ok(())
+}

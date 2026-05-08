@@ -351,7 +351,9 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::StackStorePhi { .. } => sig!(inputs: [PHI, MEM, DATA], outputs: [MEM]),
 
         // ── Integer constants and operations ────────────────────────────────
-        NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        NodeKind::IntConst(_) | NodeKind::IntConstWide(_) => {
+            sig!(inputs: [], outputs: [INT_VAL])
+        }
         // Unary integer ops: same single-input single-output shape.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate

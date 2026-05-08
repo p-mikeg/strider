@@ -242,3 +242,70 @@ pub(super) fn check_layer_c_function_arg_uniqueness(
         }
     }
 }
+
+/// Layer C: verify every reachable `IntConstWide(id)` node references
+/// a live entry in `Graph::wide_consts` and that the stored value's
+/// byte size matches the node's declared output type.
+///
+/// Emits [`ValidationError::DanglingWideConstId`] when the id is not
+/// present in the side-table (caller bypassed `intern_wide_const`),
+/// and [`ValidationError::WideConstWidthMismatch`] when the storage
+/// width contradicts the output type (e.g. U256 storage with U512
+/// declared output).
+pub(super) fn check_layer_c_wide_consts(
+    graph: &Graph,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    use crate::node::NodeOutputType;
+    for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
+        let NodeKind::IntConstWide(id) = graph.node_kind(node) else {
+            continue;
+        };
+        if graph.wide_consts.get(*id).is_none() {
+            errs.push(ValidationError::DanglingWideConstId {
+                node,
+                id: *id,
+            });
+            continue;
+        }
+        let actual = graph.wide_const(*id).byte_size();
+        let outputs = graph.node_outputs(node);
+        let Some(out) = outputs.into_iter().next() else {
+            continue;
+        };
+        let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {
+            continue;
+        };
+        let expected = match ty {
+            NodeOutputType::U256 => 32,
+            NodeOutputType::U512 => 64,
+            _ => {
+                // Output type isn't U256/U512 — this is a Layer-A signature
+                // mismatch (IntConstWide's signature is `outputs: [INT_VAL]`,
+                // any int passes Layer A but only U256/U512 are semantically
+                // valid).  Surface as a width mismatch for the rare case
+                // where a synthetic graph produces, say, IntConstWide on a
+                // U64 output.
+                errs.push(ValidationError::WideConstWidthMismatch {
+                    node,
+                    output_type: ty,
+                    expected_bytes: 0,
+                    actual_bytes: actual,
+                });
+                continue;
+            }
+        };
+        if expected != actual {
+            errs.push(ValidationError::WideConstWidthMismatch {
+                node,
+                output_type: ty,
+                expected_bytes: expected,
+                actual_bytes: actual,
+            });
+        }
+    }
+}
