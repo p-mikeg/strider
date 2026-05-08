@@ -24,7 +24,7 @@ use super::super::IrStrider;
 /// ```
 ///
 /// The last comparison's false-branch goes UNCONDITIONALLY to the
-/// final target's region — this is sound because tier-2's `Multiple`
+/// final target's region — this is sound because the IR-level indirect-branch resolver's `Multiple`
 /// classification is exhaustive for the runtime index range
 /// (KnownBits / predecessor `If(idx < N)` provide the upper bound),
 /// so the runtime always picks one of `targets`.  Sending the
@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             targets_and_regions.push((target, ir_region));
         }
         // Prefer the orchestrator's pinned NodeOutputId when available
-        // — the dispatch must compare the SAME value tier 2 classified.
+        // — the dispatch must compare the SAME value the IR-level indirect-branch resolver classified.
         // Falls back to a fresh `read_vn` when the cfg builder didn't
         // populate `target_value`.
         let idx = match target_value {

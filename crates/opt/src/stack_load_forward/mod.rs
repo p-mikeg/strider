@@ -403,7 +403,7 @@ fn realize(
 }
 
 
-// ── Public helper for the tier-2 indirect-branch classifier ──────
+// ── Public helper for the indirect-branch classifier ──────
 //
 // `try_forward_load` rewrites the load by bottoming-out the memory chain at
 // a `StackStore` and re-using its data slot.  When the load address has a
@@ -412,7 +412,7 @@ fn realize(
 // (`sp + base + idx*stride`) — the per-i target lives at offset
 // `base + i*stride` for i in [0, N), bounded by KnownBits.
 //
-// The tier-2 classifier needs to enumerate per-i values without rewriting
+// The indirect-branch classifier needs to enumerate per-i values without rewriting
 // the load (no IR primitive expresses "value depends on idx" without a
 // `ControlState` for ValuePhi to bind to).  This helper exposes the
 // `StackStore`-chain walk as a pub function: given a memory chain root
@@ -455,9 +455,9 @@ fn realize(
 // classifier can read directly.
 
 /// Per-call memo for [`find_stack_stored_value_at_offset`], keyed on
-/// `(memory_token, offset, value_type)`.  Threaded through tier-2
-/// classifier loops so repeated lookups across enumerated jump-table
-/// indices share their walks.
+/// `(memory_token, offset, value_type)`.  Threaded through the
+/// indirect-branch classifier loops so repeated lookups across
+/// enumerated jump-table indices share their walks.
 pub type StackStoredValueMemo =
     rustc_hash::FxHashMap<(NodeOutputId, i64, NodeOutputType), Option<NodeOutputId>>;
 
@@ -466,7 +466,7 @@ pub type StackStoredValueMemo =
 /// value has type `value_type`.  Returns the stored value's output id
 /// on success, or `None` when no matching store dominates the chain.
 ///
-/// See the module-level "Public helper for the tier-2 indirect-branch
+/// See the module-level "Public helper for the indirect-branch
 /// classifier" notes for the soundness rules.
 ///
 /// # Parameters

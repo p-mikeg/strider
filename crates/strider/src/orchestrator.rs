@@ -2,7 +2,7 @@
 //!
 //! [`run`] is the canonical entry point: build the CFG, lift to IR,
 //! run the optimiser pipeline, resolve indirect branches via the
-//! tier-2 fixed-point loop, and return the final IR graph.
+//! indirect-resolution fixed-point loop, and return the final IR graph.
 //!
 //! ## Iteration shape
 //!
@@ -29,8 +29,8 @@
 //! number of legal classification transitions: every transition
 //! strictly grows the induced edge set.  Plus a separate stall budget
 //! tracks consecutive in-place-only iterations (which don't grow the
-//! edge set) so the loop cannot spin indefinitely on a tier-2
-//! soundness bug.
+//! edge set) so the loop cannot spin indefinitely on an
+//! IR-level indirect-branch resolver soundness bug.
 //!
 //! ## Tail-call detection
 //!
@@ -203,7 +203,7 @@ where
     R: rsleigh::MemReader,
 {
     opts: RunOpts<'a>,
-    /// Accumulator of tier-2 resolutions across iterations.
+    /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
     /// Monotonically grows: once an anchor's targets land here, the
     /// CFG-rebuild path keeps using them.  Per-iteration classifications
     /// overlay this map (so an upgrade like

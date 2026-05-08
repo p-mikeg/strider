@@ -47,12 +47,12 @@ pub struct RegionLiftHandles {
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
-/// placeholder-anchor side-table the tier-2 resolver consumes plus
-/// per-region IR-handle snapshots.
+/// placeholder-anchor side-table the indirect-branch resolver consumes
+/// plus per-region IR-handle snapshots.
 ///
 /// Returned by [`Strider::analyze_cfg`].  Callers that only need the
-/// graph can use `outcome.graph` directly; tier-2-aware callers read
-/// `unresolved_branches` and `region_handles`.
+/// graph can use `outcome.graph` directly; indirect-branch-resolver-aware
+/// callers read `unresolved_branches` and `region_handles`.
 pub struct AnalyzeOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub graph: ir::BuiltFunctionGraph,

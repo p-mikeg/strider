@@ -1,4 +1,4 @@
-//! Jump-table arm for the tier-2 indirect-branch classifier.
+//! Jump-table arm for the indirect-branch classifier.
 //!
 //! Recognises the canonical jump-table dispatch
 //! shape — `Load(IntAdd(IntConst(base), IntMul(idx, IntConst(stride))))`

@@ -15,7 +15,7 @@ pub struct IrStrider<'a, R: rsleigh::MemReader> {
     pub(crate) strider: &'a Strider,
     pub(crate) builder: ir::FunctionBuilder,
     pub(crate) cfg: &'a cfg::Cfg<R>,
-    /// Anchors for the tier-2 resolver.  Each entry maps a
+    /// Anchors for the indirect-branch resolver.  Each entry maps a
     /// `BranchIndirect`'s pcode address to the IR `NodeOutputId` whose
     /// producer represents `target_vn`'s value at that BranchIndirect
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift

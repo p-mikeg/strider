@@ -371,11 +371,20 @@ pub struct RelocationStats {
     pub seen: usize,
     /// Relocations the applier patched into the loaded regions.
     pub applied: usize,
-    /// Relocations skipped because the target symbol could not be
-    /// resolved (typically: undefined externs, weak symbols
-    /// referencing absent libraries).  Patching with an arbitrary
-    /// value would produce wrong control flow.
+    /// Relocations skipped because the target symbol resolved cleanly
+    /// but is *legitimately* unresolvable at static-analysis time —
+    /// typically: undefined externs, weak symbols referencing absent
+    /// libraries.  Patching with an arbitrary value would produce
+    /// wrong control flow.
     pub skipped_unresolved_target: usize,
+    /// Relocations skipped because the target symbol/section index
+    /// failed to resolve at all — i.e. the ELF is malformed (the
+    /// relocation references an index `symbol_by_index` rejects, or
+    /// the relocation target is neither Symbol nor Section).  Distinct
+    /// from `skipped_unresolved_target` (which is the legitimate
+    /// weak-extern case): a non-zero count here means the input ELF
+    /// is structurally suspect.
+    pub skipped_malformed_target: usize,
     /// Relocations skipped because their kind / size / encoding
     /// isn't one the applier knows how to write — e.g. ARM Thumb-
     /// branch encodings or platform-specific TLS variants.
@@ -517,17 +526,25 @@ pub fn apply_elf_relocations(
                             .ok()
                     };
                     let Some((addr, undef)) = resolved else {
-                        stats.skipped_unresolved_target += 1;
+                        // symbol_by_index returned Err — the index is
+                        // invalid (malformed ELF), distinct from the
+                        // legitimate weak-extern case below.
+                        stats.skipped_malformed_target += 1;
                         continue;
                     };
                     if addr == 0 && undef {
+                        // Legitimate undefined / weak extern.
                         stats.skipped_unresolved_target += 1;
                         continue;
                     }
                     addr
                 }
                 _ => {
-                    stats.skipped_unresolved_target += 1;
+                    // Non-Symbol relocation target (e.g. SectionIndex
+                    // we don't model) — bucket as malformed-from-our-
+                    // perspective rather than as a legitimate
+                    // weak-extern.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 }
             };

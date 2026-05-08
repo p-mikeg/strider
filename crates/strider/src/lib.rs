@@ -31,7 +31,7 @@
 //! - [`CallingConvention`] — describes which registers are caller-saved
 //! - [`run`] — top-level orchestrator: builds the CFG, lifts to IR, runs
 //!   the optimiser pipeline, and resolves indirect branches via the
-//!   tier-2 fixed-point loop
+//!   indirect-resolution fixed-point loop
 
 mod errors;
 mod orchestrator;

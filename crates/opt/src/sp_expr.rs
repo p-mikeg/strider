@@ -22,8 +22,8 @@ use ir::{Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression.
 ///
-/// `pub` so out-of-crate callers (e.g. the tier-2 indirect-branch classifier
-/// in `crates/strider`) can drive [`decompose_sp`] when matching the 
+/// `pub` so out-of-crate callers (e.g. the indirect-branch classifier
+/// in `crates/strider`) can drive [`decompose_sp`] when matching the
 /// `Load[sp + base + idx*stride]` shape.
 #[derive(Clone, Debug)]
 pub enum SpExpr {

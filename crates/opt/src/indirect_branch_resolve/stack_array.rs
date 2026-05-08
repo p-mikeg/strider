@@ -1,4 +1,4 @@
-//! Stack-array-of-labels arm of the tier-2 indirect-branch classifier.
+//! Stack-array-of-labels arm of the indirect-branch classifier.
 //!
 //! At -O0, gcc and clang lower a C `goto *targets[idx]` to:
 //!

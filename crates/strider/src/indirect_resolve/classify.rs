@@ -279,7 +279,7 @@ mod tests {
     /// satisfy here).  This is intentional: the unit tests
     /// exercise `classify_anchor` against fully synthetic shapes
     /// that the validator would reject in production.  The
-    /// integration tests in `tests/tier2_classify.rs` cover the
+    /// integration tests in `tests/indirect_resolve_classify.rs` cover the
     /// validation-passing path end-to-end.
     fn build_value_phi_graph(
         per_pred_consts: &[u64],

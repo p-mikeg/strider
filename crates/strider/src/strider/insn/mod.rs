@@ -71,7 +71,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the
             // link-register-return case (e.g. ARM `bx lr`); the cfg
-            // builder's tier-1 indirect-branch resolver detects tail
+            // builder's cfg-time mini-graph resolver detects tail
             // calls / jump tables / computed gotos and routes them via
             // dedicated terminators (`Switch`, `UnresolvedIndirectBranch`),
             // both handled in the special-terminator post-pass.
