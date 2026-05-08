@@ -22,6 +22,20 @@ I want you to do another round of deep code review on the strider workspace at `
 - Verify all rsleigh-touching claims by reading `../rsleigh/sleigh/src/**` directly — that crate is the upstream authority for pcode opcode behaviour, varnode semantics, and the per-arch SLA / PSPEC files.
 - Verify ABI claims against published specs (System V x86_64, AAPCS / AAPCS64, MIPS o32 / n64, PPC ELF v1 / v2) — names them in your finding, but trust the *implementation* of `target::CallingConvention::*` against those specs first.
 
+## Coverage requirement — every line of source must be inspected
+
+This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/src/`, every `.rs` file under `crates/*/tests/` and `crates/*/benches/`, every `.py` file under `crates/strider-py/tests/python/`, every `Cargo.toml`, every `*.md` file under `reviews/round8-*.md`'s scope (CLAUDE.md, every per-crate README, every existing skill SKILL.md, the root README) must be **read in full** by at least one subagent during the rounds below.
+
+Concretely:
+
+- **Inventory first.**  The Round 0 orientation step must produce `reviews/round8-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set above).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
+- **No globbing skips.**  If a file is short, glance through it and tick it.  If a file is long (e.g. `crates/opt/src/constant_fold/rules.rs`, `crates/pattern/src/matcher/mod.rs`, `crates/strider/src/orchestrator.rs`), read it in 200-line chunks until the whole file is covered — don't read the first 200 lines and call it done.  When a subagent reports its findings it should also report which files it covered fully, partially, or not at all; partial / not-at-all entries become Round 1.5 follow-up tasks for a fresh subagent.
+- **Tests count.**  Test files surface missing-coverage and stale-fixture issues that source-only review misses — read every `tests/` and `benches/` file too, including the strider-py `tests/python/`.
+- **Generated / auto-formatted code is in scope** if it lives under `crates/*/src/`.  Skip only `target/`, `.git/`, `node_modules/`, `__pycache__/`, build artefacts.
+- **Exception (allowed skips):** the `../rsleigh` upstream crate is *consulted* (verifying claims) but not *audited* — it's a third-party dep, out of scope for this review.
+
+The Round 7 final summary must include a coverage table: for each crate, "X of Y .rs files inspected fully, Z partially, W skipped".  A non-trivial skip count is a signal that the round needs another sweep — surface it explicitly rather than papering over it.
+
 ## Required skills
 
 Invoke each of these via the `Skill` tool **before any major step** — `using-superpowers` enforces this:
@@ -152,6 +166,7 @@ A single `claude-md-management:revise-claude-md`-style synthesis that integrates
 - [ ] Skill audit produces a list of revisions or new-skill proposals.
 - [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets --no-deps -- -D warnings`, `cargo test --workspace`, and `pytest tests/python/` all green at the start AND end of the review.
 - [ ] No source code is edited during the review — this is a review effort, not implementation.  The output is the set of `reviews/round8-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
+- [ ] `reviews/round8-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent — no partial / skipped entries unaccounted for.
 
 ## Out of scope
 
@@ -162,7 +177,7 @@ A single `claude-md-management:revise-claude-md`-style synthesis that integrates
 
 ## Critical files to consult
 
-These are the surfaces most worth inspecting directly during the audit:
+These are the surfaces most worth starting from — but they are **not exhaustive**.  The coverage requirement above demands every `.rs` / `.py` / `Cargo.toml` under `crates/` be inspected; the list below names the high-density files where the most architectural decisions live, so the per-crate subagents have an obvious anchor to begin from.
 
 - IR core: `crates/ir/src/{lib,graph/{mod,store,access},function,validate/{mod,layer_a,layer_b,layer_c},walk,node_signature,builder/{mod,lift_addr,call,nodes,vars}}.rs`
 - Lifter: `crates/pcode-lift/src/{lib,vn_io,value_lifter}.rs`
@@ -172,6 +187,8 @@ These are the surfaces most worth inspecting directly during the audit:
 - Strider: `crates/strider/src/{orchestrator,rewrite,indirect_resolve/{mod,classify,inplace},strider/{mod,pipeline,vn_io,insn/{mod,control}}}.rs`
 - Target: `crates/target/src/{arch,call_other_abi,calling_convention/mod}.rs` cross-checked against `../rsleigh/sleigh/src/**`
 - PyO3: `crates/strider-py/src/{lib,errors,pattern,graph,opt,reader,arch,cc,run,strider_cls,sleigh,cfg}.rs`
+
+After working through the anchor list, every subagent must continue through the rest of its assigned crate's source until the coverage manifest's tick-list is complete for that crate — including `lib.rs`, every sub-module, every `tests/` and `benches/` file.  Auxiliary crates (`dot`, `entity-utils`, `graphwalk`, `reader`) are smaller but still need the same exhaustive sweep.
 
 ## Verification
 
