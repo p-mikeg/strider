@@ -555,6 +555,41 @@ fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
 }
 
 #[test]
+fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
+    // Pin the asm-fingerprint contract: when create_node hits the
+    // dedup cache (returning a previously-built equivalent NodeId),
+    // the wrapping FunctionBuilder must STILL union the current
+    // lift_addr into the cached node's fingerprint.  Without this
+    // union the second lift's contributing address would be silently
+    // lost — patterns matching the cached node would not see the
+    // second lift's attribution.
+    let mut b = builder_with_region()?;
+
+    // First build of IntConst(42, U64) under lift_addr 0x100.
+    b.set_lift_addr(Some(0x100));
+    let c1 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c1_node = b.body().graph.get_node_from_output(c1);
+
+    // Second build under lift_addr 0x104.  Same kind+type+inputs, so
+    // create_node returns the cached NodeId.
+    b.set_lift_addr(Some(0x104));
+    let c2 = b.build_int_const(42u64, NodeOutputType::U64)?;
+    let c2_node = b.body().graph.get_node_from_output(c2);
+
+    assert_eq!(c1_node, c2_node, "cache must return the same NodeId");
+    let fp = b.body().graph.asm_fingerprint(c1_node);
+    assert!(
+        fp.contains(&0x100),
+        "fingerprint must retain first lift's address (0x100); got {fp:?}"
+    );
+    assert!(
+        fp.contains(&0x104),
+        "fingerprint must union the cache-hit lift's address (0x104); got {fp:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_call_other_terminal_closes_region() -> Result<()> {
     // Regression: build_call_other_terminal must terminate the region so
     // subsequent region-bound builder calls correctly fail.  Mirrors the
