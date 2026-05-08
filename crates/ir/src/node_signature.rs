@@ -20,6 +20,12 @@
 use crate::node::NodeKind;
 
 /// The expected kind of an input or output slot of a [`NodeKind`].
+///
+/// Stays `pub` because it is reachable from the public
+/// [`crate::validate::ValidationError`] enum via
+/// `NodeInputKindMismatch::expected` and `NodeOutputKindMismatch::expected`.
+/// The remaining types in this module ([`SlotRole`], [`Slot`], [`SlotList`],
+/// [`Signature`]) are `pub(crate)` because they have no external consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedOutputKind {
     /// A `Control` token.
@@ -42,7 +48,7 @@ pub enum ExpectedOutputKind {
 /// Semantic role of a slot, independent of its kind.  Drives label colors
 /// in dot rendering and could be used by future IR-aware consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SlotRole {
+pub(crate) enum SlotRole {
     Control,
     Memory,
     Phi,
@@ -64,10 +70,10 @@ pub enum SlotRole {
 
 /// A single input or output slot.
 #[derive(Debug, Clone, Copy)]
-pub struct Slot {
-    pub kind: ExpectedOutputKind,
-    pub name: &'static str,
-    pub role: SlotRole,
+pub(crate) struct Slot {
+    pub(crate) kind: ExpectedOutputKind,
+    pub(crate) name: &'static str,
+    pub(crate) role: SlotRole,
 }
 
 /// A list of slots, possibly with a variadic repeating tail.
@@ -76,46 +82,46 @@ pub struct Slot {
 /// `>= head.len()` repeats `tail`; otherwise the list is exactly
 /// `head.len()` slots long.
 #[derive(Debug, Clone, Copy)]
-pub struct SlotList {
-    pub head: &'static [Slot],
-    pub tail: Option<Slot>,
+pub(crate) struct SlotList {
+    pub(crate) head: &'static [Slot],
+    pub(crate) tail: Option<Slot>,
 }
 
 impl SlotList {
-    pub const fn fixed(head: &'static [Slot]) -> Self {
+    pub(crate) const fn fixed(head: &'static [Slot]) -> Self {
         Self { head, tail: None }
     }
 
-    pub const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
+    pub(crate) const fn variadic(head: &'static [Slot], tail: Slot) -> Self {
         Self {
             head,
             tail: Some(tail),
         }
     }
 
-    pub fn is_variadic(&self) -> bool {
+    pub(crate) fn is_variadic(&self) -> bool {
         self.tail.is_some()
     }
 
     /// Fixed-prefix length.  Callers validating a variadic tail must read
     /// indices `>= head_len()` via [`SlotList::at`] (or against
     /// [`SlotList::tail`] directly).
-    pub fn head_len(&self) -> usize {
+    pub(crate) fn head_len(&self) -> usize {
         self.head.len()
     }
 
     /// Slot at index `idx`.  For fixed-arity lists returns `None` past the
     /// head; for variadic lists returns the tail slot for any past-head index.
-    pub fn at(&self, idx: usize) -> Option<Slot> {
+    pub(crate) fn at(&self, idx: usize) -> Option<Slot> {
         self.head.get(idx).copied().or(self.tail)
     }
 }
 
 /// Full input/output signature of a [`NodeKind`].
 #[derive(Debug, Clone, Copy)]
-pub struct Signature {
-    pub inputs: SlotList,
-    pub outputs: SlotList,
+pub(crate) struct Signature {
+    pub(crate) inputs: SlotList,
+    pub(crate) outputs: SlotList,
 }
 
 // ── Slot constants ────────────────────────────────────────────────────────────
