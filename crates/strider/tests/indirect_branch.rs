@@ -152,7 +152,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             }
         }
         // If no placeholder survived, the optimizer collapsed the
-        // dispatch entirely (e.g. tier 1 + ConstantFold proved a
+        // dispatch entirely (e.g. cfg-time resolver + ConstantFold proved a
         // single target and the placeholder became an ABI Return).
         // The test's promise holds vacuously.
         if live_anchors.is_empty() {

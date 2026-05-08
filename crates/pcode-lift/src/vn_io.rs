@@ -42,8 +42,7 @@ pub(crate) fn vn_mask(reg: &rsleigh::Vn) -> Result<u128> {
         4 => Ok(u128::from(u32::MAX)),
         8 => Ok(u128::from(u64::MAX)),
         10 => Ok((1u128 << 80) - 1),
-        16 => Ok(u128::MAX),
-        32 | 64 => Ok(u128::MAX),
+        16 | 32 | 64 => Ok(u128::MAX),
         _ => Err(anyhow!("unsupported register size {} bytes", reg.size)),
     }
 }
@@ -590,7 +589,7 @@ mod vn_mask_tests {
     /// Every unsupported size produces `UnsupportedRegSize`.
     #[test]
     fn unsupported_sizes_return_unsupported_reg_size_error() {
-        for &bad in &[0u32, 3, 5, 6, 7, 9, 32, 64, u32::MAX] {
+        for &bad in &[0u32, 3, 5, 6, 7, 9, 17, 33, 65, u32::MAX] {
             let r = vn_mask(&reg(bad));
             match r {
                 Err(e) => assert!(

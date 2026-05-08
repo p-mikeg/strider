@@ -338,7 +338,7 @@ fn unknown_memory_returns_ok_none() {
         None,
         target::Endianness::Little,
     )
-    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(res.is_none(), "got {res:?}");
 }
 
@@ -388,7 +388,7 @@ fn find_branch_indirect_target(region: &[RegionInstruction]) -> Vn {
 /// `BranchIndirect reg` with no prior write to `reg` and no
 /// link-register classification → `Ok(None)`.  The producer is
 /// `InitialVar(reg)` but `cc_link_register_vn` is `None`, so the
-/// LinkRegister arm doesn't fire and tier 1 defers to the
+/// LinkRegister arm doesn't fire and cfg-time resolver defers to the
 /// strider-level outer loop.
 #[test]
 fn runtime_input_returns_ok_none() {
@@ -485,7 +485,7 @@ fn cfg_time_unresolved_returns_ok_none() {
         None,
         target::Endianness::Little,
     )
-    .expect("soft contract: tier 1 returns Ok rather than Err on unresolved");
+    .expect("soft contract: cfg-time resolver returns Ok rather than Err on unresolved");
     assert!(
         res.is_none(),
         "unresolvable target must produce Ok(None), got {res:?}"

@@ -208,7 +208,7 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
         }
         other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
     }
-    // No outgoing edge — the target is unknown until tier 2 resolves.
+    // No outgoing edge — the target is unknown until IR-level indirect-branch resolver resolves.
     assert_eq!(
         cfg.graph
             .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
@@ -312,10 +312,10 @@ fn options_read_only_memory_round_trips() {
 /// `UnresolvedIndirectBranch`.  This is the negative companion to
 /// `unresolvable_branch_indirect_produces_unresolved_terminator`
 /// and guards against an over-zealous deferral that would defeat the
-/// "tier 1 closes trivial cases inline" speed argument.
+/// "cfg-time resolver closes trivial cases inline" speed argument.
 #[test]
 fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
-    // `mov rax, K; jmp rax` with K outside fn range — tier 1 returns
+    // `mov rax, K; jmp rax` with K outside fn range — cfg-time resolver returns
     // `Single(K)`, which is a tail call.  Terminator must be
     // `TailCall`, not `UnresolvedIndirectBranch`.
     let base = 0x1000u64;

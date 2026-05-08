@@ -58,7 +58,7 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
 #[test]
 fn outer_loop_unresolved_at_fixed_point_returns_typed_error() {
     // `jmp rax` on x86_64: rax is a function-entry value (no constant
-    // write), and x86_64 has no link register, so tier 2 cannot
+    // write), and x86_64 has no link register, so IR-level indirect-branch resolver cannot
     // classify.  The orchestrator must reach a fixed point and return
     // a `UnresolvedIndirectBranch`-typed error — never panic, never
     // loop forever.  The typed error lets callers (e.g. strider-py's
@@ -89,7 +89,7 @@ fn outer_loop_unresolved_at_fixed_point_returns_typed_error() {
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` — structurally a tail call.
     // After StackStoreDetect + StackLoadForward the placeholder
-    // Return's value-input folds to IntConst(K), and tier 2
+    // Return's value-input folds to IntConst(K), and IR-level indirect-branch resolver
     // classifies as `Single(K)`.  K must lie OUTSIDE the function
     // range so the orchestrator treats it as a tail call.
     let k = 0x500u64;

@@ -41,12 +41,12 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// reader's range doesn't cover that, and Sleigh's `lift_one(K)`
 /// trips DataUnavailErr.  When `K` is a tail call we get
 /// `RegionTerminator::TailCall { target: K }`, NOT
-/// `UnresolvedIndirectBranch` — i.e. tier 1 resolves it before
-/// tier 2 ever sees it.  That defeats this fixture's purpose.
+/// `UnresolvedIndirectBranch` — i.e. cfg-time resolver resolves it before
+/// IR-level indirect-branch resolver ever sees it.  That defeats this fixture's purpose.
 ///
 /// To force the branch into the tier-2 path we therefore use a
 /// **runtime-computed** target: `mov rax, [rsp+8]; jmp rax`.  The
-/// rsp-relative read prevents tier 1's mini-graph from folding the
+/// rsp-relative read prevents cfg-time resolver's mini-graph from folding the
 /// target to a constant (no constant write to rax in the region),
 /// so the branch defers to `UnresolvedIndirectBranch`.  Then
 /// classify_anchor only sees an InitialVar / Load shape — NOT
@@ -63,7 +63,7 @@ pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Valu
 
 /// Build a function whose only indirect branch resolves to a
 /// constant `k` *only after* the optimiser has run on the lifted IR
-/// — i.e. one where tier 1's mini-graph couldn't classify it.
+/// — i.e. one where cfg-time resolver's mini-graph couldn't classify it.
 ///
 /// Approach: write `k` to a stack slot via a function-entry push,
 /// then load that slot through a register-indirect load and jump
@@ -73,7 +73,7 @@ pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Valu
 /// `UnresolvedIndirectBranch`.  After strider runs the full
 /// optimiser pipeline (including `StackStoreDetect` +
 /// `StackLoadForward`), the loaded value folds to `IntConst(k)` —
-/// exactly the shape tier 2's IntConst arm classifies.
+/// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(
     k: u64,
 ) -> (BuiltFunctionGraph, ir::Value) {
@@ -83,7 +83,7 @@ pub fn build_int_const_target_scenario_via_stack(
     //   ff e0                jmp rax
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `StackLoadForward` can simplify back to the pushed constant
-    // K, while keeping tier 1's single-region mini-graph (which
+    // K, while keeping cfg-time resolver's single-region mini-graph (which
     // lacks StackLoadForward) unable to classify the target.
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![
@@ -309,7 +309,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     // Include `RedundantPhis` so the trivial single-input
     // VarPhi(lr) at the entry region collapses back to
-    // `InitialVar(lr)` — that's the shape tier 2's LinkRegister
+    // `InitialVar(lr)` — that's the shape IR-level indirect-branch resolver's LinkRegister
     // arm classifies, and it's what the production strider
     // pipeline (`default_pipeline()` includes RedundantPhis)
     // produces in real-binary integration tests.
@@ -422,7 +422,7 @@ pub fn build_push_target_pop_pc_scenario(
 // Each helper builds a `BuiltFunctionGraph` whose placeholder Return's
 // value-input is shaped like a jump-table dispatch — `Load(IntAdd(
 // IntConst(base), IntMul(idx, IntConst(stride))))` — and runs the
-// stable optimiser subset so the structure is exactly what tier 2's
+// stable optimiser subset so the structure is exactly what IR-level indirect-branch resolver's
 // classifier sees in production.  Helpers parameterise over how `idx`
 // is bounded:
 //
@@ -811,7 +811,7 @@ pub fn build_stack_array_dispatch_scenario(
 /// Tier 1 cannot classify this (its mini-graph isn't given a
 /// link-register VN since we don't pass `set_link_register` on
 /// `OptionsBuilder`), so the cfg builder defers via
-/// `UnresolvedIndirectBranch` and tier 2 sees the cleaned-up
+/// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up
 /// shape.
 pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
@@ -837,9 +837,9 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
         .expect("AArch64 AAPCS has a link register");
 
     // Note: we deliberately omit `set_link_register` on the cfg
-    // builder's options.  With it set, tier 1's mini-graph would
+    // builder's options.  With it set, cfg-time resolver's mini-graph would
     // already classify the branch as LinkRegister and short-circuit
-    // before tier 2 ever sees it — i.e. no
+    // before IR-level indirect-branch resolver ever sees it — i.e. no
     // `UnresolvedIndirectBranch` placeholder would be emitted, and
     // the integration test would have nothing to assert against.
     let opts = OptionsBuilder::new().build();

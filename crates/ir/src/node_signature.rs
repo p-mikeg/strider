@@ -304,9 +304,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
-        NodeKind::InitialVar(_) | NodeKind::FunctionArg { .. } => {
-            sig!(inputs: [], outputs: [INT_VAL])
-        }
+        NodeKind::InitialVar(_)
+        | NodeKind::FunctionArg { .. }
+        | NodeKind::IntConst(_)
+        | NodeKind::IntConstWide(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // ControlState: one Control input per predecessor (variadic).
@@ -351,9 +352,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::StackStorePhi { .. } => sig!(inputs: [PHI, MEM, DATA], outputs: [MEM]),
 
         // ── Integer constants and operations ────────────────────────────────
-        NodeKind::IntConst(_) | NodeKind::IntConstWide(_) => {
-            sig!(inputs: [], outputs: [INT_VAL])
-        }
+        // (`IntConst` / `IntConstWide` shape is folded into the Initial-state
+        // arm above — they share the `inputs: [], outputs: [INT_VAL]` shape.)
         // Unary integer ops: same single-input single-output shape.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate

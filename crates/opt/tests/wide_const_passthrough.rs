@@ -7,7 +7,7 @@
 //! survives every default-pipeline pass without losing or rewriting
 //! the wide nodes.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
 use ir::node::{NodeKind, NodeOutputType};
 use ir::wide_const::WideConstStorage;

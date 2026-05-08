@@ -69,9 +69,28 @@ const TYPE_INFO: &[TypeInfo] = &[
 ];
 
 impl NodeOutputType {
+    /// Returns the type's [`TypeInfo`] entry.  Implemented as an
+    /// exhaustive `match` rather than `&TYPE_INFO[self as usize]` so
+    /// adding a new variant is a compile-time error rather than a
+    /// runtime out-of-bounds index.  The `TYPE_INFO` table itself is
+    /// validated against the enum order by the
+    /// `type_info_table_matches_variants` test.
     #[inline]
     fn info(self) -> &'static TypeInfo {
-        &TYPE_INFO[self as usize]
+        match self {
+            Self::Bool => &TYPE_INFO[0],
+            Self::U8 => &TYPE_INFO[1],
+            Self::U16 => &TYPE_INFO[2],
+            Self::U32 => &TYPE_INFO[3],
+            Self::U64 => &TYPE_INFO[4],
+            Self::U80 => &TYPE_INFO[5],
+            Self::U128 => &TYPE_INFO[6],
+            Self::U256 => &TYPE_INFO[7],
+            Self::U512 => &TYPE_INFO[8],
+            Self::F32 => &TYPE_INFO[9],
+            Self::F64 => &TYPE_INFO[10],
+            Self::F80 => &TYPE_INFO[11],
+        }
     }
 
     /// Returns the canonical name of this type as a static string.

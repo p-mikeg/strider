@@ -4,8 +4,8 @@
 //! branch resolver.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
-//! function-entry value, not constant, so cfg-tier-1 cannot classify
-//! the target).  Pre-fix, `analyze_cfg` either errored or emitted an
+//! function-entry value, not constant, so the cfg-time mini-graph
+//! resolver cannot classify the target).  Pre-fix, `analyze_cfg` either errored or emitted an
 //! ABI Return that discarded the dispatch value.  Post-fix, it
 //! succeeds and produces an IR with exactly one IndirectBranch node
 //! whose single value-input is `target_vn`'s value at the
@@ -28,7 +28,7 @@ use strider::{CallingConvention, SleighArch, Strider};
 /// terminator is `UnresolvedIndirectBranch{target_vn=RAX, addr=...}`.
 ///
 /// Bytes: `0xff 0xe0` — `jmp rax`.  RAX is the function-entry value of
-/// the dispatch register; tier 1 cannot classify (no LR is set, no
+/// the dispatch register; cfg-time resolver cannot classify (no LR is set, no
 /// constant write to RAX), so the cfg builder defers via the R1.3
 /// fall-through and we end up with the new terminator.
 fn make_unresolved_indirect_branch_cfg(
@@ -40,7 +40,7 @@ fn make_unresolved_indirect_branch_cfg(
     let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .expect("create x86-64 sleigh");
     // No link-register on x86-64 (the cdecl-family conventions push the
-    // return address onto the stack), so tier 1's LinkRegister arm
+    // return address onto the stack), so cfg-time resolver's LinkRegister arm
     // can't classify either.
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)

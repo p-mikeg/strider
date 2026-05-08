@@ -281,10 +281,10 @@ impl Graph {
 
         // Rewrite the surviving IntConstWide nodes' payloads in place.
         for node in wide_nodes {
-            if let NodeKind::IntConstWide(ref mut id) = self.nodes[node].kind {
-                if let Some(&new_id) = old_to_new.get(id) {
-                    *id = new_id;
-                }
+            if let NodeKind::IntConstWide(ref mut id) = self.nodes[node].kind
+                && let Some(&new_id) = old_to_new.get(id)
+            {
+                *id = new_id;
             }
         }
     }

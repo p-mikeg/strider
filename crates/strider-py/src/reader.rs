@@ -659,24 +659,20 @@ impl ReadOnlyMemory for PyMemoryMap {
         if n != size {
             return None;
         }
-        // The bytes occupy buf[..size] in target memory order; we need
-        // to interpret them as a little-endian or big-endian integer
-        // based on the configured arch.  For big-endian, place the
-        // bytes at the high end of buf so from_be_bytes recovers the
-        // intended value (analogous to ElfFileMemReader's path).
+        // Layout `buf` so that `Endianness::read_u64` decodes the
+        // size-byte payload correctly.  LE: bytes already in low slots.
+        // BE: shift bytes to the high end so from_be_bytes treats the
+        // payload as a widened N-byte BE word.
         let endianness = *self.endianness.read().ok()?;
-        match endianness {
-            target::Endianness::Little => Some(u64::from_le_bytes(buf)),
+        let layout = match endianness {
+            target::Endianness::Little => buf,
             target::Endianness::Big => {
-                // Move the size-byte payload from buf[..size] to the
-                // high end of buf[8-size..].  This matches the layout
-                // a real BE memory load would produce when widened to
-                // 8 bytes.
                 let mut be_buf = [0u8; 8];
                 be_buf[8 - size..].copy_from_slice(&buf[..size]);
-                Some(u64::from_be_bytes(be_buf))
+                be_buf
             }
-        }
+        };
+        Some(endianness.read_u64(layout))
     }
 }
 

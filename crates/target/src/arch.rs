@@ -7,6 +7,74 @@ pub enum Endianness {
     Big,
 }
 
+impl Endianness {
+    /// Decodes a 64-bit unsigned integer from `bytes` according to this
+    /// byte order.  Used by ELF relocation appliers, the strider-py
+    /// `ReadOnlyMemory` adapter, and any other consumer that needs to
+    /// interpret raw bytes as a multi-byte word.  Consolidates the
+    /// `if le { from_le_bytes } else { from_be_bytes }` branching that
+    /// was duplicated across `reader::elf` and
+    /// `strider-py::reader::PyMemoryMap`.
+    #[must_use]
+    pub fn read_u64(self, bytes: [u8; 8]) -> u64 {
+        match self {
+            Self::Little => u64::from_le_bytes(bytes),
+            Self::Big => u64::from_be_bytes(bytes),
+        }
+    }
+
+    /// Decodes a 32-bit unsigned integer from `bytes` according to this
+    /// byte order.  Mirrors [`Self::read_u64`].
+    #[must_use]
+    pub fn read_u32(self, bytes: [u8; 4]) -> u32 {
+        match self {
+            Self::Little => u32::from_le_bytes(bytes),
+            Self::Big => u32::from_be_bytes(bytes),
+        }
+    }
+
+    /// Decodes a 16-bit unsigned integer from `bytes` according to this
+    /// byte order.  Mirrors [`Self::read_u64`].
+    #[must_use]
+    pub fn read_u16(self, bytes: [u8; 2]) -> u16 {
+        match self {
+            Self::Little => u16::from_le_bytes(bytes),
+            Self::Big => u16::from_be_bytes(bytes),
+        }
+    }
+}
+
+#[cfg(test)]
+mod endianness_tests {
+    use super::Endianness;
+
+    #[test]
+    fn read_u64_little_endian_matches_from_le_bytes() {
+        let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(Endianness::Little.read_u64(bytes), u64::from_le_bytes(bytes));
+    }
+
+    #[test]
+    fn read_u64_big_endian_matches_from_be_bytes() {
+        let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(Endianness::Big.read_u64(bytes), u64::from_be_bytes(bytes));
+    }
+
+    #[test]
+    fn read_u32_round_trips() {
+        let bytes = [0xde, 0xad, 0xbe, 0xef];
+        assert_eq!(Endianness::Little.read_u32(bytes), 0xefbeadde);
+        assert_eq!(Endianness::Big.read_u32(bytes), 0xdeadbeef);
+    }
+
+    #[test]
+    fn read_u16_round_trips() {
+        let bytes = [0xab, 0xcd];
+        assert_eq!(Endianness::Little.read_u16(bytes), 0xcdab);
+        assert_eq!(Endianness::Big.read_u16(bytes), 0xabcd);
+    }
+}
+
 /// Architecture-preset discriminator used as a key for
 /// [`crate::call_other_abi::classify`].  One variant per [`SleighArch`]
 /// preset constructor — this gives full granularity, so Arm-32 vs

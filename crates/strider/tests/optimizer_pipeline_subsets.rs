@@ -10,7 +10,7 @@
 //!   * the destructive subset includes RedundantPhis +
 //!     DeadBranchElimination,
 //!   * the stable subset does NOT include those passes,
-//!   * tier 2's classification produces the same induced edge set
+//!   * IR-level indirect-branch resolver's classification produces the same induced edge set
 //!     before and after the destructive subset runs (the "robust to
 //!     RedundantPhis" guarantee from the spec).
 //!
@@ -134,6 +134,6 @@ fn ir_level_classification_robust_to_destructive_subset() {
     let cls_full = classify_anchor(&graph_full, anchor_full, None);
     assert_eq!(
         cls_stable, cls_full,
-        "tier 2 classification must be invariant to destructive subset",
+        "IR-level indirect-branch resolver classification must be invariant to destructive subset",
     );
 }

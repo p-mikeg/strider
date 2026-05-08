@@ -17,7 +17,7 @@ use rsleigh::mem_readers::BufMemReader;
 use std::collections::HashMap;
 
 /// x86_64: `jmp rax`.  RAX is a function-entry value with no
-/// constant write — tier 1's mini-graph cannot classify it, and the
+/// constant write — cfg-time resolver's mini-graph cannot classify it, and the
 /// CFG builder produces `RegionTerminator::UnresolvedIndirectBranch`.
 fn build_unresolved_jmp_rax_cfg() -> cfg::Cfg<BufMemReader<Vec<u8>>> {
     let base = 0x1000u64;
@@ -89,7 +89,7 @@ fn with_known_targets_link_register_overrides_to_return() {
 }
 
 #[test]
-fn with_known_targets_empty_map_falls_through_to_tier_1() {
+fn with_known_targets_empty_map_falls_through_to_cfg_time() {
     // Pinning that an empty `known_targets` map is equivalent to not
     // calling `with_known_targets` at all.  Defends against accidental
     // "always classify" behaviour from a future refactor.
@@ -123,7 +123,7 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
 /// escape, so encoding mixed in-range / tail-call targets in a single
 /// Switch terminator would misroute the OOB cases.  Pre-fix the
 /// builder bailed with "could not be statically resolved" even though
-/// tier 2 had already resolved the targets.
+/// IR-level indirect-branch resolver had already resolved the targets.
 #[test]
 fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let base = 0x1000u64;
