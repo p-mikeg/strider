@@ -638,6 +638,94 @@ pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
     b
 }
 
+/// Builder for `MemPhi` patterns.  No varnode payload (memory-token
+/// phis don't carry one); chain `.input(idx, p)` to constrain the
+/// memory-input from predecessor `idx`.
+#[pyclass(name = "MemPhiPat", module = "strider.pattern")]
+pub struct PyMemPhiPat {
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyMemPhiPat {
+    fn new() -> Self {
+        Self { inputs: std::cell::RefCell::new(Vec::new()) }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::mem_phi();
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
+            b = b.input(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyMemPhiPat {
+    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
+}
+
+#[pyfunction]
+pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
+
+/// Builder for `ValuePhi` patterns.  ValuePhi is synthesised by
+/// `StackLoadForward` to phi together stack-store values across a
+/// control-flow join.
+#[pyclass(name = "ValuePhiPat", module = "strider.pattern")]
+pub struct PyValuePhiPat {
+    inputs: std::cell::RefCell<Vec<(usize, pattern::Pat)>>,
+}
+
+impl PyValuePhiPat {
+    fn new() -> Self {
+        Self { inputs: std::cell::RefCell::new(Vec::new()) }
+    }
+    pub(crate) fn finalise(&self) -> pattern::Pat {
+        let mut b = pattern::value_phi();
+        for (idx, p) in self.inputs.borrow().iter().cloned() {
+            b = b.input(idx, p);
+        }
+        b.into()
+    }
+}
+
+#[pymethods]
+impl PyValuePhiPat {
+    fn input(slf: Py<Self>, py: Python<'_>, idx: usize, p: PatLike<'_>) -> PyResult<Py<Self>> {
+        let pat = p.into_pat()?;
+        slf.borrow(py).inputs.borrow_mut().push((idx, pat));
+        Ok(slf)
+    }
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+        use pattern::IntoPat;
+        PyPat::from_pat(self.finalise().capture(c.inner))
+    }
+    fn cap(&self, name: &str) -> PyResult<PyPat> {
+        use pattern::IntoPat;
+        let c = intern_str(name)?;
+        Ok(PyPat::from_pat(self.finalise().capture(c)))
+    }
+    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
+    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
+}
+
+#[pyfunction]
+pub fn value_phi() -> PyValuePhiPat { PyValuePhiPat::new() }
+
 // ── FunctionArgPat ───────────────────────────────────────────────────
 
 /// Typed builder for `FunctionArg` node patterns.  Chain
@@ -1964,6 +2052,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStackStorePat>()?;
     m.add_class::<PyStackStorePhiPat>()?;
     m.add_class::<PyPhiPat>()?;
+    m.add_class::<PyMemPhiPat>()?;
+    m.add_class::<PyValuePhiPat>()?;
     m.add_class::<PyFunctionArgPat>()?;
     m.add_class::<PyCastMask>()?;
 
@@ -1991,6 +2081,8 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(function_arg_stack);
     add_fn!(phi);
     add_fn!(phi_for);
+    add_fn!(mem_phi);
+    add_fn!(value_phi);
     add_fn!(predicate);
     add_fn!(int_cmp);
     // int binary

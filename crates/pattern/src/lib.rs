@@ -220,7 +220,7 @@ pub use pat::{
 #[rustfmt::skip]
 pub use pat::{
     function_arg, function_arg_any, function_arg_reg, function_arg_stack,
-    load, phi, phi_for, stack_store, stack_store_phi, store,
+    load, mem_phi, phi, phi_for, stack_store, stack_store_phi, store, value_phi,
 };
 
 // ── Control flow & entry values ──────────────────────────────────────────────

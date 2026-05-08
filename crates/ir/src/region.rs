@@ -293,30 +293,7 @@ impl FunctionBuilder {
     /// (graph-construction bug).
     pub fn region_entry_control(&self, region: RegionId) -> Result<NodeOutputId> {
         let cs_id = self.regions[region].control_node;
-        // Find the first Control output without materialising a Vec
-        // first.  Track the first observed output for the error path
-        // (so the message points at concrete data when no control
-        // output exists).
-        let mut first_seen: Option<NodeOutputId> = None;
-        for out in self.graph().node_outputs(cs_id) {
-            if first_seen.is_none() {
-                first_seen = Some(out);
-            }
-            if self.graph().output_kind(out).is_control() {
-                return Ok(out);
-            }
-        }
-        match first_seen {
-            Some(first) => {
-                let kind = self.graph().output_kind(first);
-                Err(anyhow!(
-                    "output {first:?} is not a control edge (got {kind:?})"
-                ))
-            }
-            None => Err(anyhow!(
-                "region {region:?} ControlState {cs_id:?} has no outputs"
-            )),
-        }
+        self.first_output_matching(cs_id, |k| k.is_control(), "control", region)
     }
 
     /// Returns the entry-boundary memory output (the `Memory`
@@ -328,12 +305,29 @@ impl FunctionBuilder {
     /// does not have a Memory output (graph-construction bug).
     pub fn region_entry_memory(&self, region: RegionId) -> Result<NodeOutputId> {
         let mp_id = self.regions[region].memory_node;
+        self.first_output_matching(mp_id, |k| k.is_memory(), "memory", region)
+    }
+
+    /// Returns the first output of `node` whose kind satisfies `pred`.
+    /// Shared between [`Self::region_entry_control`] (filter for
+    /// `Control` on the ControlState node) and
+    /// [`Self::region_entry_memory`] (filter for `Memory` on the
+    /// MemPhi node).  `kind_label` and `region` thread through to the
+    /// error message when no matching output exists.
+    fn first_output_matching(
+        &self,
+        node: crate::node::NodeId,
+        pred: impl Fn(&crate::node::NodeOutputKind) -> bool,
+        kind_label: &str,
+        region: RegionId,
+    ) -> Result<NodeOutputId> {
         let mut first_seen: Option<NodeOutputId> = None;
-        for out in self.graph().node_outputs(mp_id) {
+        for out in self.graph().node_outputs(node) {
             if first_seen.is_none() {
                 first_seen = Some(out);
             }
-            if self.graph().output_kind(out).is_memory() {
+            let kind = self.graph().output_kind(out);
+            if pred(&kind) {
                 return Ok(out);
             }
         }
@@ -341,11 +335,11 @@ impl FunctionBuilder {
             Some(first) => {
                 let kind = self.graph().output_kind(first);
                 Err(anyhow!(
-                    "output {first:?} is not a memory edge (got {kind:?})"
+                    "output {first:?} is not a {kind_label} edge (got {kind:?})"
                 ))
             }
             None => Err(anyhow!(
-                "region {region:?} MemPhi {mp_id:?} has no outputs"
+                "region {region:?} node {node:?} has no outputs"
             )),
         }
     }

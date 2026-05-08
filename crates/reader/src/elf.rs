@@ -749,8 +749,11 @@ fn find_loadable_section_containing<'data, 'a>(
         // parse-failure case in the eprintln so a malformed ELF doesn't
         // hide silently inside autoload search.
         match sec.data() {
-            Ok(d) if d.is_empty() => return false,
-            Ok(_) => {}
+            Ok(d) => {
+                if d.is_empty() {
+                    return false;
+                }
+            }
             Err(e) => {
                 eprintln!(
                     "strider: ELF section {:?} data parse failed: {e}; skipping for site-coverage",
