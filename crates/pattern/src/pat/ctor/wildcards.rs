@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::pat::any::{AnyPat, VarPat};
@@ -53,16 +52,15 @@ pub fn int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         // Determine the output type from the node's single value output.
         let ty = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value());
+            .find_map(|out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         (stored & mask) == (v_unsigned & mask)
@@ -108,15 +106,14 @@ where
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         let ty = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value());
+            .find_map(|out| ctx.graph.output_kind(out).as_value());
         let Some(ty) = ty else { return false; };
         let mask = ty.bit_mask_u128();
         let stored_masked = stored & mask;
@@ -165,15 +162,14 @@ pub fn signed_int_const(v: impl Into<i128>) -> Pat {
         InputsSpec::None,
     )
     .with_post_match(Arc::new(move |ctx, node, _b| {
-        let NodeKind::IntConst(stored) = *ctx.graph.graph.node_kind(node) else {
+        let NodeKind::IntConst(stored) = *ctx.graph.node_kind(node) else {
             return false;
         };
         let Some(ty) = ctx
             .graph
-            .graph
             .node_outputs(node)
             .into_iter()
-            .find_map(|out| ctx.graph.graph.output_kind(out).as_value())
+            .find_map(|out| ctx.graph.output_kind(out).as_value())
         else {
             return false;
         };
@@ -246,7 +242,7 @@ pub fn float_const(bits: u64) -> Pat {
 /// `any().when(f)`.
 pub fn predicate<F>(f: F) -> Pat
 where
-    F: Fn(&BuiltFunctionGraph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
+    F: Fn(&ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,
 {
     any().when(f)
 }

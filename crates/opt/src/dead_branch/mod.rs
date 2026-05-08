@@ -42,24 +42,24 @@ fn try_eliminate_dead_branch(
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     // Only handle If nodes.
-    if !matches!(*fg.graph.node_kind(node_id), NodeKind::If) {
+    if !matches!(*fg.node_kind(node_id), NodeKind::If) {
         return Ok(OptimizationResult::NoChange);
     }
 
     // If inputs: [ctrl_in, condition].
-    let inputs = fg.graph.node_inputs(node_id);
+    let inputs = fg.node_inputs(node_id);
     if inputs.len() < 2 {
         return Ok(OptimizationResult::NoChange);
     }
     let ctrl_in = inputs[0];
     let cond_out = inputs[1];
 
-    let Some(cond_val) = fg.graph.bool_const_val(cond_out) else {
+    let Some(cond_val) = fg.bool_const_val(cond_out) else {
         return Ok(OptimizationResult::NoChange);
     };
 
     // If outputs: [ctrl_true (index 0), ctrl_false (index 1)].
-    let [ctrl_true, ctrl_false] = fg.graph.node_outputs_exact::<2>(node_id)?;
+    let [ctrl_true, ctrl_false] = fg.node_outputs_exact::<2>(node_id)?;
 
     let (live_ctrl, dead_ctrl) = if cond_val {
         (ctrl_true, ctrl_false)
@@ -70,8 +70,8 @@ fn try_eliminate_dead_branch(
     // Snapshot the dead- and live-side state BEFORE any mutation so we can
     // decide whether work is left to do this iteration.  Each `dead_uses`
     // entry is `(consumer_node, input_index)`.
-    let dead_uses: Vec<(NodeId, u32)> = fg.graph.output_uses(dead_ctrl).collect();
-    let live_uses_count = fg.graph.output_uses(live_ctrl).count();
+    let dead_uses: Vec<(NodeId, u32)> = fg.output_uses(dead_ctrl).collect();
+    let live_uses_count = fg.output_uses(live_ctrl).count();
 
     // Detaching the If's inputs (the old "Step 4") severs the only edge
     // keeping the now-folded If attached to the live walk.  That's normally
@@ -110,10 +110,10 @@ fn try_eliminate_dead_branch(
     // (typically a ControlState — exempt from the non-empty check, but
     // unioning the address there preserves the contributing-asm-instruction
     // history so consumers can recover it from the side-table later).
-    let if_node = fg.graph.get_node_from_output(live_ctrl);
-    let ctrl_in_node = fg.graph.get_node_from_output(ctrl_in);
-    fg.graph.extend_asm_fingerprint_from(ctrl_in_node, if_node);
-    fg.graph.replace_all_uses(live_ctrl, ctrl_in)?;
+    let if_node = fg.get_node_from_output(live_ctrl);
+    let ctrl_in_node = fg.get_node_from_output(ctrl_in);
+    fg.extend_asm_fingerprint_from(ctrl_in_node, if_node);
+    fg.replace_all_uses(live_ctrl, ctrl_in)?;
 
     // The dead-side cleanup is **all-or-nothing** based on whether the dead
     // subgraph escapes.  When it doesn't escape we strip every CS predecessor
@@ -133,12 +133,12 @@ fn try_eliminate_dead_branch(
         for (cs_node, dead_idx) in &dead_uses {
             let cs_node = *cs_node;
             let dead_idx = *dead_idx;
-            if !matches!(*fg.graph.node_kind(cs_node), NodeKind::ControlState) {
+            if !matches!(*fg.node_kind(cs_node), NodeKind::ControlState) {
                 continue;
             }
 
             // ControlState outputs: [ctrl_out, phi_out].
-            let cs_outputs = fg.graph.node_outputs(cs_node);
+            let cs_outputs = fg.node_outputs(cs_node);
             if cs_outputs.len() < 2 {
                 continue;
             }
@@ -161,19 +161,19 @@ fn try_eliminate_dead_branch(
             // per-consumer indices already shifted by an earlier removal.
             let phi_input_idx = dead_idx + 1;
             for phi_node in phi_nodes {
-                let phi_len = fg.graph.node_inputs(phi_node).len() as u32;
+                let phi_len = fg.node_inputs(phi_node).len() as u32;
                 if phi_input_idx < phi_len {
-                    fg.graph.remove_node_input(phi_node, phi_input_idx)?;
+                    fg.remove_node_input(phi_node, phi_input_idx)?;
                 }
             }
 
-            let cs_len = fg.graph.node_inputs(cs_node).len() as u32;
+            let cs_len = fg.node_inputs(cs_node).len() as u32;
             if dead_idx < cs_len {
-                fg.graph.remove_node_input(cs_node, dead_idx)?;
+                fg.remove_node_input(cs_node, dead_idx)?;
             }
         }
 
-        fg.graph.detach_node_inputs(node_id);
+        fg.detach_node_inputs(node_id);
     }
 
     Ok(OptimizationResult::Changed)
@@ -187,8 +187,8 @@ fn dead_uses_all_zero_input(
     dead_uses: &[(NodeId, u32)],
 ) -> bool {
     dead_uses.iter().all(|(n, _)| {
-        !matches!(*fg.graph.node_kind(*n), NodeKind::ControlState)
-            || fg.graph.node_inputs(*n).is_empty()
+        !matches!(*fg.node_kind(*n), NodeKind::ControlState)
+            || fg.node_inputs(*n).is_empty()
     })
 }
 
@@ -203,19 +203,19 @@ fn collect_dead_subgraph(
     let mut subgraph = FxHashSet::default();
     let mut worklist: Vec<NodeId> = dead_uses
         .iter()
-        .filter(|(n, _)| !matches!(*fg.graph.node_kind(*n), NodeKind::ControlState))
+        .filter(|(n, _)| !matches!(*fg.node_kind(*n), NodeKind::ControlState))
         .map(|(n, _)| *n)
         .collect();
     while let Some(node) = worklist.pop() {
         if !subgraph.insert(node) {
             continue;
         }
-        for output in fg.graph.node_outputs(node) {
-            if !fg.graph.output_kind(output).is_control() {
+        for output in fg.node_outputs(node) {
+            if !fg.output_kind(output).is_control() {
                 continue;
             }
-            for (consumer, _) in fg.graph.output_uses(output) {
-                if matches!(*fg.graph.node_kind(consumer), NodeKind::ControlState) {
+            for (consumer, _) in fg.output_uses(output) {
+                if matches!(*fg.node_kind(consumer), NodeKind::ControlState) {
                     continue; // Boundary — don't walk past joins.
                 }
                 worklist.push(consumer);
@@ -234,8 +234,8 @@ fn dead_subgraph_has_live_data_consumer(
     subgraph: &FxHashSet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|&node| {
-        fg.graph.node_outputs(node).into_iter().any(|out| {
-            if fg.graph.output_kind(out).is_control() {
+        fg.node_outputs(node).into_iter().any(|out| {
+            if fg.output_kind(out).is_control() {
                 return false;
             }
             fg.graph

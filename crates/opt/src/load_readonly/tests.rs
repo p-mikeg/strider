@@ -24,10 +24,10 @@ impl ReadOnlyMemory for TestRom {
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.graph.node_inputs(ret)[2];
-    Ok(*fg.graph.kind_of_output(val))
+    let val = fg.node_inputs(ret)[2];
+    Ok(*fg.kind_of_output(val))
 }
 
 // ── original tests ────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
     // Load node should still be present.
     assert!(
         fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_)))
     );
     Ok(())
 }
@@ -151,7 +151,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let remaining_loads = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .count();
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())

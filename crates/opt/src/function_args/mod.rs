@@ -144,7 +144,7 @@ fn detect_register_args(
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
     for n in fg.preorder() {
-        if let NodeKind::InitialVar(vn) = *fg.graph.node_kind(n) {
+        if let NodeKind::InitialVar(vn) = *fg.node_kind(n) {
             initial_vars.insert(vn, n);
         }
     }
@@ -180,14 +180,14 @@ fn detect_register_args(
             continue;
         };
 
-        let [old_out] = fg.graph.node_outputs_exact::<1>(initial_var)?;
+        let [old_out] = fg.node_outputs_exact::<1>(initial_var)?;
         // Skip if the InitialVar has no consumers.
-        if fg.graph.output_use_cursor(old_out).current().is_none() {
+        if fg.output_use_cursor(old_out).current().is_none() {
             continue;
         }
 
         let out_type = NodeOutputType::try_from(effective_vn.size)?;
-        let new_node = fg.graph.create_node(
+        let new_node = fg.create_node(
             NodeKind::FunctionArg {
                 source: FunctionArgSource::Register(effective_vn),
                 index: i as u32,
@@ -195,8 +195,8 @@ fn detect_register_args(
             [],
             [NodeOutputKind::OutputType(out_type)],
         );
-        let [new_out] = fg.graph.node_outputs_exact::<1>(new_node)?;
-        fg.graph.replace_all_uses(old_out, new_out)?;
+        let [new_out] = fg.node_outputs_exact::<1>(new_node)?;
+        fg.replace_all_uses(old_out, new_out)?;
         result |= OptimizationResult::Changed;
     }
     Ok(result)
@@ -233,9 +233,9 @@ fn detect_stack_args(
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
     let mut work = WorkSet::seeded_kind(fg, |k| matches!(k, NodeKind::Load(_)));
     while let Some(node_id) = work.pop() {
-        let [memory, addr] = fg.graph.node_inputs_exact::<2>(node_id)?;
-        let [load_out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-        let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
+        let [memory, addr] = fg.node_inputs_exact::<2>(node_id)?;
+        let [load_out] = fg.node_outputs_exact::<1>(node_id)?;
+        let Some(load_ty) = fg.output_kind(load_out).as_value() else {
             continue;
         };
         let load_size = load_ty.byte_size() as i64;
@@ -288,7 +288,7 @@ fn detect_stack_args(
         // Space from first load (all loads in a K-group share the same memory
         // space).  Per-load output types may differ — pick the widest.
         let first = loads[0];
-        let NodeKind::Load(space) = *fg.graph.node_kind(first) else {
+        let NodeKind::Load(space) = *fg.node_kind(first) else {
             continue;
         };
         // Guard: every load in this K-group must share `space`. The grouping
@@ -297,15 +297,15 @@ fn detect_stack_args(
         // offset in different spaces. Skip the whole group on mismatch rather
         // than silently merging.
         if loads.iter().any(|&l| {
-            !matches!(*fg.graph.node_kind(l), NodeKind::Load(s) if s == space)
+            !matches!(*fg.node_kind(l), NodeKind::Load(s) if s == space)
         }) {
             continue;
         }
         // Collect (load, out_type) pairs and find the max byte size.
         let mut load_types: Vec<(NodeId, NodeOutputType)> = Vec::with_capacity(loads.len());
         for load in &loads {
-            let [out] = fg.graph.node_outputs_exact::<1>(*load)?;
-            let Some(ty) = fg.graph.output_kind(out).as_value() else {
+            let [out] = fg.node_outputs_exact::<1>(*load)?;
+            let Some(ty) = fg.output_kind(out).as_value() else {
                 continue;
             };
             load_types.push((*load, ty));
@@ -315,7 +315,7 @@ fn detect_stack_args(
             continue;
         };
 
-        let new_node = fg.graph.create_node(
+        let new_node = fg.create_node(
             NodeKind::FunctionArg {
                 source: FunctionArgSource::Stack { space, offset },
                 index,
@@ -323,31 +323,31 @@ fn detect_stack_args(
             [],
             [NodeOutputKind::OutputType(max_type)],
         );
-        let [new_out] = fg.graph.node_outputs_exact::<1>(new_node)?;
+        let [new_out] = fg.node_outputs_exact::<1>(new_node)?;
 
         for (load, load_ty) in load_types {
-            let [old_out] = fg.graph.node_outputs_exact::<1>(load)?;
+            let [old_out] = fg.node_outputs_exact::<1>(load)?;
             if load_ty == max_type {
                 // FunctionArg is exempt from the fingerprint check; no need
                 // to absorb the load's fingerprint into it (and doing so
                 // would couple FunctionArg's identity to the loads it
                 // happens to subsume).
-                fg.graph.replace_all_uses(old_out, new_out)?;
+                fg.replace_all_uses(old_out, new_out)?;
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
-                let trunc = fg.graph.create_node(
+                let trunc = fg.create_node(
                     NodeKind::Truncate,
                     [new_out],
                     [NodeOutputKind::OutputType(load_ty)],
                 );
-                let [trunc_out] = fg.graph.node_outputs_exact::<1>(trunc)?;
+                let [trunc_out] = fg.node_outputs_exact::<1>(trunc)?;
                 // The Truncate is non-exempt and freshly created; inherit
                 // the rewritten Load's fingerprint so the contributing
                 // machine instruction's address survives the rewrite.
-                fg.graph.extend_asm_fingerprint_from(trunc, load);
-                fg.graph.replace_all_uses(old_out, trunc_out)?;
+                fg.extend_asm_fingerprint_from(trunc, load);
+                fg.replace_all_uses(old_out, trunc_out)?;
             }
-            fg.graph.detach_node_inputs(load);
+            fg.detach_node_inputs(load);
         }
         result |= OptimizationResult::Changed;
     }
@@ -416,8 +416,8 @@ fn mem_chain_is_dirty(
         // (other edges in the traversal will surface any real shadow).
         return false;
     }
-    let node = fg.graph.get_node_from_output(mem);
-    let step = match *fg.graph.node_kind(node) {
+    let node = fg.get_node_from_output(mem);
+    let step = match *fg.node_kind(node) {
         NodeKind::InitialMemory => return cache_and_return(memo, key, false, is_outermost),
         NodeKind::StackStore { offset: k, .. } => {
             step_through_stack_store(&fg.graph, node, k, offset, load_size)
@@ -431,7 +431,7 @@ fn mem_chain_is_dirty(
         NodeKind::MemPhi => {
             // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
             // clean for the phi to be clean.
-            let inputs = fg.graph.node_inputs(node);
+            let inputs = fg.node_inputs(node);
             let any_dirty = inputs.into_iter().skip(1).any(|pred| {
                 mem_chain_is_dirty(fg, pred, offset, load_size, sp_vn, sp_memo, seen, memo)
             });
@@ -439,7 +439,7 @@ fn mem_chain_is_dirty(
         }
         NodeKind::Call | NodeKind::CallOther { .. } => {
             // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
-            let inputs = fg.graph.node_inputs(node);
+            let inputs = fg.node_inputs(node);
             if inputs.len() < 2 {
                 return cache_and_return(memo, key, false, is_outermost);
             }

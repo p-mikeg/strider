@@ -26,7 +26,7 @@ fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     fg.all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| pred(fg.graph.node_kind(n)))
+        .filter(|&n| pred(fg.node_kind(n)))
         .count()
 }
 
@@ -393,14 +393,14 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     let value_phi = fg
         .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::ValuePhi))
+        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::ValuePhi))
         .expect("ValuePhi found above");
     let mem_phi = fg
         .all_node_ids()
-        .find(|n| reachable.contains(n) && matches!(fg.graph.node_kind(*n), NodeKind::MemPhi))
+        .find(|n| reachable.contains(n) && matches!(fg.node_kind(*n), NodeKind::MemPhi))
         .expect("MemPhi survived to the merge");
-    let vp_token = fg.graph.node_inputs(value_phi)[0];
-    let mp_token = fg.graph.node_inputs(mem_phi)[0];
+    let vp_token = fg.node_inputs(value_phi)[0];
+    let mp_token = fg.node_inputs(mem_phi)[0];
     assert_eq!(
         vp_token, mp_token,
         "ValuePhi's phi-token must match the MemPhi's phi-token"
@@ -587,11 +587,11 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     );
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
-    let val_kind = fg.graph.kind_of_output(ret_inputs[2]);
+    let val_kind = fg.kind_of_output(ret_inputs[2]);
     assert!(
         matches!(val_kind, NodeKind::IntConst(0x4242)),
         "forwarded value must be the stored constant 0x4242 — got {val_kind:?}",
@@ -637,16 +637,16 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     );
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // `int_const_val` applies the output type's mask, so for a U8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
-    let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+    let val_ty = fg.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U8));
     assert_eq!(
-        fg.graph.int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -684,13 +684,13 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
-    let val_ty = fg.graph.output_kind(ret_inputs[2]).as_value();
+    let ret_inputs = fg.node_inputs(ret);
+    let val_ty = fg.output_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U16));
     assert_eq!(
-        fg.graph.int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -739,39 +739,39 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.graph.node_inputs(ret);
+    let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
     let val_out = ret_inputs[2];
-    let val_ty = fg.graph.output_kind(val_out).as_value();
+    let val_ty = fg.output_kind(val_out).as_value();
     assert_eq!(val_ty, Some(NodeOutputType::U8));
 
     // Outer node: Truncate.
-    let outer = fg.graph.get_node_from_output(val_out);
+    let outer = fg.get_node_from_output(val_out);
     assert!(
-        matches!(fg.graph.node_kind(outer), NodeKind::Truncate),
+        matches!(fg.node_kind(outer), NodeKind::Truncate),
         "BE narrow forward must wrap data in a Truncate — got {:?}",
-        fg.graph.node_kind(outer),
+        fg.node_kind(outer),
     );
 
     // Inner node: ShiftRight.
-    let outer_inputs = fg.graph.node_inputs(outer);
+    let outer_inputs = fg.node_inputs(outer);
     assert_eq!(outer_inputs.len(), 1, "Truncate has a single input");
-    let inner = fg.graph.get_node_from_output(outer_inputs[0]);
+    let inner = fg.get_node_from_output(outer_inputs[0]);
     assert!(
         matches!(
-            fg.graph.node_kind(inner),
+            fg.node_kind(inner),
             NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
         ),
         "BE narrow forward must shift before truncation — got {:?}",
-        fg.graph.node_kind(inner),
+        fg.node_kind(inner),
     );
 
     // ShiftRight inputs: [data, shift_const]; shift_const = (4 - 1) * 8 = 24.
-    let shr_inputs = fg.graph.node_inputs(inner);
+    let shr_inputs = fg.node_inputs(inner);
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
-    let shift_kind = fg.graph.kind_of_output(shr_inputs[1]);
+    let shift_kind = fg.kind_of_output(shr_inputs[1]);
     assert!(
         matches!(shift_kind, NodeKind::IntConst(24)),
         "BE shift amount must be (store_size - load_size) * 8 = 24 — got {shift_kind:?}",
@@ -832,11 +832,11 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 
     let total_truncate_before = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_before = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::ValuePhi))
         .count();
 
     // Run StackLoadForward in isolation so the leak attributable to it is
@@ -851,11 +851,11 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
 
     let total_truncate_after = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_after = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::ValuePhi))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::ValuePhi))
         .count();
     assert_eq!(
         total_truncate_after, total_truncate_before,
@@ -911,9 +911,9 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     // Reach the surviving Load and use its memory-input as the chain root.
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives without StackLoadForward");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -928,7 +928,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
     );
     let value = result.expect("helper should find StackStore at offset -24");
     // The found value must be the stored constant 0xCAFE.
-    assert_eq!(fg.graph.int_const_val(value), Some(0xCAFE));
+    assert_eq!(fg.int_const_val(value), Some(0xCAFE));
     Ok(())
 }
 
@@ -965,9 +965,9 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -982,7 +982,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.graph.int_const_val(v16.expect("find -16")), Some(0xBBBB));
+    assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing) and
     // find -24's value.
@@ -995,7 +995,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.graph.int_const_val(v24.expect("find -24")), Some(0xAAAA));
+    assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
 
@@ -1025,9 +1025,9 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1074,9 +1074,9 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1091,7 +1091,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<
     );
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
-    assert_eq!(fg.graph.int_const_val(v), Some(0xBBBB));
+    assert_eq!(fg.int_const_val(v), Some(0xBBBB));
     Ok(())
 }
 
@@ -1123,9 +1123,9 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1181,9 +1181,9 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
 
     let load = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
-    let mem = fg.graph.node_inputs(load).into_iter().next().unwrap();
+    let mem = fg.node_inputs(load).into_iter().next().unwrap();
 
     let mut memo = SpExprMemo::default();
     let mut walk_memo = StackStoredValueMemo::default();
@@ -1203,7 +1203,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
             &mut walk_memo,
         )
         .unwrap_or_else(|| panic!("must find store at offset {off}"));
-        let c = fg.graph.int_const_val(v).expect("stored value is IntConst");
+        let c = fg.int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);
     }
     assert_eq!(targets, vec![0x401190u64, 0x401180u64]);

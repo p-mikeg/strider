@@ -4,7 +4,7 @@
 //! whether "data-level" (arithmetic, loads, phis) or "control-level"
 //! (`Call`, `Return`, `If`, `CallOther`), matches against an output.
 //! Control patterns internally recover the producing node via
-//! `ctx.graph.graph.get_node_from_output(target)` and then do node-level
+//! `ctx.graph.get_node_from_output(target)` and then do node-level
 //! work; any output of the target node is an acceptable match target.
 //!
 //! The trait has a second mode — [`Pattern::try_build`] — for the RHS of
@@ -16,7 +16,6 @@
 
 use std::sync::Arc;
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeOutputId, NodeOutputType};
 
 use crate::error::Result;
@@ -29,7 +28,7 @@ use crate::matcher::{Bindings, Matcher};
 /// [`Matcher::match_output`](crate::matcher::Matcher::match_output).
 #[derive(Clone, Copy)]
 pub struct MatchCtx<'g, 'm> {
-    pub graph: &'g BuiltFunctionGraph,
+    pub graph: &'g ir::Graph,
     pub(crate) matcher: &'m Matcher<'g>,
 }
 
@@ -43,7 +42,7 @@ impl MatchCtx<'_, '_> {
         &self,
         target: NodeOutputId,
     ) -> Option<NodeOutputType> {
-        self.graph.graph.output_kind(target).as_value()
+        self.graph.output_kind(target).as_value()
     }
 }
 
@@ -76,7 +75,7 @@ pub trait Pattern: Send + Sync {
     /// `NodePat` overrides this to handle zero-output nodes (e.g. `Return`)
     /// — the default "iterate outputs" fails for those.
     fn try_match_node(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        for out in ctx.graph.graph.node_outputs(node) {
+        for out in ctx.graph.node_outputs(node) {
             let mark = b.mark();
             if self.try_match(ctx, out, b) {
                 return true;
@@ -117,7 +116,7 @@ pub enum BuildOutcome {
 /// macros to expose `ty` — the root output type — and `in_ty` — the
 /// root's first value input type).
 pub struct BuildCtx<'a> {
-    pub graph: &'a mut BuiltFunctionGraph,
+    pub graph: &'a mut ir::Graph,
     pub bindings: &'a Bindings,
     pub root: NodeId,
     pub root_ty: NodeOutputType,

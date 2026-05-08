@@ -66,7 +66,7 @@ struct IfPattern {
 
 impl Pattern for IfPattern {
     fn try_match(&self, ctx: &MatchCtx, target: NodeOutputId, b: &mut Bindings) -> bool {
-        let node = ctx.graph.graph.get_node_from_output(target);
+        let node = ctx.graph.get_node_from_output(target);
         self.try_match_at(ctx, node, b)
     }
 
@@ -87,7 +87,7 @@ impl IfPattern {
     /// Verifies `node` is an `If` and applies the cond / true_branch /
     /// false_branch constraints in canonical direct layout.
     fn try_match_at(&self, ctx: &MatchCtx, node: NodeId, b: &mut Bindings) -> bool {
-        if !matches!(ctx.graph.graph.node_kind(node), NodeKind::If) {
+        if !matches!(ctx.graph.node_kind(node), NodeKind::If) {
             return false;
         }
         let mark = b.mark();
@@ -101,7 +101,7 @@ impl IfPattern {
     fn try_layout(&self, ctx: &MatchCtx, if_node: NodeId, b: &mut Bindings) -> bool {
         // 1. Cond.  Input 1 of the If (input 0 is the Control predecessor).
         if let Some(cond_pat) = &self.cond {
-            let inputs = ctx.graph.graph.node_inputs(if_node);
+            let inputs = ctx.graph.node_inputs(if_node);
             let Some(cond_in) = inputs.into_iter().nth(1) else {
                 return false;
             };
@@ -136,7 +136,7 @@ fn match_branch_consumer(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let outputs = ctx.graph.graph.node_outputs(if_node);
+    let outputs = ctx.graph.node_outputs(if_node);
     let Some(out) = outputs.into_iter().nth(output_index) else {
         return false;
     };

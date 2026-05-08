@@ -110,10 +110,10 @@ fn collect_stack_args_in_chain_order(
     // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
-        let node = fg.graph.get_node_from_output(cur);
-        let (offset, space, base, data, prev_mem) = match *fg.graph.node_kind(node) {
+        let node = fg.get_node_from_output(cur);
+        let (offset, space, base, data, prev_mem) = match *fg.node_kind(node) {
             NodeKind::StackStore { offset, space } => {
-                let inputs = fg.graph.node_inputs(node);
+                let inputs = fg.node_inputs(node);
                 (offset, space, inputs[1], inputs[2], inputs[0])
             }
             // A plain `Store` survived `StackStoreDetect` either because
@@ -126,7 +126,7 @@ fn collect_stack_args_in_chain_order(
             //     would mean a different SP version or a non-canonical
             //     form) — terminate conservatively.
             NodeKind::Store(_) => {
-                let inputs = fg.graph.node_inputs(node);
+                let inputs = fg.node_inputs(node);
                 // Store inputs: [memory, addr, data].  Skip if shape is
                 // unexpected (defensive).
                 if inputs.len() != 3 {
@@ -234,13 +234,13 @@ fn try_collect_stack_args(
     stack_ptr_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
-    if !matches!(fg.graph.node_kind(call_id), NodeKind::Call) {
+    if !matches!(fg.node_kind(call_id), NodeKind::Call) {
         return Ok(OptimizationResult::NoChange);
     }
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
-    let inputs = fg.graph.node_inputs(call_id);
+    let inputs = fg.node_inputs(call_id);
     if inputs.len() < 2 {
         return Ok(OptimizationResult::NoChange);
     }
@@ -252,7 +252,7 @@ fn try_collect_stack_args(
         return Ok(OptimizationResult::NoChange);
     }
     for data in &args {
-        fg.graph.add_node_input(call_id, *data)?;
+        fg.add_node_input(call_id, *data)?;
     }
     Ok(OptimizationResult::Changed)
 }

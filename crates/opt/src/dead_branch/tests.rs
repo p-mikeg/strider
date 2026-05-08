@@ -10,8 +10,8 @@ use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 fn count_cs_with_n_inputs(fg: &ir::BuiltFunctionGraph, n: usize) -> usize {
     fg.all_node_ids()
         .filter(|&node| {
-            matches!(fg.graph.node_kind(node), NodeKind::ControlState)
-                && fg.graph.node_inputs(node).len() == n
+            matches!(fg.node_kind(node), NodeKind::ControlState)
+                && fg.node_inputs(node).len() == n
         })
         .count()
 }
@@ -161,7 +161,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     let if_count = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .count();
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
     Ok(())
@@ -194,25 +194,25 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     // Find the If node and its ctrl_false output (dead when cond=true).
     let if_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("expected an If node");
-    let if_outputs: Vec<_> = fg.graph.node_outputs(if_node).into_iter().collect();
+    let if_outputs: Vec<_> = fg.node_outputs(if_node).into_iter().collect();
     assert_eq!(if_outputs.len(), 2, "If must have 2 control outputs");
     let ctrl_false = if_outputs[1];
 
     // Find the false-branch ControlState (the unique consumer of ctrl_false).
-    let consumers: Vec<_> = fg.graph.output_uses(ctrl_false).collect();
+    let consumers: Vec<_> = fg.output_uses(ctrl_false).collect();
     assert_eq!(
         consumers.len(),
         1,
         "ctrl_false should have exactly one consumer in the standard make_if_fn shape"
     );
     let false_cs = consumers[0].0;
-    assert!(matches!(fg.graph.node_kind(false_cs), NodeKind::ControlState));
+    assert!(matches!(fg.node_kind(false_cs), NodeKind::ControlState));
 
     // Wire ctrl_false into the same CS a second time, producing the bad shape.
-    fg.graph.add_node_input(false_cs, ctrl_false)?;
-    let pre_inputs: Vec<_> = fg.graph.node_inputs(false_cs).into_iter().collect();
+    fg.add_node_input(false_cs, ctrl_false)?;
+    let pre_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
     assert_eq!(
         pre_inputs[0], ctrl_false,
@@ -228,7 +228,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     // it without leaving a stale reference behind.
     DeadBranchElimination.optimize(&mut fg.graph, fg.entry)?;
 
-    let post_inputs: Vec<_> = fg.graph.node_inputs(false_cs).into_iter().collect();
+    let post_inputs: Vec<_> = fg.node_inputs(false_cs).into_iter().collect();
     assert_eq!(
         post_inputs.len(),
         0,
@@ -307,18 +307,18 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     // single-predecessor ControlState.
     let if_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("If node");
-    let if_outputs = fg.graph.node_outputs(if_node);
+    let if_outputs = fg.node_outputs(if_node);
     let dead_ctrl = if_outputs[0]; // ctrl_true (cond=false → dead is true)
 
     let call_other = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::CallOther { .. }))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::CallOther { .. }))
         .expect("CallOther node");
 
-    let call_ctrl_input_id = fg.graph.node_input_id_at(call_other, 0)?;
-    fg.graph.update_input(call_ctrl_input_id, dead_ctrl);
+    let call_ctrl_input_id = fg.node_input_id_at(call_other, 0)?;
+    fg.update_input(call_ctrl_input_id, dead_ctrl);
 
     // Run DBE in isolation, then validate.  Before the fix DBE detached
     // the If's inputs (Step 4) but left the non-CS dead consumer wired
@@ -332,7 +332,7 @@ fn dead_branch_with_non_control_state_dead_consumer() -> Result<()> {
     // The If retains its [ctrl_in, cond] inputs; downstream cleanup
     // (MemPhi/VarPhi collapse + detach_unreachable) is responsible for
     // removing the dead-branch subgraph entirely, not DBE.
-    let if_inputs = fg.graph.node_inputs(if_node);
+    let if_inputs = fg.node_inputs(if_node);
     assert_eq!(
         if_inputs.len(),
         2,
@@ -374,7 +374,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     let mut fg = b.build()?;
     let pre_phi_count = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(_)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(_)))
         .count();
     assert!(pre_phi_count > 0);
 
@@ -383,9 +383,9 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     // value input (length = 1 token + 1 value = 2).
     let join_phi = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(v) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(v) if *v == var))
         .expect("control phi at join must exist");
-    let phi_inputs = fg.graph.node_inputs(join_phi);
+    let phi_inputs = fg.node_inputs(join_phi);
     assert_eq!(phi_inputs.len(), 2, "phi must have exactly 1 live value");
     Ok(())
 }

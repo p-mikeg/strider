@@ -753,11 +753,11 @@ mod tests {
         };
         assert_eq!(offset, 0, "And-aligned base offset must be 0");
         // Base must NOT be the InitialVar(sp) output — it's the And output.
-        let base_node = fg.graph.get_node_from_output(base);
+        let base_node = fg.get_node_from_output(base);
         assert!(
-            matches!(*fg.graph.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
+            matches!(*fg.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
             "And-aligned base must point to the And node, got {:?}",
-            fg.graph.node_kind(base_node)
+            fg.node_kind(base_node)
         );
         Ok(())
     }

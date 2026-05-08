@@ -80,9 +80,9 @@ fn try_forward_load(
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
-    let [mem, addr] = fg.graph.node_inputs_exact::<2>(load)?;
-    let [load_out] = fg.graph.node_outputs_exact::<1>(load)?;
-    let Some(load_ty) = fg.graph.output_kind(load_out).as_value() else {
+    let [mem, addr] = fg.node_inputs_exact::<2>(load)?;
+    let [load_out] = fg.node_outputs_exact::<1>(load)?;
+    let Some(load_ty) = fg.output_kind(load_out).as_value() else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -120,11 +120,11 @@ fn try_forward_load(
     // freshly synthesised one (Truncate / ShiftRight / ValuePhi); either
     // way the union semantics of `extend_asm_fingerprint_from` keep us
     // superset-correct.
-    let forwarded_node = fg.graph.get_node_from_output(forwarded);
-    fg.graph.extend_asm_fingerprint_from(forwarded_node, load);
-    let changed = fg.graph.replace_all_uses(load_out, forwarded)?;
+    let forwarded_node = fg.get_node_from_output(forwarded);
+    fg.extend_asm_fingerprint_from(forwarded_node, load);
+    let changed = fg.replace_all_uses(load_out, forwarded)?;
     if changed {
-        fg.graph.detach_node_inputs(load);
+        fg.detach_node_inputs(load);
     }
     Ok(OptimizationResult::from_changed(changed))
 }
@@ -208,18 +208,18 @@ fn probe(
         // Linear walk inside one path — no heap allocation on any
         // chain of disjoint StackStores or non-aliasing Stores.
         let inner_result: Option<ResolveShape> = loop {
-            let node = fg.graph.get_node_from_output(mem);
-            match *fg.graph.node_kind(node) {
+            let node = fg.get_node_from_output(mem);
+            match *fg.node_kind(node) {
                 NodeKind::StackStore {
                     offset: k,
                     space: _,
                 } => {
-                    let inputs = fg.graph.node_inputs(node);
+                    let inputs = fg.node_inputs(node);
                     if inputs.len() < 3 {
                         break None;
                     }
                     let data = inputs[2];
-                    let Some(data_ty) = fg.graph.output_kind(data).as_value() else {
+                    let Some(data_ty) = fg.output_kind(data).as_value() else {
                         break None;
                     };
                     let store_size = data_ty.byte_size() as i64;
@@ -260,7 +260,7 @@ fn probe(
                         break None;
                     }
                     // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                    let inputs = fg.graph.node_inputs(node);
+                    let inputs = fg.node_inputs(node);
                     if inputs.len() < 2 {
                         break None;
                     }
@@ -318,7 +318,7 @@ fn probe(
             // pred list on the frame — saves a Vec allocation per
             // MemPhi.
             let next_slot = top.done_count + 1;
-            let phi_inputs = fg.graph.node_inputs(top.phi_node);
+            let phi_inputs = fg.node_inputs(top.phi_node);
             let next_mem = phi_inputs[next_slot];
             mem = next_mem;
             continue 'outer;
@@ -356,22 +356,22 @@ fn realize(
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    let shift_const = fg.graph.make_int_const(shift_bits, data_ty)?;
-                    let shr = fg.graph.create_node(
+                    let shift_const = fg.make_int_const(shift_bits, data_ty)?;
+                    let shr = fg.create_node(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],
                         [NodeOutputKind::OutputType(data_ty)],
                     );
-                    let [out] = fg.graph.node_outputs_exact::<1>(shr)?;
+                    let [out] = fg.node_outputs_exact::<1>(shr)?;
                     out
                 }
             };
-            let trunc = fg.graph.create_node(
+            let trunc = fg.create_node(
                 NodeKind::Truncate,
                 [shifted],
                 [NodeOutputKind::OutputType(load_ty)],
             );
-            let [out] = fg.graph.node_outputs_exact::<1>(trunc)?;
+            let [out] = fg.node_outputs_exact::<1>(trunc)?;
             Ok(out)
         }
         ResolveShape::Phi { phi_token, preds } => {
@@ -390,12 +390,12 @@ fn realize(
             {
                 return Ok(first);
             }
-            let value_phi = fg.graph.create_node(
+            let value_phi = fg.create_node(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
             );
-            let [out] = fg.graph.node_outputs_exact::<1>(value_phi)?;
+            let [out] = fg.node_outputs_exact::<1>(value_phi)?;
             Ok(out)
         }
     }

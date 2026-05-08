@@ -62,7 +62,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
     let surviving_sp_phis = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(vn) if *vn == sp))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(vn) if *vn == sp))
         .count();
     assert_eq!(
         surviving_sp_phis, 0,
@@ -100,8 +100,8 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     let surviving = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::MemPhi))
-        .filter(|&n| fg.graph.node_inputs(n).len() <= 2)
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::MemPhi))
+        .filter(|&n| fg.node_inputs(n).len() <= 2)
         .count();
     assert_eq!(surviving, 0);
     Ok(())
@@ -199,9 +199,9 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // reachable nodes. The Add itself is not consumed by anything reachable,
     // so `preorder()` will not include it; `detach_unreachable_nodes` is the
     // only thing in RedundantPhis that can touch it.
-    let one = fg.graph.make_int_const(1, NodeOutputType::U64)?;
-    let two = fg.graph.make_int_const(2, NodeOutputType::U64)?;
-    let _orphan = fg.graph.create_node(
+    let one = fg.make_int_const(1, NodeOutputType::U64)?;
+    let two = fg.make_int_const(2, NodeOutputType::U64)?;
+    let _orphan = fg.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [one, two],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
@@ -251,12 +251,12 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // Locate the VarPhi(var) at `join` and its owning CS.
     let phi_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::VarPhi(v) if *v == var))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(v) if *v == var))
         .expect("VarPhi(var) at join");
-    let phi_inputs_pre = fg.graph.node_inputs(phi_node);
+    let phi_inputs_pre = fg.node_inputs(phi_node);
     let phi_token = phi_inputs_pre[0];
     let initial_value = phi_inputs_pre[1];
-    let cs_node = fg.graph.output_definition(phi_token).0;
+    let cs_node = fg.output_definition(phi_token).0;
 
     // Surgery: append a second, *distinct* control predecessor to the
     // join CS — the join's own ctrl_out, modelling a direct self-loop
@@ -268,10 +268,10 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // loop-back self-ref the test exercises), and any MemPhi gets
     // *its* own output (so the graph keeps the per-predecessor arity
     // invariant `remove_phis` relies on).
-    let cs_outputs = fg.graph.node_outputs(cs_node);
+    let cs_outputs = fg.node_outputs(cs_node);
     let cs_ctrl_out = cs_outputs[0];
     let cs_phi_out = cs_outputs[1];
-    fg.graph.add_node_input(cs_node, cs_ctrl_out)?;
+    fg.add_node_input(cs_node, cs_ctrl_out)?;
 
     let phi_consumers: Vec<ir::node::NodeId> = fg
         .graph
@@ -279,11 +279,11 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
         .map(|(n, _)| n)
         .collect();
     for phi in phi_consumers {
-        let self_out = fg.graph.node_outputs_exact::<1>(phi)?[0];
-        fg.graph.add_node_input(phi, self_out)?;
+        let self_out = fg.node_outputs_exact::<1>(phi)?[0];
+        fg.add_node_input(phi, self_out)?;
     }
     assert_eq!(
-        fg.graph.node_inputs(phi_node).len(),
+        fg.node_inputs(phi_node).len(),
         3,
         "VarPhi must have [token, initial, self-ref] = 3 inputs after surgery"
     );
@@ -297,9 +297,9 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     // directly.
     let return_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
-    let ret_val = fg.graph.node_inputs(return_node)[2];
+    let ret_val = fg.node_inputs(return_node)[2];
     assert_eq!(
         ret_val, initial_value,
         "Return's value must be rewired to the phi's only non-self-referential operand"

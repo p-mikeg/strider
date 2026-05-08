@@ -8,10 +8,10 @@ use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.graph.node_inputs(ret)[2];
-    Ok(*fg.graph.kind_of_output(val))
+    let val = fg.node_inputs(ret)[2];
+    Ok(*fg.kind_of_output(val))
 }
 
 // ── Original tests ────────────────────────────────────────────────────────────
@@ -223,7 +223,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     let val = return_value(&fg)?;
-    let semantic = fg.graph.int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
 }
@@ -231,9 +231,9 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
 fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.graph.node_inputs(ret)[2])
+    Ok(fg.node_inputs(ret)[2])
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     let val = return_value(&fg)?;
-    assert_eq!(fg.graph.int_const_val(val), Some(1));
+    assert_eq!(fg.int_const_val(val), Some(1));
     Ok(())
 }
 
@@ -323,7 +323,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     let val = return_value(&fg)?;
-    assert_eq!(fg.graph.int_const_val(val), Some(0x80));
+    assert_eq!(fg.int_const_val(val), Some(0x80));
     Ok(())
 }
 
@@ -357,7 +357,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     }
     let val = return_value(&fg)?;
     assert_eq!(
-        fg.graph.int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
          KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
@@ -381,7 +381,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     }
     let val = return_value(&fg)?;
     assert_eq!(
-        fg.graph.int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
          `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
@@ -413,7 +413,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     let val = return_value(&fg)?;
-    let semantic = fg.graph.int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(
         semantic,
         Some(1),

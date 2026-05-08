@@ -256,7 +256,7 @@ pub struct PyPartialMatch {
     /// `Arc<Mutex<...>>` so the Python predicate can hold the proxy
     /// across Rust ↔ Python boundaries safely; the wrapper code clears
     /// the pointer back to `None` right after the predicate returns.
-    graph_ptr: Mutex<Option<*const ir::BuiltFunctionGraph>>,
+    graph_ptr: Mutex<Option<*const ir::Graph>>,
 }
 
 // SAFETY: We never share PyPartialMatch across threads (`unsendable`).
@@ -266,7 +266,7 @@ pub struct PyPartialMatch {
 // that re-enters Rust.
 
 impl PyPartialMatch {
-    fn new(bindings: pattern::Bindings, graph: &ir::BuiltFunctionGraph) -> Self {
+    fn new(bindings: pattern::Bindings, graph: &ir::Graph) -> Self {
         Self {
             bindings,
             graph_ptr: Mutex::new(Some(graph as *const _)),
@@ -288,7 +288,7 @@ impl PyPartialMatch {
 
     /// Borrow the graph pointer for a closure call.  Returns `None` if
     /// the proxy has been invalidated.
-    fn with_graph<R>(&self, f: impl FnOnce(&ir::BuiltFunctionGraph) -> R) -> Option<R> {
+    fn with_graph<R>(&self, f: impl FnOnce(&ir::Graph) -> R) -> Option<R> {
         let guard = self.graph_ptr.lock().ok()?;
         let ptr = (*guard)?;
         // SAFETY: `ptr` was set to a valid `&BuiltFunctionGraph` by the

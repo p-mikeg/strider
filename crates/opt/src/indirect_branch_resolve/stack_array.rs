@@ -391,7 +391,7 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
-    let candidate_node = fg.graph.get_node_from_output(candidate);
+    let candidate_node = fg.get_node_from_output(candidate);
     let matcher = Matcher::new(fg);
 
     // Mul(idx, IntConst(stride)) — either ordering.
@@ -512,9 +512,9 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — StackLoadForward not in pipeline");
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         (fg, load_out)
     }
 
@@ -554,9 +554,9 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known = crate::analyze_known_bits(&fg).expect("kb analyze");
         assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
     }
@@ -605,9 +605,9 @@ mod tests {
         p.run(&mut fg.graph, fg.entry).unwrap();
         let load = fg
             .all_node_ids()
-            .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.graph.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known = crate::analyze_known_bits(&fg).expect("kb analyze");
         assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
     }

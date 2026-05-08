@@ -105,18 +105,18 @@ pub fn node_known_bits(
     node_id: NodeId,
     known: &FxHashMap<NodeOutputId, Kb>,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
-    let kind = *fg.graph.node_kind(node_id);
+    let kind = *fg.node_kind(node_id);
 
     // Find the first integer value output.
     let Some(out) = fg
         .graph
         .node_outputs(node_id)
         .into_iter()
-        .find(|&o| fg.graph.output_kind(o).is_integer())
+        .find(|&o| fg.output_kind(o).is_integer())
     else {
         return Ok(None);
     };
-    let out_kind = fg.graph.output_kind(out);
+    let out_kind = fg.output_kind(out);
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
@@ -133,7 +133,7 @@ pub fn node_known_bits(
         },
 
         NodeKind::IntBinaryOp(op) => {
-            let [lhs, rhs] = fg.graph.node_inputs_exact::<2>(node_id)?;
+            let [lhs, rhs] = fg.node_inputs_exact::<2>(node_id)?;
             let l = known.get(&lhs).copied().unwrap_or_default();
             let r = known.get(&rhs).copied().unwrap_or_default();
             match op {
@@ -245,7 +245,7 @@ pub fn node_known_bits(
             // negate — `IntUnaryOp::Neg` — has no closed-form known-bits
             // propagation: it depends on the borrow chain across the
             // input's bits, so it falls through to the unknown case.)
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let [input] = fg.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
                 ones: kb.zeros & type_mask,
@@ -255,7 +255,7 @@ pub fn node_known_bits(
 
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+            let [input] = fg.node_inputs_exact::<1>(node_id)?;
             let kb = known.get(&input).copied().unwrap_or_default();
             Kb {
                 ones: kb.ones & type_mask,
@@ -265,8 +265,8 @@ pub fn node_known_bits(
 
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.graph.output_kind(input);
+            let [input] = fg.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let input_mask = u64_type_mask(input_ty).unwrap_or(0);
             let kb = known.get(&input).copied().unwrap_or_default();
@@ -280,8 +280,8 @@ pub fn node_known_bits(
             // Upper bits replicate the input's sign bit.  When the sign bit
             // is statically known, the entire upper region is determined;
             // otherwise we still pass the lower bits through.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.graph.output_kind(input);
+            let [input] = fg.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
@@ -313,8 +313,8 @@ pub fn node_known_bits(
 
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
-            let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.graph.output_kind(input);
+            let [input] = fg.node_inputs_exact::<1>(node_id)?;
+            let input_kind = fg.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {

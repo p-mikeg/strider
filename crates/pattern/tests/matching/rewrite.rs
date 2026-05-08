@@ -93,7 +93,7 @@ fn identity_rule_redirects_consumers_and_returns_true() {
 
     let mut fired = false;
     for n in &add_nodes {
-        if rule(&mut g, *n).expect("rule did not error") {
+        if rule(&mut pattern::RewriteCtx::for_built(&mut g), *n).expect("rule did not error") {
             fired = true;
         }
     }
@@ -112,7 +112,7 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0));
     let add_node = find_add(&g);
-    let fired = rule(&mut g, add_node).expect("ok");
+    let fired = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect("ok");
     assert!(!fired, "rule should not fire on wrong-kind root");
 
     // Graph is unchanged — Return still consumes an Add.
@@ -129,7 +129,7 @@ fn sub_x_x_to_zero_rule() {
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0));
 
     let sub_node = find_sub(&g);
-    let fired = rule(&mut g, sub_node).expect("ok");
+    let fired = rule(&mut pattern::RewriteCtx::for_built(&mut g), sub_node).expect("ok");
     assert!(fired);
 
     // Return now consumes an IntConst(0).
@@ -150,7 +150,7 @@ fn int_const_with_folds_two_captured_ints() {
     );
 
     let add_node = find_add(&g);
-    assert!(rule(&mut g, add_node).expect("ok"));
+    assert!(rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect("ok"));
 
     // Return now consumes IntConst(8).
     assert!(matches!(
@@ -183,7 +183,7 @@ fn int_const_with_exposes_ty_and_in_ty() {
     // the LHS.  The Truncate's input is a non-const Add here, so the rule
     // should NOT fire; this asserts the build-side compiles and runs.
     for n in g.preorder().collect::<Vec<_>>() {
-        let _ = rule(&mut g, n);
+        let _ = rule(&mut pattern::RewriteCtx::for_built(&mut g), n);
     }
 
     // Graph unchanged: Return consumes a Truncate.
@@ -198,7 +198,7 @@ fn rhs_wildcard_is_not_buildable() {
     let rule = rewrite_rule(add(any(), any()), any());
 
     let add_node = find_add(&g);
-    let err = rule(&mut g, add_node).expect_err("any() on RHS must error");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect_err("any() on RHS must error");
     assert!(
         err.downcast_ref::<pattern::NotBuildable>().is_some(),
         "expected NotBuildable, got {err:?}"
@@ -214,7 +214,7 @@ fn rhs_predicate_is_not_buildable() {
     );
 
     let add_node = find_add(&g);
-    let err = rule(&mut g, add_node).expect_err("predicate RHS must error");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect_err("predicate RHS must error");
     assert!(err.downcast_ref::<pattern::NotBuildable>().is_some(), "got {err:?}");
 }
 
@@ -224,7 +224,7 @@ fn rhs_control_pattern_is_not_buildable() {
     let rule = rewrite_rule(add(any(), any()), ret());
 
     let add_node = find_add(&g);
-    let err = rule(&mut g, add_node).expect_err("ret() RHS must error");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect_err("ret() RHS must error");
     assert!(err.downcast_ref::<pattern::NotBuildable>().is_some(), "got {err:?}");
 }
 
@@ -243,7 +243,7 @@ fn rhs_unbound_capture_raises_missing_binding() {
     );
 
     let add_node = find_add(&g);
-    let err = rule(&mut g, add_node).expect_err("missing binding expected");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect_err("missing binding expected");
     let mb = err.downcast_ref::<pattern::MissingBinding>();
     assert!(
         matches!(mb, Some(pattern::MissingBinding("uint"))),
@@ -269,7 +269,7 @@ fn rhs_skip_sentinel_returns_false_without_mutation() {
     );
 
     let add_node = find_add(&g);
-    let fired = rule(&mut g, add_node).expect("skip must convert to Ok(false)");
+    let fired = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect("skip must convert to Ok(false)");
     assert!(!fired, "skip sentinel should yield Ok(false)");
 
     // Graph unchanged.
@@ -302,7 +302,7 @@ fn rhs_closure_error_propagates_through_anyhow() {
     );
 
     let add_node = find_add(&g);
-    let err = rule(&mut g, add_node).expect_err("closure error must propagate");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect_err("closure error must propagate");
     assert!(err.downcast_ref::<CustomErr>().is_some(), "got {err:?}");
 }
 
@@ -329,7 +329,7 @@ fn rewrite_rule_on_call_root_returns_err() {
         .preorder()
         .find(|n| matches!(g.graph.node_kind(*n), NodeKind::Call))
         .expect("Call node");
-    let err = rule(&mut g, call_node).expect_err("multi-output root must error");
+    let err = rule(&mut pattern::RewriteCtx::for_built(&mut g), call_node).expect_err("multi-output root must error");
     assert!(
         format!("{err:?}").contains("output") || format!("{err:?}").contains("exactly"),
         "expected node_outputs_exact failure, got {err:?}"
@@ -348,7 +348,7 @@ fn apply_rules_returns_false_when_neither_fires() {
     ];
     let apply = apply_rules_in_order(&rules);
     let add_node = find_add(&g);
-    assert!(!apply(&mut g, add_node).expect("ok"));
+    assert!(!apply(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect("ok"));
 }
 
 #[test]
@@ -365,7 +365,7 @@ fn apply_rules_or_composes_results() {
     ];
     let apply = apply_rules_in_order(&rules);
     let add_node = find_add(&g);
-    let fired = apply(&mut g, add_node).expect("ok");
+    let fired = apply(&mut pattern::RewriteCtx::for_built(&mut g), add_node).expect("ok");
     assert!(fired, "second rule should have fired");
 }
 
@@ -390,7 +390,7 @@ fn apply_rules_observes_post_fire_state() {
     // least one rule fires somewhere.
     let mut any_fired = false;
     for n in g.preorder().collect::<Vec<_>>() {
-        if apply(&mut g, n).expect("ok") {
+        if apply(&mut pattern::RewriteCtx::for_built(&mut g), n).expect("ok") {
             any_fired = true;
         }
     }
@@ -432,7 +432,7 @@ fn rewrite_returns_false_when_no_consumer() {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     for n in g.preorder().collect::<Vec<_>>() {
-        assert!(!rule(&mut g, n).expect("ok"));
+        assert!(!rule(&mut pattern::RewriteCtx::for_built(&mut g), n).expect("ok"));
     }
 }
 
@@ -447,7 +447,7 @@ fn pattern_match_before_and_after_rewrite() {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
     for n in g.preorder().collect::<Vec<_>>() {
-        let _ = rule(&mut g, n);
+        let _ = rule(&mut pattern::RewriteCtx::for_built(&mut g), n);
     }
 
     // After: the outer pattern no longer finds a match at the Return's

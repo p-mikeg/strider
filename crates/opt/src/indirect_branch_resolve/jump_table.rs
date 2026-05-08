@@ -298,7 +298,7 @@ pub fn bound_via_known_bits(
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
-    let ty = fg.graph.output_kind(idx_output).as_value()?;
+    let ty = fg.output_kind(idx_output).as_value()?;
     if !ty.is_integer() {
         return None;
     }

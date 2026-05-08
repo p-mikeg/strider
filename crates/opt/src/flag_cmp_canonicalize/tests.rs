@@ -85,7 +85,7 @@ where
 fn find_unique_if(fg: &BuiltFunctionGraph) -> NodeId {
     let ifs: Vec<NodeId> = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .collect();
     assert_eq!(ifs.len(), 1, "fixture must have exactly one If node");
     ifs[0]
@@ -101,7 +101,7 @@ fn if_cond_output(fg: &BuiltFunctionGraph, if_node: NodeId) -> NodeOutputId {
 
 fn if_cond_node_kind(fg: &BuiltFunctionGraph, if_node: NodeId) -> NodeKind {
     let cond_out = if_cond_output(fg, if_node);
-    *fg.graph.node_kind(fg.graph.get_node_from_output(cond_out))
+    *fg.node_kind(fg.get_node_from_output(cond_out))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
@@ -114,9 +114,9 @@ fn assert_if_cond_is_intcmp(
     expect_rhs: NodeOutputId,
 ) {
     let cond_out = if_cond_output(fg, if_node);
-    let cond_node = fg.graph.get_node_from_output(cond_out);
+    let cond_node = fg.get_node_from_output(cond_out);
     assert_eq!(
-        *fg.graph.node_kind(cond_node),
+        *fg.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
         "If cond should be IntCmpOp({op:?})",
     );
@@ -142,9 +142,9 @@ fn assert_if_cond_is_neg_intcmp(
     expect_rhs: NodeOutputId,
 ) {
     let cond_out = if_cond_output(fg, if_node);
-    let neg_node = fg.graph.get_node_from_output(cond_out);
+    let neg_node = fg.get_node_from_output(cond_out);
     assert_eq!(
-        *fg.graph.node_kind(neg_node),
+        *fg.node_kind(neg_node),
         NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg),
         "If cond should be BoolNeg(...)",
     );
@@ -152,9 +152,9 @@ fn assert_if_cond_is_neg_intcmp(
         .graph
         .node_inputs_exact::<1>(neg_node)
         .expect("BoolNeg has 1 input");
-    let inner_node = fg.graph.get_node_from_output(inner);
+    let inner_node = fg.get_node_from_output(inner);
     assert_eq!(
-        *fg.graph.node_kind(inner_node),
+        *fg.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
         "Inner cond should be IntCmpOp({op:?})",
     );

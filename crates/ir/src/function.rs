@@ -79,6 +79,19 @@ pub struct BuiltFunctionGraph {
     pub call_other_clobbered: Box<[rsleigh::Vn]>,
 }
 
+impl std::ops::Deref for BuiltFunctionGraph {
+    type Target = Graph;
+    fn deref(&self) -> &Graph {
+        &self.graph
+    }
+}
+
+impl std::ops::DerefMut for BuiltFunctionGraph {
+    fn deref_mut(&mut self) -> &mut Graph {
+        &mut self.graph
+    }
+}
+
 impl BuiltFunctionGraph {
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
     /// empty `variables` / `call_clobbered` / `ret_val_regs`.

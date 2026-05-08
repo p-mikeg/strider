@@ -48,15 +48,15 @@ pub(crate) fn try_walk_through_control_state(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let producer = ctx.graph.graph.get_node_from_output(target);
-    if !matches!(ctx.graph.graph.node_kind(producer), NodeKind::ControlState) {
+    let producer = ctx.graph.get_node_from_output(target);
+    if !matches!(ctx.graph.node_kind(producer), NodeKind::ControlState) {
         return false;
     }
     // Try each control input; rollback bindings between failed attempts.
     // Recurse via the walk-through entry point so chained ControlStates
     // (region joins of region joins) also resolve.
     let mark = b.mark();
-    for input in ctx.graph.graph.node_inputs(producer) {
+    for input in ctx.graph.node_inputs(producer) {
         if ctx.matcher.match_output_with_walk_through(input, pat, b) {
             return true;
         }

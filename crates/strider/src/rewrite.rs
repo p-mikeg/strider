@@ -116,28 +116,21 @@ impl<'a> GraphRewriter<'a> {
     /// relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
-        F: Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>,
+        F: for<'g> Fn(&mut pattern::RewriteCtx<'g>, NodeId) -> pattern::Result<bool>,
     {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
         // iterator borrows the graph immutably.
         let candidates: Vec<NodeId> = self.graph.preorder(self.entry).collect();
-        // Take the graph out of `&mut self.graph` so we can package it
-        // into a `BuiltFunctionGraph` the rule expects.  Restored at
-        // the end of every iteration by writing back through the
-        // `*self.graph = ...` slot.
         for node in candidates {
-            let stolen = std::mem::take(&mut *self.graph);
-            let mut tmp = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(stolen, self.entry);
+            let mut ctx = pattern::RewriteCtx::new(&mut *self.graph, self.entry);
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an
             // earlier rule firing on this same walk.  The rule's
             // structural matcher returns `Ok(false)` on a detached /
             // rewired node, so this is safe.
-            let fired_result = rule(&mut tmp, node);
-            *self.graph = tmp.graph;
-            if fired_result? {
+            if rule(&mut ctx, node)? {
                 applied += 1;
             }
         }

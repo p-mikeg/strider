@@ -49,10 +49,10 @@ impl OptimizationResult {
         old: ir::node::NodeOutputId,
         new: ir::node::NodeOutputId,
     ) -> crate::Result<Self> {
-        let old_node = fg.graph.get_node_from_output(old);
-        let new_node = fg.graph.get_node_from_output(new);
-        fg.graph.extend_asm_fingerprint_from(new_node, old_node);
-        Ok(self | OptimizationResult::from_changed(fg.graph.replace_all_uses(old, new)?))
+        let old_node = fg.get_node_from_output(old);
+        let new_node = fg.get_node_from_output(new);
+        fg.extend_asm_fingerprint_from(new_node, old_node);
+        Ok(self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?))
     }
 }
 

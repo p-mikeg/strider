@@ -71,18 +71,19 @@ pub struct MatcherOptions {
 /// first use via `OnceCell`: the first call pays a one-time preorder
 /// walk to populate `index → NodeId`; subsequent calls are O(1).
 pub struct Matcher<'g> {
-    pub(super) fn_graph: &'g BuiltFunctionGraph,
+    pub(super) graph: &'g ir::Graph,
+    pub(super) entry: NodeId,
     pub(crate) options: MatcherOptions,
     function_arg_index: std::cell::OnceCell<FunctionArgIndex>,
-    /// Lazily-cached preorder traversal of `fn_graph`.  Built on
+    /// Lazily-cached preorder traversal of `graph`.  Built on
     /// first call to [`Self::preorder_cached`]; stays valid for the
     /// `Matcher`'s lifetime because the matcher holds an immutable
-    /// borrow of `fn_graph` (any mutation would require a fresh
+    /// borrow of `graph` (any mutation would require a fresh
     /// `&mut Graph`, which forces this `Matcher` out of scope).
     ///
     /// Used by [`Self::find_all`], [`Self::find_all_multi`], and the
-    /// kind-index bootstrap to avoid M independent
-    /// `BuiltFunctionGraph::preorder()` walks per session.
+    /// kind-index bootstrap to avoid M independent preorder walks per
+    /// session.
     preorder: std::cell::OnceCell<Vec<NodeId>>,
     /// Lazily-cached `Discriminant<NodeKind> → Vec<NodeId>` index of
     /// the graph.  Populated on first call to [`Self::kind_index`];
@@ -97,12 +98,25 @@ pub struct Matcher<'g> {
 }
 
 impl<'g> Matcher<'g> {
-    /// Creates a new `Matcher` with default options (both walk-through
-    /// flags off — strict exact-walk semantics).
+    /// Creates a new `Matcher` over a [`BuiltFunctionGraph`].  Wrapper
+    /// around [`Self::for_graph`] for callers that already hold the
+    /// fully-built form (the common query path).  Rewrite-only callers
+    /// that have just `&Graph + NodeId` should use [`Self::for_graph`]
+    /// directly to avoid synthesising a dummy `BuiltFunctionGraph` with
+    /// empty CC fields.
     #[must_use]
     pub fn new(fn_graph: &'g BuiltFunctionGraph) -> Self {
+        Self::for_graph(&fn_graph.graph, fn_graph.entry)
+    }
+
+    /// Creates a new `Matcher` over a raw `(graph, entry)` pair —
+    /// the rewrite-only path.  No `BuiltFunctionGraph` wrapper required;
+    /// the matcher only ever consults graph + entry.
+    #[must_use]
+    pub fn for_graph(graph: &'g ir::Graph, entry: NodeId) -> Self {
         Self {
-            fn_graph,
+            graph,
+            entry,
             options: MatcherOptions::default(),
             function_arg_index: std::cell::OnceCell::new(),
             preorder: std::cell::OnceCell::new(),
@@ -114,7 +128,7 @@ impl<'g> Matcher<'g> {
     /// it on first call.
     fn preorder_cached(&self) -> &[NodeId] {
         self.preorder
-            .get_or_init(|| self.fn_graph.preorder().collect())
+            .get_or_init(|| ir::walk::walk_graph(self.graph, self.entry).collect())
             .as_slice()
     }
 
@@ -130,7 +144,7 @@ impl<'g> Matcher<'g> {
                 Vec<NodeId>,
             > = rustc_hash::FxHashMap::default();
             for &node in self.preorder_cached() {
-                let d = std::mem::discriminant(self.fn_graph.graph.node_kind(node));
+                let d = std::mem::discriminant(self.graph.node_kind(node));
                 index.entry(d).or_default().push(node);
             }
             index
@@ -194,9 +208,9 @@ impl<'g> Matcher<'g> {
     fn function_arg_index(&self) -> &FunctionArgIndex {
         self.function_arg_index.get_or_init(|| {
             let mut map: HashMap<u32, NodeId> = HashMap::new();
-            for node in self.fn_graph.preorder() {
+            for node in ir::walk::walk_graph(self.graph, self.entry) {
                 if let NodeKind::FunctionArg { index, .. } =
-                    self.fn_graph.graph.node_kind(node)
+                    self.graph.node_kind(node)
                 {
                     map.insert(*index, node);
                 }
@@ -541,12 +555,12 @@ impl<'g> Matcher<'g> {
     /// by construction, so this never fires in practice, but preserves the
     /// "no-panic" discipline.
     fn make_function_arg_handle(&self, node_id: NodeId) -> Option<FunctionArgHandle<'g>> {
-        let NodeKind::FunctionArg { source, index } = *self.fn_graph.graph.node_kind(node_id)
+        let NodeKind::FunctionArg { source, index } = *self.graph.node_kind(node_id)
         else {
             return None;
         };
         Some(FunctionArgHandle {
-            fn_graph: self.fn_graph,
+            graph: self.graph,
             node_id,
             source,
             index,
@@ -565,7 +579,7 @@ impl<'g> Matcher<'g> {
     /// [`Self::match_node_id`] dispatch.
     pub(crate) fn ctx(&self) -> crate::pat::traits::MatchCtx<'g, '_> {
         crate::pat::traits::MatchCtx {
-            graph: self.fn_graph,
+            graph: self.graph,
             matcher: self,
         }
     }
@@ -632,14 +646,14 @@ impl<'g> Matcher<'g> {
             if self.options.ignore_cast_mask.is_empty() {
                 break;
             }
-            let producer = self.fn_graph.graph.get_node_from_output(out);
+            let producer = self.graph.get_node_from_output(out);
             let bit = cast_mask::cast_mask_of(
-                self.fn_graph.graph.node_kind(producer),
+                self.graph.node_kind(producer),
             );
             if bit.is_empty() || !self.options.ignore_cast_mask.contains(bit) {
                 break;
             }
-            let inputs = self.fn_graph.graph.node_inputs(producer);
+            let inputs = self.graph.node_inputs(producer);
             if inputs.len() != 1 {
                 break;
             }

@@ -215,10 +215,10 @@ mod tests {
         // Return [ctrl, mem] — same NodeId, kind mutated in place.
         let (mut fg, placeholder) = build_placeholder_graph();
         let inputs_before: Vec<_> =
-            fg.graph.node_inputs(placeholder).into_iter().collect();
+            fg.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
         apply_link_register(&mut fg, placeholder, &[]).expect("apply");
-        assert!(matches!(fg.graph.node_kind(placeholder), NodeKind::Return));
+        assert!(matches!(fg.node_kind(placeholder), NodeKind::Return));
     }
 
     #[test]
@@ -226,7 +226,7 @@ mod tests {
         let (mut fg, _placeholder) = build_placeholder_graph();
         let int_const_id = fg.graph
             .all_node_ids()
-            .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::IntConst(_)))
+            .find(|&nid| matches!(fg.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
         let result = apply_link_register(&mut fg, int_const_id, &[]);
         assert!(result.is_err(), "must reject non-IndirectBranch: {result:?}");
@@ -241,8 +241,8 @@ mod tests {
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
         let mut had_call = false;
-        for nid in fg.graph.all_node_ids() {
-            if matches!(fg.graph.node_kind(nid), NodeKind::Call) {
+        for nid in fg.all_node_ids() {
+            if matches!(fg.node_kind(nid), NodeKind::Call) {
                 had_call = true;
                 break;
             }
@@ -264,7 +264,7 @@ mod tests {
         let mut fg = builder.build().expect("build");
         let ret_id = fg.graph
             .all_node_ids()
-            .find(|&nid| matches!(fg.graph.node_kind(nid), NodeKind::Return))
+            .find(|&nid| matches!(fg.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let result = apply_tail_call(&mut fg, ret_id, 0xc0de, &[], &[], &[]);
         assert!(result.is_err(), "must reject Return: {result:?}");
@@ -306,12 +306,12 @@ mod tests {
         // `target_value` slot is dropped so `RetPat::ret_val(idx)` stays
         // 0-indexed over the real return values).
         let (mut fg, placeholder) = build_placeholder_graph();
-        let inputs_before: Vec<_> = fg.graph.node_inputs(placeholder).into_iter().collect();
+        let inputs_before: Vec<_> = fg.node_inputs(placeholder).into_iter().collect();
         assert_eq!(inputs_before.len(), 3);
         let r0 = synth_value_output(&mut fg.graph, 0x42, NodeOutputType::U64);
         let r1 = synth_value_output(&mut fg.graph, 0x43, NodeOutputType::U64);
         apply_link_register(&mut fg, placeholder, &[r0, r1]).expect("apply");
-        let inputs_after: Vec<_> = fg.graph.node_inputs(placeholder).into_iter().collect();
+        let inputs_after: Vec<_> = fg.node_inputs(placeholder).into_iter().collect();
         assert_eq!(
             inputs_after.len(),
             2 + 2,
@@ -335,11 +335,11 @@ mod tests {
         // The new Return's input #0 is the Call's ctrl output.  Walk
         // back to the Call.
         let new_return_inputs: Vec<_> =
-            fg.graph.node_inputs(new_return).into_iter().collect();
+            fg.node_inputs(new_return).into_iter().collect();
         let call_ctrl = new_return_inputs[0];
-        let (call_node, _) = fg.graph.output_definition(call_ctrl);
-        assert!(matches!(fg.graph.node_kind(call_node), NodeKind::Call));
-        let call_inputs: Vec<_> = fg.graph.node_inputs(call_node).into_iter().collect();
+        let (call_node, _) = fg.output_definition(call_ctrl);
+        assert!(matches!(fg.node_kind(call_node), NodeKind::Call));
+        let call_inputs: Vec<_> = fg.node_inputs(call_node).into_iter().collect();
         assert_eq!(
             call_inputs.len(),
             6,
@@ -370,16 +370,16 @@ mod tests {
         .expect("apply");
         // Walk to the Call.
         let new_return_inputs: Vec<_> =
-            fg.graph.node_inputs(new_return).into_iter().collect();
-        let (call_node, _) = fg.graph.output_definition(new_return_inputs[0]);
-        let call_outputs: Vec<_> = fg.graph.node_outputs(call_node).into_iter().collect();
+            fg.node_inputs(new_return).into_iter().collect();
+        let (call_node, _) = fg.output_definition(new_return_inputs[0]);
+        let call_outputs: Vec<_> = fg.node_outputs(call_node).into_iter().collect();
         assert_eq!(
             call_outputs.len(),
             4,
             "Call must have [Control, Memory, clob_0, clob_1]",
         );
-        assert_eq!(fg.graph.output_kind(call_outputs[2]), clob_kinds[0]);
-        assert_eq!(fg.graph.output_kind(call_outputs[3]), clob_kinds[1]);
+        assert_eq!(fg.output_kind(call_outputs[2]), clob_kinds[0]);
+        assert_eq!(fg.output_kind(call_outputs[3]), clob_kinds[1]);
     }
 
     #[test]
@@ -392,7 +392,7 @@ mod tests {
         let new_return =
             apply_tail_call(&mut fg, placeholder, 0xface, &[], &[], &[r0, r1])
                 .expect("apply");
-        let inputs: Vec<_> = fg.graph.node_inputs(new_return).into_iter().collect();
+        let inputs: Vec<_> = fg.node_inputs(new_return).into_iter().collect();
         assert_eq!(inputs.len(), 4, "[call_ctrl, call_mem, r0, r1]");
         assert_eq!(inputs[2], r0);
         assert_eq!(inputs[3], r1);

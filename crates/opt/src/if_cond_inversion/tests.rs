@@ -43,7 +43,7 @@ fn build_if_with_neg_cond() -> Result<(ir::BuiltFunctionGraph, ir::node::NodeId)
 fn find_unique_if(fg: &ir::BuiltFunctionGraph) -> ir::node::NodeId {
     let ifs: Vec<ir::node::NodeId> = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::If))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .collect();
     assert_eq!(ifs.len(), 1, "fixture must have exactly one If node");
     ifs[0]
@@ -55,7 +55,7 @@ fn if_cond_kind(fg: &ir::BuiltFunctionGraph, if_node: ir::node::NodeId) -> NodeK
         .graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
-    *fg.graph.kind_of_output(cond_out)
+    *fg.kind_of_output(cond_out)
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
             .expect("each If output has exactly one consumer in this fixture");
         consumer
     };
-    let [out0_pre, out1_pre] = fg.graph.node_outputs_exact::<2>(if_node)?;
+    let [out0_pre, out1_pre] = fg.node_outputs_exact::<2>(if_node)?;
     let pre_true_consumer = consumer_of(&fg, out0_pre);
     let pre_false_consumer = consumer_of(&fg, out1_pre);
     assert_ne!(
@@ -157,7 +157,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
 
     IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
 
-    let [out0_post, out1_post] = fg.graph.node_outputs_exact::<2>(if_node)?;
+    let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(&fg, out0_post);
     let post_false_consumer = consumer_of(&fg, out1_post);
 

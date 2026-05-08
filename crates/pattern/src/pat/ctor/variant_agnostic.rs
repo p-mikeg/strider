@@ -42,7 +42,7 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.graph.node_kind(node) {
+                match ctx.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => $commutative(*op),
                     _ => false,
                 }
@@ -57,7 +57,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -65,7 +65,7 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
                     b.bind_capture(c, Binding::new(node, None))
                 } else {
                     false
@@ -80,7 +80,7 @@ macro_rules! impl_variant_any {
         #[doc = $doc]
         pub fn $fn_name(c: Capture, lhs: impl Into<Pat>, rhs: impl Into<Pat>) -> Pat {
             let inputs = InputsSpec::fixed_maybe_commutative(lhs.into(), rhs.into(), |ctx, node| {
-                match ctx.graph.graph.node_kind(node) {
+                match ctx.graph.node_kind(node) {
                     NodeKind::$op_enum(op) => $commutative(*op),
                     _ => false,
                 }
@@ -95,7 +95,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -103,7 +103,7 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
                     b.bind_capture(c, Binding::new(node, None))
                 } else {
                     false
@@ -127,7 +127,7 @@ macro_rules! impl_variant_any {
                         .bindings
                         .get_node(c)
                         .ok_or_else(|| crate::error::missing_binding($missing))?;
-                    match ctx.graph.graph.node_kind(node) {
+                    match ctx.graph.node_kind(node) {
                         NodeKind::$op_enum(op) => Ok(NodeKind::$op_enum(*op)),
                         _ => Err(crate::error::missing_binding($missing)),
                     }
@@ -135,7 +135,7 @@ macro_rules! impl_variant_any {
                 $build_ty,
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
-                if matches!(ctx.graph.graph.node_kind(node), NodeKind::$op_enum(_)) {
+                if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
                     b.bind_capture(c, Binding::new(node, None))
                 } else {
                     false

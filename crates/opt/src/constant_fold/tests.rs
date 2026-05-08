@@ -15,15 +15,15 @@ use ir::test_utils::reg_vn;
 fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
     let ret = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.graph.node_inputs(ret)[2])
+    Ok(fg.node_inputs(ret)[2])
 }
 
 /// Returns the `NodeKind` of the node that produces the return value.
 fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
     let val = return_value(fg)?;
-    Ok(*fg.graph.kind_of_output(val))
+    Ok(*fg.kind_of_output(val))
 }
 
 // ── integer binary folding ────────────────────────────────────────────────
@@ -138,16 +138,16 @@ fn assert_add_with_const(
     ty: NodeOutputType,
 ) -> Result<()> {
     let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
+    let node = fg.get_node_from_output(val);
     assert!(
         matches!(
-            fg.graph.node_kind(node),
+            fg.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ),
         "expected outer Add, got {:?}",
-        fg.graph.node_kind(node)
+        fg.node_kind(node)
     );
-    let inputs = fg.graph.node_inputs(node);
+    let inputs = fg.node_inputs(node);
     assert_eq!(inputs.len(), 2);
     let l = inputs[0];
     let r = inputs[1];
@@ -156,7 +156,7 @@ fn assert_add_with_const(
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_on = |o: ir::Value| -> bool {
         matches!(
-            *fg.graph.kind_of_output(o),
+            *fg.kind_of_output(o),
             // IntConst stores u128; masked is u64, widen for comparison.
             NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
         )
@@ -166,8 +166,8 @@ fn assert_add_with_const(
         ok,
         "expected `base + {:#x}`; got lhs kind={:?}, rhs kind={:?}",
         masked,
-        fg.graph.kind_of_output(l),
-        fg.graph.kind_of_output(r),
+        fg.kind_of_output(l),
+        fg.kind_of_output(r),
     );
     Ok(())
 }
@@ -186,16 +186,16 @@ fn assert_sub_with_const(
     ty: NodeOutputType,
 ) -> Result<()> {
     let val = return_value(fg)?;
-    let node = fg.graph.get_node_from_output(val);
+    let node = fg.get_node_from_output(val);
     assert!(
         matches!(
-            fg.graph.node_kind(node),
+            fg.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ),
         "expected outer Add (lowered Sub), got {:?}",
-        fg.graph.node_kind(node)
+        fg.node_kind(node)
     );
-    let inputs = fg.graph.node_inputs(node);
+    let inputs = fg.node_inputs(node);
     assert_eq!(inputs.len(), 2);
     // The lowered `a - K` shape after `ConstantFold` is `Add(a, IntConst(-K))`.
     // `Add` is commutative, so accept the const on either side; check that
@@ -207,7 +207,7 @@ fn assert_sub_with_const(
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
     let const_match = |out: ir::Value| {
         matches!(
-            *fg.graph.kind_of_output(out),
+            *fg.kind_of_output(out),
             NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(neg_masked)
         )
     };
@@ -218,8 +218,8 @@ fn assert_sub_with_const(
         "expected `base + {:#x}` (= base - {:#x} canonicalised); got lhs kind={:?}, rhs kind={:?}",
         neg_masked,
         expected_const,
-        fg.graph.kind_of_output(l),
-        fg.graph.kind_of_output(r),
+        fg.kind_of_output(l),
+        fg.kind_of_output(r),
     );
     Ok(())
 }
@@ -446,12 +446,12 @@ fn fold_truncate_const() -> Result<()> {
     })?;
     let val = return_value(&fg)?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.graph.int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to U8 should be 0");
     // No Truncate nodes should exist.
     assert!(
         !fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Truncate)),
         "builder should have folded the truncate"
     );
     Ok(())
@@ -481,7 +481,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // Sanity: builder did emit a Truncate node.
     assert!(
         fg.all_node_ids()
-            .any(|n| matches!(fg.graph.node_kind(n), NodeKind::Truncate)),
+            .any(|n| matches!(fg.node_kind(n), NodeKind::Truncate)),
         "test setup expects a Truncate node before optimization",
     );
 
@@ -491,7 +491,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     // i.e. the low byte of 0xFFFF — *masked* to U8. A pre-fix run would
     // store `0xFFFF` (the wider raw value) here.
     let val = return_value(&fg)?;
-    let kind = *fg.graph.kind_of_output(val);
+    let kind = *fg.kind_of_output(val);
     let raw = match kind {
         NodeKind::IntConst(v) => v,
         other => panic!("expected IntConst producer for Return value, got {other:?}"),
@@ -541,14 +541,14 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     // Most importantly: no Truncate or Extend node remains in the chain.
     let val = return_value(&fg)?;
     assert!(
-        matches!(fg.graph.kind_of_output(val), NodeKind::IntConst(_)),
+        matches!(fg.kind_of_output(val), NodeKind::IntConst(_)),
         "round-trip + const-fold must leave an IntConst at the root, got {:?}",
-        fg.graph.kind_of_output(val)
+        fg.kind_of_output(val)
     );
     // Belt-and-suspenders: walk all reachable nodes and verify no
     // Truncate/Extend survives the chain to the Return.
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
             "Truncate/Extend round-trip must be folded away; found {kind:?}"
@@ -575,7 +575,7 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
         changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Truncate | NodeKind::Extend(_)),
             "SignExtend round-trip must be folded away; found {kind:?}"
@@ -612,7 +612,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(21));
     // Nothing wider than U32 should survive (no SignExtend/Mul@U64/Truncate).
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::Extend(ExtendOp::SignExtend) | NodeKind::Truncate),
             "narrowing rule must collapse the SignExt-Mul-Truncate chain; \
@@ -663,13 +663,13 @@ fn fold_cast_to_bool_of_cast_to_int_round_trip() -> Result<()> {
     // upstream — if any survives, the round-trip rule didn't fire.
     let reachable: std::collections::HashSet<_> = fg.preorder().collect();
     for n in fg.all_node_ids().filter(|n| reachable.contains(n)) {
-        if !matches!(fg.graph.node_kind(n), NodeKind::CastToBool) {
+        if !matches!(fg.node_kind(n), NodeKind::CastToBool) {
             continue;
         }
-        let inputs = fg.graph.node_inputs(n);
-        let producer = fg.graph.output_definition(inputs[0]).0;
+        let inputs = fg.node_inputs(n);
+        let producer = fg.output_definition(inputs[0]).0;
         assert!(
-            !matches!(fg.graph.node_kind(producer), NodeKind::CastToInt),
+            !matches!(fg.node_kind(producer), NodeKind::CastToInt),
             "CastToBool(CastToInt(...)) round-trip must be folded; \
              survived at {n:?}"
         );
@@ -706,7 +706,7 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     // the result is IntConst(0xAA).  No Or remains.
     assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xAA));
     for nid in fg.preorder() {
-        let kind = fg.graph.node_kind(nid);
+        let kind = fg.node_kind(nid);
         assert!(
             !matches!(kind, NodeKind::IntBinaryOp(IntBinaryOp::Or)),
             "high-mask half drop must collapse the Or; found {kind:?}"
@@ -763,7 +763,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     // The result must be U16-typed.
     let val = return_value(&fg)?;
     assert_eq!(
-        fg.graph.output_kind(val),
+        fg.output_kind(val),
         ir::node::NodeOutputKind::OutputType(NodeOutputType::U16),
         "Truncate_U16(Extend_U64(U32)) must keep U16 typing — round-trip \
          rule must not fire when inner width != outer truncate width"
@@ -1036,19 +1036,19 @@ fn build_unary_with_wide_const_input(
     use ir::node::NodeOutputKind;
     let mut fg = make_fn(|b| Ok(b.build_int_const(0u64, NodeOutputType::U64).unwrap()))?;
     let placeholder = return_value(&fg)?;
-    let wide_node = fg.graph.create_node(
+    let wide_node = fg.create_node(
         NodeKind::IntConst(0xFF),
         [],
         [NodeOutputKind::OutputType(wide_ty)],
     );
-    let wide_const = fg.graph.node_outputs_exact::<1>(wide_node)?[0];
-    let unary_node = fg.graph.create_node(
+    let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
+    let unary_node = fg.create_node(
         kind,
         [wide_const],
         [NodeOutputKind::OutputType(out_ty)],
     );
-    let unary_out = fg.graph.node_outputs_exact::<1>(unary_node)?[0];
-    fg.graph.replace_all_uses(placeholder, unary_out)?;
+    let unary_out = fg.node_outputs_exact::<1>(unary_node)?[0];
+    fg.replace_all_uses(placeholder, unary_out)?;
     Ok(fg)
 }
 
@@ -1493,7 +1493,7 @@ fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
+    if let NodeKind::FloatConst(bits) = *fg.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan(), "NaN must propagate through Add");
     } else {
         return Err(anyhow!("assertion failed: expected FloatConst result"));
@@ -1516,7 +1516,7 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
     })?;
     assert!(ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed());
     let val = return_value(&fg)?;
-    if let NodeKind::FloatConst(bits) = *fg.graph.kind_of_output(val) {
+    if let NodeKind::FloatConst(bits) = *fg.kind_of_output(val) {
         assert!(f64::from_bits(bits).is_nan());
     } else {
         return Err(anyhow!("assertion failed: expected FloatConst result"));

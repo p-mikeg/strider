@@ -24,29 +24,29 @@ fn try_lower_cast_to_float(
     fg: &mut BuiltFunctionGraph,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
-    if !matches!(*fg.graph.node_kind(node_id), NodeKind::CastToFloat) {
+    if !matches!(*fg.node_kind(node_id), NodeKind::CastToFloat) {
         return Ok(OptimizationResult::NoChange);
     }
 
-    let [out] = fg.graph.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.graph.node_inputs_exact::<1>(node_id)?;
+    let [out] = fg.node_outputs_exact::<1>(node_id)?;
+    let [input] = fg.node_inputs_exact::<1>(node_id)?;
 
-    let out_ty = fg.graph.output_kind(out).as_value_or_err()?;
-    let in_ty = fg.graph.output_kind(input).as_value_or_err()?;
+    let out_ty = fg.output_kind(out).as_value_or_err()?;
+    let in_ty = fg.output_kind(input).as_value_or_err()?;
 
     let new_out = if in_ty == out_ty {
         input
     } else if in_ty.is_float() {
-        fg.graph.make_float_to_float_node(input, out_ty)?
-    } else if let Some(bits) = fg.graph.int_const_val(input) {
-        fg.graph.make_float_const(bits, out_ty)?
+        fg.make_float_to_float_node(input, out_ty)?
+    } else if let Some(bits) = fg.int_const_val(input) {
+        fg.make_float_const(bits, out_ty)?
     } else {
-        fg.graph.make_int_bits_to_float_node(input, out_ty)?
+        fg.make_int_bits_to_float_node(input, out_ty)?
     };
     // Absorb the rewritten cast node's asm-fingerprint into the new producer.
-    let new_node = fg.graph.get_node_from_output(new_out);
-    fg.graph.extend_asm_fingerprint_from(new_node, node_id);
-    Ok(OptimizationResult::from_changed(fg.graph.replace_all_uses(out, new_out)?))
+    let new_node = fg.get_node_from_output(new_out);
+    fg.extend_asm_fingerprint_from(new_node, node_id);
+    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────

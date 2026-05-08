@@ -61,7 +61,7 @@ impl Match {
     /// `None` for unbound captures, control-flow bindings, or
     /// non-`IntConst` producers.
     #[must_use]
-    pub fn get_uint(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u128> {
+    pub fn get_uint(&self, c: Capture, graph: &ir::Graph) -> Option<u128> {
         self.bindings.get_uint(c, graph)
     }
 
@@ -69,21 +69,21 @@ impl Match {
     /// constant sign-extended from the output type's bit width to
     /// `i128`.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_int(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i128> {
+    pub fn get_int(&self, c: Capture, graph: &ir::Graph) -> Option<i128> {
         self.bindings.get_int(c, graph)
     }
 
     /// If the node bound to `c` is a `BoolConst`, returns the stored
     /// boolean value.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_bool(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<bool> {
+    pub fn get_bool(&self, c: Capture, graph: &ir::Graph) -> Option<bool> {
         self.bindings.get_bool(c, graph)
     }
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.  Returns `None` otherwise.
     #[must_use]
-    pub fn get_float_bits(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<u64> {
+    pub fn get_float_bits(&self, c: Capture, graph: &ir::Graph) -> Option<u64> {
         self.bindings.get_float_bits(c, graph)
     }
 
@@ -92,7 +92,7 @@ impl Match {
     pub fn get_int_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<IntBinaryOp> {
         self.bindings.get_int_binary_op(c, graph)
     }
@@ -102,14 +102,14 @@ impl Match {
     pub fn get_int_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<IntUnaryOp> {
         self.bindings.get_int_unary_op(c, graph)
     }
 
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
     #[must_use]
-    pub fn get_int_cmp_op(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<IntCmpOp> {
+    pub fn get_int_cmp_op(&self, c: Capture, graph: &ir::Graph) -> Option<IntCmpOp> {
         self.bindings.get_int_cmp_op(c, graph)
     }
 
@@ -118,7 +118,7 @@ impl Match {
     pub fn get_bool_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<BoolBinaryOp> {
         self.bindings.get_bool_binary_op(c, graph)
     }
@@ -128,7 +128,7 @@ impl Match {
     pub fn get_bool_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<BoolUnaryOp> {
         self.bindings.get_bool_unary_op(c, graph)
     }
@@ -138,7 +138,7 @@ impl Match {
     pub fn get_float_binary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatBinaryOp> {
         self.bindings.get_float_binary_op(c, graph)
     }
@@ -148,7 +148,7 @@ impl Match {
     pub fn get_float_unary_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatUnaryOp> {
         self.bindings.get_float_unary_op(c, graph)
     }
@@ -158,7 +158,7 @@ impl Match {
     pub fn get_float_cmp_op(
         &self,
         c: Capture,
-        graph: &BuiltFunctionGraph,
+        graph: &ir::Graph,
     ) -> Option<FloatCmpOp> {
         self.bindings.get_float_cmp_op(c, graph)
     }
@@ -241,9 +241,9 @@ impl Match {
     /// `any_int_const(other)` on the call-arg side, compute the
     /// difference).
     #[must_use]
-    pub fn stack_offset(&self, c: Capture, graph: &BuiltFunctionGraph) -> Option<i64> {
+    pub fn stack_offset(&self, c: Capture, graph: &ir::Graph) -> Option<i64> {
         let node = self.bindings.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::StackStore { offset, .. } => Some(*offset),
             _ => None,
         }
@@ -267,12 +267,12 @@ impl Match {
     pub fn stack_phi_offsets<'g>(
         &self,
         c: Capture,
-        graph: &'g BuiltFunctionGraph,
+        graph: &'g ir::Graph,
     ) -> Option<&'g [i64]> {
         let node = self.bindings.get_node(c)?;
-        match graph.graph.node_kind(node) {
+        match graph.node_kind(node) {
             NodeKind::StackStorePhi { .. } => {
-                let slice = graph.graph.stack_phi_offsets(node);
+                let slice = graph.stack_phi_offsets(node);
                 if slice.is_empty() { None } else { Some(slice) }
             }
             _ => None,
@@ -296,10 +296,10 @@ impl Match {
     pub fn asm_fingerprint<'g>(
         &self,
         c: Capture,
-        graph: &'g BuiltFunctionGraph,
+        graph: &'g ir::Graph,
     ) -> &'g [u64] {
         match self.bindings.get_node(c) {
-            Some(node) => graph.graph.asm_fingerprint(node),
+            Some(node) => graph.asm_fingerprint(node),
             None => &[],
         }
     }

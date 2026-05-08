@@ -240,7 +240,6 @@ impl From<CallOtherPat> for Pat {
                 if let Some(ref want) = want_name {
                     let ok = ctx
                         .graph
-                        .graph
                         .call_other_name(node)
                         .is_some_and(|s| s == want.as_str());
                     if !ok {

@@ -97,7 +97,8 @@ pub(super) fn apply_reassoc_and_mask_rules(
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(fg, node)?;
+    let mut __ctx = pattern::RewriteCtx::for_built(fg);
+    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(&mut __ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -136,7 +137,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |fg, ty, b| {
             b.get(x)
-                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .and_then(|out| fg.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -149,7 +150,7 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |fg, ty, b| {
             b.get(x)
-                .and_then(|out| fg.graph.output_kind(out).as_value())
+                .and_then(|out| fg.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -175,11 +176,11 @@ fn build_bitcast_extend_rules() -> Vec<pattern::BoxedRule> {
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |fg, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    .and_then(|out| fg.output_kind(out).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| fg.graph.output_kind(out).as_value())
+                        .and_then(|out| fg.output_kind(out).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -281,7 +282,8 @@ pub(super) fn apply_bitcast_extend_rules(
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(fg, node)?;
+    let mut __ctx = pattern::RewriteCtx::for_built(fg);
+    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(&mut __ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -370,7 +372,8 @@ pub(super) fn apply_identity_rules(
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&IDENTITY_RULES)(fg, node)?;
+    let mut __ctx = pattern::RewriteCtx::for_built(fg);
+    let changed = apply_rules_in_order(&IDENTITY_RULES)(&mut __ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -563,7 +566,7 @@ fn build_const_eval_rules() -> Vec<pattern::BoxedRule> {
             let x = Capture::new();
             let pat = cast_to_bool(cast_to_int(var(x))).when_match(move |fg, _ty, b| {
                 b.get(x)
-                    .and_then(|out| fg.graph.output_kind(out).as_value())
+                    .and_then(|out| fg.output_kind(out).as_value())
                     == Some(NodeOutputType::Bool)
             });
             boxed_rule(rewrite_rule(pat, var(x)))
@@ -582,7 +585,8 @@ pub(super) fn apply_const_eval_rules(
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(fg, node)?;
+    let mut __ctx = pattern::RewriteCtx::for_built(fg);
+    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(&mut __ctx, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -730,7 +734,8 @@ pub(super) fn apply_bool_float_rules(
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(fg, node)?;
+    let mut __ctx = pattern::RewriteCtx::for_built(fg);
+    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(&mut __ctx, node)?;
     // CastToFloat lowering is too stateful for a rule (it does graph surgery);
     // handle it separately after the rule sweep.
     let cast_changed = try_lower_cast_to_float(fg, node)?;

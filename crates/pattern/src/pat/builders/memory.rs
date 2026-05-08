@@ -85,11 +85,11 @@ impl From<LoadPat> for Pat {
         // single-output node — see node_signature::expected_signature).
         if let Some(want) = bit_width {
             pat = pat.with_post_match(Arc::new(move |ctx, node, _b| {
-                let outs = ctx.graph.graph.node_outputs(node);
+                let outs = ctx.graph.node_outputs(node);
                 let Some(&value_out) = outs.get(0) else {
                     return false;
                 };
-                let Some(ty) = ctx.graph.graph.output_kind(value_out).as_value() else {
+                let Some(ty) = ctx.graph.output_kind(value_out).as_value() else {
                     return false;
                 };
                 ty.bit_width() == want as usize
@@ -202,11 +202,11 @@ impl From<StorePat> for Pat {
                 if let Some(w) = want_width {
                     // Store's data input is at inputs[2]; its producer's
                     // output type tells us the width.
-                    let inputs = ctx.graph.graph.node_inputs(node);
+                    let inputs = ctx.graph.node_inputs(node);
                     let Some(&data_in) = inputs.get(2) else {
                         return false;
                     };
-                    let Some(ty) = ctx.graph.graph.output_kind(data_in).as_value() else {
+                    let Some(ty) = ctx.graph.output_kind(data_in).as_value() else {
                         return false;
                     };
                     if ty.bit_width() != w as usize {
@@ -374,7 +374,7 @@ impl From<StackStorePhiPat> for Pat {
             // `expected_offsets` is already sorted (see
             // `StackStorePhiPat::offsets`).
             let check: NodeKindCheck = Arc::new(move |ctx, node, _b| {
-                let actual_slice = ctx.graph.graph.stack_phi_offsets(node);
+                let actual_slice = ctx.graph.stack_phi_offsets(node);
                 if actual_slice.len() != expected_offsets.len() {
                     return false;
                 }

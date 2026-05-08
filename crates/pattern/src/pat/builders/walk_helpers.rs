@@ -25,7 +25,7 @@ pub(crate) fn match_unique_output_consumer(
     pat: &Pat,
     b: &mut Bindings,
 ) -> bool {
-    let outputs = ctx.graph.graph.node_outputs(node);
+    let outputs = ctx.graph.node_outputs(node);
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };

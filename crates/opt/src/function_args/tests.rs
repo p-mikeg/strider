@@ -12,7 +12,7 @@ fn rdi_like_vn() -> rsleigh::Vn {
 
 fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
     fg.all_node_ids()
-        .filter(|&n| pred(fg.graph.node_kind(n)))
+        .filter(|&n| pred(fg.node_kind(n)))
         .count()
 }
 
@@ -58,7 +58,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let reachable_initial_rdi = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::InitialVar(v) if *v == rdi))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::InitialVar(v) if *v == rdi))
         .count();
     assert_eq!(
         reachable_initial_rdi, 0,
@@ -121,7 +121,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let reachable_loads = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .count();
     assert_eq!(
         reachable_loads, 0,
@@ -204,7 +204,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     let reachable_loads = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Load(_)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .count();
     assert_eq!(
         reachable_loads, 1,
@@ -372,11 +372,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     // That one FunctionArg must be at U64 (the widest observed load).
     let fa_node = fg
         .all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::FunctionArg { .. }))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::FunctionArg { .. }))
         .expect("FunctionArg exists");
-    let [fa_out] = fg.graph.node_outputs_exact::<1>(fa_node)?;
+    let [fa_out] = fg.node_outputs_exact::<1>(fa_node)?;
     assert_eq!(
-        fg.graph.output_kind(fa_out).as_value(),
+        fg.output_kind(fa_out).as_value(),
         Some(NodeOutputType::U64),
         "FunctionArg output width should match widest load (U64)"
     );
@@ -387,9 +387,9 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     let trunc_from_fa = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Truncate))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .filter(|&n| {
-            let inputs = fg.graph.node_inputs(n);
+            let inputs = fg.node_inputs(n);
             inputs.len() == 1 && inputs[0] == fa_out
         })
         .count();

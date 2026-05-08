@@ -11,7 +11,7 @@ use ir::{FunctionBuilder, IntBinaryOp};
 /// Counts how many nodes in `fg` match the predicate.
 fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
     fg.all_node_ids()
-        .filter(|&n| pred(fg.graph.node_kind(n)))
+        .filter(|&n| pred(fg.node_kind(n)))
         .count()
 }
 
@@ -49,7 +49,7 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     let reachable_stores = fg
         .all_node_ids()
         .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::Store(_)))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
         .count();
     assert_eq!(reachable_stores, 0, "no reachable Store must remain");
     Ok(())
@@ -186,10 +186,10 @@ fn phi_of_offsets_becomes_stack_store_phi() -> Result<()> {
 
     let phis: Vec<NodeId> = fg
         .all_node_ids()
-        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::StackStorePhi { .. }))
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::StackStorePhi { .. }))
         .collect();
     assert_eq!(phis.len(), 1, "expected one StackStorePhi");
-    let offsets = fg.graph.stack_phi_offsets(phis[0]);
+    let offsets = fg.stack_phi_offsets(phis[0]);
     let mut sorted: Vec<i64> = offsets.to_vec();
     sorted.sort();
     assert_eq!(
@@ -350,15 +350,15 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + exactly 2 args = 5 inputs.
     assert_eq!(
         inputs.len(),
         5,
         "buf-init and callee-save writes must not be mis-collected as args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(42)),
         "arg0 should be 42, got {arg0_kind:?}"
@@ -403,7 +403,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
 /// Finds the unique Call node in `fg`.
 fn find_call(fg: &BuiltFunctionGraph) -> Result<NodeId> {
     fg.all_node_ids()
-        .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Call))
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))
 }
 
@@ -444,7 +444,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
     // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
     assert_eq!(
@@ -455,8 +455,8 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     let arg0_val = inputs[3];
     let arg1_val = inputs[4];
-    let arg0_kind = *fg.graph.kind_of_output(arg0_val);
-    let arg1_kind = *fg.graph.kind_of_output(arg1_val);
+    let arg0_kind = *fg.kind_of_output(arg0_val);
+    let arg1_kind = *fg.kind_of_output(arg1_val);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -497,7 +497,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + stack_arg_0 — only the one we have.
     assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
     Ok(())
@@ -548,7 +548,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target only — slot 1 was filled but slot 0's hole
     // truncates the dense prefix to empty, so no args appended.
     assert_eq!(
@@ -571,7 +571,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
         Ok(())
     })?;
 
-    let before_inputs = fg.graph.node_inputs(find_call(&fg)?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -580,7 +580,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let after_inputs = fg.graph.node_inputs(find_call(&fg)?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected"
@@ -712,11 +712,11 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     let collected_arg_consts: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.graph.kind_of_output(out) {
+            if let NodeKind::IntConst(v) = *fg.kind_of_output(out) {
                 Some(v)
             } else {
                 None
@@ -786,15 +786,15 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + 2 stack args = 5.
     assert_eq!(
         inputs.len(),
         5,
         "walker must pass through the non-aliasing global store and collect both stack args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -857,7 +857,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + 4 args = 7 inputs.
     assert_eq!(
         inputs.len(),
@@ -865,7 +865,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
         "walker must collect all 4 stack args across 4 interleaved global writes; got inputs={inputs:?}"
     );
     for (slot_idx, expected) in arg_vals.iter().enumerate() {
-        let kind = *fg.graph.kind_of_output(inputs[3 + slot_idx]);
+        let kind = *fg.kind_of_output(inputs[3 + slot_idx]);
         let expected_u128: u128 = (*expected).into();
         assert!(
             matches!(kind, NodeKind::IntConst(v) if v == expected_u128),
@@ -935,14 +935,14 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -1008,14 +1008,14 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         6,
         "expected ctrl+mem+target+3 stack args; got {inputs:?}"
     );
     for (slot_idx, expected) in [11u128, 22, 33].iter().enumerate() {
-        let kind = *fg.graph.kind_of_output(inputs[3 + slot_idx]);
+        let kind = *fg.kind_of_output(inputs[3 + slot_idx]);
         assert!(
             matches!(kind, NodeKind::IntConst(v) if v == *expected),
             "arg{slot_idx} should be {expected}, got {kind:?}"
@@ -1074,13 +1074,13 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
@@ -1147,11 +1147,11 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.graph.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     let collected: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.graph.kind_of_output(out) {
+            if let NodeKind::IntConst(v) = *fg.kind_of_output(out) {
                 Some(v)
             } else {
                 None
@@ -1169,8 +1169,8 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.graph.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.graph.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg1_kind = *fg.kind_of_output(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
