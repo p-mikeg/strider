@@ -10,8 +10,8 @@ use ir::node::{FunctionArgSource, NodeKind};
 
 use crate::pat::node_pat::{InputsSpec, KindSpec, NodePat, exemplar_vn};
 use crate::pat::{
-    CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, Pat, PhiPat, RetPat, StackStorePat,
-    StackStorePhiPat, StorePat,
+    CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPhiPat, Pat, PhiPat, RetPat,
+    StackStorePat, StackStorePhiPat, StorePat, ValuePhiPat,
 };
 
 // ── Memory ops ────────────────────────────────────────────────────────────────
@@ -38,12 +38,26 @@ pub fn stack_store_phi() -> StackStorePhiPat { StackStorePhiPat::new() }
 
 /// Starts building a `VarPhi` pattern.  Matches `VarPhi` nodes only.
 ///
-/// Note: only `VarPhi` is matched.  `MemPhi` and `ValuePhi` are not
-/// currently exposed via dedicated pattern constructors (TODO: add
-/// `mem_phi()` / `value_phi()` when a use case appears).
+/// For other phi kinds use [`mem_phi`] (memory-token phi) or
+/// [`value_phi`] (`StackLoadForward`-synthesised value phi).
 #[must_use]
 pub fn phi() -> PhiPat {
     PhiPat::new()
+}
+
+/// Starts building a `MemPhi` pattern.  Matches the memory-token phi
+/// at control-flow join points.
+#[must_use]
+pub fn mem_phi() -> MemPhiPat {
+    MemPhiPat::new()
+}
+
+/// Starts building a `ValuePhi` pattern.  Matches the value phi
+/// `StackLoadForward` synthesises when forwarding stack-store values
+/// across a control-flow join.
+#[must_use]
+pub fn value_phi() -> ValuePhiPat {
+    ValuePhiPat::new()
 }
 /// Starts building a `VarPhi` pattern pinned to varnode `vn`.
 #[must_use]
