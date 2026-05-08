@@ -161,6 +161,10 @@ impl PyCastMask {
     #[classmethod] fn none(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
         Self { inner: pattern::CastMask::empty() }
     }
+    /// Alias for `none()` — mirrors Rust's `pattern::CastMask::empty()`.
+    #[classmethod] fn empty(cls: &Bound<'_, pyo3::types::PyType>) -> Self {
+        Self::none(cls)
+    }
 
     fn __or__(&self, other: &Self) -> Self {
         Self { inner: self.inner | other.inner }
