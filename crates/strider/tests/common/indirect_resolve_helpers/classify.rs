@@ -652,6 +652,148 @@ pub fn build_non_jump_table_load_scenario() -> (BuiltFunctionGraph, ir::Value) {
     (fg, anchor)
 }
 
+/// Build a placeholder `IndirectBranch(load)` whose load is a
+/// **stack-array dispatch**: at function entry, `N` constants are
+/// stored at contiguous SP-relative offsets (`sp + base_offset +
+/// i*stride` for `i in 0..N`), and the dispatch loads from
+/// `sp + base_offset + (idx & MASK) * stride` where `MASK` is the
+/// power-of-two-minus-one bound that lets `KnownBits` derive the
+/// per-arm `bound = MASK + 1`.
+///
+/// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 256), and
+/// must be a power of 2 so the `idx & (N - 1)` mask matches the
+/// stack-array classifier's `bound_via_known_bits` path.  Returns
+/// the graph, the anchor (load output), and the SP varnode the
+/// caller passes to `classify_anchor_with_rom_and_sp`.
+///
+/// The fixture mirrors the existing `build_two_target_array`
+/// fixture in `crates/opt/src/indirect_branch_resolve/stack_array.rs`,
+/// generalised to N targets.  The stack pointer is a fake 8-byte
+/// register at offset `0x40`; the index argument is a fake 8-byte
+/// register at offset `0x38` (matches sysv argument register
+/// width); the dispatch is `Load[(sp + base_offset) + ((arg & N-1)
+/// * stride)]`.
+///
+/// Pipeline run: `ConstantFold + KnownBits + RedundantPhis +
+/// StackStoreDetect`.  `StackLoadForward` is **deliberately
+/// omitted** — including it would forward the Load to the matching
+/// IntConst directly, eliminating the Load entirely and turning the
+/// anchor into an IntConst (the Single-target arm), defeating the
+/// stack-array classifier exercise.
+pub fn build_stack_array_dispatch_scenario(
+    targets: &[u64],
+    base_offset: i64,
+    stride: u64,
+) -> (BuiltFunctionGraph, ir::node::NodeOutputId, rsleigh::Vn) {
+    use ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
+    use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
+    use opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis, StackStoreDetect};
+
+    let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
+    assert!(n > 0, "stack-array fixture needs at least one target");
+    assert!(
+        n.is_power_of_two(),
+        "stack-array fixture requires N = power of 2 so KnownBits derives bound = N \
+         (idx & (N-1) leaves N candidate values)",
+    );
+    let mask = n - 1;
+
+    let sp = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0)
+        .expect("FunctionBuilder::new_raw");
+    let region = b.create_region().expect("create_region");
+    b.set_entry_region(region).expect("set_entry_region");
+    b.set_region(region);
+    let sp_val = b.read_variable(&sp).expect("read sp");
+
+    // N entry stores: target[i] → *(sp + base_offset + i*stride).
+    for (i, &target_addr) in targets.iter().enumerate() {
+        let off =
+            base_offset + i64::try_from(i).expect("i fits") * i64::try_from(stride).expect("stride fits");
+        let off_const = b.build_int_const(off as u64, NodeOutputType::U64).unwrap();
+        let addr = b
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+            .expect("addr");
+        let target_v = b
+            .build_int_const(target_addr, NodeOutputType::U64)
+            .unwrap();
+        b.build_store(addr, target_v, rsleigh::VnSpace::RAM)
+            .expect("store target");
+    }
+
+    // Index = (arg as u32) & MASK, zero-extended to u64.
+    let arg_val = b.read_variable(&arg_vn).expect("read arg");
+    let arg_u32_node = b.graph_mut().create_node(
+        ir::node::NodeKind::Truncate,
+        [arg_val],
+        [NodeOutputKind::OutputType(NodeOutputType::U32)],
+    );
+    let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
+    let mask_c = b
+        .build_int_const(mask, NodeOutputType::U32)
+        .unwrap();
+    let masked = b
+        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
+        .expect("idx & mask");
+    let idx_u64_node = b.graph_mut().create_node(
+        ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
+        [masked],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
+    let stride_const = b.build_int_const(stride, NodeOutputType::U64).unwrap();
+    let idx_scaled = b
+        .build_int_binary_operation(
+            idx_u64_out,
+            stride_const,
+            IntBinaryOp::Mul,
+            NodeOutputType::U64,
+        )
+        .expect("idx*stride");
+
+    // Address = (sp + base_offset) + idx*stride.  Two-Add shape so the
+    // classifier's flatten_add_tree exercises both terms.
+    let base_const = b
+        .build_int_const(base_offset as u64, NodeOutputType::U64)
+        .unwrap();
+    let sp_plus_base = b
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::U64)
+        .expect("sp + base");
+    let load_addr = b
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+        .expect("addr");
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+        .expect("load");
+    b.build_indirect_branch(loaded)
+        .expect("placeholder IndirectBranch");
+    let mut fg = b.build().expect("build");
+
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold);
+    p.add(KnownBits);
+    p.add(RedundantPhis);
+    p.add(StackStoreDetect::new(sp));
+    // NOTE: StackLoadForward is intentionally NOT in this pipeline;
+    // see the doc-comment above.
+    p.run(&mut fg.graph, fg.entry).expect("opt pipeline");
+
+    // Locate the surviving Load from the IndirectBranch's value-input.
+    // After the partial pipeline, the placeholder's anchor IS the Load
+    // — `anchor_value_input` returns inputs[2], which is the Load output.
+    let anchor: NodeOutputId = anchor_value_input(&fg).expect("placeholder anchor");
+    (fg, anchor, sp)
+}
+
 /// Build a function whose only indirect branch resolves to
 /// `InitialVar(lr_vn)` after the optimiser runs.  Returns the
 /// link-register VN as the third tuple element so the caller can

@@ -14,12 +14,13 @@
 
 mod common;
 
-use strider::indirect_resolve::{ResolvedTargets, classify_anchor};
+use strider::indirect_resolve::{ResolvedTargets, classify_anchor, classify_anchor_with_rom_and_sp};
 
 use common::indirect_resolve_helpers::{
     build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
     build_int_const_target_scenario_via_stack, build_pop_pc_via_stack_load_forward_scenario,
-    build_push_target_pop_pc_scenario, build_value_phi_target_scenario,
+    build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
+    build_value_phi_target_scenario,
 };
 
 /// Spec test #7: target VN's producer folds to `IntConst(k)` after
@@ -171,6 +172,88 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
     // future refactor that accidentally reintroduces the unsound
     // heuristic gets a directly-named failure.
     assert_ne!(result, Some(ResolvedTargets::LinkRegister));
+}
+
+// ── O9 stack-array indirect-branch shape ──────────────────────────────────
+//
+// The classifier's stack-array arm (`opt::indirect_branch_resolve::
+// stack_array::classify_stack_array`) is reached via
+// `classify_anchor_with_rom_and_sp` when the rodata jump-table arm
+// doesn't match and an SP varnode is supplied.  These tests pin the
+// end-to-end shape: N constants stored at contiguous SP-relative
+// offsets, dispatch via `Load[(sp + base) + (idx & MASK) * stride]`,
+// and `bound = MASK + 1` derived via `KnownBits`.
+//
+// The classifier sorts the resulting target set; we assert against the
+// sorted form so a deterministic-output regression fails the test
+// rather than silently re-ordering the orchestrator's edge-set.
+
+/// 2 targets, base offset -16, stride 8.  KnownBits bounds `idx & 1`
+/// to `[0, 2)` so the stack-array arm reads exactly 2 entries.
+#[test]
+fn stack_array_two_targets_resolves_to_multiple() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
+    );
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+/// 4 targets, base offset -32, stride 8.  Exercises a wider mask
+/// (`idx & 3`) so the bound is 4.  Verifies the classifier doesn't
+/// truncate beyond 2 entries (a regression that pinned only the
+/// first two would slip through the 2-target test above).
+#[test]
+fn stack_array_four_targets_resolves_to_multiple() {
+    let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
+    let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
+    );
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+/// Without the SP varnode, the stack-array arm is short-circuited.
+/// The fixture's anchor is a `Load` whose address is SP-rooted, but
+/// without `stack_ptr_vn` the classifier can't decompose it; the
+/// rodata-jump-table arm also fails (the address isn't a constant
+/// base), so the classifier returns `None`.
+///
+/// This is the soundness gate that keeps callers from over-resolving:
+/// the stack-array arm requires the calling-convention's SP varnode,
+/// and supplying `None` (e.g. an unknown CC) must defer rather than
+/// guess.
+#[test]
+fn stack_array_returns_none_without_sp_varnode() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor_with_rom_and_sp(
+        &graph, anchor, /* lr */ None, /* rom */ None, /* sp */ None,
+    );
+    assert_eq!(
+        result, None,
+        "no SP varnode → stack-array arm short-circuits, no other arm matches → None",
+    );
+}
+
+/// Sanity: the same anchor passed to `classify_anchor` (no rom, no SP)
+/// must also return None — confirms the stack-array shape is unique
+/// to the rom-and-sp entry point and the bare entry point fails
+/// closed.
+#[test]
+fn stack_array_returns_none_via_bare_classify_anchor() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_anchor(&graph, anchor, /* lr */ None);
+    assert_eq!(
+        result, None,
+        "bare classify_anchor (no SP/no rom) cannot resolve stack-array shape",
+    );
 }
 
 /// Spec test #15: opaque target produces `None`/Unresolved (no
