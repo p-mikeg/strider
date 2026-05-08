@@ -81,49 +81,23 @@ pub struct BuiltFunctionGraph {
 
 impl BuiltFunctionGraph {
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
-    /// empty `variables` / `call_clobbered` / `ret_val_regs` /
-    /// `call_other_clobbered`.
+    /// empty `variables` / `call_clobbered` / `ret_val_regs`.
     ///
     /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
     /// fields.**  Used by `opt::with_built` and `strider::rewrite::
-    /// GraphRewriter` to bridge `(&mut Graph, NodeId)` callers to the
-    /// `&mut BuiltFunctionGraph`-typed `pattern` crate rewrite engine.
-    ///
-    /// # Why this isn't a `RewriteCtx<'g>` newtype
-    ///
-    /// The audit (`reviews/round7-types.md`, "Full RewriteCtx newtype")
-    /// flagged this helper as a "dummy struct" smell and proposed
-    /// splitting `pattern`'s API into a graph-only `RewriteCtx<'g>`
-    /// path and a CC-rich `BuiltFunctionGraph` path.  After
-    /// investigation that split was deferred:
-    ///
-    /// * The empty-field defaults are *semantically correct* for
-    ///   rewrite-only contexts.  `Match::get_vn` returning `None` when
-    ///   `call_clobbered` is empty is the right answer ("no CC info
-    ///   available here") — not a bug, not silent garbage.
-    /// * Several `Match`-side accessors (`get_vn`, the CallOther clobber
-    ///   resolution) genuinely need `BuiltFunctionGraph`'s
-    ///   per-function fields; they cannot collapse to a `&Graph`.
-    /// * The split would force `pattern` to expose two parallel APIs
-    ///   (`Matcher::new` vs `Matcher::new_for_rewrite`, `BuildCtx<&Graph>`
-    ///   vs `BuildCtx<&BuiltFunctionGraph>`) with the same behaviour
-    ///   — strictly more surface area for the same callers.
-    ///
-    /// The `_for_rewrite` suffix names the contract; the doc below
-    /// pins the empty-fields invariant; downstream consumers
-    /// (`pattern::rewrite_rule`, `opt::Optimizer`) are vetted to
-    /// honour it.  Future work could revisit this if pattern grows a
-    /// query API with mutation semantics that genuinely splits along
-    /// CC-aware vs CC-blind lines.
+    /// GraphRewriter` to bridge `(&mut Graph, NodeId)` callers to
+    /// `&mut BuiltFunctionGraph`-typed helpers (the `pattern` crate's
+    /// rewrite machinery is typed against `BuiltFunctionGraph`).
     ///
     /// # Contract — caller responsibility
     ///
     /// The returned `BuiltFunctionGraph` has **empty** `variables`,
     /// `call_clobbered`, `ret_val_regs`, and `call_other_clobbered`.
     /// Callers MUST pass it only to consumers that touch `graph` and
-    /// `entry`; consulting any other field returns the empty / `None`
-    /// value silently — which is the correct semantic for a
-    /// rewrite-only context.
+    /// `entry`; consulting any other field returns a meaningless
+    /// empty value silently.  The `pattern::rewrite_rule` machinery
+    /// and the `opt::Optimizer` trait are vetted to honour this
+    /// contract.  Bespoke callers must verify by inspection.
     ///
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
     #[must_use]
