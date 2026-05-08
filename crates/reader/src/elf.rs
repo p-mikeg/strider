@@ -971,7 +971,15 @@ pub fn elf_load_with_relocations(
     obj: &object::File<'_>,
 ) -> Result<(Vec<MemRegion>, RelocationStats)> {
     let mut regions = elf_get_allocatable_file_backed_sections_as_mem_regions(obj)?;
-    let stats = apply_elf_relocations(&mut regions, obj)?;
+    // Use the autoload variant so this bundled path is consistent with
+    // the standalone `add_region_from_elf(path)` + `apply_elf_relocations(path)`
+    // sequence used from Python.  In practice the upfront
+    // `elf_get_allocatable_file_backed_sections_as_mem_regions` already
+    // covers every relocation-targeted section, so the autoload step
+    // is a no-op; the symmetry just guards against future ELF shapes
+    // that emit relocation sites against sections the upfront loader
+    // misses.
+    let stats = apply_elf_relocations_autoload(&mut regions, obj)?;
     Ok((regions, stats))
 }
 
