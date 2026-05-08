@@ -494,57 +494,70 @@ pub(crate) fn find_stack_stored_value_at_offset(
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
-    let key = (mem, offset, value_type);
-    if let Some(&cached) = walk_memo.get(&key) {
-        return cached;
-    }
+    // Iterative form (was recursive — see scale.md A1).  Walks the
+    // memory-chain backward via StackStore.inputs[0] or
+    // Store-passthrough's prev_mem.  Stack-safe at any chain depth.
+    //
+    // Visited stack records every `mem` node we passed through so we
+    // can populate `walk_memo` for ALL of them once the terminal
+    // result is known — preserves the prior memoisation behaviour
+    // where every revisited prefix saved its result.
     let load_size = value_type.byte_size() as i64;
-    let node = graph.get_node_from_output(mem);
-    let result = match *graph.node_kind(node) {
-        NodeKind::StackStore { offset: k, space: _ } => {
-            // StackStore inputs: [MEM, SP, DATA].  The signature pins
-            // input arity; the < 3 guard is a defensive belt-and-braces
-            // against malformed IR slipping past the validator.
-            let inputs = graph.node_inputs(node);
-            if inputs.len() < 3 {
-                None
-            } else {
+    let mut visited: Vec<(NodeOutputId, i64, NodeOutputType)> = Vec::new();
+    let mut cur_mem = mem;
+
+    let result: Option<NodeOutputId> = loop {
+        let key = (cur_mem, offset, value_type);
+        if let Some(&cached) = walk_memo.get(&key) {
+            break cached;
+        }
+        visited.push(key);
+        let node = graph.get_node_from_output(cur_mem);
+        match *graph.node_kind(node) {
+            NodeKind::StackStore { offset: k, space: _ } => {
+                let inputs = graph.node_inputs(node);
+                if inputs.len() < 3 {
+                    break None;
+                }
                 let data = inputs[2];
                 let data_ty = graph.output_kind(data).as_value();
                 match data_ty {
-                    None => None,
+                    None => break None,
                     Some(data_ty) if k == offset => {
-                        // Exact-type match → return the stored value.
-                        // Mismatched types are a deliberate non-match here
-                        // (see module notes).
-                        if data_ty == value_type { Some(data) } else { None }
+                        if data_ty == value_type {
+                            break Some(data);
+                        }
+                        break None;
                     }
                     Some(data_ty) => {
                         let store_size = data_ty.byte_size() as i64;
                         if ranges_disjoint(k, store_size, offset, load_size) {
-                            find_stack_stored_value_at_offset(
-                                graph, inputs[0], offset, value_type, sp_vn, sp_memo, walk_memo,
-                            )
-                        } else {
-                            None
+                            cur_mem = inputs[0];
+                            continue;
                         }
+                        break None;
                     }
                 }
             }
-        }
-        NodeKind::Store(_) => {
-            match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
-                AliasStep::MayAlias => None,
-                AliasStep::PassThrough { prev_mem } => find_stack_stored_value_at_offset(
-                    graph, prev_mem, offset, value_type, sp_vn, sp_memo, walk_memo,
-                ),
+            NodeKind::Store(_) => {
+                match step_through_store(graph, node, sp_vn, sp_memo, offset, load_size) {
+                    AliasStep::MayAlias => break None,
+                    AliasStep::PassThrough { prev_mem } => {
+                        cur_mem = prev_mem;
+                        continue;
+                    }
+                }
             }
+            // MemPhi / InitialMemory / anything else: bail.  See module
+            // notes for why MemPhi handling is intentionally future work.
+            _ => break None,
         }
-        // MemPhi / InitialMemory / anything else: bail.  See module notes
-        // for why MemPhi handling is intentionally future work.
-        _ => None,
     };
-    walk_memo.insert(key, result);
+
+    // Memoise every prefix on the way back so future queries reuse work.
+    for key in visited {
+        walk_memo.insert(key, result);
+    }
     result
 }
 

@@ -971,3 +971,55 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
+    use crate::{ConstantFold, OptimizerPipeline};
+
+    // 10k-store chain pins the iterative form of `mem_chain_is_dirty`
+    // (scale.md A3).  The prior recursive form would stack-overflow
+    // on the default 8 MB Rust stack at this depth.
+    const CHAIN_LEN: usize = 10_000;
+
+    let sp = sp32_vn();
+    let mut fg = ir::test_utils::make_sp_fn(sp, |b, sp_val| {
+        // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
+        for i in 0..CHAIN_LEN {
+            let off = b.build_int_const(((i * 4) as u64) + 16, NodeOutputType::U32)?;
+            let addr = b.build_int_binary_operation(
+                sp_val, off, IntBinaryOp::Add, NodeOutputType::U32,
+            )?;
+            let val = b.build_int_const(i as u64, NodeOutputType::U32)?;
+            b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
+        }
+        // Load from sp+4 — disjoint from every store above.
+        // The walker must pass through all 10k stores backwards.
+        let four = b.build_int_const(4u64, NodeOutputType::U32)?;
+        let addr4 = b.build_int_binary_operation(
+            sp_val, four, IntBinaryOp::Add, NodeOutputType::U32,
+        )?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::U32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold);
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run(&mut fg.graph, fg.entry)?;
+
+    let fa = count(&fg, |k| {
+        matches!(
+            k,
+            NodeKind::FunctionArg {
+                source: FunctionArgSource::Stack { offset: 4, .. },
+                index: 0,
+            }
+        )
+    });
+    assert_eq!(
+        fa, 1,
+        "10k disjoint stores must not mark the chain dirty: load at sp+4 forwards to FunctionArg"
+    );
+    Ok(())
+}

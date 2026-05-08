@@ -387,10 +387,25 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 /// `Graph::stack_phi_offsets`.  They are relative to `InitialVar(sp)` by
 /// construction (the only place that populates them is `StackStoreDetect`).
 //
+/// Iterative form of `mem_chain_is_dirty` — was recursive (scale.md A3).
+/// Walks the memory chain backward via an explicit work stack, with
+/// dedicated frames for `MemPhi` predecessors that join-OR their
+/// per-pred results.  Stack-safe at any chain depth and any phi
+/// fan-out, including pathological 10k+ store prologues.
+///
+/// **Cycle handling.**  `seen` (a graph-wide visited set) is updated
+/// on every visit; revisiting a `mem` returns `false` (clean) for
+/// that edge, mirroring the original.  The original "cache only at
+/// the outermost frame" trick (line 414) is replaced by the simpler
+/// invariant that the iterative walk has a single entry-point frame
+/// — we cache the final result for the original `mem` argument.
+/// Sub-frame results aren't cached because their cleanliness depends
+/// on the cycle set populated above them, not just on `(mem, offset,
+/// load_size)`.
 // Eight arguments are the minimum needed to thread cycle-guards, the
-// SP-decomposition memo and the shadow-walk memo through a recursive
-// memory-chain DFS; bundling them into a context struct would just add
-// indirection without clarifying call sites.
+// SP-decomposition memo and the shadow-walk memo through the
+// memory-chain DFS; bundling them into a context struct would just
+// add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     fg: &BuiltFunctionGraph,
@@ -402,72 +417,111 @@ fn mem_chain_is_dirty(
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
 ) -> bool {
-    let key = (mem, offset, load_size);
-    if let Some(&cached) = memo.get(&key) {
+    let entry_key = (mem, offset, load_size);
+    if let Some(&cached) = memo.get(&entry_key) {
         return cached;
     }
-    // Cache only top-level results: when `seen` is empty here we know any
-    // sub-call's cycle truncation didn't taint THIS node's answer with a
-    // pre-populated set. Sub-calls (where `seen` is non-empty on entry)
-    // compute correctly but don't write back, since their value reflects
-    // cycle handling relative to the parent's already-explored set.
-    let is_outermost = seen.is_empty();
-    if !seen.insert(mem) {
-        // Already visited this edge — loop back-edge, treat as clean here
-        // (other edges in the traversal will surface any real shadow).
-        return false;
-    }
-    let node = fg.get_node_from_output(mem);
-    let step = match *fg.node_kind(node) {
-        NodeKind::InitialMemory => return cache_and_return(memo, key, false, is_outermost),
-        NodeKind::StackStore { offset: k, .. } => {
-            step_through_stack_store(&fg.graph, node, k, offset, load_size)
-        }
-        NodeKind::StackStorePhi { .. } => {
-            step_through_stack_store_phi(&fg.graph, node, offset, load_size)
-        }
-        NodeKind::Store(_) => {
-            step_through_store(&fg.graph, node, sp_vn, sp_memo, offset, load_size)
-        }
-        NodeKind::MemPhi => {
-            // Inputs: [PHI, MEM, MEM, ...].  Every value predecessor must be
-            // clean for the phi to be clean.
-            let inputs = fg.node_inputs(node);
-            let any_dirty = inputs.into_iter().skip(1).any(|pred| {
-                mem_chain_is_dirty(fg, pred, offset, load_size, sp_vn, sp_memo, seen, memo)
-            });
-            return cache_and_return(memo, key, any_dirty, is_outermost);
-        }
-        NodeKind::Call | NodeKind::CallOther { .. } => {
-            // Inputs: [CTRL, MEM, ...args].  Recurse on pre-call memory.
-            let inputs = fg.node_inputs(node);
-            if inputs.len() < 2 {
-                return cache_and_return(memo, key, false, is_outermost);
-            }
-            AliasStep::PassThrough { prev_mem: inputs[1] }
-        }
-        // Any other memory-producing node we don't recognise: be conservative.
-        _ => return cache_and_return(memo, key, true, is_outermost),
-    };
-    let result = match step {
-        AliasStep::MayAlias => true,
-        AliasStep::PassThrough { prev_mem } => mem_chain_is_dirty(
-            fg, prev_mem, offset, load_size, sp_vn, sp_memo, seen, memo,
-        ),
-    };
-    cache_and_return(memo, key, result, is_outermost)
-}
 
-#[inline]
-fn cache_and_return(
-    memo: &mut ShadowMemo,
-    key: (NodeOutputId, i64, i64),
-    result: bool,
-    is_outermost: bool,
-) -> bool {
-    if is_outermost {
-        memo.insert(key, result);
+    /// Work-stack frame.  Either a fresh `Visit` of a mem node, or a
+    /// `JoinPhi` continuation that OR-combines K already-popped
+    /// predecessor results into the phi's own result.
+    enum Frame {
+        Visit(NodeOutputId),
+        /// After visiting all `pred_count` predecessors of a MemPhi,
+        /// pop their `bool` results from `results` and OR them.
+        /// `pred_count` is the number of predecessor `Visit` frames
+        /// we pushed; results stack invariant: top `pred_count`
+        /// entries belong to this phi's preds.
+        JoinPhi { pred_count: usize },
     }
+
+    let mut work: Vec<Frame> = vec![Frame::Visit(mem)];
+    let mut results: Vec<bool> = Vec::new();
+
+    while let Some(frame) = work.pop() {
+        match frame {
+            Frame::JoinPhi { pred_count } => {
+                let drain_at = results.len() - pred_count;
+                let any_dirty = results.drain(drain_at..).any(|d| d);
+                results.push(any_dirty);
+            }
+            Frame::Visit(cur_mem) => {
+                if !seen.insert(cur_mem) {
+                    // Cycle / re-visit: treat as clean for this edge.
+                    results.push(false);
+                    continue;
+                }
+                let node = fg.get_node_from_output(cur_mem);
+                match *fg.node_kind(node) {
+                    NodeKind::InitialMemory => {
+                        results.push(false);
+                    }
+                    NodeKind::StackStore { offset: k, .. } => {
+                        match step_through_stack_store(&fg.graph, node, k, offset, load_size) {
+                            AliasStep::MayAlias => results.push(true),
+                            AliasStep::PassThrough { prev_mem } => {
+                                work.push(Frame::Visit(prev_mem));
+                            }
+                        }
+                    }
+                    NodeKind::StackStorePhi { .. } => {
+                        match step_through_stack_store_phi(&fg.graph, node, offset, load_size) {
+                            AliasStep::MayAlias => results.push(true),
+                            AliasStep::PassThrough { prev_mem } => {
+                                work.push(Frame::Visit(prev_mem));
+                            }
+                        }
+                    }
+                    NodeKind::Store(_) => {
+                        match step_through_store(&fg.graph, node, sp_vn, sp_memo, offset, load_size)
+                        {
+                            AliasStep::MayAlias => results.push(true),
+                            AliasStep::PassThrough { prev_mem } => {
+                                work.push(Frame::Visit(prev_mem));
+                            }
+                        }
+                    }
+                    NodeKind::MemPhi => {
+                        // Inputs: [PHI, MEM, MEM, ...].  Push a JoinPhi
+                        // continuation followed by every predecessor's
+                        // Visit frame.  When the LIFO worklist pops them,
+                        // each pred runs to completion (pushing one
+                        // result), and the JoinPhi at the bottom OR-combines.
+                        let inputs: Vec<NodeOutputId> =
+                            fg.node_inputs(node).into_iter().collect();
+                        let preds: Vec<NodeOutputId> = inputs.into_iter().skip(1).collect();
+                        let pred_count = preds.len();
+                        if pred_count == 0 {
+                            // Empty phi (malformed) — clean.
+                            results.push(false);
+                        } else {
+                            work.push(Frame::JoinPhi { pred_count });
+                            for pred in preds {
+                                work.push(Frame::Visit(pred));
+                            }
+                        }
+                    }
+                    NodeKind::Call | NodeKind::CallOther { .. } => {
+                        let inputs = fg.node_inputs(node);
+                        if inputs.len() < 2 {
+                            results.push(false);
+                        } else {
+                            work.push(Frame::Visit(inputs[1]));
+                        }
+                    }
+                    _ => {
+                        // Unknown memory-producing node: be conservative.
+                        results.push(true);
+                    }
+                }
+            }
+        }
+    }
+
+    // The walk pushed exactly one final result for the original `mem`.
+    debug_assert_eq!(results.len(), 1, "mem_chain_is_dirty: result-stack invariant");
+    let result = results.pop().unwrap_or(true);
+    memo.insert(entry_key, result);
     result
 }
 
