@@ -11,9 +11,8 @@
 //! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of
 //! which submodule's `impl Graph { ... }` block defines each method.
 
-use std::collections::HashMap;
-
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
+use hashbrown::HashMap;
 
 use crate::node::{
     Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,

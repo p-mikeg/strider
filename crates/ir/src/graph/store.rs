@@ -6,6 +6,9 @@
 //! invoke it before mutating, so the cache key always matches the node's
 //! current inputs.
 
+use std::hash::{BuildHasher, Hash, Hasher};
+
+use hashbrown::hash_map::RawEntryMut;
 use smallvec::SmallVec;
 
 use crate::node::{
@@ -14,6 +17,27 @@ use crate::node::{
 };
 
 use super::Graph;
+
+/// Hashes a borrowed dedup-cache key.  Must produce the same hash as the
+/// derived `Hash` impl on the owned `(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>)`
+/// tuple so that lookups using the borrowed shape land in the same bucket
+/// as inserts using the owned shape.  `Vec<T>: Hash` and `[T]: Hash` agree
+/// (both hash the length followed by each element), and the tuple's
+/// derived `Hash` hashes its fields in declaration order — so the borrowed
+/// hash below matches the owned-key derived hash field-for-field.
+#[inline]
+fn hash_borrowed_key<S: BuildHasher>(
+    hasher: &S,
+    node: &Node,
+    inputs: &[NodeOutputId],
+    output_kinds: &[NodeOutputKind],
+) -> u64 {
+    let mut h = hasher.build_hasher();
+    node.hash(&mut h);
+    inputs.hash(&mut h);
+    output_kinds.hash(&mut h);
+    h.finish()
+}
 
 impl Graph {
     /// Returns a reference to the kind of `node_id`.
@@ -186,21 +210,43 @@ impl Graph {
         let output_kinds: SmallVec<[NodeOutputKind; 4]> = output_kinds.into_iter().collect();
         let node = Node::new(kind);
 
-        // Build the cache key only for cacheable kinds; otherwise the two
-        // `Vec`s would be allocated and discarded on every call.
-        let cache_key = if kind.is_cacheable() {
-            let key = (node, inputs.to_vec(), output_kinds.to_vec());
-            if let Some(node_id) = self.node_to_id.get(&key) {
-                return *node_id;
+        // For cacheable kinds, look up via a borrowed `(&Node, &[…], &[…])`
+        // shape so a cache *hit* never allocates the two `Vec`s.  Only the
+        // miss path allocates the owned key for insertion below.
+        //
+        // We hash the borrowed triple manually (`hash_borrowed_key`) and
+        // probe via `raw_entry_mut().from_hash(…)`; the comparator then
+        // dereferences the owned key tuple's fields and compares them as
+        // slices against our borrowed view.  See `hash_borrowed_key`'s
+        // doc-comment for why the borrowed and owned hashes coincide.
+        //
+        // The `BuildHasher` is cloned out of the map up-front so we can
+        // re-use it inside `insert_with_hasher`'s rehash closure (which
+        // can't reborrow `self.node_to_id` while the `RawEntryMut`
+        // already holds it mutably).
+        let cache_slot = if kind.is_cacheable() {
+            let hasher = self.node_to_id.hasher().clone();
+            let hash = hash_borrowed_key(&hasher, &node, &inputs, &output_kinds);
+            match self.node_to_id.raw_entry_mut().from_hash(hash, |k| {
+                k.0 == node
+                    && k.1.as_slice() == inputs.as_slice()
+                    && k.2.as_slice() == output_kinds.as_slice()
+            }) {
+                RawEntryMut::Occupied(entry) => return *entry.get(),
+                RawEntryMut::Vacant(entry) => Some((hasher, hash, entry)),
             }
-            Some(key)
         } else {
             None
         };
 
         let node_id = self.nodes.push(node);
-        if let Some(key) = cache_key {
-            self.node_to_id.insert(key, node_id);
+        if let Some((hasher, hash, entry)) = cache_slot {
+            entry.insert_with_hasher(
+                hash,
+                (node, inputs.to_vec(), output_kinds.to_vec()),
+                node_id,
+                |k| hash_borrowed_key(&hasher, &k.0, k.1.as_slice(), k.2.as_slice()),
+            );
         }
 
         // Add all inputs to the graph

@@ -112,6 +112,38 @@ fn cacheable_node_is_deduplicated() {
     );
 }
 
+/// Repeated `create_node` calls with the same cacheable-kind key must
+/// return the same `NodeId` and grow the arena exactly once.  This pins
+/// the behavioural contract of the borrowed-key dedup-cache lookup
+/// (`raw_entry_mut().from_hash(…)`): a cache *hit* must allocate
+/// neither the owned key nor a duplicate node.  Bulk-shape variant of
+/// `cacheable_node_is_deduplicated` to guard against accidental hash
+/// mismatches between the borrowed `(&Node, &[…], &[…])` probe shape
+/// and the owned `(Node, Vec<…>, Vec<…>)` insert shape.
+#[test]
+fn cacheable_node_dedup_is_stable_across_many_calls() {
+    let mut graph = Graph::new();
+    let first = graph.create_node(
+        NodeKind::IntConst(0xdead_beefu128),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let arena_after_first = graph.nodes.len();
+    for _ in 0..1000 {
+        let id = graph.create_node(
+            NodeKind::IntConst(0xdead_beefu128),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        assert_eq!(id, first, "cache hit must return the original id");
+    }
+    assert_eq!(
+        graph.nodes.len(),
+        arena_after_first,
+        "no new nodes should be allocated on repeated cache hits",
+    );
+}
+
 /// Non-cacheable nodes (e.g. `Return`) must always produce fresh ids even
 /// when all arguments are identical.
 #[test]
