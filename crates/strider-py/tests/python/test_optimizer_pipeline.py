@@ -9,6 +9,20 @@ def test_empty_pipeline():
     assert pipe.post_pass_count() == 0
 
 
+def test_python_default_pipeline_matches_rust_pinned_count():
+    """G7 (Round-7 follow-up): pin Python's manually-listed default
+    pipeline pass count against the Rust-side factory function.  The
+    Rust counterpart asserts the same numbers in
+    crates/opt/tests/pipeline_subsets.rs::*_pass_count_pinned.
+    Adding a Rust pass without updating PipelineState::from_default in
+    crates/strider-py/src/opt.rs would make the Python pipeline a
+    behaviourally-different subset of the Rust one — silent drift.
+    """
+    assert strider.OptimizerPipeline.default().pass_count() == 6
+    assert strider.OptimizerPipeline.stable_default().pass_count() == 4
+    assert strider.OptimizerPipeline.destructive_default().pass_count() == 2
+
+
 def test_default_pipeline_nonempty():
     pipe = strider.OptimizerPipeline.default()
     assert pipe.pass_count() > 0
