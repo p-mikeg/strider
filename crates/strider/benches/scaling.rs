@@ -13,8 +13,14 @@ use std::hint::black_box;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
+
+use ir::node::{NodeOutputType, NodeOutputKind};
+use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
+use opt::{
+    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
+};
 
 #[derive(Clone, Copy)]
 struct Case {
@@ -106,5 +112,322 @@ fn bench_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_pipeline);
+// ──────────────────────────────────────────────────────────────────────────
+// O12-O15 P4 SCALING BENCHMARKS
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Synthetic-fixture benches that don't depend on ELF fixtures.  Each
+// bench parameterises over a problem-size N so we can plot scaling
+// curves separately from the absolute pipeline cost.
+//
+// Helpers live in a private module so the bench-level globs stay
+// disciplined.  None of the helpers recurse (Criterion's
+// `iter_batched` calls them per-iteration; recursion would inflate
+// per-sample cost unpredictably).
+
+mod synthetic {
+    use super::*;
+
+    /// Synthetic 8-byte stack-pointer VN.  Same shape used in the
+    /// existing `stack_array.rs` tests.  Doesn't have to match a real
+    /// arch — `StackStoreDetect` / `StackLoadForward` only care that
+    /// it's the SP varnode passed into the pass constructors.
+    pub fn sp_vn() -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        }
+    }
+
+    /// Build a function with `n` SP-relative `Store`s at distinct
+    /// offsets (`-8 * (i+1)`), each storing a fresh `IntConst(i)`,
+    /// followed by `n` `Load`s at the matching offsets that feed a
+    /// chain of `Add`s producing the function's return value.  After
+    /// `StackStoreDetect`, every store becomes a `StackStore`; the
+    /// returned graph is ready to feed into `StackLoadForward` for
+    /// the bench.  Pre-pass: `StackStoreDetect` is run inside the
+    /// helper so the bench measures `StackLoadForward` in isolation.
+    pub fn build_stack_store_chain(n: usize) -> BuiltFunctionGraph {
+        let sp = sp_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp).unwrap();
+        // Phase 1: N stores at distinct SP offsets.
+        let mut load_addrs: Vec<ir::Value> = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = -((i as i64 + 1) * 8) as u64;
+            let off_const = b.build_int_const(off, NodeOutputType::U64).unwrap();
+            let addr = b
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+            let v = b.build_int_const(i as u64, NodeOutputType::U64).unwrap();
+            b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
+            load_addrs.push(addr);
+        }
+        // Phase 2: N loads at the same offsets.  Combine via a left-
+        // folding chain of Adds so every loaded value reaches the
+        // return.
+        let mut acc = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        for addr in load_addrs {
+            let loaded = b
+                .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+                .unwrap();
+            acc = b
+                .build_int_binary_operation(acc, loaded, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+        }
+        b.build_return(Some(acc), &[]).unwrap();
+        let mut fg = b.build().unwrap();
+        // Pre-pass: StackStoreDetect so the graph the bench measures
+        // already has StackStore nodes (StackLoadForward only forwards
+        // through StackStore, not raw Store).  This isolates the
+        // forward-pass cost from the detect-pass cost.
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(StackStoreDetect::new(sp));
+        p.run(&mut fg.graph, fg.entry).unwrap();
+        fg
+    }
+
+    /// Build a function with `n` if-else diamonds chained sequentially.
+    /// Each diamond merges back to the same control-state before the
+    /// next branches; the merge varphi count grows linearly in `n`.
+    /// Used to bench scaling of the validator + optimiser loop on
+    /// merge-heavy IRs.
+    pub fn run_diamond_cfg(n: usize) -> BuiltFunctionGraph {
+        let sp = sp_vn();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0).unwrap();
+        let entry = b.create_region().unwrap();
+        b.set_entry_region(entry).unwrap();
+
+        // Build N diamonds.  prev_region is the predecessor for the
+        // next branch; on each iteration we create true / false / merge
+        // sub-regions and route prev → If(true) / If(false) → merge,
+        // then set prev = merge for the next iteration.
+        let mut prev_region = entry;
+        for _ in 0..n {
+            let true_arm = b.create_region().unwrap();
+            let false_arm = b.create_region().unwrap();
+            let merge = b.create_region().unwrap();
+
+            b.set_region(prev_region);
+            let cond = b.build_boolean_const(true);
+            b.build_if(cond, true_arm, false_arm).unwrap();
+
+            // Each arm reads SP, adds a unique offset constant, and
+            // branches to the merge.  This keeps both arms data-
+            // distinct so `RedundantPhis` doesn't collapse the merge.
+            b.set_region(true_arm);
+            let sp_t = b.read_variable(&sp).unwrap();
+            let off_t = b.build_int_const(0xa_au64, NodeOutputType::U64).unwrap();
+            let _ = b
+                .build_int_binary_operation(sp_t, off_t, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+            b.build_branch(merge).unwrap();
+
+            b.set_region(false_arm);
+            let sp_f = b.read_variable(&sp).unwrap();
+            let off_f = b.build_int_const(0xb_bu64, NodeOutputType::U64).unwrap();
+            let _ = b
+                .build_int_binary_operation(sp_f, off_f, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+            b.build_branch(merge).unwrap();
+
+            prev_region = merge;
+        }
+
+        // Final region: a clean Return.
+        b.set_region(prev_region);
+        let sp_final = b.read_variable(&sp).unwrap();
+        b.build_return(Some(sp_final), &[]).unwrap();
+        let mut fg = b.build().unwrap();
+        // Run a small pipeline on the diamond graph.  Bench measures
+        // build + pipeline together — the build dominates, but the
+        // pipeline run pins the validator's per-region cost too.
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(RedundantPhis);
+        p.run(&mut fg.graph, fg.entry).unwrap();
+        fg
+    }
+
+    /// Build a function shaped like a stack-array indirect-branch
+    /// dispatch with `n` targets (constants stored at contiguous
+    /// SP-relative offsets, loaded via `arg & (n-1) * stride`).  `n`
+    /// must be a power of 2.  The bench measures the full lift +
+    /// stable-subset cost; `IndirectBranchResolve` isn't run here —
+    /// callers can layer it on top if they want the resolve cost.
+    pub fn run_jump_table_scenario(n: usize) -> BuiltFunctionGraph {
+        assert!(
+            n.is_power_of_two(),
+            "jump-table fixture requires n = power of 2",
+        );
+        let mask = (n - 1) as u64;
+        let sp = sp_vn();
+        let arg_vn = rsleigh::Vn {
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![sp, arg_vn], &[], &[sp], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let sp_val = b.read_variable(&sp).unwrap();
+
+        for i in 0..n {
+            let off = -((i as i64 + 1) * 8) as u64;
+            let off_const = b.build_int_const(off, NodeOutputType::U64).unwrap();
+            let addr = b
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+            let target = b.build_int_const(0x4000 + i as u64, NodeOutputType::U64).unwrap();
+            b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
+        }
+        let arg_val = b.read_variable(&arg_vn).unwrap();
+        let arg_u32 = b.graph_mut().create_node(
+            ir::node::NodeKind::Truncate,
+            [arg_val],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let arg_u32_out = b.body().graph.node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let mask_c = b.build_int_const(mask, NodeOutputType::U32).unwrap();
+        let masked = b
+            .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::U32)
+            .unwrap();
+        let idx_u64 = b.graph_mut().create_node(
+            ir::node::NodeKind::Extend(ir::ExtendOp::ZeroExtend),
+            [masked],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let idx_u64_out = b.body().graph.node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let stride = b.build_int_const(8u64, NodeOutputType::U64).unwrap();
+        let idx_scaled = b
+            .build_int_binary_operation(idx_u64_out, stride, IntBinaryOp::Mul, NodeOutputType::U64)
+            .unwrap();
+        let base = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        let sp_plus_base = b
+            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let load_addr = b
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::U64)
+            .unwrap();
+        let loaded = b
+            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
+            .unwrap();
+        b.build_return(Some(loaded), &[]).unwrap();
+        let mut fg = b.build().unwrap();
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold);
+        p.add(StackStoreDetect::new(sp));
+        p.run(&mut fg.graph, fg.entry).unwrap();
+        fg
+    }
+
+    /// Build a function with `n` distinct `IntConst` nodes added
+    /// together.  Used to bench pattern-matcher cross-product joins
+    /// (`find_all_requirements`) with shared captures.
+    pub fn build_many_int_consts(n: usize) -> BuiltFunctionGraph {
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        // N consts → N adds → return.  Each `IntConst(i)` is a
+        // distinct cache key (they hash on value), so we get N distinct
+        // root nodes for the matcher to walk.
+        let mut acc = b.build_int_const(0u64, NodeOutputType::U64).unwrap();
+        for i in 1..=n {
+            let c = b.build_int_const(i as u64, NodeOutputType::U64).unwrap();
+            acc = b
+                .build_int_binary_operation(acc, c, IntBinaryOp::Add, NodeOutputType::U64)
+                .unwrap();
+        }
+        b.build_return(Some(acc), &[]).unwrap();
+        b.build().unwrap()
+    }
+}
+
+fn bench_stack_store_chain(c: &mut Criterion) {
+    let mut group = c.benchmark_group("synthetic/stack_store_chain");
+    let sp = synthetic::sp_vn();
+    for n in [100usize, 500, 1_000] {
+        group.bench_function(format!("n_{n}"), |b| {
+            b.iter_batched(
+                || synthetic::build_stack_store_chain(n),
+                |mut fg| {
+                    let pass = StackLoadForward::new(sp, target::Endianness::Little);
+                    let _ = pass.optimize(&mut fg.graph, fg.entry);
+                    black_box(fg);
+                },
+                BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+fn bench_diamond_cfg(c: &mut Criterion) {
+    let mut group = c.benchmark_group("synthetic/diamond_cfg");
+    for n in [100usize, 500, 1_000] {
+        group.bench_function(format!("n_{n}_regions"), |b| {
+            b.iter(|| {
+                let g = synthetic::run_diamond_cfg(black_box(n));
+                black_box(g);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_wide_jump_table(c: &mut Criterion) {
+    let mut group = c.benchmark_group("synthetic/wide_jump_table");
+    for n in [16usize, 64, 256] {
+        group.bench_function(format!("n_{n}_targets"), |b| {
+            b.iter(|| {
+                let g = synthetic::run_jump_table_scenario(black_box(n));
+                black_box(g);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_find_all_requirements_shared_capture(c: &mut Criterion) {
+    use pattern::{Capture, Matcher, add, any_int_const, var};
+
+    let mut group = c.benchmark_group("synthetic/find_all_requirements_shared");
+    for n in [100usize, 500, 1_000] {
+        let fg = synthetic::build_many_int_consts(n);
+        // Two patterns that share a capture `x`:
+        //   pat1: add(_, x).capture(y)  (x = rhs of every Add)
+        //   pat2: any_int_const(x)      (x = every IntConst)
+        // The cross-product join over shared `x` exercises the
+        // matcher's bindings-equality path on every (Add, IntConst)
+        // pair where they coincide.
+        let x = Capture::new();
+        let pat1: pattern::Pat = add(pattern::any(), var(x)).into();
+        let pat2: pattern::Pat = any_int_const(x);
+        group.bench_function(format!("n_{n}"), |bnch| {
+            bnch.iter(|| {
+                let m = Matcher::new(&fg);
+                let pat_refs: Vec<&pattern::Pat> = vec![&pat1, &pat2];
+                let result = m.find_all_requirements(&pat_refs);
+                black_box(result);
+            });
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_pipeline,
+    bench_stack_store_chain,
+    bench_diamond_cfg,
+    bench_wide_jump_table,
+    bench_find_all_requirements_shared_capture,
+);
 criterion_main!(benches);
