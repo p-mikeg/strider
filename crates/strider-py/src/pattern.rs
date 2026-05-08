@@ -367,15 +367,20 @@ impl PyPartialMatch {
 }
 
 /// Build a `Pat::when_match` closure that calls a Python predicate with
-/// a transient `PyPartialMatch` proxy.  Errors / non-bool returns are
-/// treated as `false` (no match).
+/// a transient `PyPartialMatch` proxy.  All failure modes (proxy alloc
+/// failure, predicate exception, non-bool return) are surfaced to
+/// stderr and treated as `false` (no match) — aborting `find_all`
+/// mid-walk on a buggy predicate would be worse than continuing.
 fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
     inner.when_match(move |graph, _ty, bindings| {
         Python::with_gil(|py| {
             let proxy = PyPartialMatch::new(bindings.clone(), graph);
             let py_proxy = match Py::new(py, proxy) {
                 Ok(p) => p,
-                Err(_) => return false,
+                Err(e) => {
+                    eprintln!("strider: .when() predicate proxy alloc failed: {e}");
+                    return false;
+                }
             };
             let args = PyTuple::new_bound(py, [py_proxy.clone_ref(py)]);
             let result = py_func.call_bound(py, args, None);
@@ -385,7 +390,15 @@ fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
                 b.clear_graph_ptr();
             }
             match result {
-                Ok(obj) => obj.extract::<bool>(py).unwrap_or(false),
+                Ok(obj) => match obj.extract::<bool>(py) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!(
+                            "strider: .when() predicate returned non-bool ({e}); treating as no-match"
+                        );
+                        false
+                    }
+                },
                 Err(e) => {
                     // Surface the predicate's exception to stderr but
                     // treat it as "no match" to avoid aborting

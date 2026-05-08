@@ -102,16 +102,16 @@ struct Rule {
     /// returns the new value-output to redirect the root's uses to.
     build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId,
     /// Captures used by `lhs` for `a` and `b`.
-    cap_a: Capture,
-    cap_b: Capture,
+    lhs_capture: Capture,
+    rhs_capture: Capture,
 }
 
 fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) -> Result<bool> {
     // Snapshot the matched bindings inside a tight scope so the borrow
     // ends before we mutate the graph.  Some rules (Thumb's "test bool
-    // against 0") use only `cap_a`; `cap_b` defaults to the same output
-    // in that case so the RHS builder, which ignores it, still gets a
-    // valid argument.
+    // against 0") use only `lhs_capture`; `rhs_capture` defaults to the
+    // same output in that case so the RHS builder, which ignores it,
+    // still gets a valid argument.
     let (a_out, b_out) = {
         let matcher = Matcher::new(function);
         let m = match matcher.match_at(node, &rule.lhs) {
@@ -119,14 +119,14 @@ fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) 
             None => return Ok(false),
         };
         // `match_at` succeeded above, and the rule's `lhs` always
-        // captures `cap_a` at a value-producing position; the matcher
-        // contract guarantees `output(cap_a)` returns `Some` whenever
-        // the capture appears in a successful match.
+        // captures `lhs_capture` at a value-producing position; the
+        // matcher contract guarantees `output(lhs_capture)` returns
+        // `Some` whenever the capture appears in a successful match.
         #[allow(clippy::expect_used)]
         let a = m
-            .output(rule.cap_a)
+            .output(rule.lhs_capture)
             .expect("Capture a must bind to a value output");
-        let b = m.output(rule.cap_b).unwrap_or(a);
+        let b = m.output(rule.rhs_capture).unwrap_or(a);
         (a, b)
     };
 
@@ -232,9 +232,10 @@ fn rhs_le(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> 
 // flag varnode directly — same as AArch64 — and the AArch64 rules
 // (1, 2, 3, …) take over.
 
-// `var(b)` here is captured as `cap_a` in the `Rule` shape; I reuse the
-// `cap_a` slot for the bool input and leave `cap_b` unused.  This is a
-// special-case unary rewrite using the shared two-cap rule struct.
+// `var(b)` here is captured as `lhs_capture` in the `Rule` shape; I
+// reuse the `lhs_capture` slot for the bool input and leave
+// `rhs_capture` unused.  This is a special-case unary rewrite using
+// the shared two-cap rule struct.
 
 fn rhs_thumb_neg_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> NodeOutputId {
     build_bool_neg(graph, a, root)
@@ -255,13 +256,13 @@ static RULES: LazyLock<Vec<Rule>> = LazyLock::new(build_rules);
 fn rule(lhs_builder: impl FnOnce(Capture, Capture) -> Pat,
         build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId)
         -> Rule {
-    let cap_a = Capture::new();
-    let cap_b = Capture::new();
+    let lhs_capture = Capture::new();
+    let rhs_capture = Capture::new();
     Rule {
-        lhs: lhs_builder(cap_a, cap_b),
+        lhs: lhs_builder(lhs_capture, rhs_capture),
         build_rhs,
-        cap_a,
-        cap_b,
+        lhs_capture,
+        rhs_capture,
     }
 }
 
