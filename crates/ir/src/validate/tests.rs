@@ -304,23 +304,34 @@ fn layer_c_duplicate_initial_memory() {
 
 #[test]
 fn layer_c_control_state_bad_predecessor() {
+    // The bad ControlState must be **reachable** from entry — otherwise
+    // round 9's reachability gate (Ask-8 R2 F2 fix in `check_layer_c_control_state`)
+    // correctly skips it as an unreachable zombie.  Build a 2-predecessor
+    // ControlState: input[0] = entry's Control (well-formed) so the walk
+    // reaches it via cfg-succs, input[1] = InitialMemory's Memory (the
+    // bad input the test pins).  The ControlState's Control output then
+    // feeds a Return so it stays in the reachable set even after the
+    // walk's forward-control phase.
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
     let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
     let mem_out = graph.node_outputs(mem).into_iter().next().unwrap();
 
-    // ControlState with a Memory predecessor instead of Control.
-    let _bad_cs = graph.create_node(
+    // ControlState with [Control, Memory] inputs — input[1] is wrong.
+    let bad_cs = graph.create_node(
         NodeKind::ControlState,
-        [mem_out],
+        [entry_ctrl, mem_out],
         [NodeOutputKind::Control, NodeOutputKind::PhiToken],
     );
+    let bad_cs_ctrl = graph.node_outputs(bad_cs).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [bad_cs_ctrl, mem_out], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
             e,
-            ValidationError::ControlStateNonControlPredecessor { input_idx: 0, .. }
+            ValidationError::ControlStateNonControlPredecessor { input_idx: 1, .. }
         )),
         "got: {errs:?}"
     );
@@ -1010,6 +1021,46 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
             .iter()
             .any(|e| matches!(e, ValidationError::MissingAsmFingerprint { kind: NodeKind::Return, .. })),
         "expected Return to be flagged"
+    );
+}
+
+/// Round 9 IMPORTANT (Ask-8 R2 F2 / I-2) regression: a non-reachable
+/// `ControlState` zombie with stale non-Control inputs must not
+/// produce a false-positive `ControlStateNonControlPredecessor`
+/// error.  Pre-fix, the empty-input branch was correctly
+/// reachability-gated but the non-empty-input branch was not.
+#[test]
+fn unreachable_control_state_with_non_control_input_does_not_fire() {
+    let mut graph = Graph::new();
+    // Reachable spine: Entry → Return.
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let init_mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let mem_out = graph.node_outputs(init_mem).into_iter().next().unwrap();
+    let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+
+    // Detached zombie: a ControlState whose input is a non-Control output
+    // (an IntConst's value output).  This shape can be left behind by a
+    // future pass that surgery-edits without scrubbing inputs.  The
+    // node IS in the arena but is NOT reachable from `entry`.
+    let int_const = graph.create_node(
+        NodeKind::IntConst(0x1234),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let bogus_input = graph.node_outputs(int_const).into_iter().next().unwrap();
+    let _zombie_cs = graph.create_node(
+        NodeKind::ControlState,
+        [bogus_input],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+
+    // The unreachable zombie must be skipped by the reachability gate;
+    // the validator must not flag a `ControlStateNonControlPredecessor`
+    // error.  (Pre-fix this would have fired.)
+    validate(&graph, entry).expect(
+        "unreachable ControlState zombies must not produce \
+         ControlStateNonControlPredecessor errors",
     );
 }
 
