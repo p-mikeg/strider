@@ -1,5 +1,5 @@
 //! Tests for [`cfg::Builder::with_known_targets`] — the feedback path
-//! the strider fixed-point orchestrator uses to thread tier-2
+//! the strider fixed-point orchestrator uses to thread IR-level
 //! resolution results into a CFG rebuild.
 //!
 //! Each test:
@@ -105,7 +105,7 @@ fn with_known_targets_empty_map_falls_through_to_cfg_time() {
         .with_known_targets(HashMap::new())
         .build()
         .expect("build with empty known_targets");
-    // Tier-1 still can't classify `jmp rax`; the terminator is
+    // cfg-time still can't classify `jmp rax`; the terminator is
     // UnresolvedIndirectBranch.
     let mut had_unresolved = false;
     for region in cfg.regions() {

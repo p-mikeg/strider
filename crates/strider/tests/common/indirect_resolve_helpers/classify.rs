@@ -1,6 +1,6 @@
-//! Fixture builders feeding the tier-2 *classifier* unit / integration tests.
+//! Fixture builders feeding the IR-level *classifier* unit / integration tests.
 //!
-//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7).  Every
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs`.  Every
 //! helper here builds a `BuiltFunctionGraph` whose unique placeholder
 //! Return's value-input is shaped to exercise one specific classifier arm
 //! (IntConst, InitialVar(lr), ValuePhi-of-IntConsts, Load jump-table, etc.).
@@ -36,7 +36,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// folds to `IntConst(K)`.
 ///
 /// **K must be < the function start address (0x1000)** so the cfg
-/// builder's tier-1 resolver classifies the branch as a tail call —
+/// builder's cfg-time resolver classifies the branch as a tail call —
 /// otherwise it enqueues exploration of `K`, the buffered memory
 /// reader's range doesn't cover that, and Sleigh's `lift_one(K)`
 /// trips DataUnavailErr.  When `K` is a tail call we get
@@ -44,7 +44,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// `UnresolvedIndirectBranch` — i.e. cfg-time resolver resolves it before
 /// IR-level indirect-branch resolver ever sees it.  That defeats this fixture's purpose.
 ///
-/// To force the branch into the tier-2 path we therefore use a
+/// To force the branch into the IR-level path we therefore use a
 /// **runtime-computed** target: `mov rax, [rsp+8]; jmp rax`.  The
 /// rsp-relative read prevents cfg-time resolver's mini-graph from folding the
 /// target to a constant (no constant write to rax in the region),
@@ -56,7 +56,7 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 #[allow(dead_code)]
 pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Value) {
     unimplemented!(
-        "tier-1 always classifies a constant target — use \
+        "cfg-time always classifies a constant target — use \
          build_int_const_target_scenario_phi_merge for the IntConst arm"
     )
 }
@@ -433,7 +433,7 @@ pub fn build_push_target_pop_pc_scenario(
 //
 // All helpers go through `FunctionBuilder::new_raw` rather than the
 // cfg-builder + analyze_cfg path because (a) we don't
-// need the cfg builder's tier-1 resolver here, (b) constructing real
+// need the cfg builder's cfg-time resolver here, (b) constructing real
 // arch bytes that lift to a jump-table-shaped IR is fixture overkill,
 // and (c) the FunctionBuilder API is the same code path the cfg
 // builder ultimately goes through, so we exercise the same lift
@@ -856,7 +856,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     assert_eq!(
         outcome.unresolved_branches.len(),
         1,
-        "bx lr fixture must have exactly one tier-2 placeholder",
+        "bx lr fixture must have exactly one IR-level placeholder",
     );
     let anchor = anchor_value_input(&graph)
         .expect("bx lr fixture must have one IndirectBranch placeholder after optimisation");

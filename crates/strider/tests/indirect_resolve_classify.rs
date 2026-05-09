@@ -86,7 +86,7 @@ fn phi_of_int_consts_to_multiple() {
             // Output is sort + dedup'd by the classifier; assert the
             // canonical order so a regression that shuffles the
             // result fails the test rather than silently mismatching
-            // the orchestrator's edge-set comparison (R3).
+            // the orchestrator's edge-set comparison.
             assert_eq!(ts, vec![0x1000, 0x2000]);
         }
         other => panic!("expected Multiple([0x1000, 0x2000]); got {other:?}"),
@@ -261,7 +261,7 @@ fn stack_array_returns_none_via_bare_classify_anchor() {
 }
 
 /// Spec test #15: opaque target produces `None`/Unresolved (no
-/// error inside the resolver).  The orchestrator (R3) is responsible for
+/// error inside the resolver).  The orchestrator is responsible for
 /// surfacing `UnresolvedIndirectBranch` at fixed point if every
 /// iteration's classifier returns `None` for the same anchor.
 ///

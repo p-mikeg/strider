@@ -114,7 +114,7 @@ fn full_pipeline_passes_are_stable_then_destructive_in_order() {
     assert_eq!(full_names, expected);
 }
 
-// ── Python ↔ Rust pipeline-shape sync (G7 from round7-followup plan) ──
+// ── Python ↔ Rust pipeline-shape sync ──
 //
 // The Python wrapper `strider_py::opt::PipelineState` rebuilds the three
 // named pipelines manually (it can't directly clone a Rust pipeline because

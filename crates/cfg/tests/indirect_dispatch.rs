@@ -180,7 +180,7 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
 /// write, no link-register plugin).  Under the fixed-point design
 /// the cfg builder defers the branch via
 /// `RegionTerminator::UnresolvedIndirectBranch{target_vn, addr}` so
-/// the strider-level outer loop can attempt tier-2 resolution
+/// the strider-level outer loop can attempt IR-level resolution
 /// against the optimised IR.  The test asserts the deferred
 /// terminator AND that no edge was added (the target is unknown).
 #[test]
@@ -309,7 +309,7 @@ fn options_read_only_memory_round_trips() {
     assert!(test_api::options_read_only_memory(&default).is_none());
 }
 
-/// A tier-1-resolvable BranchIndirect must NOT produce
+/// A cfg-time-resolvable BranchIndirect must NOT produce
 /// `UnresolvedIndirectBranch`.  This is the negative companion to
 /// `unresolvable_branch_indirect_produces_unresolved_terminator`
 /// and guards against an over-zealous deferral that would defeat the
@@ -332,7 +332,7 @@ fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
             entry.terminator,
             RegionTerminator::UnresolvedIndirectBranch { .. },
         ),
-        "tier-1-resolvable target must not produce UnresolvedIndirectBranch, got {:?}",
+        "cfg-time-resolvable target must not produce UnresolvedIndirectBranch, got {:?}",
         entry.terminator,
     );
     assert_eq!(entry.terminator, RegionTerminator::TailCall { target });

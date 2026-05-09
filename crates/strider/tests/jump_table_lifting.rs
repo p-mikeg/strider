@@ -1,10 +1,10 @@
-//! F7 integration tests for jump-table (`Switch`) lifting.
+//! `build_switch_if_ladder` integration tests for jump-table (`Switch`) lifting.
 //!
 //! Drives the full `analyze_cfg` → `handle_switch` →
 //! `build_switch_if_ladder` path with a real x86-64 BranchIndirect
 //! that's resolved to `Multiple([t0, t1, ...])` via the cfg
 //! builder's `with_known_targets` feedback path — the same path
-//! the strider fixed-point orchestrator uses to commit a tier-2
+//! the strider fixed-point orchestrator uses to commit a IR-level
 //! `Multiple` classification across iterations.
 //!
 //! Each test constructs a tiny x86-64 byte sequence whose control
@@ -127,7 +127,7 @@ fn switch_terminator_lifts_to_if_ladder_for_one_target() {
     let g = analyze_with_known_targets(bytes, base, ba, targets.clone());
     assert_eq!(count_if_nodes(&g), 0, "no If for 1-target Switch");
     assert_eq!(count_eq_cmps(&g), 0, "no equality cmp for 1-target Switch");
-    // Still no comparison-constant for K_0 — F7 emits the const
+    // Still no comparison-constant for K_0 — `build_switch_if_ladder` emits the const
     // ONLY when there's a cmp.
     assert_eq!(
         count_int_consts_eq(&g, targets[0]),
@@ -169,7 +169,7 @@ fn switch_terminator_lifts_to_if_ladder_for_three_targets() {
 
 #[test]
 fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
-    // F7 + ConstantFold composition: F7's lifted If-ladder uses
+    // `build_switch_if_ladder` + ConstantFold composition: `build_switch_if_ladder`'s lifted If-ladder uses
     // the existing `IntCmpOp::Equal` + `If` primitives, so when
     // the index folds to a constant the existing `ConstantFold` +
     // `DeadBranchElimination` passes prune the dead arms and
@@ -231,7 +231,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
     let mut graph = outcome.graph;
 
-    // Sanity: pre-optimization, the F7 if-ladder produced N-1 = 2
+    // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
     // If nodes.  After the default pipeline collapses the
     // constant-index dispatch, all of them should be gone
     // (DeadBranchElimination removes If nodes whose conditions are
@@ -259,12 +259,12 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // End-to-end pin: a CFG that has a `BranchIndirect` resolved
     // to `Multiple([t0, t1])` via `with_known_targets` produces an
-    // IR graph containing the F7 If-ladder corresponding to those
+    // IR graph containing the `build_switch_if_ladder` If-ladder corresponding to those
     // targets.  Verifies the full
     // `analyze_cfg → handle_switch → build_switch_if_ladder`
     // pipeline produces visible IR structure that downstream
     // consumers (pattern queries, dot rendering) can pattern-match
-    // against — closing the gap that pre-F7 produced CFG edges
+    // against — closing the gap that pre-`build_switch_if_ladder` produced CFG edges
     // with no IR encoding for the dispatch.
     let (bytes, base, ba, targets) = synth_jmp_rax_with_targets(2);
     let g = analyze_with_known_targets(bytes, base, ba, targets.clone());
@@ -287,6 +287,6 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
         .count();
     assert_eq!(
         placeholder_count, 0,
-        "tier-2 `Multiple` resolution must NOT leave an IndirectBranch placeholder",
+        "IR-level `Multiple` resolution must NOT leave an IndirectBranch placeholder",
     );
 }

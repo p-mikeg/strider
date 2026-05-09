@@ -1,4 +1,4 @@
-//! Shared fixture builders for the tier-2 classifier integration tests.
+//! Shared fixture builders for the IR-level classifier integration tests.
 //!
 //! Two sub-modules:
 //!

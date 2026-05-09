@@ -465,7 +465,7 @@ fn malformed_branch_indirect_returns_ok_none() {
     assert!(res.is_none(), "got {res:?}");
 }
 
-/// Tier-1 unresolved cases return `Ok(None)`; the strict-failure
+/// cfg-time unresolved cases return `Ok(None)`; the strict-failure
 /// semantic lives at the strider-level outer loop (cfg-build defers
 /// the branch via `RegionTerminator::UnresolvedIndirectBranch`).
 ///
@@ -492,7 +492,7 @@ fn cfg_time_unresolved_returns_ok_none() {
     );
 }
 
-/// Tier-1 resolved cases return `Ok(Some(ResolvedTargets))`.  Same
+/// cfg-time resolved cases return `Ok(Some(ResolvedTargets))`.  Same
 /// input shape as `resolves_direct_const_to_single`.
 #[test]
 fn cfg_time_resolved_const_returns_ok_some_single() {

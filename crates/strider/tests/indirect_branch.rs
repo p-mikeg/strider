@@ -93,13 +93,13 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 
-    // F3: the stack-array shape resolves only at TIER 2 (post-IR
+    // F3: the stack-array shape resolves only at IR-LEVEL (post-IR
     // optimisation, on the optimised graph).  The CFG already contains
     // `UnresolvedIndirectBranch` terminators; we lift to IR, run the
     // optimiser pipeline (with rom for `LoadReadOnly`), then call the
-    // tier-2 classifier directly on each unresolved anchor.  Asserting
+    // IR-level classifier directly on each unresolved anchor.  Asserting
     // that EVERY anchor classifies into `ResolvedTargets::Multiple`
-    // (or any non-`None` resolution) is the F3 contract — failing on
+    // (or any non-`None` resolution) is the stack-array contract — failing on
     // any anchor surfaces the gap.
     let mut graph = ana.analyze_cfg(&cfg)
         .unwrap_or_else(|e| panic!("analyze_cfg for indirect_branch_resolved on {}: {e:?}", arch.name()));
@@ -181,7 +181,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             panic!(
                 "indirect_branch_resolved on {} has unresolved indirect \
                  branch at {anchor_addr:?} after optimisation — neither \
-                 tier-1 nor tier-2 (incl. F3 stack-array arm) classified \
+                 cfg-time nor IR-level (incl. stack-array classifier arm) classified \
                  the dispatch",
                 arch.name(),
             );
@@ -189,12 +189,12 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     }
 }
 
-// One #[test] per architecture.  F3 (stack-array tier-2 classifier
+// One #[test] per architecture.  stack-array IR-level classifier (stack-array
 // arm) covers x86 / x64 / aarch64 / arm / arm-be / arm-thumb /
 // mips32le / mips32be — those tests pass without `#[ignore]`.  Seven
 // archs remain ignored (aarch64be / mips64 / ppc32 / ppc64 — both
 // endiannesses each), each with a focused reason naming the lifter
-// quirk that keeps the F3 stack-array shape match from firing.
+// quirk that keeps the stack-array classifier shape match from firing.
 // Closing the remaining seven is incremental — the assertion body is
 // identical across arches and does not need a rewrite when each
 // arch's specific shape gap is closed.

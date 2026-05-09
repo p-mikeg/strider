@@ -1,7 +1,7 @@
 //! Shared end-to-end pipeline runners + placeholder-anchor finders for the
-//! tier-2 fixture builders.
+//! IR-level fixture builders.
 //!
-//! Split out from the previous monolithic `indirect_resolve_helpers.rs` (W7) so each
+//! Split out from the previous monolithic `indirect_resolve_helpers.rs` so each
 //! sub-module imports only the helpers it actually needs.  This module owns
 //! the lift-and-optimise harness used by every classify / inplace / cache
 //! fixture; it does not build any specific scenario itself.
@@ -46,7 +46,7 @@ pub fn anchor_value_input(graph: &BuiltFunctionGraph) -> Option<ir::Value> {
 /// Run `Strider::analyze_cfg` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
-/// (single) tier-2 placeholder anchor's `NodeOutputId` and the
+/// (single) IR-level placeholder anchor's `NodeOutputId` and the
 /// convention's link-register VN (always `None` on x86_64 — that arch
 /// pushes return addresses on the stack).
 ///
@@ -86,7 +86,7 @@ pub fn run_pipeline_x86_64(
     assert_eq!(
         outcome.unresolved_branches.len(),
         1,
-        "fixture must have exactly one tier-2 placeholder",
+        "fixture must have exactly one IR-level placeholder",
     );
     // Resolve the *current* anchor after the optimiser ran — the
     // original recorded NodeOutputId may be orphaned if any pass

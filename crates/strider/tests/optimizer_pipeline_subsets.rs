@@ -86,10 +86,11 @@ fn stable_subset_does_not_remove_phi_nodes() {
     // The whole point of the stable/destructive split: the stable
     // subset must NOT call RedundantPhis.  We build a graph that
     // would have at least one phi after lift, run the stable subset,
-    // and assert that the phi count is unchanged.  Round 1 doesn't
-    // wire the orchestrator to use the stable subset directly (it
-    // runs the full pipeline), but this test pins the contract for
-    // round-2 code that DOES use it.
+    // and assert that the phi count is unchanged.  The orchestrator
+    // uses the stable subset on every iteration (intermediate
+    // resolutions) and the destructive subset only at fixed-point
+    // exit; this test pins the contract that callers using the
+    // stable subset get phi preservation.
     let (mut graph, _) = build_initial_var_target_scenario_x86_64();
     let phi_count_before = graph
         .preorder()

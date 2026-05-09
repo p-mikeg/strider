@@ -9,7 +9,7 @@
 //!    If-ladder) with `IntConst(K_0)`, then re-optimises; the optimizer
 //!    collapses the dispatch to a single branch.
 //! 2. `replace_jump_table_index_with_const_collapses_to_one_target` —
-//!    tier-2-resolved jump table lifted via the If-ladder; user
+//!    IR-level-resolved jump table lifted via the If-ladder; user
 //!    replaces the index input with a constant; only one target's
 //!    branch survives.
 //! 3. `replace_input_then_reoptimize_then_replace_again_works` —
@@ -133,12 +133,12 @@ fn count_adds(g: &BuiltFunctionGraph) -> usize {
 
 // ── Test 1 — replace switch selector with const, collapse to one branch ─────
 
-/// 3-target Switch lifted via F7 produces an If-ladder of 2 If nodes
+/// 3-target Switch lifted via `build_switch_if_ladder` produces an If-ladder of 2 If nodes
 /// comparing the index against `K_0` and `K_1`.  Rewriting **all** of
 /// the equality-cmp's right-hand-input (the `K_0` constant) to a
 /// matching value and then re-optimising won't actually collapse the
 /// ladder — the cmp is `Eq(idx, K_0)`, and replacing K_0 with K_0
-/// changes nothing.  Instead, the user-facing flow F6 enables is to
+/// changes nothing.  Instead, the user-facing flow switch lifting enables is to
 /// rewrite the cmp's INDEX side (the `idx` operand) to `IntConst(K_0)`.
 /// Then `Eq(K_0, K_0)` folds to `BoolConst(true)`, the first If's
 /// false-branch becomes dead, and DeadBranchElim collapses the
@@ -186,7 +186,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
 
 // ── Test 2 — replace jump-table index with const, collapse to one target ────
 
-/// **Headline F6+F7 flow.**  Tier-2-resolved jump table lifted via F7's
+/// **Headline switch lifting + post-resolution rewrite flow.**  IR-level-resolved jump table lifted via `build_switch_if_ladder`'s
 /// If-ladder; rewrite the cmp output to BoolConst(true) at one
 /// equality cmp; re-optimize; the dispatch collapses to a single
 /// branch (zero Ifs reachable post-fold).

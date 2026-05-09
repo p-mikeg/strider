@@ -1,4 +1,4 @@
-//! Integration tests for the jump-table classifier (R4).
+//! Integration tests for the jump-table classifier.
 //!
 //! Each test builds a synthetic `BuiltFunctionGraph` via the fixture
 //! helpers in `common::indirect_resolve_helpers`, runs the stable optimiser

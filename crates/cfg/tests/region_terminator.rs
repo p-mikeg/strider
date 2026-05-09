@@ -278,7 +278,7 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
 // `Return(target_value)` strider emits during lifting.  the cfg-time mini-graph resolver
 // surfaces this terminator when the cfg-time mini-graph resolver
 // cannot prove a `BranchIndirect`'s target; the strider fixed-point
-// loop then attempts tier-2 resolution against the optimised IR.
+// loop then attempts IR-level resolution against the optimised IR.
 #[test]
 fn unresolved_indirect_branch_variant_is_constructible() {
     use cfg::test_api::{MachineInsnAddr, PcodeInsnAddr};
