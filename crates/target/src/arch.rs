@@ -130,6 +130,30 @@ pub struct SleighArch {
 }
 
 impl SleighArch {
+    /// Read the `.sla` spec.  Round 9 V7 (R9-2D L5): canonical
+    /// accessor for the migration path that will eventually tighten
+    /// the field to `pub(crate)`.
+    #[must_use]
+    pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
+        self.sla_spec
+    }
+    /// Read the `.pspec`.  Round 9 V7 (R9-2D L5): canonical accessor.
+    #[must_use]
+    pub fn pspec(&self) -> rsleigh::pspec::PSpec {
+        self.pspec
+    }
+    /// Read the byte-order.  Round 9 V7 (R9-2D L5): canonical accessor.
+    #[must_use]
+    pub fn endianness(&self) -> Endianness {
+        self.endianness
+    }
+    /// Read the arch preset discriminator.  Round 9 V7 (R9-2D L5):
+    /// canonical accessor.
+    #[must_use]
+    pub fn preset(&self) -> ArchPreset {
+        self.preset
+    }
+
     /// Returns the x86-64 (64-bit Intel/AMD) architecture descriptor.
     #[must_use]
     pub fn x86_64() -> SleighArch {
