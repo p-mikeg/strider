@@ -1,6 +1,6 @@
 # Strider — Next-Round Code Review Prompt
 
-> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes both round 7 and round 8 have already landed — see `reviews/round7-*.md` and `reviews/round8-*.md` for the prior outputs — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
+> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes rounds 7, 8, and 9 have already landed — see `reviews/round7-*.md`, `reviews/round8-*.md`, and `reviews/round9-*.md` for the prior outputs — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
 
 ---
 
@@ -12,12 +12,12 @@ Paste everything between the `=== BEGIN PROMPT ===` and `=== END PROMPT ===` mar
 
 === BEGIN PROMPT ===
 
-I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **9** — round 7's outputs live under `reviews/round7-*.md`, round 8's under `reviews/round8-*.md`, and round 8's implementation commits were `8920d8a` / `d3e0d10` / `339b3f6` on branch `review/ai2`.
+I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **10** — round 7's outputs live under `reviews/round7-*.md`, round 8's under `reviews/round8-*.md`, round 9's under `reviews/round9-*.md`, and round 9 shipped 31 implementation waves on branch `review/ai3` culminating in commit `d4846e1`.
 
 ## Trust model — strict
 
-- **Do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written.  In particular, round-8 fixed every HIGH finding it identified; the resolver classifier surface, the orchestrator's `Builder::for_arch` migration, the `pat_builder_finalise!` macro, the `pure_pass_class!` macro, the `crates/strider/src/test_utils.rs` module, the `count_reachable` helper in `crates/opt/src/test_support.rs`, the `multiple-pymethods` PyO3 feature, and the `KnownBitsMap` SecondaryMap migration are all *new shape* relative to round 7's snapshot — so a "round 7 said X" reference is doubly stale here.
-- **Do NOT trust comments, docstrings, CLAUDE.md, or per-crate READMEs as evidence.**  They are inputs to be *verified* against code.  CLAUDE.md was edited in round 8 to reflect the new shape; verify each claim against the source nonetheless.
+- **Do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written.  In particular, round 9 closed every HIGH finding it identified that wasn't refuted by verification (H-2 multi-node `rewrite_rule` interior-node fingerprint walk, H-6 `analyze_known_bits` Result propagation through `classify_anchor*`, H-8 `KeyboardInterrupt`/`SystemExit` re-raise in `wrap_when`); the `OptimizerOnBuilt::optimize_built` trait migrated from `&mut BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>` (wave 28); the dead `Truncate`/`Extend` classifier arms in `crates/opt/src/indirect_branch_resolve/classify.rs` and the `CallOtherElide` tombstones in `opt/lib.rs` and `opt/README.md` are gone (wave 30); the public read-only opt API (`analyze_known_bits`, `classify_anchor*`) now takes `pattern::RewriteCtxView<'_>` instead of `&BuiltFunctionGraph`; `Builder::for_arch` replaced `Builder::with_endianness` in 4 test fixtures (wave 29); `lift_at` is now panic-safe via an inner `Drop` guard with `Deref/DerefMut` to `FunctionBuilder`; `resolve_const_loads` runs to fixed point so chained `Load(Load(const_addr))` resolves; `try_apply_rule` propagates the real `replace_all_uses` change-bit; `handle_int_sub`'s inner `Neg` is sized from `inputs[1].size`; `opt::AnchorAddr` fields are `pub(crate)` with `from_packed`/`parts` accessors; `pattern::Capture::from_id(u32)` exists for PyO3 round-trip; `pattern::RewriteCtxView` is a new Copy view type with `Deref<Target=Graph>` + `From<&BuiltFunctionGraph>`/`From<&RewriteCtx>`; the four `BuiltFunctionGraph` CC fields have inline doc warnings about post-build mutation hazards; `swapgs` and the various `set_lift_addr` doc comments are rewritten.  All this is *new shape* relative to round 9's pre-implementation snapshot, so a "round 9 said X" reference is doubly stale here.
+- **Do NOT trust comments, docstrings, CLAUDE.md, or per-crate READMEs as evidence.**  They are inputs to be *verified* against code.  CLAUDE.md was edited in round 9 (wave 31) to clarify the `Optimizer` / `OptimizerOnBuilt` trait split; verify each claim against the source nonetheless.
 - **Do NOT trust the previous reviews' conclusions.**  Each finding in your final summary must cite a code location (`file:line`) and explain its reasoning from code shape alone.
 - Verify all rsleigh-touching claims by reading `../rsleigh/sleigh/src/**` directly — that crate is the upstream authority for pcode opcode behaviour, varnode semantics, and the per-arch SLA / PSPEC files.
 - Verify ABI claims against published specs (System V x86_64, AAPCS / AAPCS64, MIPS o32 / n64, PPC ELF v1 / v2) — name them in your finding, but trust the *implementation* of `target::CallingConvention::*` against those specs first.
@@ -108,7 +108,7 @@ Per-finding criteria (every proposal must answer all of these):
 - **Visibility tightening as a side-effect.**  When a helper is extracted, the original implementation may have been over-public — propose the minimum visibility for the new helper.
 - **Skip when the indirection cost exceeds the duplication cost.**  If a proposed helper is < 3 LOC AND the call sites are < 5, document the decision and skip.
 
-The Round 5 simplifications report should land at `reviews/round9-simplifications.md` with sections matching the toolkit above:
+The Round 5 simplifications report should land at `reviews/round10-simplifications.md` with sections matching the toolkit above:
 
 1. Code to delete (largest expected LOC win).
 2. Code to merge (helper extractions + structural merges).
@@ -126,7 +126,7 @@ This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/sr
 
 Concretely:
 
-- **Inventory first.**  The Round 0 orientation step must produce `reviews/round9-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
+- **Inventory first.**  The Round 0 orientation step must produce `reviews/round10-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
 - **No globbing skips.**  If a file is short, glance through it and tick it.  If a file is long (e.g. `crates/opt/src/constant_fold/rules.rs`, `crates/pattern/src/matcher/mod.rs`, `crates/strider/src/orchestrator.rs`, `crates/strider-py/src/pattern.rs`), read it in 200-line chunks until the whole file is covered.  When a subagent reports its findings it should also report which files it covered fully, partially, or not at all; partial / not-at-all entries become Round 1.5 follow-up tasks for a fresh subagent.
 - **Tests count.**  Test files surface missing-coverage and stale-fixture issues that source-only review misses — read every `tests/` and `benches/` file too, including the strider-py `tests/python/`.
 - **Generated / auto-formatted code is in scope** if it lives under `crates/*/src/`.  Skip only `target/`, `.git/`, `node_modules/`, `__pycache__/`, build artefacts.
@@ -156,8 +156,8 @@ Spawn fresh subagents in **parallel** for independent rounds.  Each agent must:
 
 1. Receive a self-contained prompt — assume the agent has zero context for this conversation.
 2. Read code directly via `Read`/`Grep`/`Glob` — not via inherited memory.
-3. Be told explicitly: do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, or any earlier-round output.
-4. Produce a single Markdown report at `reviews/round9-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
+3. Be told explicitly: do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, or any earlier-round output.
+4. Produce a single Markdown report at `reviews/round10-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
 5. Output format per finding:
    ```
    ### <Finding title>
@@ -208,7 +208,7 @@ When you launch multiple subagents for independent work, send them in a **single
    - **Hand-rolled patterns** where stdlib has a one-line equivalent (`?` instead of `let Some(_) = _ else { return None }`, `.count()` instead of `.collect::<Vec<_>>().len()`, etc.).
    - **Partial-state types** (a struct populated to sentinel values in some paths and to real values in others) candidate for sum-type rewrite.
 
-5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere — not just round-7's `tier1`/`tier2` and round-8's `x86_64_systemv_abi`/`r1_placeholder`.  Verify that the meaning of every term in CLAUDE.md / per-crate README / SKILL.md matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role.  Propose a concrete rename mapping for every flagged identifier.
+5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere — not just round-7's `tier1`/`tier2`, round-8's `x86_64_systemv_abi`/`r1_placeholder`, or round-9's `from_graph_and_entry_for_rewrite`/`with_built`/`with_endianness` migrations.  Verify that the meaning of every term in CLAUDE.md / per-crate README / SKILL.md matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role.  Propose a concrete rename mapping for every flagged identifier.
 
 6. **Unused features.**  Confirm by code inspection that every `pub` item has at least one external consumer (within the workspace OR via Python bindings).  Items unreachable from any consumer are candidates for deletion.  Check both ways: walk down from `lib.rs`'s `pub use` re-exports to find every public surface, then walk back up from each surface to find at least one external call site.
 
@@ -221,7 +221,7 @@ When you launch multiple subagents for independent work, send them in a **single
    - **Round-4 pass (re-audit, focused on edge cases)**: boundary errors — empty / single / max-arity inputs, NaN / inf / signed-zero floats, INT_MIN sign-extension, address `u64::MAX`, instruction at `addr = start_addr` boundary, the very last node id in the arena, the lifetime-zero-overlap case for `StackStorePhi`.
    - **Round-5 pass (cross-arch consistency)**: pick one finding per round and verify it across every arch.
 
-   Each pass produces its own subagent report (`reviews/round9-correctness-types.md`, `round9-correctness-invariants.md`, `round9-correctness-borrowing.md`, `round9-correctness-edge-cases.md`, `round9-correctness-cross-arch.md`).
+   Each pass produces its own subagent report (`reviews/round10-correctness-types.md`, `round10-correctness-invariants.md`, `round10-correctness-borrowing.md`, `round10-correctness-edge-cases.md`, `round10-correctness-cross-arch.md`).
 
 9. **Test plan.**  Where coverage is sparse, propose specific tests with file path, scope (unit / integration / property / scale), exact harness/fixture, expected assertions.  Use TDD discipline — failing test FIRST, then fix.
 
@@ -229,7 +229,7 @@ When you launch multiple subagents for independent work, send them in a **single
 
 11. **Production panics.**  No `panic!` / `unwrap()` / `expect()` / `unreachable!()` / `assert!()` in non-test code paths.  Audit every occurrence; if not justified by a by-construction invariant, propose `Result` propagation.  Annotate justified ones with `#[allow(clippy::expect_used)]` and a code comment naming the invariant.
 
-12. **CLAUDE.md / READMEs / doc consistency.**  Verify the root README's claims, every per-crate README's public-surface enumeration, every `pub fn` doc.  Round 8 landed a CLAUDE.md correctness diff and 12 per-crate READMEs (`reviews/round8-claudemd-diff.md`, `reviews/round8-readme-diffs.md`); verify against the post-round-8 state.
+12. **CLAUDE.md / READMEs / doc consistency.**  Verify the root README's claims, every per-crate README's public-surface enumeration, every `pub fn` doc.  Round 8 landed a CLAUDE.md correctness diff and 12 per-crate READMEs (`reviews/round8-claudemd-diff.md`, `reviews/round8-readme-diffs.md`); round 9 added its own diffs and applied them in waves 1, 6, 8, 29, 31 (see `reviews/round9-claudemd-diff.md`, `reviews/round9-readme-diffs.md`).  Verify against the post-round-9 state — the previous diffs are stale.
 
 13. **Skills.**  Skim `crates/strider/.claude/skills/*/SKILL.md`.  Identify any new skill that would help future contributors (or any existing skill that has decayed against the current code).  Round 8 added 6 new skills (orchestrator-extend, cc-preset-extend, fixture-author, flagcmp-rule-author, cli-runner, validation-invariant-extend); verify each against the actual procedure they describe.
 
@@ -261,12 +261,12 @@ When you launch multiple subagents for independent work, send them in a **single
 ## Recommended round structure
 
 ### Round 0 — orient
-Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README, every existing `crates/strider/.claude/skills/*/SKILL.md`, the round-8 implementation commit messages (`git log --no-decorate review/ai2 -- ':!reviews/'` for the post-round-7 commits).  Build a mental model of what's in each crate.  Run the four baseline checks above.  Produce `reviews/round9-coverage-manifest.md` listing every file in scope.
+Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README, every existing `crates/strider/.claude/skills/*/SKILL.md`, the round-9 implementation commit messages (`git log --no-decorate review/ai3 -- ':!reviews/'` for the round-9 waves 1–31).  Build a mental model of what's in each crate.  Run the four baseline checks above.  Produce `reviews/round10-coverage-manifest.md` listing every file in scope.
 
 ### Round 1 — deep per-crate audit (parallel; 6 subagents)
 Six `feature-dev:code-reviewer` agents, one per crate group:
 
-| # | Crates | Special focus (round 9) |
+| # | Crates | Special focus (round 10) |
 |---|--------|-------------------------|
 | 1A | `ir` | Graph dedup correctness; asm-fingerprint contract; validate Layer A/B/C reachability scoping; `FunctionBuilder::lift_at` / `LiftAddrGuard` invariants; `node_signature` panic sites; `BuiltFunctionGraph::from_graph_and_entry_for_rewrite` partial-state (still `pub`?); `KnownBitsMap` / `WideConstStorage` / `IntConstWide` correctness against the new `make_int_const(U256/U512)` rejection guard |
 | 1B | `pcode-lift` + `cfg` | `vn_io` register-aliasing for *every* supported width (1/2/4/8/10/16/32/64; round 8 added 32 / 64); the new `Truncate(IntConst)` / `Extend(IntConst)` resolver-arm peeling at `crates/opt/src/indirect_branch_resolve/classify.rs`; `Builder::for_arch` vs `Builder::with_endianness` invariants (round 8 migrated tests/common + benches/scaling); `is_addr_tail_call` half-open semantics |
@@ -286,7 +286,7 @@ Six `feature-dev:code-reviewer` agents, one per crate group:
 - **3B — stale comment sweep.**  `pr-review-toolkit:comment-analyzer`.  Flag every comment block that names a deleted symbol, has a `TODO(TaskNN)` whose task is closed, or describes behaviour that doesn't match the surrounding code.
 
 ### Round 4 — test-gap analysis
-`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round9-test-plan.md` listing each missing test with: scope, file path, harness/fixture, expected assertions, estimated effort.  Use TDD discipline — failing test FIRST.
+`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round10-test-plan.md` listing each missing test with: scope, file path, harness/fixture, expected assertions, estimated effort.  Use TDD discipline — failing test FIRST.
 
 Required gaps to investigate (not exhaustive):
 
@@ -309,7 +309,7 @@ Required gaps to investigate (not exhaustive):
 - **Asm-fingerprint contract end-to-end**: lift a real binary, walk every reachable non-exempt node, assert each has at least one fingerprint entry tracing to a real machine address.
 
 ### Round 5 — consolidation + simplification
-`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round9-simplifications.md` per emphasis B's seven-category toolkit:
+`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round10-simplifications.md` per emphasis B's seven-category toolkit:
 
 1. Code to delete.
 2. Code to merge.
@@ -327,21 +327,21 @@ Skim every existing skill against the current code.  Propose new skills or revis
 ### Round 7 — final consolidation
 A single synthesis that integrates every prior-round output into:
 
-1. `reviews/round9-summary.md` — executive summary with prioritised fix backlog.
-2. `reviews/round9-claudemd-diff.md` — concrete CLAUDE.md edits.
-3. `reviews/round9-readme-diffs.md` — concrete per-crate README edits.
+1. `reviews/round10-summary.md` — executive summary with prioritised fix backlog.
+2. `reviews/round10-claudemd-diff.md` — concrete CLAUDE.md edits.
+3. `reviews/round10-readme-diffs.md` — concrete per-crate README edits.
 
-The summary must include a "what's-new-vs-round-8" section: which findings are genuinely new (introduced post-round-8) vs. which are pre-existing bugs round 8 missed vs. which are pre-existing-and-known-deferred.
+The summary must include a "what's-new-vs-round-9" section: which findings are genuinely new (introduced post-round-9) vs. which are pre-existing bugs round 9 missed vs. which are pre-existing-and-known-deferred.
 
 ## Acceptance criteria
 
-- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round9-summary.md` with concrete actions.
-- [ ] Emphasis A (correctness against itself + against pcode + against assembly) produces three reports: `reviews/round9-correctness-self-vs-self.md`, `reviews/round9-correctness-ir-vs-pcode.md`, `reviews/round9-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
-- [ ] Emphasis B (simplification) produces `reviews/round9-simplifications.md` with 50–80 entries grouped into the seven-category toolkit (delete, merge, inline, stdlib idioms, visibility, drop wrappers, sum-type partial states).  Header includes the per-category total LOC delta and the projected post-implementation workspace LOC reduction.
-- [ ] Ask 8 (multi-round correctness) produces five separate reports — `round9-correctness-types.md`, `round9-correctness-invariants.md`, `round9-correctness-borrowing.md`, `round9-correctness-edge-cases.md`, `round9-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
+- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round10-summary.md` with concrete actions.
+- [ ] Emphasis A (correctness against itself + against pcode + against assembly) produces three reports: `reviews/round10-correctness-self-vs-self.md`, `reviews/round10-correctness-ir-vs-pcode.md`, `reviews/round10-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
+- [ ] Emphasis B (simplification) produces `reviews/round10-simplifications.md` with 50–80 entries grouped into the seven-category toolkit (delete, merge, inline, stdlib idioms, visibility, drop wrappers, sum-type partial states).  Header includes the per-category total LOC delta and the projected post-implementation workspace LOC reduction.
+- [ ] Ask 8 (multi-round correctness) produces five separate reports — `round10-correctness-types.md`, `round10-correctness-invariants.md`, `round10-correctness-borrowing.md`, `round10-correctness-edge-cases.md`, `round10-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
 - [ ] Round 9 summary lists every HIGH-severity finding with `file:line` + a proposed fix + (for emphasis A findings) the regression test scaffolding.
 - [ ] Ask 14 (perf at 10k+ nodes) produces a measured P50 / P95 table per pass over a synthetic 10k-node fixture; flagged hot-spots (> 100 ms) listed with proposed fixes.
-- [ ] Ask 3 (graph-soundness vs real assembly) produces `reviews/round9-correctness-ir-vs-assembly.md` documenting per-arch ABI verification against real binaries (≥ 1 representative function per arch + ≥ 20 CallOther entries spot-checked + ≥ 3 indirect-branch sites per resolver shape + ≥ 1 lifted-from-real-code regression per lift-time canonicalisation).  Every finding includes the lifted-from-real-code regression test that pins it.
+- [ ] Ask 3 (graph-soundness vs real assembly) produces `reviews/round10-correctness-ir-vs-assembly.md` documenting per-arch ABI verification against real binaries (≥ 1 representative function per arch + ≥ 20 CallOther entries spot-checked + ≥ 3 indirect-branch sites per resolver shape + ≥ 1 lifted-from-real-code regression per lift-time canonicalisation).  Every finding includes the lifted-from-real-code regression test that pins it.
 - [ ] CLAUDE.md correctness diff lists every drift from the current code.
 - [ ] Per-crate README diff lists drift in every crate that has one.
 - [ ] Test plan lists ≥ 15 missing tests with exact `file:line` scaffolding, covering at minimum every gap enumerated under Round 4 above.
@@ -351,12 +351,12 @@ The summary must include a "what's-new-vs-round-8" section: which findings are g
 - [ ] Silent-failure audit produces a list of `.ok()?` / `unwrap_or` sites with a propose-or-document decision per site.
 - [ ] Skill audit produces a list of revisions or new-skill proposals.
 - [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `pytest tests/python/` all green at the start AND end of the review.
-- [ ] No source code is edited during the review.  The output is the set of `reviews/round9-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
-- [ ] `reviews/round9-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent.
+- [ ] No source code is edited during the review.  The output is the set of `reviews/round10-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
+- [ ] `reviews/round10-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent.
 
 ## Out of scope
 
-- **Editing source code.**  Only documentation under `reviews/round9-*.md` is allowed.
+- **Editing source code.**  Only documentation under `reviews/round10-*.md` is allowed.
 - **Authoring new tests.**  Only the test plan is in scope; writing the actual tests is follow-up.
 - **Authoring new skills.**  Only the skill design is in scope.
 - **Per-crate README rewrites.**  Only the diff is in scope.
@@ -381,10 +381,10 @@ After working through the anchor list, every subagent must continue through the 
 
 ## Verification
 
-The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round9-summary.md` describing:
+The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round10-summary.md` describing:
 
 - Total HIGH / MED / LOW finding counts.
-- How many findings were genuinely new (post-round-8) vs. pre-existing bugs round 8 missed vs. pre-existing-and-deferred.
+- How many findings were genuinely new (post-round-9) vs. pre-existing bugs round 9 missed vs. pre-existing-and-deferred.
 - Which subagents found load-bearing items the others missed (the multi-round signal).
 - For emphasis A: the count of findings per axis (code-vs-code, IR-vs-pcode, IR-vs-assembly).
 - For emphasis B: per-category total LOC delta (delete / merge / inline / stdlib / visibility / wrappers / partial-state), the workspace's pre-review LOC, the projected post-implementation LOC, and the per-category cognitive-load assessment (subjective, but called out for the top 5 entries per category).
@@ -395,7 +395,7 @@ The review is itself a research effort — the "verification" is the quality of 
 
 ## Notes for the user
 
-- The prompt explicitly forbids reading `reviews/round7-*.md` and `reviews/round8-*.md` so the next round derives findings independently.  The previous rounds' outputs stay on disk as historical context.
+- The prompt explicitly forbids reading `reviews/round7-*.md`, `reviews/round8-*.md`, and `reviews/round9-*.md` so the next round derives findings independently.  The previous rounds' outputs stay on disk as historical context.
 - The two emphases (A: triangulated correctness, B: exhaustive helper extraction) override conflicting per-ask priorities.  The subagent prompts inherit that ordering.
 - The prompt is sized to drive ~4–5 hours of subagent work plus ~1–2 hours of consolidation (longer than round 8 because of the assembly-vs-IR ground-truth verification).  Approve tool prompts as they appear.
-- After the review lands, you'll have the `reviews/round9-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 9" runs the same play we ran for rounds 7 and 8.
+- After the review lands, you'll have the `reviews/round10-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 10" runs the same play we ran for rounds 7, 8, and 9.
