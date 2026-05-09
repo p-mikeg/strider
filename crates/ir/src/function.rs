@@ -92,6 +92,39 @@ impl std::ops::DerefMut for BuiltFunctionGraph {
     }
 }
 
+// Round 9 V2 (R9-2D H4): canonical read-only accessors for the CC
+// fields.  The fields themselves remain `pub` for back-compat (the
+// workspace has ~30+ direct-field readers), but new code should use
+// these accessors — they're the migration path for tightening field
+// visibility to `pub(crate)` in a future round.  Method bodies are
+// trivial (`&self.field`) so the indirection cost is zero.
+impl BuiltFunctionGraph {
+    /// Read the calling convention's call-clobbered varnode list.
+    /// Mirrors the [`Self::call_clobbered`] field.
+    #[must_use]
+    pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.call_clobbered
+    }
+    /// Read the calling convention's return-value varnode list.
+    /// Mirrors the [`Self::ret_val_regs`] field.
+    #[must_use]
+    pub fn ret_val_regs_slice(&self) -> &[rsleigh::Vn] {
+        &self.ret_val_regs
+    }
+    /// Read the function-default CallOther clobber list.
+    /// Mirrors the [`Self::call_other_clobbered`] field.
+    #[must_use]
+    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.call_other_clobbered
+    }
+    /// Read the `VarId → Vn` map for tracked variables.
+    /// Mirrors the [`Self::variables`] field.
+    #[must_use]
+    pub fn variables_map(&self) -> &PrimaryMap<VarId, rsleigh::Vn> {
+        &self.variables
+    }
+}
+
 impl BuiltFunctionGraph {
     /// Wraps `(graph, entry)` into a temporary `BuiltFunctionGraph` with
     /// empty `variables` / `call_clobbered` / `ret_val_regs`.
