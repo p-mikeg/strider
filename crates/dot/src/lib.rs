@@ -193,7 +193,14 @@ fn json_quote(s: &str) -> String {
             // in `as_html_from_dot`'s output.
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
-                let _ = std::fmt::write(&mut out, format_args!("\\u{:04x}", c as u32));
+                use std::fmt::Write;
+                // Round 9 S1 (R9-2C OK table): writing to a `String`
+                // via `Write` is infallible — `let _ = std::fmt::write(...)`
+                // was hiding a non-failing call.  `write!` over a
+                // `String` returns `fmt::Result` whose `Err` arm only
+                // fires for `Formatter`-side failures, which a
+                // `String` target cannot produce; `.expect` is sound.
+                write!(out, "\\u{:04x}", c as u32).expect("write to String is infallible");
             }
             c => out.push(c),
         }
