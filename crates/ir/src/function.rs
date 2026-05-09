@@ -146,6 +146,19 @@ impl BuiltFunctionGraph {
     /// contract.  Bespoke callers must verify by inspection.
     ///
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
+    ///
+    /// Round 9 H-9/D2 (R9-2D H1) — partial-state ctor.  Migration to
+    /// `pattern::RewriteCtx { graph: &mut Graph, entry: NodeId }`
+    /// (round-8 addition) is the long-term direction, but the two
+    /// production callers (`opt::with_built` and `compact`'s test
+    /// fixture) consume `&mut BuiltFunctionGraph` because their
+    /// downstream traits (`OptimizerOnBuilt::optimize_built`,
+    /// `BuiltFunctionGraph::compact`) take that type.  Migrating
+    /// would require changing those trait signatures across every
+    /// opt pass — multi-day refactor deferred.  The
+    /// `#[doc(hidden)]` attribute discourages external adoption while
+    /// the migration is pending.
+    #[doc(hidden)]
     #[must_use]
     pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
         Self {
