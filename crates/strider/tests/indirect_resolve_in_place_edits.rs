@@ -73,7 +73,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
 
 #[test]
 fn apply_tail_call_replaces_placeholder_with_call_then_return() {
-    // R3-FIXUP G2: apply_tail_call now does a real in-place edit.
+    // apply_tail_call now does a real in-place edit.
     // After the edit, the IR contains a Call with the IntConst
     // target as its address, feeding a fresh Return.  The original
     // placeholder Return is detached (unreachable from entry) but

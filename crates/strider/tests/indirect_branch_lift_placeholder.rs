@@ -29,7 +29,7 @@ use strider::{CallingConvention, SleighArch, Strider};
 ///
 /// Bytes: `0xff 0xe0` — `jmp rax`.  RAX is the function-entry value of
 /// the dispatch register; cfg-time resolver cannot classify (no LR is set, no
-/// constant write to RAX), so the cfg builder defers via the R1.3
+/// constant write to RAX), so the cfg builder defers via the the cfg-time placeholder lift
 /// fall-through and we end up with the new terminator.
 fn make_unresolved_indirect_branch_cfg(
 ) -> (cfg::Cfg<BufMemReader<Vec<u8>>>, SleighArch) {
@@ -45,7 +45,7 @@ fn make_unresolved_indirect_branch_cfg(
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
         .build()
-        .expect("cfg build must succeed under R1.3 deferral");
+        .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (cfg, arch)
 }
 
@@ -66,7 +66,7 @@ fn make_unresolved_indirect_branch_cfg(
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("Strider::new");
     let graph = strider
         .analyze_cfg(&cfg)
@@ -102,14 +102,14 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 
 /// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `NodeOutputId`
-/// that anchors `target_vn`.  Tier 2 (R2) walks this table.
+/// that anchors `target_vn`.  the IR-level orchestrator resolver (R2) walks this table.
 ///
 /// Pinning the table now keeps the API surface stable for R2.
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("Strider::new");
     let outcome = strider
         .analyze_cfg(&cfg)

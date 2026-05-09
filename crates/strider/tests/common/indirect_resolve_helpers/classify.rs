@@ -67,7 +67,7 @@ pub fn build_int_const_target_scenario(_k: u64) -> (BuiltFunctionGraph, ir::Valu
 ///
 /// Approach: write `k` to a stack slot via a function-entry push,
 /// then load that slot through a register-indirect load and jump
-/// through the loaded value.  Tier 1's mini-graph isn't given
+/// through the loaded value.  the cfg-time mini-graph resolver's mini-graph isn't given
 /// `LoadReadOnly` for synthetic regions and doesn't track stack
 /// stores / loads, so the BranchIndirect defers via
 /// `UnresolvedIndirectBranch`.  After strider runs the full
@@ -125,7 +125,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (BuiltFunctionGraph, ir::Va
 /// merge's `Load` is replaced by a synthesised `ValuePhi` whose
 /// per-pred value inputs are the per-pred IntConsts.  We anchor
 /// the load via a single-input `Return(target_value)` — exactly
-/// the shape strider's R1.4 placeholder lift produces.
+/// the shape strider's the strider deferred-anchor lift placeholder lift produces.
 ///
 /// Bypasses the cfg builder + `Strider::analyze_cfg`
 /// because the only x86_64 byte sequence that compresses to this
@@ -346,7 +346,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 /// gate that killed the prior in-place heuristic: a naïve
 /// "Load(InitialVar(sp)+K) means return" classifier would mark
 /// this as LinkRegister, sending the analyser down the
-/// wrong-edge-set path.  Tier 2 dodges that trap because
+/// wrong-edge-set path.  the IR-level orchestrator resolver dodges that trap because
 /// StackLoadForward folds the load to the **stored constant** K,
 /// not to InitialVar(lr); the IntConst arm then classifies as
 /// Single(K).
@@ -417,7 +417,7 @@ pub fn build_push_target_pop_pc_scenario(
     (fg, anchor, lr)
 }
 
-// ── R4 jump-table fixtures ──────────────────────────────────────────────────
+// ── jump-table fixtures ──────────────────────────────────────────────────
 //
 // Each helper builds a `BuiltFunctionGraph` whose placeholder Return's
 // value-input is shaped like a jump-table dispatch — `Load(IntAdd(
@@ -808,7 +808,7 @@ pub fn build_stack_array_dispatch_scenario(
 /// `mov x0, x30; br x0` lifts cleanly to `Copy + BranchIndirect`
 /// and the optimiser folds `r0 = x30 = InitialVar(lr_vn)` directly.
 ///
-/// Tier 1 cannot classify this (its mini-graph isn't given a
+/// the cfg-time mini-graph resolver cannot classify this (its mini-graph isn't given a
 /// link-register VN since we don't pass `set_link_register` on
 /// `OptionsBuilder`), so the cfg builder defers via
 /// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up

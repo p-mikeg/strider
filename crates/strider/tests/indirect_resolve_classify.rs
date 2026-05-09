@@ -27,7 +27,7 @@ use common::indirect_resolve_helpers::{
 /// the optimiser pipeline runs → `Single(k)`.
 ///
 /// The fixture pushes a constant onto the stack and pops it into the
-/// dispatch register (`push K; pop rax; jmp *rax`).  Tier 1's
+/// dispatch register (`push K; pop rax; jmp *rax`).  the cfg-time mini-graph resolver's
 /// single-region mini-graph lacks `StackLoadForward`, so it can't
 /// fold the load — it returns `None` and the cfg builder defers via
 /// `UnresolvedIndirectBranch`.  The full pipeline DOES run
@@ -124,7 +124,7 @@ fn phi_of_three_int_consts_to_multiple() {
 /// InitialVar(lr).
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "Why this is sound across iterations" + "Tier 2 — post-IR resolver"
+/// "Why this is sound across iterations" + "the IR-level orchestrator resolver — post-IR resolver"
 /// for the full argument.
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
@@ -154,7 +154,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 /// pattern-matching on the load shape.
 ///
 /// See `docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md`
-/// "Tier 2 — post-IR resolver" for the soundness rules.
+/// "the IR-level orchestrator resolver — post-IR resolver" for the soundness rules.
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;

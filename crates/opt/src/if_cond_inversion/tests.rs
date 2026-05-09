@@ -173,3 +173,65 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     );
     Ok(())
 }
+
+/// Regression for round8-correctness-invariants H-2: when the `If`'s
+/// `BoolNeg(cond)` becomes dead after the rewrite (no other consumers
+/// of the `BoolNeg` exist), its asm-fingerprint must be absorbed into
+/// the surviving inner-cond node so the contributing-asm history is
+/// preserved.  Without the fix, the inner cond would carry only its
+/// own lift_addr; the BoolNeg's address would be silently dropped.
+#[test]
+fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
+    let cond_vn = ir::test_utils::reg_vn(0x2000, 1);
+    let mut b = FunctionBuilder::new_raw(vec![cond_vn], &[], &[], &[], None, 0)?;
+    let entry = b.create_region()?;
+    let t = b.create_region()?;
+    let f = b.create_region()?;
+
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+    // Stamp distinct lift_addrs on the cond producer and the BoolNeg so we
+    // can observe absorption.
+    b.set_lift_addr(Some(0x500));
+    let raw = b.read_variable(&cond_vn)?;
+    let cond_bool = b.convert_to_bool_if_needed(raw)?;
+    b.set_lift_addr(Some(0x504));
+    let neg_cond = b.build_boolean_unary_operation(cond_bool, ir::BoolUnaryOp::Neg)?;
+    b.set_lift_addr(None);
+    b.build_if(neg_cond, t, f)?;
+
+    b.set_region(t);
+    let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+    b.build_return(Some(one), &[])?;
+    b.set_region(f);
+    let two = b.build_int_const(2u64, NodeOutputType::U64)?;
+    b.build_return(Some(two), &[])?;
+
+    let mut fg = b.build()?;
+
+    // Capture the BoolNeg's NodeId BEFORE optimisation; after the rewrite
+    // it becomes dead but stays in the arena.
+    let bool_neg_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg)))
+        .expect("BoolUnaryOp::Neg present pre-pass");
+
+    let r = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    assert!(r.changed());
+
+    // The BoolNeg's fingerprint MUST have been absorbed into the
+    // inner-cond node (the new If cond input's producer).
+    let if_node = find_unique_if(&fg);
+    let [_ctrl, cond_out] = fg.graph.node_inputs_exact::<2>(if_node)?;
+    let inner_node = fg.graph.get_node_from_output(cond_out);
+    let inner_fp = fg.graph.asm_fingerprint(inner_node);
+    let bool_neg_fp = fg.graph.asm_fingerprint(bool_neg_node);
+    for addr in bool_neg_fp {
+        assert!(
+            inner_fp.contains(addr),
+            "BoolNeg's address {addr:#x} must survive into inner-cond fingerprint after \
+             IfCondInversion: inner_fp={inner_fp:?}, bool_neg_fp={bool_neg_fp:?}"
+        );
+    }
+    Ok(())
+}

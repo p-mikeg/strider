@@ -28,6 +28,53 @@ use pyo3::types::{PyString, PyTuple};
 
 use crate::errors::into_pattern_err;
 
+// ── Pat-builder finalise macro ───────────────────────────────────────────
+//
+// Every typed pattern builder (`PyPhiPat`, `PyCallPat`, `PyLoadPat`, …)
+// finishes by reading its in-progress builder state into a `pattern::Pat`
+// and wrapping it in a `PyPat`.  The four-method `capture` / `cap` /
+// `when` / `into_pat` block is identical at every site (only the
+// receiver type differs).
+//
+// `pat_builder_finalise!(BuilderTy)` emits a separate `#[pymethods] impl
+// BuilderTy { … }` block carrying those four methods.  This relies on
+// PyO3's `multiple-pymethods` feature so the same `#[pyclass]` can have
+// more than one `#[pymethods]` block.  Each builder retains its own
+// primary `#[pymethods]` block holding the builder-specific methods
+// (`for_vn`, `addr`, `arg`, `at`, …) and only declares
+// `pat_builder_finalise!(BuilderTy);` at module scope.
+
+macro_rules! pat_builder_finalise {
+    ($BuilderTy:ident) => {
+        #[pymethods]
+        impl $BuilderTy {
+            /// Capture this pattern's matched node under the given
+            /// [`Capture`].
+            fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
+                use pattern::IntoPat;
+                PyPat::from_pat(self.finalise().capture(c.inner))
+            }
+            /// Capture this pattern under a string name (auto-interned).
+            fn cap(&self, name: &str) -> PyResult<PyPat> {
+                use pattern::IntoPat;
+                let c = intern_str(name)?;
+                Ok(PyPat::from_pat(self.finalise().capture(c)))
+            }
+            /// Attach a Python predicate that runs after the match.  See
+            /// [`PyPat::when`] for the full predicate contract.
+            fn when(&self, f: PyObject) -> PyPat {
+                PyPat::from_pat(wrap_when(self.finalise(), f))
+            }
+            /// Finalise into a [`PyPat`].  Most call sites accept a
+            /// builder directly via `PatLike`, so explicit `.into_pat()`
+            /// is rarely needed.
+            fn into_pat(&self) -> PyPat {
+                PyPat::from_pat(self.finalise())
+            }
+        }
+    };
+}
+
 // ── Capture ──────────────────────────────────────────────────────────────
 
 #[pyclass(name = "Capture", module = "strider.pattern", frozen)]
@@ -288,8 +335,21 @@ impl PyPartialMatch {
 
     /// Borrow the graph pointer for a closure call.  Returns `None` if
     /// the proxy has been invalidated.
+    ///
+    /// Recovers from `Mutex` poisoning via `into_inner()` — the inner is
+    /// `Option<*const ir::Graph>` (a single Copy slot), and only ever
+    /// written by `clear_graph_ptr` (atomic `*g = None`) or the matcher
+    /// pointer-set (atomic `*g = Some(p)`).  Neither can panic after
+    /// partial mutation, so the slot is consistent on entry.  Matches
+    /// the existing recovery in [`Self::clear_graph_ptr`].
+    ///
+    /// Caller contract: `f` MUST NOT call back into Python code that
+    /// re-invokes `with_graph` on the same proxy.  Doing so would
+    /// re-lock the same `Mutex` and deadlock (`std::sync::Mutex` is
+    /// non-reentrant).  Current callers (`bindings.get_uint`, etc.) are
+    /// pure-Rust accessors so the constraint is honoured trivially.
     fn with_graph<R>(&self, f: impl FnOnce(&ir::Graph) -> R) -> Option<R> {
-        let guard = self.graph_ptr.lock().ok()?;
+        let guard = self.graph_ptr.lock().unwrap_or_else(|p| p.into_inner());
         let ptr = (*guard)?;
         // SAFETY: `ptr` was set to a valid `&BuiltFunctionGraph` by the
         // matcher and only cleared after the predicate returns.  The
@@ -361,7 +421,9 @@ impl PyPartialMatch {
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
         if let Some(Some(v)) = self.with_graph(|g| self.bindings.get_uint(cap, g)) {
-            return Ok((v as i128).into_py(py));
+            // Pass `u128` directly — see `crates/strider-py/src/matcher.rs`
+            // PyMatch::__getitem__ for why a `as i128` cast was wrong.
+            return Ok(v.into_py(py));
         }
         if let Some(Some(b)) = self.with_graph(|g| self.bindings.get_bool(cap, g)) {
             return Ok(b.into_py(py));
@@ -617,17 +679,6 @@ impl PyPhiPat {
         slf.borrow(py).inputs.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -670,17 +721,6 @@ impl PyMemPhiPat {
         slf.borrow(py).inputs.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -714,17 +754,6 @@ impl PyValuePhiPat {
         slf.borrow(py).inputs.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -774,17 +803,6 @@ impl PyFunctionArgPat {
         }));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1123,17 +1141,6 @@ impl PyLoadPat {
         slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1217,17 +1224,6 @@ impl PyStorePat {
         slf.borrow(py).bit_width.replace(Some(n));
         slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1287,17 +1283,6 @@ impl PyStackStorePat {
     fn space(slf: Py<Self>, py: Python<'_>, s: crate::sleigh::PyVnSpace) -> Py<Self> {
         slf.borrow(py).space.replace(Some(s.inner)); slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1349,17 +1334,6 @@ impl PyStackStorePhiPat {
     fn offsets(slf: Py<Self>, py: Python<'_>, os: Vec<i64>) -> Py<Self> {
         slf.borrow(py).offsets.replace(Some(os)); slf
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1458,25 +1432,6 @@ impl PyCallPat {
         let pat = p.into_pat()?;
         slf.borrow(py).ret_outputs.borrow_mut().push((idx, pat));
         Ok(slf)
-    }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    /// Materialise this builder as a `Pat`.  Use this when a function
-    /// that doesn't accept `PatLike` (e.g. `Graph.rewrite_all`'s pair
-    /// list) needs a finalised pattern.  `Graph.find_all` accepts the
-    /// builder directly via `PatLike` — `into_pat()` isn't required there.
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
     }
 }
 
@@ -1600,17 +1555,6 @@ impl PyCallOtherPat {
         slf.borrow(py).next_mem.replace(Some(pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1661,17 +1605,6 @@ impl PyRetPat {
         slf.borrow(py).ret_vals.borrow_mut().push((idx, pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1727,17 +1660,6 @@ impl PyIfPat {
         slf.borrow(py).false_branch.replace(Some(pat));
         Ok(slf)
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat { PyPat::from_pat(wrap_when(self.finalise(), f)) }
-    fn into_pat(&self) -> PyPat { PyPat::from_pat(self.finalise()) }
 }
 
 #[pyfunction]
@@ -1841,21 +1763,6 @@ impl PyIntBinaryPat {
         self.ordered = true;
         PyPat::from_pat(self.finalise())
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
-    }
 }
 
 /// Typed builder for a boolean binary-op pattern.
@@ -1883,21 +1790,6 @@ impl PyBoolBinaryPat {
         self.ordered = true;
         PyPat::from_pat(self.finalise())
     }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
-        PyPat::from_pat(self.finalise())
-    }
 }
 
 /// Typed builder for a float binary-op pattern.
@@ -1923,21 +1815,6 @@ impl PyFloatBinaryPat {
 impl PyFloatBinaryPat {
     fn ordered(&mut self) -> PyPat {
         self.ordered = true;
-        PyPat::from_pat(self.finalise())
-    }
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use pattern::IntoPat;
-        PyPat::from_pat(self.finalise().capture(c.inner))
-    }
-    fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use pattern::IntoPat;
-        let c = intern_str(name)?;
-        Ok(PyPat::from_pat(self.finalise().capture(c)))
-    }
-    fn when(&self, f: PyObject) -> PyPat {
-        PyPat::from_pat(wrap_when(self.finalise(), f))
-    }
-    fn into_pat(&self) -> PyPat {
         PyPat::from_pat(self.finalise())
     }
 }
@@ -2179,3 +2056,27 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     sys.getattr("modules")?.set_item("strider.pattern", &m)?;
     Ok(())
 }
+
+// ── Pat-builder finalise impls ───────────────────────────────────────────
+//
+// One macro invocation per typed builder.  Each emits a separate
+// `#[pymethods]` block (allowed by the `multiple-pymethods` PyO3 feature)
+// carrying the four shared `capture` / `cap` / `when` / `into_pat`
+// methods.  See `pat_builder_finalise!` (declared near the top of the
+// file) for the body.
+
+pat_builder_finalise!(PyPhiPat);
+pat_builder_finalise!(PyMemPhiPat);
+pat_builder_finalise!(PyValuePhiPat);
+pat_builder_finalise!(PyFunctionArgPat);
+pat_builder_finalise!(PyLoadPat);
+pat_builder_finalise!(PyStorePat);
+pat_builder_finalise!(PyStackStorePat);
+pat_builder_finalise!(PyStackStorePhiPat);
+pat_builder_finalise!(PyCallPat);
+pat_builder_finalise!(PyCallOtherPat);
+pat_builder_finalise!(PyRetPat);
+pat_builder_finalise!(PyIfPat);
+pat_builder_finalise!(PyIntBinaryPat);
+pat_builder_finalise!(PyBoolBinaryPat);
+pat_builder_finalise!(PyFloatBinaryPat);

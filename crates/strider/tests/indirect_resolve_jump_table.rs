@@ -38,7 +38,7 @@ use common::indirect_resolve_helpers::{
 /// `base + i * stride`, capped at `entries.len()`.  Reads outside
 /// the configured table range return None.
 ///
-/// Used by the R4 integration tests to provide the rom that the
+/// Used by the integration tests to provide the rom that the
 /// classifier reads jump-table entries from.
 struct TableRom {
     base: u64,
@@ -92,7 +92,7 @@ impl opt::ReadOnlyMemory for PartialRom {
     }
 }
 
-/// Spec catalogue test #13 (R4 headline).
+/// Spec catalogue test #13 (headline).
 ///
 /// `idx & 0x7; load[base + idx*stride]; jmp *target` →
 /// `Multiple([table[0], …, table[7]])`.

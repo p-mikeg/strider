@@ -8,18 +8,31 @@ same types. No IR, no rsleigh state machine — just descriptors and the
 ## Public surface
 
 - `ArchPreset` — `X8664`, `X86`, `Aarch64`, `Aarch64Be`, `Arm`, `ArmBe`,
-  `ArmThumb`, `Mipsbe32`, `Mipsle32`, `Mipsbe64`, `Mipsle64`.
+  `ArmThumb`, `Mipsbe32`, `Mipsle32`, `Mipsbe64`, `Mipsle64`,
+  `Ppc32Be`, `Ppc32Le`, `Ppc64Be`, `Ppc64Le`.
 - `Endianness` — `Little` | `Big`.
-- `SleighArch` — pairs an SLA spec path + PSPEC + `Endianness`. Presets:
-  `SleighArch::x86_64()`, `x86()`, `aarch64()`, `aarch64be()`, `arm()`,
-  `arm_be()`, `arm_thumb()`, `mipsbe32()`, `mipsle32()`, `mipsbe64()`,
-  `mipsle64()`.
+- `SleighArch` — pairs an SLA spec path + PSPEC + `Endianness`. 15 presets
+  covering every supported architecture: `SleighArch::x86_64()`, `x86()`,
+  `aarch64()`, `aarch64be()`, `arm()`, `arm_be()`, `arm_thumb()`,
+  `mipsbe32()`, `mipsle32()`, `mipsbe64()`, `mipsle64()`, `ppc32be()`,
+  `ppc32le()`, `ppc64be()`, `ppc64le()`.
 - `CallingConvention` — static-string register names. Carries the stack
   pointer, integer + float return-value regs, callee-saved regs, positional
   `stack_arg_offsets`, the `ret_stack_pop` delta (8 on x86_64, 0 on AAPCS),
-  and the optional link-register name (`lr` on AArch64/ARM, `ra` on MIPS,
-  `None` on x86/x86_64). Presets: `x86_cdecl`, `x86_64_systemv_abi`,
-  `aarch64_aapcs64`, `arm_aapcs`, `mips_o32`, `mips_n64`.
+  the optional link-register name (`lr` on AArch64/ARM, `ra` on MIPS,
+  `None` on x86/x86_64), and an optional `syscall_number_reg_name` that
+  marks Linux syscall conventions. Presets:
+  - **Userland**: `x86_cdecl`, `x86_64_systemv`, `x86_64_all_preserving`
+    (zero-side-effect hooks like `__fentry__` / `mcount`; sets
+    `no_memory_clobber: true` so `Call` nodes don't advance the memory
+    chain), `aarch64_aapcs64`, `arm_aapcs`, `mips_o32`, `mips_n64`,
+    `powerpc_sysv32`, `powerpc64_elf_v1`, `powerpc64_elf_v2`.
+  - **Linux kernel internal**: `x86_linux_kernel`, `x86_64_linux_kernel`,
+    `aarch64_linux_kernel`, `arm_linux_kernel`, `mips_linux_kernel_o32`,
+    `mips_linux_kernel_n64`.
+  - **Linux syscall** (sets `syscall_number_reg_name`): `x86_linux_syscall`,
+    `x86_64_linux_syscall`, `aarch64_linux_syscall`, `arm_linux_syscall`,
+    `mips_linux_syscall_o32`, `mips_linux_syscall_n64`.
 - `CallingConvention::build(&sleigh) -> Result<BuiltCallingConvention>` —
   resolves register names to `rsleigh::Vn` varnodes.
 - `BuiltCallingConvention` — the resolved version. Same fields as
@@ -75,6 +88,13 @@ what real lifts emit (rather than silently misclassifying).
 - No `Opaque` variant in `CallOtherClass` — every previously-Opaque entry
   was reclassified to `NoOp`, `NoReturn`, or precise `Call(abi)`. See
   `docs/superpowers/specs/2026-05-06-callother-precise-abi-design.md`.
+- **LR is intentionally listed in `callee_saved_regs`** for AArch64, ARM,
+  PowerPC, and MIPS conventions even though the callee normally clobbers it
+  on a leaf call. The tradeoff: leaf functions don't save LR but the
+  indirect-branch resolver expects LR to retain its caller-supplied value
+  at function entry so `bx lr` / `blr` shapes classify as `Return` rather
+  than tail call. The spec call-out lives in
+  `docs/superpowers/specs/2026-05-06-callother-precise-abi-design.md`.
 
 ## Tests
 
@@ -96,5 +116,8 @@ cargo test --package target
   not by mutating presets.
 - `mips_o32` and `mips_n64` differ in stack-arg offsets and integer/float
   reg sets — pick the correct one for the binary's ABI.
+- `x86_64_systemv` was renamed from `x86_64_systemv_abi`; the old name is
+  retained as a deprecated alias (`x86_64_systemv_abi()` calls through to
+  `x86_64_systemv()`). New code should use `x86_64_systemv`.
 - Depends only on `rsleigh` and `anyhow`. No dependency on
   [`ir`](../ir), [`opt`](../opt), or [`pattern`](../pattern).

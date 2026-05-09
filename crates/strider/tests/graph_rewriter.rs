@@ -82,7 +82,7 @@ fn analyze_with_known_targets(
         .expect("cfg build");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("Strider::new");
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     (graph, strider)

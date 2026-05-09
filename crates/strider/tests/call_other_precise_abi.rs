@@ -16,7 +16,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let strider_h = strider::Strider::new(
         arch,
         regs,
-        strider::CallingConvention::x86_64_systemv_abi(),
+        strider::CallingConvention::x86_64_systemv(),
     )
     .expect("strider");
 

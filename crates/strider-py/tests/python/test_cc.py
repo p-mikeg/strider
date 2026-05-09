@@ -3,7 +3,7 @@ import strider
 
 
 @pytest.mark.parametrize("name", [
-    "x86_64_systemv_abi", "aarch64_aapcs64", "arm_aapcs",
+    "x86_64_systemv", "aarch64_aapcs64", "arm_aapcs",
     "mips_o32", "mips_n64",
     "powerpc_sysv32", "powerpc64_elf_v1", "powerpc64_elf_v2",
     "x86_cdecl",

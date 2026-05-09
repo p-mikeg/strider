@@ -18,7 +18,7 @@ use strider::{CallingConvention, SleighArch, Strider};
 fn x86_64_ud2_terminates_cleanly() {
     let arch = SleighArch::x86_64();
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("strider");
 
     let bytes = vec![0x0fu8, 0x0b]; // ud2

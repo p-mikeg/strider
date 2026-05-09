@@ -526,8 +526,16 @@ where
         // build_anchor_calling_context) to O(1) per varnode read.
         // read_or_init_var inserts new entries as it creates fresh
         // InitialVar nodes, so the index stays consistent across edits.
+        //
+        // Use `preorder` (reachable-only) rather than `all_node_ids` so
+        // zombie `InitialVar` nodes left detached by a previous
+        // `FunctionArgDetect` don't get re-indexed and resurrected:
+        // `read_or_init_var` would return a zombie's output and wire it
+        // straight into a fresh Call's input list, breaking
+        // `FunctionArgDetect`'s post-detection invariant that all
+        // argument-register reads flow through `FunctionArg` nodes.
         let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
-        for nid in graph.graph.all_node_ids() {
+        for nid in graph.graph.preorder(graph.entry) {
             if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
                 && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
             {
@@ -821,12 +829,15 @@ where
     }
     let cfg_opts = opts_builder.build();
 
-    let arch_endianness = opts.strider.arch().endianness;
-    let cfg: Cfg<R> =
-        Builder::with_endianness(sleigh, opts.start_addr, cfg_opts, arch_endianness)
-            .with_known_targets(known_targets.clone())
-            .with_decode_cache(decode_cache.clone())
-            .build()?;
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
+    // arch atomically.  `Builder::with_endianness` would silently default the
+    // preset to `X86_64`, which causes arch-specific CallOther dispatch
+    // (ARM `swi`, AArch64 `CallHyperVisor`/`CallSecureMonitor`) to be looked
+    // up under the wrong preset and silently misclassified or rejected.
+    let cfg: Cfg<R> = Builder::for_arch(opts.strider.arch(), sleigh, opts.start_addr, cfg_opts)
+        .with_known_targets(known_targets.clone())
+        .with_decode_cache(decode_cache.clone())
+        .build()?;
 
     // Vn cache: scan only the regions added since the previous
     // iteration (petgraph's StableDiGraph allocates monotonic
@@ -917,7 +928,7 @@ mod tests {
     fn make_strider_x86_64() -> Strider {
         let arch = crate::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
-        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv_abi())
+        Strider::new(arch, regs, crate::CallingConvention::x86_64_systemv())
             .expect("strider")
     }
 

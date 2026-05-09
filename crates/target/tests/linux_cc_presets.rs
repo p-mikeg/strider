@@ -66,7 +66,7 @@ fn x86_64_linux_kernel_aliases_systemv() {
     let regs = regs_for(SleighArch::x86_64());
     assert_eq!(
         arg_reg_names(CallingConvention::x86_64_linux_kernel(), &regs),
-        arg_reg_names(CallingConvention::x86_64_systemv_abi(), &regs),
+        arg_reg_names(CallingConvention::x86_64_systemv(), &regs),
         "x86_64 kernel-internal CC is identical to SystemV"
     );
     assert!(

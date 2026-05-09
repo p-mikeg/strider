@@ -140,8 +140,17 @@ pub(crate) fn step_through_stack_store_phi(
         return AliasStep::MayAlias;
     }
     let store_size = store_value_byte_size(graph, inputs[2]);
-    let any_overlap = graph
-        .stack_phi_offsets(node)
+    let offsets = graph.stack_phi_offsets(node);
+    if offsets.is_empty() {
+        // No per-predecessor offsets recorded — the StackStorePhi could
+        // alias any stack address.  Conservative answer is MayAlias.
+        // `StackStoreDetect` always populates `stack_phi_offsets` for
+        // every StackStorePhi it creates, so this branch only fires for
+        // graphs where another builder produced the node without
+        // populating the side-table.
+        return AliasStep::MayAlias;
+    }
+    let any_overlap = offsets
         .iter()
         .any(|&k| !ranges_disjoint(k, store_size, query_off, query_size));
     if any_overlap {
@@ -244,6 +253,13 @@ pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 /// caching definitive results in `memo`. The `visiting` set guards against
 /// cycles through `VarPhi` back-edges; cycle-broken results are NOT
 /// memoized (so a different call path can still resolve the same output).
+///
+/// Implemented iteratively so deep `sp + K1 + K2 + ... + KN` chains
+/// (typical of long prologues / spill-heavy frames) cannot overflow the
+/// thread stack.  The Add-chain spine is walked in a single loop that
+/// accumulates offsets; the leaf cases (`InitialVar(sp)`, `VarPhi(sp)`,
+/// `And(sp_root, mask)`) dispatch to handlers that recurse only when
+/// graph topology actually requires (phi predecessors).
 pub fn decompose_sp(
     g: &Graph,
     out: NodeOutputId,
@@ -251,98 +267,133 @@ pub fn decompose_sp(
     memo: &mut SpExprMemo,
     visiting: &mut entity_utils::DenseEntitySet<NodeId>,
 ) -> Option<SpExpr> {
-    if let Some(cached) = memo.get(&out) {
-        return cached.clone();
-    }
-    let node = g.get_node_from_output(out);
-    if !visiting.insert(node) {
-        // Cycle: do NOT cache (a different call path may resolve it).
-        return None;
-    }
-    let result = decompose_sp_inner(g, out, node, sp_vn, memo, visiting);
-    visiting.remove(node);
-    // Cache `Some(_)` results unconditionally — the decomposition is a
-    // deterministic function of `out`. Don't cache `None`: it could mean
-    // "genuinely not SP-rooted" (safe to recompute) OR "cycle-truncated on
-    // this call path" (must NOT be cached, since a different call path
-    // where `node` isn't on the stack may decompose it cleanly). The
-    // `Some(_)` filter is sound because the cycle-truncation early-return
-    // above always returns `None`.
-    if let Some(ref e) = result {
-        memo.insert(out, Some(e.clone()));
-    }
-    result
-}
+    // Spine record: (output_id_at_visit, accumulated_offset_BEFORE_descend).
+    // After we determine the leaf result, we propagate the SpExpr back up
+    // the spine, memoizing each level by reconstructing its offset from
+    // the leaf's accumulated total.
+    let mut spine: Vec<(NodeOutputId, NodeId, i64)> = Vec::new();
+    let mut current = out;
+    let mut accumulated: i64 = 0;
 
-fn decompose_sp_inner(
-    g: &Graph,
-    out: NodeOutputId,
-    node: NodeId,
-    sp_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
-    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
-) -> Option<SpExpr> {
-    match *g.node_kind(node) {
-        NodeKind::InitialVar(vn) if vn == sp_vn => Some(SpExpr::Terminal {
-            base: out,
-            offset: 0,
-        }),
-        NodeKind::VarPhi(vn) if vn == sp_vn => {
-            decompose_sp_phi(g, node, sp_vn, memo, visiting)
+    let leaf_result: Option<SpExpr> = loop {
+        // Memo hit: the cached value is the SpExpr at `current` (no offset
+        // adjustment), so shift by the accumulated total to get the value
+        // at the original `out`.
+        if let Some(cached) = memo.get(&current).cloned() {
+            break cached.map(|e| e.shifted(accumulated));
         }
-        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            let inputs = g.node_inputs(node);
-            if inputs.len() != 2 {
-                return None;
+        let node = g.get_node_from_output(current);
+        if !visiting.insert(node) {
+            // Cycle: do NOT cache (a different call path may resolve it).
+            // Roll the spine back before bailing.
+            for (_, sp_node, _) in spine.iter().rev() {
+                visiting.remove(*sp_node);
             }
-            let l = inputs[0];
-            let r = inputs[1];
-            if let Some(c) = int_const_signed(g, r) {
-                decompose_sp(g, l, sp_vn, memo, visiting).map(|e| e.shifted(c))
-            } else if let Some(c) = int_const_signed(g, l) {
-                decompose_sp(g, r, sp_vn, memo, visiting).map(|e| e.shifted(c))
-            } else {
-                None
-            }
+            return None;
         }
-        // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
-        // `0xfffffff0` for SSE-aligned frames).  The And's output is
-        // runtime-aligned `(SP & mask)` — its exact value depends on the
-        // entry SP's alignment, so the offset relative to `InitialVar(sp)`
-        // is unknown.  But within the function the And's output is *fixed*
-        // and serves as a stable opaque base for every subsequent stack
-        // address.  Return `Terminal { base: <And output>, offset: 0 }`
-        // so downstream Adds / Subs of constants chain through normally
-        // and `StackStoreDetect` can rewrite the post-alignment stores
-        // into `StackStore`s sharing this base.  Subsequent walkers
-        // (`CallStackArgCollect`, `StackLoadForward`) compare offsets
-        // relative to the matched base, so every aligned-frame store is
-        // mutually comparable.
-        //
-        // Only matches when the non-mask operand is itself an SP-rooted
-        // expression — guards against `And(rax, mask)` accidentally
-        // producing a fake stack base.
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            let inputs = g.node_inputs(node);
-            if inputs.len() != 2 {
-                return None;
+        spine.push((current, node, accumulated));
+
+        match *g.node_kind(node) {
+            NodeKind::InitialVar(vn) if vn == sp_vn => {
+                break Some(SpExpr::Terminal {
+                    base: current,
+                    offset: accumulated,
+                });
             }
-            let l = inputs[0];
-            let r = inputs[1];
-            let sp_input = if int_const_signed(g, r).is_some() {
-                l
-            } else if int_const_signed(g, l).is_some() {
-                r
-            } else {
-                return None;
+            NodeKind::VarPhi(vn) if vn == sp_vn => {
+                break decompose_sp_phi(g, node, sp_vn, memo, visiting)
+                    .map(|e| e.shifted(accumulated));
+            }
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+                let inputs = g.node_inputs(node);
+                if inputs.len() != 2 {
+                    break None;
+                }
+                let l = inputs[0];
+                let r = inputs[1];
+                if let Some(c) = int_const_signed(g, r) {
+                    accumulated = accumulated.wrapping_add(c);
+                    current = l;
+                    continue;
+                } else if let Some(c) = int_const_signed(g, l) {
+                    accumulated = accumulated.wrapping_add(c);
+                    current = r;
+                    continue;
+                }
+                break None;
+            }
+            // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
+            // `0xfffffff0` for SSE-aligned frames).  The And's output is
+            // runtime-aligned `(SP & mask)` — its exact value depends on the
+            // entry SP's alignment, so the offset relative to `InitialVar(sp)`
+            // is unknown.  But within the function the And's output is *fixed*
+            // and serves as a stable opaque base for every subsequent stack
+            // address.  Return `Terminal { base: <And output>, offset: 0 }`
+            // so downstream Adds / Subs of constants chain through normally
+            // and `StackStoreDetect` can rewrite the post-alignment stores
+            // into `StackStore`s sharing this base.
+            //
+            // Only matches when the non-mask operand is itself an SP-rooted
+            // expression — guards against `And(rax, mask)` accidentally
+            // producing a fake stack base.
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                let inputs = g.node_inputs(node);
+                if inputs.len() != 2 {
+                    break None;
+                }
+                let l = inputs[0];
+                let r = inputs[1];
+                let sp_input = if int_const_signed(g, r).is_some() {
+                    l
+                } else if int_const_signed(g, l).is_some() {
+                    r
+                } else {
+                    break None;
+                };
+                // The sub-call resolves to anything SP-rooted; we discard
+                // its concrete decomposition because the And's output is a
+                // fresh opaque base (offset 0) for downstream walkers.
+                let sub = decompose_sp(g, sp_input, sp_vn, memo, visiting);
+                break sub.map(|_| SpExpr::Terminal {
+                    base: current,
+                    offset: accumulated,
+                });
+            }
+            _ => break None,
+        }
+    };
+
+    // Roll back `visiting` and memoize each spine level.  `leaf_result`
+    // already represents the SpExpr at the *original* `out` (the top of
+    // the spine) — the leaf branches all returned a value with its
+    // offset shifted by `accumulated`, which is the total constant
+    // absorbed during descent from `out` to the leaf.  For an
+    // intermediate spine level `X` (whose entry-time accumulation is
+    // `accum_at_X`), the SpExpr at `X` shares the same `base`/`phi_node`
+    // but its offset is reduced by `accum_at_X` (we want only the
+    // offsets absorbed BELOW `X`, i.e. `total_acc - accum_at_X`, and
+    // `total_acc == leaf_result.offset`).
+    for (level_out, level_node, accum_at_level) in spine.iter().rev() {
+        visiting.remove(*level_node);
+        if let Some(ref top) = leaf_result {
+            let level_expr = match top {
+                SpExpr::Terminal { base, offset } => SpExpr::Terminal {
+                    base: *base,
+                    offset: offset.wrapping_sub(*accum_at_level),
+                },
+                SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
+                    phi_node: *phi_node,
+                    offsets: offsets
+                        .iter()
+                        .map(|o| o.wrapping_sub(*accum_at_level))
+                        .collect(),
+                },
             };
-            decompose_sp(g, sp_input, sp_vn, memo, visiting).map(|_| SpExpr::Terminal {
-                base: out,
-                offset: 0,
-            })
+            memo.insert(*level_out, Some(level_expr));
         }
-        _ => None,
     }
+
+    leaf_result
 }
 
 fn decompose_sp_phi(
@@ -802,6 +853,89 @@ mod tests {
         );
         assert_eq!(aligned_off, 0);
         assert_eq!(post_sub_off, -0x1D0, "Sub by 0x1D0 shifts offset by -0x1D0");
+        Ok(())
+    }
+
+    /// Regression for round8-correctness-edge-cases H1: `decompose_sp`
+    /// must not blow the thread stack on a deep `sp + K1 + K2 + ... + KN`
+    /// chain.  The recursive form overflowed at ~4-8k nodes; the
+    /// iterative form must walk a 5000-node chain without panic AND
+    /// produce the correct cumulative offset.
+    #[test]
+    fn decompose_sp_does_not_stack_overflow_on_deep_chain() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[sp], &[], &[], None, 0)?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        let mut current = b.read_variable(&sp)?;
+        const N: usize = 5000;
+        for _ in 0..N {
+            let one = b.build_int_const(1u64, NodeOutputType::U32)?;
+            current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, NodeOutputType::U32)?;
+        }
+        b.build_return(Some(current), &[])?;
+        let fg = b.build()?;
+        let mut memo = SpExprMemo::default();
+        let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
+        let r = decompose_sp(&fg.graph, current, sp, &mut memo, &mut visiting)
+            .expect("5000-node chain must decompose without stack-overflowing");
+        let SpExpr::Terminal { offset, .. } = r else {
+            panic!("expected Terminal, got {r:?}");
+        };
+        assert_eq!(offset, N as i64, "cumulative offset must equal N adds of +1");
+        Ok(())
+    }
+
+    /// Regression for round8-correctness-edge-cases H2: a `StackStorePhi`
+    /// node with empty `stack_phi_offsets` MUST yield `MayAlias` from
+    /// `step_through_stack_store_phi` — the conservative answer for
+    /// "offsets unknown".  Previously it returned `PassThrough`, which
+    /// would silently let `StackLoadForward` forward across a phi that
+    /// could alias.
+    #[test]
+    fn step_through_stack_store_phi_empty_offsets_returns_may_alias() -> crate::Result<()> {
+        use ir::node::NodeOutputKind;
+        // Build a graph with a StackStorePhi but DO NOT populate
+        // `stack_phi_offsets`.  We need a valid 3-input shape (PHI,
+        // MEM, DATA) so the function reaches the offsets check.
+        let mut b = FunctionBuilder::empty()?;
+        let region = b.create_region()?;
+        b.set_entry_region(region)?;
+        b.set_region(region);
+        // We'll synthesise a StackStorePhi node directly in the graph
+        // by making three placeholder inputs.  Use the builder's region
+        // ControlState's PhiToken slot, the builder's InitialMemory,
+        // and a fresh IntConst as DATA.
+        let data = b.build_int_const(0xCAFE_u64, NodeOutputType::U64)?;
+        b.build_return(None, &[])?;
+        let mut fg = b.build()?;
+        // Locate the ControlState (it owns the PhiToken).
+        let cs = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::ControlState))
+            .expect("ControlState present");
+        let cs_outs = fg.node_outputs(cs).into_iter().collect::<Vec<_>>();
+        let phi_token = *cs_outs
+            .iter()
+            .find(|&&o| matches!(fg.graph.output_kind(o), NodeOutputKind::PhiToken))
+            .expect("PhiToken slot");
+        let init_mem = fg
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
+            .expect("InitialMemory present");
+        let mem_out = fg.node_outputs(init_mem).into_iter().next().unwrap();
+        let phi_node = fg.graph.create_node(
+            NodeKind::StackStorePhi { space: rsleigh::VnSpace::RAM },
+            [phi_token, mem_out, data],
+            [NodeOutputKind::Memory],
+        );
+        // DELIBERATELY do NOT call set_stack_phi_offsets.
+        let alias = step_through_stack_store_phi(&fg.graph, phi_node, 0, 8);
+        assert!(
+            matches!(alias, AliasStep::MayAlias),
+            "empty stack_phi_offsets must yield MayAlias (sound default)"
+        );
         Ok(())
     }
 }

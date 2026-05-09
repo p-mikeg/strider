@@ -275,7 +275,7 @@ fn switch_variant_round_trips_target_vn_targets_and_optional_value() {
 
 // Pins the `UnresolvedIndirectBranch` variant's shape: `(target_vn,
 // addr)` — both fields needed to anchor the placeholder
-// `Return(target_value)` strider emits during lifting.  Tier 1
+// `Return(target_value)` strider emits during lifting.  the cfg-time mini-graph resolver
 // surfaces this terminator when the cfg-time mini-graph resolver
 // cannot prove a `BranchIndirect`'s target; the strider fixed-point
 // loop then attempts tier-2 resolution against the optimised IR.

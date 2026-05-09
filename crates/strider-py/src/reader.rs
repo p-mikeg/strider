@@ -131,11 +131,16 @@ impl PyMemoryMap {
     /// Returns a snapshot of the current lookup table, building it on
     /// demand if invalidated.  Used internally by both `read` and the
     /// `MemReader` view supplied to `Sleigh::new`.
+    ///
+    /// Recovers from RwLock poisoning via `into_inner()` — the table's
+    /// inner state is `Option<Arc<...>>` (an atomic-pointer slot), so
+    /// the only way it could be inconsistent after a panicking writer
+    /// is to be partially overwritten, which `*slot = Some(...)` cannot
+    /// do.  Recovery is therefore safe and matches the read-side
+    /// semantic: a partial-write panic leaves the prior value intact
+    /// or replaces it atomically.
     pub(crate) fn lookup_table(&self) -> anyhow::Result<Arc<MemRegionsLookupTable>> {
-        let slot = self
-            .table
-            .read()
-            .map_err(|_| anyhow::anyhow!("MemoryMap table lock poisoned"))?;
+        let slot = self.table.read().unwrap_or_else(|p| p.into_inner());
         if let Some(t) = slot.as_ref() {
             return Ok(Arc::clone(t));
         }
@@ -663,7 +668,12 @@ impl ReadOnlyMemory for PyMemoryMap {
         // size-byte payload correctly.  LE: bytes already in low slots.
         // BE: shift bytes to the high end so from_be_bytes treats the
         // payload as a widened N-byte BE word.
-        let endianness = *self.endianness.read().ok()?;
+        //
+        // Recover from poisoning rather than silently failing — the inner
+        // is `target::Endianness` (Copy), and `*guard = new_endianness`
+        // is atomic, so a partial-write panic cannot leave the slot
+        // half-initialised.
+        let endianness = *self.endianness.read().unwrap_or_else(|p| p.into_inner());
         let layout = match endianness {
             target::Endianness::Little => buf,
             target::Endianness::Big => {

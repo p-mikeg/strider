@@ -123,7 +123,7 @@ pub fn classify_anchor_with_rom_and_sp(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     let producer_id = graph.get_node_from_output(anchor_output);

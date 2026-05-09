@@ -162,7 +162,8 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
                     || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
                 )?;
-                let pcode_count = u64::try_from(lift_res.insns.len()).unwrap_or(u64::MAX);
+                // `usize → u64` is infallible on every supported target (32/64-bit).
+                let pcode_count = lift_res.insns.len() as u64;
                 // Sleigh idiom: a branch to `target == pcode_count` (one past the
                 // last pcode insn) means "exit the current pcode block, fall
                 // through to the next machine instruction". MIPS DIV / SLT

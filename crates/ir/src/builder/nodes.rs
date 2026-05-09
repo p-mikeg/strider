@@ -93,9 +93,10 @@ impl FunctionBuilder {
                 "build_int_const called with non-integer type {output_type:?}"
             ));
         }
-        if matches!(output_type, NodeOutputType::U256) {
+        if matches!(output_type, NodeOutputType::U256 | NodeOutputType::U512) {
             return Err(anyhow!(
-                "build_int_const(U256) not yet supported - IntConst storage is u128"
+                "build_int_const({output_type:?}) not supported - IntConst storage is u128; \
+                 use build_int_const_wide for U256/U512"
             ));
         }
         let val = val.into() & output_type.bit_mask_u128();

@@ -17,7 +17,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rax = regs.name_to_vn("RAX").unwrap();
     let rsp = regs.name_to_vn("RSP").unwrap();
 
-    let cc = CallingConvention::x86_64_systemv_abi().build(&regs).unwrap();
+    let cc = CallingConvention::x86_64_systemv().build(&regs).unwrap();
     let mut b = FunctionBuilder::new(vec![rax, rsp], &cc).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();

@@ -66,6 +66,25 @@ impl PyGraph {
             .write()
             .map_err(|_| anyhow::anyhow!("Graph lock poisoned"))
     }
+
+    /// Try to acquire the write lock without blocking.  Used by mutating
+    /// methods (`optimize`, `compact`, `rewrite`, `reoptimize`) so that a
+    /// re-entrant call from inside a `.when()` predicate (which holds the
+    /// read lock for the duration of `find_all`) surfaces a typed error
+    /// rather than deadlocking the thread.
+    pub(crate) fn try_write_inner(&self) -> anyhow::Result<std::sync::RwLockWriteGuard<'_, ir::BuiltFunctionGraph>> {
+        use std::sync::TryLockError;
+        self.inner.try_write().map_err(|e| match e {
+            TryLockError::Poisoned(_) => anyhow::anyhow!("Graph lock poisoned"),
+            TryLockError::WouldBlock => anyhow::anyhow!(
+                "Graph mutation rejected: the graph is currently borrowed for read \
+                 (typically because this call is from inside a `.when()` predicate \
+                 invoked by `find_all`/`find_all_requirements`).  Mutating the graph \
+                 from within a pattern predicate is not supported — collect matches \
+                 first and mutate after `find_all` returns."
+            ),
+        })
+    }
 }
 
 #[pymethods]
@@ -271,10 +290,7 @@ impl PyGraph {
     /// `entry` via [`ir::walk::walk_graph`].  Mutates in place.
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let _remap = graph.compact();
         Ok(())
     }
@@ -285,10 +301,7 @@ impl PyGraph {
     /// or the equivalent classmethods if you need to apply it again.
     fn optimize(&self, pipeline: &crate::opt::PyOptimizerPipeline) -> PyResult<()> {
         let real_pipeline = pipeline.drain_into_pipeline()?;
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
             .run_on_built(&mut graph)
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
@@ -305,10 +318,7 @@ impl PyGraph {
             pipe.add(opt::RedundantPhis);
             pipe.add(opt::DeadBranchElimination);
         }
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run_on_built(&mut graph).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
@@ -454,10 +464,7 @@ impl PyGraph {
         let lhs = find.into_pat()?;
         let rhs = replace.into_pat()?;
         let rule = pattern::rewrite_rule(lhs, rhs);
-        let mut graph = self
-            .inner
-            .write()
-            .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
         rewriter.apply_rule(rule).map_err(|e| {
             crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite failed: {e:?}"))
@@ -474,9 +481,7 @@ impl PyGraph {
                 let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
                 rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
             }
-            let mut graph = self.inner.write().map_err(|_| {
-                crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned"))
-            })?;
+            let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
             let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
             rewriter.apply_rules(&rules).map_err(|e| {
                 crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))

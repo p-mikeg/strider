@@ -11,8 +11,14 @@ The CFG is the input to the [`strider`](../strider) crate's IR translator.
 - `Cfg<R: rsleigh::MemReader>` — finished graph. Holds the `petgraph::StableDiGraph`
   of regions, the entry `RegionId`, and the `rsleigh::Sleigh<R>` lifter context
   (kept across analysis iterations so the SLA spec is loaded once).
-- `Builder<R>` / `OptionsBuilder` — fluent constructors. `Builder::build()`
-  produces a `Cfg`.
+- `Builder<R>` / `OptionsBuilder` — fluent constructors. Three constructors:
+  `Builder::new(sleigh, start_addr, options)` — defaults to LE + x86_64; convenient
+  but unsafe for non-x86_64 / big-endian binaries.
+  `Builder::with_endianness(sleigh, start_addr, options, endianness)` — set
+  endianness only.
+  `Builder::for_arch(arch, sleigh, start_addr, options)` — **preferred**: derives
+  both endianness and `ArchPreset` from a `target::SleighArch` atomically.
+  `Builder::build()` produces a `Cfg`.
 - `Region`, `RegionInstruction`, `RegionTerminator` — basic block, the lifted
   p-code instructions inside it, and the terminator kind.
 - `RegionEdgeKind` — `Fallthrough` | `Branch` | `IfCaseTrue` | `IfCaseFalse`.
@@ -85,3 +91,8 @@ cargo test --package cfg <test_name>
 - Depends on `rsleigh` (a local path crate at `../rsleigh`). The Sleigh SLA
   spec for the chosen architecture must be available at runtime via
   `target::SleighArch`.
+- `Builder::new` silently defaults to LE + x86_64. A non-x86_64 caller that
+  forgets to chain `with_endianness` / `with_preset` would silently misclassify
+  CallOthers and decode bytes in the wrong byte order. `strider::run` uses
+  `Builder::for_arch` to avoid this — outside-strider callers should follow
+  suit.

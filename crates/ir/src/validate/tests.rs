@@ -543,22 +543,30 @@ fn layer_a_wrong_input_count() {
     );
 }
 
-/// Layer C: two `FunctionArg` nodes sharing the same `index` are a
-/// construction/optimization bug — the validator must catch it.
+/// Layer C: two `FunctionArg` nodes sharing the same `index` (both
+/// reachable from entry) are a construction/optimization bug — the
+/// validator must catch it.
+///
+/// Both `FunctionArg` nodes are routed through the `Return` so they are
+/// reachable from `entry` — the check is reachability-scoped, so
+/// unreachable zombie `FunctionArg` nodes (which `RedundantPhis` may
+/// leave behind) do NOT trigger this error.
 #[test]
 fn layer_c_duplicate_function_arg_index_detected() {
     use crate::node::FunctionArgSource;
 
     let mut graph = Graph::new();
     let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem = graph.node_outputs(mem).into_iter().next().unwrap();
 
     let reg = rsleigh::Vn {
         addr_off: 0x38,
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let _a = graph.create_node(
+    let a = graph.create_node(
         NodeKind::FunctionArg {
             source: FunctionArgSource::Register(reg),
             index: 0,
@@ -566,7 +574,7 @@ fn layer_c_duplicate_function_arg_index_detected() {
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    let _b = graph.create_node(
+    let b = graph.create_node(
         NodeKind::FunctionArg {
             source: FunctionArgSource::Register(reg),
             index: 0,
@@ -574,6 +582,11 @@ fn layer_c_duplicate_function_arg_index_detected() {
         [],
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
+    let a_out = graph.node_outputs(a).into_iter().next().unwrap();
+    let b_out = graph.node_outputs(b).into_iter().next().unwrap();
+    // Make both FunctionArg nodes reachable from entry by routing them
+    // through a Return.
+    graph.create_node(NodeKind::Return, [entry_ctrl, init_mem, a_out, b_out], []);
 
     let errs = validate(&graph, entry).unwrap_err();
     assert!(
@@ -583,6 +596,49 @@ fn layer_c_duplicate_function_arg_index_detected() {
         )),
         "expected DuplicateFunctionArg, got: {errs:?}"
     );
+}
+
+/// Layer C: two `FunctionArg` nodes with the same `index` where ONE is
+/// unreachable (a zombie left behind by `RedundantPhis`) MUST NOT
+/// trigger `DuplicateFunctionArg`.  Reachability scoping prevents
+/// false-positive validation errors on graphs that have completed
+/// `RedundantPhis`-style detach-and-replace.
+#[test]
+fn layer_c_duplicate_function_arg_skips_unreachable_zombie() {
+    use crate::node::FunctionArgSource;
+
+    let mut graph = Graph::new();
+    let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry_ctrl = graph.node_outputs(entry).into_iter().next().unwrap();
+    let init_mem = graph.node_outputs(mem).into_iter().next().unwrap();
+
+    let reg = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let live = graph.create_node(
+        NodeKind::FunctionArg {
+            source: FunctionArgSource::Register(reg),
+            index: 0,
+        },
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let _zombie = graph.create_node(
+        NodeKind::FunctionArg {
+            source: FunctionArgSource::Register(reg),
+            index: 0,
+        },
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::U64)],
+    );
+    let live_out = graph.node_outputs(live).into_iter().next().unwrap();
+    // Only `live` is reachable; `_zombie` is detached.
+    graph.create_node(NodeKind::Return, [entry_ctrl, init_mem, live_out], []);
+
+    validate(&graph, entry).expect("zombie FunctionArg must not trigger DuplicateFunctionArg");
 }
 
 /// Regression: Layer A must check variadic input tails, not just the fixed

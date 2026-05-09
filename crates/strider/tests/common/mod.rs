@@ -105,7 +105,7 @@ impl Arch {
         match self {
             Arch::X86 => strider::CallingConvention::x86_cdecl(),
             Arch::X86Kernel => strider::CallingConvention::x86_linux_kernel(),
-            Arch::X64 => strider::CallingConvention::x86_64_systemv_abi(),
+            Arch::X64 => strider::CallingConvention::x86_64_systemv(),
             // AAPCS64 is byte-order independent; same CC for LE and BE AArch64.
             Arch::Aarch64 | Arch::Aarch64Be => strider::CallingConvention::aarch64_aapcs64(),
             // AAPCS32 is byte-order- and mode-independent — same CC for
@@ -212,7 +212,12 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived
+    // from `sleigh_arch` atomically — `Builder::with_endianness` would
+    // silently default the preset to `X86_64`, breaking the arch-specific
+    // CallOther dispatch path on AArch64/ARM/MIPS/PPC test fixtures.
+    // See round8-correctness-cross-arch §1.
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let mut graph = ana.analyze_cfg(&cfg)

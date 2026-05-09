@@ -112,14 +112,17 @@ fn try_forward_load(
     ) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let forwarded = realize(fg, shape, load_ty, endianness)?;
+    let forwarded = realize(fg, shape, load_ty, endianness, load)?;
 
     // Absorb the rewritten Load's asm-fingerprint into the forwarded
     // producer.  `realize` may have returned an existing-attributed node
     // (when the value comes straight from a StackStore's data slot) or
-    // freshly synthesised one (Truncate / ShiftRight / ValuePhi); either
-    // way the union semantics of `extend_asm_fingerprint_from` keep us
-    // superset-correct.
+    // freshly synthesised one (Truncate / ShiftRight / ValuePhi).  When
+    // `realize` synthesises multi-node chains (BE narrow path emits
+    // `Truncate(ShiftRight(...))`), each intermediate node carries the
+    // attribution via `create_node_attributed(..., &[load])` inside
+    // `realize`; the call below covers the outermost-only LE narrow
+    // and Existing cases.
     let forwarded_node = fg.get_node_from_output(forwarded);
     fg.extend_asm_fingerprint_from(forwarded_node, load);
     let changed = fg.replace_all_uses(load_out, forwarded)?;
@@ -340,6 +343,7 @@ fn realize(
     shape: ResolveShape,
     load_ty: ir::node::NodeOutputType,
     endianness: Endianness,
+    load: ir::node::NodeId,
 ) -> crate::Result<NodeOutputId> {
     match shape {
         ResolveShape::Existing(out) => Ok(out),
@@ -351,25 +355,35 @@ fn realize(
             //   `ShiftRight` is the *logical* right-shift (zero-fill), the
             //   correct synthesis since we want the high bytes positioned
             //   in the low end before truncating.
+            //
+            // Use `create_node_attributed(..., &[load])` for every
+            // freshly-synthesised node so the asm-fingerprint contract
+            // holds at every intermediate node — not just the outermost.
+            // The caller in `try_forward_load` only absorbs into the
+            // returned outermost node, so a plain `create_node` would
+            // leave the BE-path `ShiftRight` node reachable with an
+            // empty fingerprint.
             let shifted = match endianness {
                 Endianness::Little => data,
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
                     let shift_const = fg.make_int_const(shift_bits, data_ty)?;
-                    let shr = fg.create_node(
+                    let shr = fg.graph.create_node_attributed(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],
                         [NodeOutputKind::OutputType(data_ty)],
+                        &[load],
                     );
                     let [out] = fg.node_outputs_exact::<1>(shr)?;
                     out
                 }
             };
-            let trunc = fg.create_node(
+            let trunc = fg.graph.create_node_attributed(
                 NodeKind::Truncate,
                 [shifted],
                 [NodeOutputKind::OutputType(load_ty)],
+                &[load],
             );
             let [out] = fg.node_outputs_exact::<1>(trunc)?;
             Ok(out)
@@ -377,7 +391,7 @@ fn realize(
         ResolveShape::Phi { phi_token, preds } => {
             let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
             for p in preds {
-                resolved.push(realize(fg, p, load_ty, endianness)?);
+                resolved.push(realize(fg, p, load_ty, endianness, load)?);
             }
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph
@@ -390,10 +404,11 @@ fn realize(
             {
                 return Ok(first);
             }
-            let value_phi = fg.create_node(
+            let value_phi = fg.graph.create_node_attributed(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
+                &[load],
             );
             let [out] = fg.node_outputs_exact::<1>(value_phi)?;
             Ok(out)

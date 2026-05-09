@@ -101,9 +101,15 @@ struct Rule {
     /// and the original root's `NodeId` (for fingerprint absorption),
     /// returns the new value-output to redirect the root's uses to.
     build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId,
-    /// Captures used by `lhs` for `a` and `b`.
+    /// Capture used by `lhs` for `a`.
     lhs_capture: Capture,
-    rhs_capture: Capture,
+    /// Capture used by `lhs` for `b` — `None` for unary rules whose LHS
+    /// uses only `a` (the Thumb "test bool against 0" pattern).  When
+    /// `Some(c)`, the matched binding MUST resolve via `Match::output(c)`;
+    /// a missing binding here is an invariant break, not a fallback.
+    /// `None` means the corresponding `build_rhs` ignores its `_b`
+    /// parameter — the caller passes `a` as a placeholder.
+    rhs_capture: Option<Capture>,
 }
 
 fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) -> Result<bool> {
@@ -119,14 +125,25 @@ fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) 
             None => return Ok(false),
         };
         // `match_at` succeeded above, and the rule's `lhs` always
-        // captures `lhs_capture` at a value-producing position; the
-        // matcher contract guarantees `output(lhs_capture)` returns
-        // `Some` whenever the capture appears in a successful match.
+        // captures `lhs_capture` at a value-producing position.  When
+        // `rhs_capture` is `Some(_)`, the matcher contract guarantees
+        // `output(_)` returns `Some` for it as well; an empty binding
+        // would be a structurally wrong rewrite, so surface it.  When
+        // `rhs_capture` is `None`, the rule is unary (Thumb "test bool
+        // against 0") — the build_rhs ignores `_b`, so we pass `a`.
         #[allow(clippy::expect_used)]
         let a = m
             .output(rule.lhs_capture)
             .expect("Capture a must bind to a value output");
-        let b = m.output(rule.rhs_capture).unwrap_or(a);
+        let b = match rule.rhs_capture {
+            Some(c) => {
+                #[allow(clippy::expect_used)]
+                {
+                    m.output(c).expect("Capture b must bind to a value output")
+                }
+            }
+            None => a,
+        };
         (a, b)
     };
 
@@ -259,7 +276,9 @@ fn rhs_thumb_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeI
 
 static RULES: LazyLock<Vec<Rule>> = LazyLock::new(build_rules);
 
-/// Helper: one rule entry — fresh captures + LHS + RHS builder.
+/// Helper: one binary rule entry — fresh captures + LHS + RHS builder.
+/// LHS pattern must bind both `a` and `b`; if it only uses `a`, use
+/// [`rule_unary`] instead so the matcher's binding contract stays strict.
 fn rule(lhs_builder: impl FnOnce(Capture, Capture) -> Pat,
         build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId)
         -> Rule {
@@ -269,7 +288,22 @@ fn rule(lhs_builder: impl FnOnce(Capture, Capture) -> Pat,
         lhs: lhs_builder(lhs_capture, rhs_capture),
         build_rhs,
         lhs_capture,
-        rhs_capture,
+        rhs_capture: Some(rhs_capture),
+    }
+}
+
+/// Helper: one unary rule entry — only `lhs_capture` is bound by the
+/// LHS.  The `build_rhs` MUST ignore its `_b` parameter (the caller
+/// passes `a` in its place).
+fn rule_unary(lhs_builder: impl FnOnce(Capture) -> Pat,
+              build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> NodeOutputId)
+              -> Rule {
+    let lhs_capture = Capture::new();
+    Rule {
+        lhs: lhs_builder(lhs_capture),
+        build_rhs,
+        lhs_capture,
+        rhs_capture: None,
     }
 }
 
@@ -343,16 +377,16 @@ fn build_rules() -> Vec<Rule> {
         // 8. Thumb "false" flag test:  IntEqual(CastToInt(b), 0)  →  BoolNeg(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
         //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
-        rule(
-            |a, _b| int_eq(cast_to_int(var(a)), int_const(0)),
+        rule_unary(
+            |a| int_eq(cast_to_int(var(a)), int_const(0)),
             rhs_thumb_neg_b,
         ),
         // 9. Thumb "true" flag test:  BoolNeg(IntEqual(CastToInt(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
         //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
         //    plus our cast-to-int coercion gives this shape.
-        rule(
-            |a, _b| bool_not(int_eq(cast_to_int(var(a)), int_const(0))),
+        rule_unary(
+            |a| bool_not(int_eq(cast_to_int(var(a)), int_const(0))),
             rhs_thumb_b,
         ),
     ]

@@ -66,7 +66,7 @@ pub fn classify_jump_table(
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     // Step 1: structural shape match.  `match_jump_table_shape`
     // returns the `idx` value and the `(base, stride, entry_size)`
@@ -294,7 +294,7 @@ fn match_jump_table_shape(
 pub fn bound_via_known_bits(
     fg: &BuiltFunctionGraph,
     idx_output: NodeOutputId,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
@@ -309,8 +309,9 @@ pub fn bound_via_known_bits(
     let type_mask = u64::try_from(ty.get_unsigned_int(u128::from(u64::MAX))?).ok()?;
 
     // Outputs absent from the map have no proven bit info; treat them
-    // as the all-unknown default.
-    let kb = known.get(&idx_output).copied().unwrap_or_default();
+    // as the all-unknown default — `SecondaryMap` returns `Kb::default()`
+    // (the all-unknown sentinel) for unrecorded entries via `Index`.
+    let kb = known[idx_output];
     let max = kb.max_value(type_mask);
     if max == type_mask {
         // No narrowing — fall back rather than try to enumerate

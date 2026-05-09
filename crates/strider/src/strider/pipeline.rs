@@ -83,8 +83,9 @@ impl std::fmt::Display for AnalyzeOutcome {
 }
 
 /// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
-/// defaults match the legacy `analyze_cfg(cfg)` behaviour: the
-/// orchestrator uses this with both fields set; strider-py's
+/// defaults match the [`Strider::analyze_cfg(cfg)`] convenience
+/// behaviour (which is the standard public entry, not deprecated):
+/// the orchestrator uses this with both fields set; strider-py's
 /// custom-pipeline path uses it with `per_address_ccs` set.
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
@@ -495,9 +496,14 @@ impl Strider {
 /// to skip the terminator p-code insn so the post-loop dispatch can
 /// lift it via a dedicated handler.
 enum SpecialTerm {
-    /// IR-level indirect-branch resolver placeholder: lifts to
-    /// `Return(target_value)` and pushes the (addr, target_value) pair
-    /// onto `unresolved_branches`.  Skip the trailing `BranchIndirect`.
+    /// IR-level indirect-branch resolver placeholder: emits an
+    /// `IndirectBranch(target_value)` node (via
+    /// `FunctionBuilder::build_indirect_branch`) and pushes the
+    /// `(addr, target_value)` pair onto `unresolved_branches`.  The
+    /// orchestrator's classifier later rewrites this in place to a
+    /// `Call`/`Return` (link-register / tail-call shapes) or replaces
+    /// the region terminator on CFG rebuild (jump-table shape).  Skip
+    /// the trailing `BranchIndirect` p-code insn.
     PendingIndirect {
         target_vn: rsleigh::Vn,
         addr: cfg::PcodeInsnAddr,
@@ -577,7 +583,7 @@ mod tests {
         let strider = crate::Strider::new(
             arch,
             regs,
-            crate::CallingConvention::x86_64_systemv_abi(),
+            crate::CallingConvention::x86_64_systemv(),
         )
         .expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);

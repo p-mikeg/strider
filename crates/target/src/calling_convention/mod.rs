@@ -275,7 +275,7 @@ impl CallingConvention {
     /// as callee-saved — `ret` pops the return address, so the caller observes
     /// SP shifted by `ret_stack_pop` across the call.
     #[must_use]
-    pub fn x86_64_systemv_abi() -> CallingConvention {
+    pub fn x86_64_systemv() -> CallingConvention {
         CallingConvention {
             stack_ptr_reg_name: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
@@ -294,6 +294,16 @@ impl CallingConvention {
             syscall_number_reg_name: None,
             no_memory_clobber: false,
         }
+    }
+
+    /// Deprecated alias for [`Self::x86_64_systemv`].  The `_abi`
+    /// suffix was inconsistent with the other CC presets
+    /// (`x86_cdecl`, `arm_aapcs`, `aarch64_aapcs64`, etc., which all
+    /// omit it).  Kept for one cycle so external callers can migrate.
+    #[must_use]
+    #[deprecated(since = "0.1.0", note = "renamed to `x86_64_systemv` (drops the `_abi` suffix for naming consistency with other CC presets)")]
+    pub fn x86_64_systemv_abi() -> CallingConvention {
+        Self::x86_64_systemv()
     }
 
     /// "All-preserving" x86_64 calling convention: every userland
@@ -689,7 +699,7 @@ impl CallingConvention {
     }
 
     /// Returns the Linux kernel-internal CC for x86_64.  Identical to
-    /// [`Self::x86_64_systemv_abi`] — the kernel writes its C in
+    /// [`Self::x86_64_systemv`] — the kernel writes its C in
     /// SystemV (the syscall-entry assembly does the
     /// `r10`→`rcx` shuffle before calling C handlers, so by the time
     /// any kernel function is entered its args are already in their
@@ -697,7 +707,7 @@ impl CallingConvention {
     /// "this is kernel code" is explicit at the call site.
     #[must_use]
     pub fn x86_64_linux_kernel() -> CallingConvention {
-        Self::x86_64_systemv_abi()
+        Self::x86_64_systemv()
     }
 
     /// Returns the Linux kernel-internal CC for AArch64.  Identical
@@ -759,7 +769,7 @@ impl CallingConvention {
     /// Syscall number in `RAX`; return in `RAX`.
     #[must_use]
     pub fn x86_64_linux_syscall() -> CallingConvention {
-        let mut cc = Self::x86_64_systemv_abi();
+        let mut cc = Self::x86_64_systemv();
         cc.arg_passing_regs = &["RDI", "RSI", "RDX", "R10", "R8", "R9"];
         cc.ret_val_regs = &["RAX"];
         cc.ret_val_regs_float = &[];

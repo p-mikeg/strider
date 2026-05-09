@@ -45,12 +45,8 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     });
     assert_eq!(stack_stores, 1, "expected one StackStore at offset -4");
     // Every reachable Store must have been rewritten.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_stores = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-        .count();
+    let reachable_stores =
+        crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::Store(_)));
     assert_eq!(reachable_stores, 0, "no reachable Store must remain");
     Ok(())
 }

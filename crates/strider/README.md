@@ -43,7 +43,11 @@ The orchestration flow is:
 
 1. **Build CFG**: [`cfg::Builder`](../cfg) walks pcode emitted by Sleigh,
    carving regions until each terminator. `BranchIndirect` opcodes leave
-   placeholder anchors.
+   placeholder anchors. The orchestrator constructs the builder via
+   `Builder::for_arch(arch, sleigh, start_addr, opts)` so endianness and
+   `ArchPreset` are derived from the `target::SleighArch` atomically — the
+   weaker `Builder::new` defaults to LE + x86_64 and would silently
+   misclassify CallOthers / decode bytes wrong on non-x86_64 binaries.
 2. **Lift to IR**: `Strider::analyze_cfg` walks the CFG region by region,
    handing each region's pcode to an internal `IrStrider` which dispatches
    value-producing opcodes through [`pcode-lift::ValueLifter`](../pcode-lift)

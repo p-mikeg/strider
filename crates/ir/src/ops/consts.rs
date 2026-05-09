@@ -74,19 +74,21 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns an error when `ty` is not an integer type, or is `U256`
-    /// (which is not yet representable in the `u128` storage that `IntConst`
-    /// uses), or when the freshly-created node does not have exactly one
-    /// output.
+    /// Returns an error when `ty` is not an integer type, or is `U256` /
+    /// `U512` (neither is representable in the `u128` storage that
+    /// `IntConst` uses — wide constants must go through
+    /// [`crate::FunctionBuilder::build_int_const_wide`]), or when the
+    /// freshly-created node does not have exactly one output.
     pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
         if !ty.is_integer() {
             return Err(anyhow!(
                 "make_int_const called with non-integer type {ty:?}"
             ));
         }
-        if matches!(ty, NodeOutputType::U256) {
+        if matches!(ty, NodeOutputType::U256 | NodeOutputType::U512) {
             return Err(anyhow!(
-                "make_int_const(U256) not yet supported - IntConst storage is u128"
+                "make_int_const({ty:?}) not supported - IntConst storage is u128; \
+                 use build_int_const_wide for U256/U512"
             ));
         }
         let node = self.create_node(

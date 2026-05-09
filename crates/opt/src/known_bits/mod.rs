@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use cranelift_entity::SecondaryMap;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
@@ -9,6 +9,14 @@ use crate::worklist::WorkSet;
 
 #[cfg(test)]
 mod tests;
+
+/// Per-output known-bits side-table.  Defaults to `Kb::default()`
+/// (`{ones: 0, zeros: 0}` = "no info") for unrecorded outputs, which is
+/// equivalent to "absent" in the previous `FxHashMap`-based form.
+/// Migrated from `FxHashMap<NodeOutputId, Kb>` to `SecondaryMap` to
+/// avoid hashing in the inner loop — at 10k+ nodes this is the
+/// hottest probe in the entire `KnownBits` pass.
+pub type KnownBitsMap = SecondaryMap<NodeOutputId, Kb>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -103,7 +111,7 @@ impl Kb {
 pub fn node_known_bits(
     fg: &BuiltFunctionGraph,
     node_id: NodeId,
-    known: &FxHashMap<NodeOutputId, Kb>,
+    known: &KnownBitsMap,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
     let kind = *fg.node_kind(node_id);
 
@@ -134,8 +142,8 @@ pub fn node_known_bits(
 
         NodeKind::IntBinaryOp(op) => {
             let [lhs, rhs] = fg.node_inputs_exact::<2>(node_id)?;
-            let l = known.get(&lhs).copied().unwrap_or_default();
-            let r = known.get(&rhs).copied().unwrap_or_default();
+            let l = known[lhs];
+            let r = known[rhs];
             match op {
                 IntBinaryOp::And => Kb {
                     ones: l.ones & r.ones,
@@ -169,7 +177,7 @@ pub fn node_known_bits(
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
+                    let rhs_kb = known[rhs];
                     if rhs_kb.all_known(rhs_mask) {
                         let bit_width = ty.bit_width() as u64;
                         if rhs_kb.ones >= bit_width {
@@ -210,7 +218,7 @@ pub fn node_known_bits(
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known.get(&rhs).copied().unwrap_or_default();
+                    let rhs_kb = known[rhs];
                     if rhs_kb.all_known(rhs_mask) {
                         let bit_width = ty.bit_width() as u64;
                         if rhs_kb.ones >= bit_width {
@@ -246,7 +254,7 @@ pub fn node_known_bits(
             // propagation: it depends on the borrow chain across the
             // input's bits, so it falls through to the unknown case.)
             let [input] = fg.node_inputs_exact::<1>(node_id)?;
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let kb = known[input];
             Kb {
                 ones: kb.zeros & type_mask,
                 zeros: kb.ones & type_mask,
@@ -256,7 +264,7 @@ pub fn node_known_bits(
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
             let [input] = fg.node_inputs_exact::<1>(node_id)?;
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let kb = known[input];
             Kb {
                 ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
@@ -269,7 +277,7 @@ pub fn node_known_bits(
             let input_kind = fg.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let input_mask = u64_type_mask(input_ty).unwrap_or(0);
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let kb = known[input];
             Kb {
                 ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
@@ -286,7 +294,7 @@ pub fn node_known_bits(
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
             };
-            let kb = known.get(&input).copied().unwrap_or_default();
+            let kb = known[input];
             // Sign bit = highest bit of the input width.
             let sign_bit = (input_mask >> 1) + 1;
             let upper_mask = type_mask & !input_mask;
@@ -364,7 +372,7 @@ pub fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, Kb>> {
+pub fn analyze(function: &BuiltFunctionGraph) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -376,13 +384,13 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<FxHashMap<NodeOutputId, 
     // surface a hard error on a zero-input zombie.  Reachability is
     // the validator's existing scope-of-correctness boundary
     // (Layer A in `ir::validate`), so it's the right scope here too.
-    let mut known: FxHashMap<NodeOutputId, Kb> = FxHashMap::default();
+    let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work = WorkSet::seeded(function.preorder());
     while let Some(node_id) = work.pop() {
         let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
             continue;
         };
-        let merged = known.entry(out).or_default().merge(kb)?;
+        let merged = known[out].merge(kb)?;
         if !merged {
             continue;
         }
@@ -441,7 +449,11 @@ impl OptimizerOnBuilt for KnownBits {
                 let Some(type_mask) = u64_type_mask(ty) else {
                     continue;
                 };
-                let Some(&kb) = known.get(&out) else { continue };
+                // SecondaryMap returns `Kb::default()` (zero-known) for
+                // unrecorded outputs — `all_known` then returns false,
+                // which short-circuits the same way the prior
+                // `Some(&kb) = known.get(&out) else { continue };` did.
+                let kb = known[out];
                 if !kb.all_known(type_mask) {
                     continue;
                 }

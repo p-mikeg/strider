@@ -239,7 +239,7 @@ def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
     if arch_id == "x86":
         arch, cc = strider.SleighArch.x86(), strider.CallingConvention.x86_cdecl()
     elif arch_id == "x64":
-        arch, cc = strider.SleighArch.x86_64(), strider.CallingConvention.x86_64_systemv_abi()
+        arch, cc = strider.SleighArch.x86_64(), strider.CallingConvention.x86_64_systemv()
     else:
         raise ValueError(arch_id)
     mem = strider.MemoryMap()

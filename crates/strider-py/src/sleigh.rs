@@ -142,9 +142,13 @@ impl PyVnSpace {
     }
 
     fn __hash__(&self) -> u64 {
-        // Sleigh spaces compare by pointer; hash via the same identity.
-        let p: *const () = (&self.inner) as *const _ as *const ();
-        p as usize as u64
+        // Hash the inner identity (the shortcut byte that's the
+        // PartialEq/Hash key on `rsleigh::VnSpace`) — NOT the heap
+        // address of `self.inner`.  Two PyVnSpace instances wrapping
+        // the same `VnSpace::RAM` live at different `&self.inner`
+        // addresses, so address-based hashing violated Python's
+        // `a == b ⇒ hash(a) == hash(b)` contract.
+        u64::from(self.inner.shortcut_raw())
     }
 }
 
@@ -209,8 +213,14 @@ impl PyVn {
     }
 
     fn __hash__(&self) -> u64 {
+        // Mix all three Vn fields into the hash so varnodes that differ
+        // only in `addr_space` (e.g. RAM[0x10]:8 vs REGISTER[0x10]:8)
+        // don't collide.  Without `addr_space` in the mix, equal-offset/
+        // equal-size varnodes in different spaces shared a bucket.
         let mut h = self.inner.addr_off;
         h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= u64::from(self.inner.addr_space.shortcut_raw())
+            .wrapping_mul(0xBF58_476D_1CE4_E5B9);
         h
     }
 }

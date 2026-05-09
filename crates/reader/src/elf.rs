@@ -564,7 +564,12 @@ pub fn apply_elf_relocations(
                         .ok()
                 };
                 let Some((addr, undef)) = resolved else {
-                    stats.skipped_unresolved_target += 1;
+                    // symbol_by_index returned Err — the index is invalid
+                    // (malformed ELF), distinct from the legitimate
+                    // weak-extern case below.  Match the GOT/PLT path's
+                    // bucket so callers diagnosing relocation outcomes
+                    // see a consistent error class.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 };
                 if addr == 0 && undef {
@@ -925,10 +930,12 @@ fn locate_and_write(
     endian_le: bool,
     stats: &mut RelocationStats,
 ) {
-    if let Some(region) = regions
-        .iter_mut()
-        .find(|r| r.contains(site_addr) && site_addr + size_bytes as u64 <= r.end_addr())
-    {
+    if let Some(region) = regions.iter_mut().find(|r| {
+        r.contains(site_addr)
+            && site_addr
+                .checked_add(size_bytes as u64)
+                .is_some_and(|end| end <= r.end_addr())
+    }) {
         let off = (site_addr - region.start_addr()) as usize;
         write_at(region.data_mut(), off, value, size_bytes, endian_le);
         stats.applied += 1;

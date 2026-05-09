@@ -85,7 +85,7 @@ fn analyze_with_known_targets(
         .expect("cfg build with Multiple known target");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("Strider::new");
     strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
 }
@@ -230,7 +230,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         .expect("cfg build");
 
     let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi())
+    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
         .expect("Strider::new");
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
     let mut graph = outcome.graph;

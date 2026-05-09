@@ -162,8 +162,8 @@ pub use var::Capture;
 #[rustfmt::skip]
 pub use pat::{
     BoolBinaryOpPat, CallOtherPat, CallPat, FloatBinaryOpPat, FunctionArgPat,
-    IfPat, IntBinaryOpPat, LoadPat, PhiPat, RetPat, StackStorePat,
-    StackStorePhiPat, StorePat,
+    IfPat, IntBinaryOpPat, LoadPat, MemPhiPat, PhiPat, RetPat, StackStorePat,
+    StackStorePhiPat, StorePat, ValuePhiPat,
 };
 
 // ── Wildcards, captures, predicates ──────────────────────────────────────────

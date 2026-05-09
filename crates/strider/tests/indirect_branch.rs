@@ -11,11 +11,11 @@
 //!
 //! Resolving this lowering requires **cross-region stack-load
 //! forwarding** (`StackStoreDetect` + `StackLoadForward` joined
-//! across the function's region graph) — round 1 of the
+//! across the function's region graph) — the initial round of the
 //! indirect-branch fixed-point design does not yet implement that
-//! layer.  Tier 1's mini-graph runs `ConstantFold` + `KnownBits` on
+//! layer.  the cfg-time mini-graph resolver's mini-graph runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
-//! the pushed label addresses.  Tier 2 in round 1 has the
+//! the pushed label addresses.  the IR-level orchestrator resolver in round 1 has the
 //! `LinkRegister` / `IntConst` / `Multiple-of-IntConsts` arms but
 //! no stack-array-of-labels arm.
 //!
@@ -104,7 +104,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         .unwrap_or_else(|e| panic!("analyze_cfg for indirect_branch_resolved on {}: {e:?}", arch.name()));
     let unresolved = graph.unresolved_branches.clone();
     if unresolved.is_empty() {
-        // Tier 1 already resolved this fixture (e.g. -O? collapse).
+        // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any

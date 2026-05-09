@@ -157,12 +157,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let if_count = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .count();
+    let if_count = crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
     Ok(())
 }

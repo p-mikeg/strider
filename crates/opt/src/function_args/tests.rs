@@ -54,12 +54,9 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 
     // The original InitialVar(rdi) should have no remaining live uses
     // (the Return should now source from the FunctionArg output).
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_initial_rdi = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::InitialVar(v) if *v == rdi))
-        .count();
+    let reachable_initial_rdi = crate::test_support::count_reachable(&fg, |k| {
+        matches!(k, NodeKind::InitialVar(v) if *v == rdi)
+    });
     assert_eq!(
         reachable_initial_rdi, 0,
         "InitialVar(rdi) should be detached after rewiring"
@@ -117,12 +114,9 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 
     // The original Load should no longer be reachable (its single consumer,
     // the Return, now sources from the FunctionArg).
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let reachable_loads = crate::test_support::count_reachable(&fg, |k| {
+        matches!(k, NodeKind::Load(_))
+    });
     assert_eq!(
         reachable_loads, 0,
         "Load[sp+4] should be detached after rewiring"
@@ -200,12 +194,9 @@ fn stack_arg_gap_truncates() -> Result<()> {
     assert_eq!(arg2, 0, "arg 2 (sp+12) must be truncated by the gap");
 
     // The sp+12 load must still exist and be reachable.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let reachable_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let reachable_loads = crate::test_support::count_reachable(&fg, |k| {
+        matches!(k, NodeKind::Load(_))
+    });
     assert_eq!(
         reachable_loads, 1,
         "sp+12 Load should remain (sp+4 Load replaced)"

@@ -11,7 +11,7 @@ fn x86_64_regs() -> rsleigh::SleighRegs {
 }
 
 fn x86_64_built_cc() -> BuiltCallingConvention {
-    CallingConvention::x86_64_systemv_abi()
+    CallingConvention::x86_64_systemv()
         .build(&x86_64_regs())
         .unwrap()
 }

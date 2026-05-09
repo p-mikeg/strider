@@ -55,7 +55,7 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
     };
     let cc = match c.arch_name {
         "x86" => strider::CallingConvention::x86_cdecl(),
-        "x64" => strider::CallingConvention::x86_64_systemv_abi(),
+        "x64" => strider::CallingConvention::x86_64_systemv(),
         // The earlier `match c.arch_name` guards this — we only
         // reach this point on supported arches.  Use `panic!`
         // (the bench's `clippy::panic` is allow-listed) rather
@@ -86,7 +86,11 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+    // Use `for_arch` so both endianness AND `ArchPreset` are derived
+    // atomically; `with_endianness` would default the preset to `X86_64`,
+    // breaking arch-specific CallOther dispatch.  See
+    // round8-correctness-cross-arch §1.
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
     let mut graph = ana.analyze_cfg(&cfg).expect("analyze_cfg").graph;

@@ -201,9 +201,23 @@ impl Match {
             // output) or 3 (with value output).  Detect by total
             // output count: `2 + clobber_len` for value-less,
             // `3 + clobber_len` for value-bearing.
+            //
+            // The clobber length here is per-CallOther: a precise-ABI
+            // CallOther carries its own `call_clobbered_override` list,
+            // and that list's length may differ from the function-default
+            // `call_other_clobbered` (e.g. `syscall` writes RAX/RCX/R11
+            // = 3 slots, while a SWI emits only `[r0]` = 1 slot, while
+            // the function-default may be empty).  Use the override
+            // length when present so `clobber_start` matches the actual
+            // node shape — a function-default-based check would produce
+            // a "shape we don't recognise" miss for every per-CallOther
+            // override whose length differs from the default.
             if matches!(kind, NodeKind::CallOther { .. }) {
                 let total_outputs = graph.graph.node_outputs(node).len();
-                let clobber_len = graph.call_other_clobbered.len();
+                let clobber_len = graph
+                    .graph
+                    .call_clobbered_override(node)
+                    .map_or(graph.call_other_clobbered.len(), |ov| ov.len());
                 let clobber_start: u32 = if total_outputs == 2 + clobber_len {
                     2
                 } else if total_outputs == 3 + clobber_len {

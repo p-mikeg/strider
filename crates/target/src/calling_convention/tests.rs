@@ -28,7 +28,7 @@ fn cases() -> Vec<Case> {
     vec![
         Case {
             name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv_abi,
+            cc: CallingConvention::x86_64_systemv,
             arch: crate::arch::SleighArch::x86_64,
             arg_count: 6,
             callee_saved_count: 6,
@@ -603,7 +603,7 @@ fn link_reg_cases() -> Vec<LinkRegCase> {
         },
         LinkRegCase {
             name: "x86-64 SysV",
-            cc: CallingConvention::x86_64_systemv_abi,
+            cc: CallingConvention::x86_64_systemv,
             arch: crate::arch::SleighArch::x86_64,
             expected_lr_name: None,
         },
@@ -771,7 +771,7 @@ fn standard_presets_have_no_memory_clobber_false() {
     // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
     // opts out.
     let presets: &[(&str, CallingConvention)] = &[
-        ("x86_64_systemv_abi", CallingConvention::x86_64_systemv_abi()),
+        ("x86_64_systemv", CallingConvention::x86_64_systemv()),
         ("x86_cdecl", CallingConvention::x86_cdecl()),
         ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64()),
         ("arm_aapcs", CallingConvention::arm_aapcs()),

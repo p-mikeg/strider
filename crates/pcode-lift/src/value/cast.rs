@@ -129,10 +129,16 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         };
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
         let out = if (len as usize) < narrow_ty.bit_width() {
-            let mask_val = if len >= 64 {
-                u64::MAX
+            // Compute the AND-mask in u128 so a U128 narrow_ty with
+            // 64 ≤ len < 128 produces a mask covering the requested
+            // upper bits.  Using u64 here would cap the mask at
+            // 0xFFFF_FFFF_FFFF_FFFF, then `build_int_const` would
+            // zero-extend to u128 and the result would zero bits
+            // 64..127 of the narrowed value.
+            let mask_val: u128 = if (len as usize) >= 128 {
+                u128::MAX
             } else {
-                (1u64 << len) - 1
+                (1u128 << len) - 1
             };
             let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
             self.builder.build_int_binary_operation(
@@ -165,10 +171,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
         let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
 
-        let mask_raw = if len >= 64 {
-            u64::MAX
+        // Compute masks in u128 so a U128 (or U80) `out_ty` with
+        // `lsb + len > 64` produces correct bits in slots 64..127.
+        // Using u64 here would silently zero those slots through
+        // `build_int_const`'s u64→u128 zero-extension.
+        let mask_raw: u128 = if (len as usize) >= 128 {
+            u128::MAX
         } else {
-            (1u64 << len) - 1
+            (1u128 << len) - 1
         };
         let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
         let not_mask_shifted = !mask_shifted;

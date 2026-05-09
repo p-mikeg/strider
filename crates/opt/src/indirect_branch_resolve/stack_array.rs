@@ -78,7 +78,7 @@ pub fn classify_stack_array(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
-    known: &rustc_hash::FxHashMap<NodeOutputId, crate::Kb>,
+    known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     let graph = &fg.graph;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the

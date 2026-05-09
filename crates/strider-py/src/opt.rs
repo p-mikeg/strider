@@ -256,54 +256,30 @@ impl PyOptimizerPipeline {
 //
 // One zero-sized class per pure (no-arg) Rust pass.  CC/arch-aware
 // passes that need configuration land in a follow-up task.
+//
+// `pure_pass_class!` collapses the 5-line zero-sized-struct + #[new]
+// boilerplate that each pass would otherwise repeat verbatim.  The
+// macro emits a `pub struct Py<Name>` plus a `#[pymethods]` block with
+// a single `#[new] fn new() -> Self { Self }`.
 
-#[pyclass(name = "ConstantFold", module = "strider.opt")]
-pub struct PyConstantFold;
-#[pymethods]
-impl PyConstantFold {
-    #[new]
-    fn new() -> Self { Self }
+macro_rules! pure_pass_class {
+    ($pyname:literal => $rust:ident) => {
+        #[pyclass(name = $pyname, module = "strider.opt")]
+        pub struct $rust;
+        #[pymethods]
+        impl $rust {
+            #[new]
+            fn new() -> Self { Self }
+        }
+    };
 }
 
-#[pyclass(name = "KnownBits", module = "strider.opt")]
-pub struct PyKnownBits;
-#[pymethods]
-impl PyKnownBits {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "RedundantPhis", module = "strider.opt")]
-pub struct PyRedundantPhis;
-#[pymethods]
-impl PyRedundantPhis {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "DeadBranchElim", module = "strider.opt")]
-pub struct PyDeadBranchElim;
-#[pymethods]
-impl PyDeadBranchElim {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "FlagCmpCanonicalize", module = "strider.opt")]
-pub struct PyFlagCmpCanonicalize;
-#[pymethods]
-impl PyFlagCmpCanonicalize {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-#[pyclass(name = "IfCondInversion", module = "strider.opt")]
-pub struct PyIfCondInversion;
-#[pymethods]
-impl PyIfCondInversion {
-    #[new]
-    fn new() -> Self { Self }
-}
+pure_pass_class!("ConstantFold" => PyConstantFold);
+pure_pass_class!("KnownBits" => PyKnownBits);
+pure_pass_class!("RedundantPhis" => PyRedundantPhis);
+pure_pass_class!("DeadBranchElim" => PyDeadBranchElim);
+pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize);
+pure_pass_class!("IfCondInversion" => PyIfCondInversion);
 
 // ── CC/arch-aware passes ──────────────────────────────────────────────────
 //
@@ -324,13 +300,7 @@ impl PyStackStoreDetect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::StackStoreDetect::from_convention(&built_cc),
         })
@@ -351,13 +321,7 @@ impl PyStackLoadForward {
         cc: crate::cc::PyCallingConvention,
         arch: crate::arch::PySleighArch,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::StackLoadForward::from_convention(&built_cc, &arch.inner),
         })
@@ -377,13 +341,7 @@ impl PyFunctionArgDetect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::FunctionArgDetect::from_convention(&built_cc),
         })
@@ -403,13 +361,7 @@ impl PyCallStackArgCollect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        drop(sleigh_borrow);
-        let built_cc = cc
-            .inner
-            .build(&regs)
-            .map_err(crate::errors::into_lift_err)?;
+        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
         Ok(Self {
             inner: opt::CallStackArgCollect::from_convention(&built_cc),
         })

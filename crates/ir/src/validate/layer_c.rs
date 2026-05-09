@@ -219,14 +219,24 @@ pub(super) fn check_layer_c_asm_fingerprints(
 /// [`opt::FunctionArgDetect`] pass emits one canonical node per argument
 /// index; having two would mean patterns keyed by `matcher.function_arg(i)`
 /// become ambiguous.
+///
+/// Reachability-scoped — every other Layer-C per-node check is
+/// reachability-gated, and `RedundantPhis` may leave a stale
+/// `FunctionArg` zombie in the arena while a new canonical one is live.
+/// Without scoping, the validator would flag a structurally valid graph
+/// with `DuplicateFunctionArg`.
 pub(super) fn check_layer_c_function_arg_uniqueness(
     graph: &Graph,
+    reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
     use std::collections::HashMap;
 
     let mut by_index: HashMap<u32, NodeId> = HashMap::new();
     for node in graph.nodes.keys() {
+        if !reachable.contains(node) {
+            continue;
+        }
         let index = match *graph.node_kind(node) {
             NodeKind::FunctionArg { index, .. } => index,
             _ => continue,

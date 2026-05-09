@@ -23,11 +23,9 @@ fn sp64_vn() -> rsleigh::Vn {
 }
 
 fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    fg.all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| pred(fg.node_kind(n)))
-        .count()
+    // Delegate to the shared helper promoted in `test_support` —
+    // see `reviews/round8-repetition-sweep.md` (#1).
+    crate::test_support::count_reachable(fg, pred)
 }
 
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes

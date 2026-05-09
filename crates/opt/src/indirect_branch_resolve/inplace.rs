@@ -56,11 +56,15 @@ pub fn apply_link_register(
     }
     // Drop the placeholder `target_value` at slot 2 (after [control, memory]).
     // Done after `add_node_input` above so the appended ret_vals shift down
-    // from slot 3+ to slot 2+ post-removal.
-    let inputs = graph.node_inputs(placeholder);
-    if inputs.len() > 2 && inputs.len() > ret_val_outputs.len() + 2 {
-        graph.remove_node_input(placeholder, 2)?;
-    }
+    // from slot 3+ to slot 2+ post-removal.  Removal is unconditional: the
+    // matches!-guard above already pinned this as a 3-input IndirectBranch
+    // [control, memory, target_value], and the loop only appends, so slot 2
+    // is always present.
+    debug_assert!(
+        graph.node_inputs(placeholder).len() >= 3,
+        "IndirectBranch must have ≥3 inputs (control, memory, target_value)"
+    );
+    graph.remove_node_input(placeholder, 2)?;
     // Mutate the kind: IndirectBranch → Return.  Same input/output
     // signature shape (control + memory + variadic value tail; no
     // outputs); both kinds are non-cacheable.
@@ -123,10 +127,19 @@ pub fn apply_tail_call(
     let memory_in = inputs[1];
     let target_value = inputs[2];
 
+    // Surface a non-integer target type as a typed error — silently
+    // defaulting to U64 would mask an upstream invariant break (every
+    // BranchIndirect placeholder's target_value must be an integer
+    // address).
     let target_int_ty = graph
         .output_kind(target_value)
         .as_integer_or_err()
-        .unwrap_or(ir::node::NodeOutputType::U64);
+        .map_err(|e| anyhow!(
+            "apply_tail_call: expected integer target type for IndirectBranch placeholder, \
+             got {:?} (node {:?}): {e}",
+            graph.output_kind(target_value),
+            placeholder
+        ))?;
 
     // Snapshot the placeholder's asm-fingerprint BEFORE detaching it; we
     // absorb it into every new node spliced in below so the placeholder's
@@ -397,5 +410,46 @@ mod tests {
         assert_eq!(inputs.len(), 4, "[call_ctrl, call_mem, r0, r1]");
         assert_eq!(inputs[2], r0);
         assert_eq!(inputs[3], r1);
+    }
+
+    /// Regression for round8-2C H4: `apply_tail_call` must propagate an
+    /// `Err` (not silently default to `U64`) when the placeholder's
+    /// `target_value` has a non-integer output type.  We construct a
+    /// malformed IndirectBranch directly via `Graph::create_node` so the
+    /// builder's typechecking doesn't reject it; this exercises the
+    /// defensive `as_integer_or_err()?` path.
+    #[test]
+    fn apply_tail_call_rejects_non_integer_target_type() {
+        let (mut fg, placeholder) = build_placeholder_graph();
+        // Build a Bool-typed value that we'll splice into the placeholder's
+        // target_value slot.  `BoolConst` produces a single Bool output.
+        let bool_const = fg.graph.create_node(
+            NodeKind::BoolConst(true),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        );
+        let bool_out = fg.graph.node_outputs(bool_const).into_iter().next().unwrap();
+        // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
+        let target_input_id = fg
+            .graph
+            .node_input_id_at(placeholder, 2)
+            .expect("input slot 2 exists");
+        fg.graph.update_input(target_input_id, bool_out);
+        // Sanity: the placeholder now has a Bool target_value.
+        let target_value_kind = fg
+            .graph
+            .output_kind(fg.graph.node_inputs(placeholder)[2]);
+        assert!(
+            matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::Bool)),
+            "fixture must have Bool target_value, got {target_value_kind:?}"
+        );
+
+        let result = apply_tail_call(&mut fg, placeholder, 0xc0de, &[], &[], &[]);
+        let err = result.expect_err("non-integer target_value must propagate as Err");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("integer") || msg.contains("Bool"),
+            "Err must name the type problem; got: {msg}"
+        );
     }
 }

@@ -120,7 +120,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
 fn ir_level_classification_robust_to_destructive_subset() {
     // Classify an anchor on a stable-only optimised graph and on a
     // stable + destructive optimised graph.  Both must produce the
-    // same `Option<ResolvedTargets>` — the spec's "Tier 2's
+    // same `Option<ResolvedTargets>` — the spec's "the IR-level orchestrator resolver's
     // classification is robust to whether the destructive subset
     // has run" guarantee.
     use strider::indirect_resolve::classify_anchor;

@@ -24,7 +24,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 fn make_strider() -> Strider {
     let arch = SleighArch::x86_64();
     let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv_abi()).unwrap()
+    Strider::new(arch, regs, CallingConvention::x86_64_systemv()).unwrap()
 }
 
 #[test]

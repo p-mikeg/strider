@@ -147,12 +147,8 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     })?;
     assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let remaining_loads = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .count();
+    let remaining_loads =
+        crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())
 }

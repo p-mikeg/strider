@@ -110,7 +110,7 @@ fn x86_64_cmp_je_branch_bytes() -> Vec<u8> {
 fn x86_64_je_after_pipeline_has_direct_int_cmp_cond() {
     let graph = lift(
         SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv_abi(),
+        CallingConvention::x86_64_systemv(),
         x86_64_cmp_je_branch_bytes(),
     );
     let if_node = find_unique_if(&graph);

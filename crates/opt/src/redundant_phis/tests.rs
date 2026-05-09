@@ -58,12 +58,9 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
-    let surviving_sp_phis = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::VarPhi(vn) if *vn == sp))
-        .count();
+    let surviving_sp_phis = crate::test_support::count_reachable(&fg, |k| {
+        matches!(k, NodeKind::VarPhi(vn) if *vn == sp)
+    });
     assert_eq!(
         surviving_sp_phis, 0,
         "VarPhi(sp) with identical data inputs must be removed"
@@ -95,11 +92,11 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
-    // must be 0.
-    let reachable: std::collections::HashSet<_> = fg.preorder().collect();
+    // must be 0.  `count_reachable` only filters by `NodeKind`, so the
+    // arity-additional check is inline below — `preorder()` is the
+    // reachable iterator the helper itself uses internally.
     let surviving = fg
-        .all_node_ids()
-        .filter(|n| reachable.contains(n))
+        .preorder()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::MemPhi))
         .filter(|&n| fg.node_inputs(n).len() <= 2)
         .count();

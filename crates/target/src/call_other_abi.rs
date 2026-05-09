@@ -334,6 +334,18 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         "DataSynchronizationBarrier"        => PURE_WITH_MEM_EDGE,
         "InstructionSynchronizationBarrier" => PURE_WITH_MEM_EDGE,
 
+        // x86/x86_64 standalone memory fences — explicit ordering
+        // primitives with no register channel.  Emitted by Sleigh's
+        // x86 spec as the lowercase mnemonic.  Memory-edge so opt
+        // passes that walk the memory chain (StackLoadForward,
+        // LoadReadOnly) cannot forward across them — matches the
+        // semantic that subsequent loads must observe prior stores
+        // in program order.  Without this entry, any binary using
+        // SSE memory fences would lift to UnknownCallOtherError.
+        "lfence" => PURE_WITH_MEM_EDGE,
+        "mfence" => PURE_WITH_MEM_EDGE,
+        "sfence" => PURE_WITH_MEM_EDGE,
+
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
         "in"  => PURE_WITH_MEM_EDGE,
@@ -803,6 +815,37 @@ mod tests {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap();
             match class {
                 CallOtherClass::NoOp | CallOtherClass::NoReturn | CallOtherClass::Call(_) => {}
+            }
+        }
+    }
+
+    /// Regression for round8-17 D-1: x86/x86_64 memory fences (mfence,
+    /// sfence, lfence) MUST classify as PURE_WITH_MEM_EDGE so any binary
+    /// using SSE memory fences lifts cleanly.  Without this entry, the
+    /// CallOther emitted by Sleigh would raise UnknownCallOtherError at
+    /// the IR layer.
+    #[test]
+    fn x86_memory_fences_classify_as_pure_with_mem_edge() {
+        for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
+            for name in ["mfence", "sfence", "lfence"] {
+                let cls = classify(preset, name)
+                    .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
+                let abi = match cls {
+                    CallOtherClass::Call(abi) => abi,
+                    other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
+                };
+                assert!(
+                    abi.implicit_reads.is_empty(),
+                    "({preset:?}, {name}) must have empty implicit_reads"
+                );
+                assert!(
+                    abi.implicit_writes.is_empty(),
+                    "({preset:?}, {name}) must have empty implicit_writes"
+                );
+                assert!(
+                    abi.memory_edge,
+                    "({preset:?}, {name}) must advance memory edge — fences are ordering primitives"
+                );
             }
         }
     }

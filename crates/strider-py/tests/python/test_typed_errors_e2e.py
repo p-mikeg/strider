@@ -111,7 +111,7 @@ def test_lift_error_on_unmapped_entry_address():
     minimal repro."""
     mem = strider.MemoryMap()  # no regions added
     arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv_abi()
+    cc = strider.CallingConvention.x86_64_systemv()
     # Any address — the orchestrator will fail on the very first lift
     # because the buffered reader has no data at all.
     with pytest.raises(errors.StriderError):
@@ -136,7 +136,7 @@ def test_lift_error_subclass_when_explicit_lift_fails():
     fired."""
     mem = strider.MemoryMap()
     arch = strider.SleighArch.x86_64()
-    cc = strider.CallingConvention.x86_64_systemv_abi()
+    cc = strider.CallingConvention.x86_64_systemv()
     raised: BaseException | None = None
     try:
         strider.run(

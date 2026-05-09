@@ -28,6 +28,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use ir::Graph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
 
@@ -260,7 +261,6 @@ impl IndirectBranchResolve {
         // affects bounds on existing producers).
         let known = crate::analyze_known_bits(fg)?;
         let mut changed = false;
-        let empty_ctx = AnchorCallingContext::default();
         for (addr, anchor_output) in &self.unresolved_anchors {
             let resolved = match classify::classify_anchor_with_rom_and_sp(
                 fg,
@@ -278,7 +278,17 @@ impl IndirectBranchResolve {
             else {
                 continue;
             };
-            let ctx = self.anchor_contexts.get(addr).unwrap_or(&empty_ctx);
+            // Surface a missing anchor context as an Err — the orchestrator
+            // populates `anchor_contexts` and `unresolved_anchors` in lockstep,
+            // so a missing entry here means an upstream contract was broken.
+            // Silently substituting an empty context would splice a `Return`
+            // with zero return values and a `Call` with zero args/clobbers,
+            // producing wrong IR.
+            let ctx = self.anchor_contexts.get(addr).ok_or_else(|| {
+                anyhow!(
+                    "IndirectBranchResolve: missing AnchorCallingContext for anchor {addr:?}"
+                )
+            })?;
             match resolved {
                 ResolvedTargets::LinkRegister => {
                     inplace::apply_link_register(fg, placeholder, &ctx.ret_val_outputs)?;
@@ -466,7 +476,16 @@ mod tests {
 
         let mut pass = IndirectBranchResolve::new();
         pass.link_register_vn = Some(lr_vn);
-        pass.unresolved_anchors.push((fake_addr(0x1234), live_anchor));
+        let anchor_addr = fake_addr(0x1234);
+        pass.unresolved_anchors.push((anchor_addr, live_anchor));
+        // Pair each unresolved anchor with a default (empty-ABI) calling
+        // context — `IndirectBranchResolve::optimize` now requires the
+        // two lists to be in lockstep.  The orchestrator populates both
+        // from the same source; tests bypassing the orchestrator must do
+        // the same.  Empty context is sound here: this test exercises
+        // only the `LinkRegister` arm, which uses `ctx.ret_val_outputs`
+        // (empty by default = no return values, valid IR).
+        pass.anchor_contexts.insert(anchor_addr, AnchorCallingContext::default());
         let result = pass.optimize(&mut built.graph, entry)?;
         assert_eq!(result, OptimizationResult::Changed);
         Ok(())
@@ -480,7 +499,9 @@ mod tests {
         let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
         let mut pass = IndirectBranchResolve::new();
-        pass.unresolved_anchors.push((fake_addr(0x1000), anchor));
+        let anchor_addr = fake_addr(0x1000);
+        pass.unresolved_anchors.push((anchor_addr, anchor));
+        pass.anchor_contexts.insert(anchor_addr, AnchorCallingContext::default());
         // Treat 0xc0de as a tail call (out of function range).
         pass.is_tail_call = Box::new(|target| target == 0xc0de);
         let result = pass.optimize(&mut graph, entry)?;
@@ -505,7 +526,9 @@ mod tests {
         let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
         let mut pass = IndirectBranchResolve::new();
-        pass.unresolved_anchors.push((fake_addr(0x1000), anchor));
+        let anchor_addr = fake_addr(0x1000);
+        pass.unresolved_anchors.push((anchor_addr, anchor));
+        pass.anchor_contexts.insert(anchor_addr, AnchorCallingContext::default());
         // Always intra-function — no tail calls.
         pass.is_tail_call = Box::new(|_| false);
         let result = pass.optimize(&mut graph, entry)?;
@@ -518,5 +541,53 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// Regression for round8-2C H5: a missing `AnchorCallingContext` for
+    /// an entry in `unresolved_anchors` MUST produce a typed `Err`
+    /// rather than silently splicing an empty calling context.  The
+    /// orchestrator populates both lists in lockstep — a mismatch is a
+    /// contract violation that shouldn't be papered over.
+    #[test]
+    fn pass_errors_when_anchor_context_missing() {
+        let lr_vn = rsleigh::Vn {
+            addr_off: 0x4c,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 4,
+        };
+        let mut b = FunctionBuilder::new_raw(vec![lr_vn], &[], &[], &[], None, 0).unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        let lr_in = b.read_variable(&lr_vn).unwrap();
+        b.build_indirect_branch(lr_in).unwrap();
+        let mut built = b.build().unwrap();
+        let entry = built.entry;
+        // Collapse the trivial VarPhi(lr) so the anchor is InitialVar.
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::RedundantPhis);
+        p.run(&mut built.graph, entry).unwrap();
+
+        let placeholder_id = built
+            .all_node_ids()
+            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
+            .unwrap();
+        let live_anchor: Vec<_> =
+            built.graph.node_inputs(placeholder_id).into_iter().collect();
+        let live_anchor = live_anchor[2];
+
+        let mut pass = IndirectBranchResolve::new();
+        pass.link_register_vn = Some(lr_vn);
+        // Populate `unresolved_anchors` but DELIBERATELY leave
+        // `anchor_contexts` empty — the lockstep contract is broken.
+        pass.unresolved_anchors.push((fake_addr(0x9999), live_anchor));
+        let err = pass
+            .optimize(&mut built.graph, entry)
+            .expect_err("missing anchor context must propagate as Err");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("missing AnchorCallingContext"),
+            "Err message must name the contract violation; got: {msg}"
+        );
     }
 }
