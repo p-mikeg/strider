@@ -114,7 +114,17 @@ pub fn classify_stack_array(
             &mut memo,
             &mut walk_memo,
         )?;
-        let c = graph.int_const_val(value)?;
+        // Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave): peel
+        // `Truncate(IntConst)` and `Extend(IntConst)` wrappers before
+        // checking for a constant.  AArch64-BE's lifter wraps stored
+        // label addresses in `Truncate` for 32-bit ARM Thumb-interworking
+        // (mask to pointer width); ConstantFold rules 4-6 normally fold
+        // these, but the StackStore→StackLoadForward path can land us on
+        // a not-yet-folded shape.  SOUND: both wrappers are deterministic
+        // functions of the inner constant, exactly mirroring the
+        // `Truncate(IntConst)` / `Extend(IntConst)` arms in
+        // `classify_anchor_with_rom_and_sp`.
+        let c = peel_to_u64_const(graph, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -123,6 +133,68 @@ pub fn classify_stack_array(
         None
     } else {
         Some(ResolvedTargets::Multiple(targets))
+    }
+}
+
+/// Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers and return
+/// the inner constant masked to its consumer-declared output width.
+/// Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave) companion to the
+/// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
+/// label addresses in `Truncate(IntConst, U32)` (32-bit ARM
+/// Thumb-interworking); ConstantFold normally folds these but the
+/// `StackStore` → `StackLoadForward` propagation can leave the wrapper
+/// in place when the load's declared output type matches the truncate.
+///
+/// Mirrors the `Truncate(_)` and `Extend(_)` arms in
+/// `crates/opt/src/indirect_branch_resolve/classify.rs:233-269`.
+///
+/// SOUND: both wrappers are deterministic functions of the inner
+/// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
+/// requires the input width to recover the sign.  Truncate masks to
+/// the output width.
+fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
+    // Direct IntConst — fast path.
+    if let Some(c) = graph.int_const_val(out) {
+        return Some(c);
+    }
+    let producer = graph.get_node_from_output(out);
+    let kind = *graph.node_kind(producer);
+    match kind {
+        NodeKind::Truncate => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer).into_iter().collect();
+            let inner = *inputs.first()?;
+            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            if let NodeKind::IntConst(k) = inner_kind {
+                let out_ty = graph.output_kind(out).as_value()?;
+                let masked = k & out_ty.bit_mask_u128();
+                #[allow(clippy::cast_possible_truncation)]
+                return Some(masked as u64);
+            }
+            None
+        }
+        NodeKind::Extend(op) => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer).into_iter().collect();
+            let inner = *inputs.first()?;
+            let inner_kind = *graph.node_kind(graph.get_node_from_output(inner));
+            let NodeKind::IntConst(k) = inner_kind else {
+                return None;
+            };
+            match op {
+                ir::ExtendOp::ZeroExtend => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Some(k as u64)
+                }
+                ir::ExtendOp::SignExtend => {
+                    let in_ty = graph.output_kind(inner).as_value()?;
+                    let signed = in_ty.get_signed_int(k)?;
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    Some(signed as u64)
+                }
+            }
+        }
+        _ => None,
     }
 }
 
