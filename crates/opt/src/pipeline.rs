@@ -111,7 +111,7 @@ pub(crate) fn with_built<R>(
 /// modified (causing the pipeline to run another iteration) or
 /// [`OptimizationResult::NoChange`] if the graph is already in normal form for
 /// this pass.
-pub trait Optimizer {
+pub trait Optimizer: Send + Sync {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
     /// # Why `(&mut Graph, NodeId)` and not `&mut BuiltFunctionGraph`
@@ -148,7 +148,7 @@ pub trait Optimizer {
 /// [`crate::indirect_branch_resolve::IndirectBranchResolve`], whose
 /// in-place edits straddle `with_built` boundaries) implement
 /// [`Optimizer`] directly instead.
-pub trait OptimizerOnBuilt {
+pub trait OptimizerOnBuilt: Send + Sync {
     /// Run one sweep of this pass over the function graph.  See
     /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.
     ///
