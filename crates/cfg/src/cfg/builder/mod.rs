@@ -64,9 +64,10 @@ pub struct Builder<R: rsleigh::MemReader> {
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
     /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::Arch::X86_64`] when constructed via [`Self::new`] /
+    /// [`target::ArchPreset::X86_64`] when constructed via [`Self::new`] /
     /// [`Self::with_endianness`]; callers that analyse non-x86_64
-    /// binaries should set it via [`Self::with_arch`].
+    /// binaries should use [`Self::for_arch`] (atomic endianness +
+    /// preset) or [`Self::with_preset`] to override.
     pub(super) preset: target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
@@ -145,10 +146,12 @@ impl<R: rsleigh::MemReader> Builder<R> {
         }
     }
 
-    /// Sets the [`target::Arch`] used by the `Opcode::CallOther` arm
-    /// in [`super::region_builder`] when consulting
+    /// Sets the [`target::ArchPreset`] used by the `Opcode::CallOther`
+    /// arm in [`super::region_builder`] when consulting
     /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::Arch::X86_64`]; override for non-x86_64 targets.
+    /// [`target::ArchPreset::X86_64`]; override for non-x86_64 targets.
+    /// Prefer [`Self::for_arch`] when an arch object is in scope —
+    /// it sets endianness AND preset atomically.
     #[must_use]
     pub fn with_preset(mut self, preset: target::ArchPreset) -> Self {
         self.preset = preset;
