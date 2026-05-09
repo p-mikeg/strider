@@ -87,7 +87,39 @@ pub enum ResolvedTargets {
     Single(u64),
     /// The indirect branch resolves to a known set of constant
     /// targets.  Sorted-deduplicated by the classifier.
+    ///
+    /// **Invariant:** the inner `Vec` must be **non-empty**.  An
+    /// empty `Multiple` would silently advertise zero runtime targets,
+    /// making the dispatch site appear unreachable.  Use
+    /// [`Self::multiple`] for the validating constructor that
+    /// rejects empty input — the existing `Multiple(targets)`
+    /// tuple-construct form is retained for pattern-matching and
+    /// for callers that have already established non-emptiness.
     Multiple(Vec<u64>),
+}
+
+impl ResolvedTargets {
+    /// Validating constructor for [`Self::Multiple`] (round 9 P5 /
+    /// R9-2D M6).  Rejects empty `targets` so a future arm cannot
+    /// silently produce an unreachable dispatch site.  The classifier
+    /// arms (jump-table, stack-array, ValuePhi) already check
+    /// `targets.is_empty()` and return `None` instead of constructing
+    /// an empty `Multiple`; this constructor codifies the contract
+    /// for any future arm.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if `targets` is empty.
+    pub fn multiple(targets: Vec<u64>) -> std::result::Result<Self, anyhow::Error> {
+        if targets.is_empty() {
+            return Err(anyhow::anyhow!(
+                "ResolvedTargets::multiple: targets must be non-empty \
+                 (an empty Multiple advertises zero runtime targets, \
+                 making the dispatch site appear unreachable)"
+            ));
+        }
+        Ok(Self::Multiple(targets))
+    }
 }
 
 /// Opt pass that classifies indirect-branch placeholder anchors and
