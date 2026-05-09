@@ -1,15 +1,20 @@
-//! Walk-through helpers for [`MatcherOptions::ignore_cast_mask`] and
+//! `ControlState` walk-through helper for
 //! [`MatcherOptions::ignore_control_states`].
 //!
-//! When a flag / mask bit is set, the matcher's input-walking layer falls
-//! through these helpers if a direct match fails: instead of giving up,
-//! it recurses past a "transparent" producer node (a value-passthrough
-//! cast selected by the mask, or a region-join `ControlState`) and
-//! retries the inner pattern.
+//! When the flag is set, the matcher's input-walking layer falls
+//! through this helper if a direct match fails: instead of giving up,
+//! it tries the inner pattern against each predecessor of the
+//! region-join `ControlState`.
 //!
 //! Direct match is always tried first — the fallback runs only after a
-//! direct attempt and bindings rollback, so strict patterns (like
-//! `truncate(x)` looking for a literal Truncate) keep matching unchanged.
+//! direct attempt and bindings rollback, so strict patterns keep
+//! matching unchanged.
+//!
+//! The sibling cast walk-through (selected by
+//! [`MatcherOptions::ignore_cast_mask`]) lives inline in
+//! [`crate::matcher::Matcher::match_output_with_walk_through`] — it
+//! unwraps a value-passthrough cast and loops, which is cheaper as a
+//! tail-loop than a recursive call.
 
 use ir::node::{NodeKind, NodeOutputId};
 

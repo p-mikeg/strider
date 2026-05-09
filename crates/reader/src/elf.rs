@@ -764,10 +764,9 @@ pub fn apply_elf_relocations_autoload(
         }
         Ok(Some(MemRegion::new(sec.address(), data.to_vec())?))
     })?;
-    // Round 10 H10-S3: surface autoload section-parse failures via a
-    // counter on the returned stats, in addition to the eprintln on
-    // stderr.  Programmatic callers can detect malformed-ELF without
-    // scraping stderr.
+    // Surface autoload section-parse failures on `stats` so
+    // programmatic callers can detect malformed-ELF without inspecting
+    // log output.
     stats.autoload_section_parse_failures = parse_failures;
     Ok(stats)
 }
@@ -792,21 +791,19 @@ fn find_loadable_section_containing<'data, 'a>(
         // SHT_NOBITS sections (BSS) and sections whose data fails to
         // parse both yield no usable bytes — treat them identically as
         // "skip this section for site-coverage", but distinguish the
-        // parse-failure case via both `eprintln!` AND a counter the
-        // caller surfaces in `RelocationStats::autoload_section_parse_failures`,
-        // so programmatic callers can detect malformed-ELF without
-        // scraping stderr.
+        // parse-failure case via the
+        // `RelocationStats::autoload_section_parse_failures` counter
+        // the caller surfaces, so programmatic callers can detect
+        // malformed-ELF without scraping stderr.  No `eprintln!`: this
+        // is library code, and stderr writes from a deep helper are
+        // un-suppressable noise for embedders.
         match sec.data() {
             Ok(d) => {
                 if d.is_empty() {
                     return false;
                 }
             }
-            Err(e) => {
-                eprintln!(
-                    "strider: ELF section {:?} data parse failed: {e}; skipping for site-coverage",
-                    sec.name().unwrap_or("?"),
-                );
+            Err(_) => {
                 *parse_failure_count += 1;
                 return false;
             }

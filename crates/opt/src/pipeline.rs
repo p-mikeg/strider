@@ -73,15 +73,11 @@ impl std::ops::BitOrAssign for OptimizationResult {
 }
 
 /// Bridge `(&mut Graph, NodeId)` callers to a `&mut RewriteCtx`-typed
-/// closure.  replaces the previous
-/// `with_built` adapter that constructed a partial-state
-/// `BuiltFunctionGraph` via `from_graph_and_entry_for_rewrite`.  Audit
-/// of the 12+ `OptimizerOnBuilt` impls confirmed none of them touch
-/// the CC fields (`variables`, `call_clobbered`, `ret_val_regs`,
-/// `call_other_clobbered`) — they only read `graph` and `entry`,
-/// which `RewriteCtx` exposes natively (with `Deref<Target=Graph>` +
-/// `preorder()` mirroring BFG's API for ergonomic call-site
-/// compatibility).  No partial-state construction needed.
+/// closure.  No partial-state `BuiltFunctionGraph` construction is
+/// needed: every `OptimizerOnBuilt` impl in this crate reads only
+/// `graph` and `entry`, both of which `RewriteCtx` exposes natively
+/// (with `Deref<Target=Graph>` + `preorder()` mirroring BFG's API for
+/// ergonomic call-site compatibility).
 pub(crate) fn with_rewrite_ctx<R>(
     graph: &mut ir::Graph,
     entry: ir::node::NodeId,
@@ -133,14 +129,10 @@ pub trait Optimizer: Send + Sync {
 /// [`Optimizer`] directly: the blanket impl below wires the
 /// [`with_rewrite_ctx`] adapter so the pass slots into the pipeline.
 ///
-/// parameter type was migrated from
-/// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.  Audit
-/// of every existing `OptimizerOnBuilt` impl confirmed none of them
-/// touch the BFG CC fields, so the rewrite-only context is sufficient.
 /// `RewriteCtx` provides `Deref<Target=Graph>` + `preorder()` /
-/// `preorder_kind()` mirroring BFG's API, so existing pass bodies
-/// that say `function.node_kind(_)` / `function.preorder()` /
-/// `function.create_node(_)` work unchanged.
+/// `preorder_kind()` mirroring BFG's API, so pass bodies can use
+/// `function.node_kind(_)` / `function.preorder()` /
+/// `function.create_node(_)` directly.
 ///
 /// Passes that need direct `&mut Graph` access without the wrapper
 /// (e.g. [`crate::indirect_branch_resolve::IndirectBranchResolve`],

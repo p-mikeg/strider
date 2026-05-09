@@ -391,6 +391,12 @@ pub fn decompose_sp(
             };
             memo.insert(*level_out, Some(level_expr));
         }
+        // Note: `None` results are deliberately NOT memoized.  When a
+        // spine descent hits a cycle (mutually-recursive phis), it
+        // returns `None` for the sake of the *current* call path —
+        // but a different entry-point may legitimately resolve the
+        // same node.  Memoizing `None` would poison those entries.
+        // See `decompose_sp_does_not_cache_none_results`.
     }
 
     leaf_result

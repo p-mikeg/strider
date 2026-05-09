@@ -4,7 +4,7 @@ mod insn;
 mod pipeline;
 mod vn_io;
 
-pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, SortedVns, Strider};
+pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, RegionLiftHandles, Strider};
 
 /// Per-function translation context that converts a [`cfg::Cfg`] into an IR
 /// graph region by region.

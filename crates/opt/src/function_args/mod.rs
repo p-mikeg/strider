@@ -537,7 +537,13 @@ fn mem_chain_is_dirty(
             results.len()
         ));
     }
-    let result = results.pop().expect("len == 1 just checked");
+    let Some(result) = results.pop() else {
+        // unreachable: the len==1 check above already proved
+        // `results` is non-empty.
+        return Err(anyhow::anyhow!(
+            "mem_chain_is_dirty: result-stack pop failed after len==1 check (walker bug)"
+        ));
+    };
     memo.insert(entry_key, result);
     Ok(result)
 }
