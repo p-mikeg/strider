@@ -843,7 +843,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     // `UnresolvedIndirectBranch` placeholder would be emitted, and
     // the integration test would have nothing to assert against.
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
     let outcome = strider

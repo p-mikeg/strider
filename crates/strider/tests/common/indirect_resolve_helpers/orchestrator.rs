@@ -62,7 +62,7 @@ pub fn run_pipeline_x86_64(
     let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .expect("create x86_64 sleigh");
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build");
 

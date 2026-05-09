@@ -43,7 +43,7 @@ fn make_unresolved_indirect_branch_cfg(
     // return address onto the stack), so cfg-time resolver's LinkRegister arm
     // can't classify either.
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (cfg, arch)
