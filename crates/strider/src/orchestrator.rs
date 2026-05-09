@@ -623,7 +623,7 @@ fn apply_in_place_edit(
                 region_index,
                 None,
                 initial_var_index,
-            );
+            )?;
             apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
             Ok(())
         }
@@ -636,7 +636,7 @@ fn apply_in_place_edit(
                 region_index,
                 override_cc,
                 initial_var_index,
-            );
+            )?;
             let new_return = apply_tail_call(
                 graph,
                 placeholder,
@@ -702,7 +702,7 @@ fn build_anchor_calling_context(
     region_index: &RegionIndex,
     override_cc: Option<&target::BuiltCallingConvention>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
-) -> opt::AnchorCallingContext {
+) -> Result<opt::AnchorCallingContext> {
     // When an override is supplied, route arg-passing / ret-val /
     // clobber computation through the override CC instead of the
     // function-default.
@@ -716,9 +716,11 @@ fn build_anchor_calling_context(
     // O(arg_count) instead of the previous O(N) arena scan.
 
     for vn in cc.arg_passing_regs() {
-        if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
-            ctx.arg_passing_outputs.push(out);
-        }
+        // Round 9 H-4: surface unsupported reg sizes as Err instead
+        // of silently dropping the slot (which under-models the Call
+        // and can cause downstream pattern queries to miss args).
+        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+        ctx.arg_passing_outputs.push(out);
     }
     // Clobber list: with an override, recompute from the override's
     // callee_saved set against the function's tracked variables (via
@@ -733,18 +735,25 @@ fn build_anchor_calling_context(
         Box::new(graph.call_clobbered.iter())
     };
     for vn in clobber_iter {
-        let Ok(ty) = ir::node::NodeOutputType::try_from(vn.size) else {
-            continue;
-        };
+        // Round 9 H-5: surface unsupported clobber-reg sizes as Err
+        // (same reasoning as H-4 above).
+        let ty = ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
+            anyhow::anyhow!(
+                "clobber varnode size {} has no NodeOutputType — \
+                 calling-convention register {:?} cannot be modelled \
+                 (supported sizes are 1, 2, 4, 8, 10, 16, 32, 64 bytes)",
+                vn.size,
+                vn,
+            )
+        })?;
         ctx.clobbered_kinds
             .push(ir::node::NodeOutputKind::OutputType(ty));
     }
     for vn in cc.ret_val_regs() {
-        if let Some(out) = read_or_init_var(graph, region, initial_var_index, *vn) {
-            ctx.ret_val_outputs.push(out);
-        }
+        let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
+        ctx.ret_val_outputs.push(out);
     }
-    ctx
+    Ok(ctx)
 }
 
 /// Iterate the function-tracked varnodes that are *clobbered* under the
@@ -774,31 +783,52 @@ fn override_clobber_vars<'a>(
 
 /// Resolve a varnode to its IR value at the placeholder site.
 /// Order: (1) region exit `vn_to_value`, (2) existing `InitialVar(vn)`
-/// in the graph, (3) freshly-created `InitialVar(vn)`.  Returns
-/// `None` when the varnode's byte size has no matching `NodeOutputType`.
+/// in the graph, (3) freshly-created `InitialVar(vn)`.
+///
+/// Round 9 H-4: returns an error (instead of silently dropping the
+/// varnode) when its byte size has no matching `NodeOutputType`.  In
+/// practice every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10,
+/// 16, 32, 64} which all map cleanly; the Err arm exists so a future
+/// CC addition with an exotic size surfaces the gap immediately
+/// instead of producing a Call node with under-modelled inputs.
+///
+/// # Errors
+///
+/// Returns `Err` if `vn.size` doesn't map to a `NodeOutputType` or
+/// if the freshly-created `InitialVar` doesn't have exactly one
+/// output (the `node_signature` invariant guarantees this; the error
+/// path exists only for defensive completeness).
 fn read_or_init_var(
     graph: &mut ir::BuiltFunctionGraph,
     region: Option<&ExitVnToValue>,
     initial_var_index: &mut HashMap<rsleigh::Vn, NodeOutputId>,
     vn: rsleigh::Vn,
-) -> Option<NodeOutputId> {
+) -> Result<NodeOutputId> {
     if let Some(r) = region
         && let Some(&out) = r.get(&vn)
     {
-        return Some(out);
+        return Ok(out);
     }
     if let Some(&out) = initial_var_index.get(&vn) {
-        return Some(out);
+        return Ok(out);
     }
-    let ty: ir::node::NodeOutputType = vn.size.try_into().ok()?;
+    let ty: ir::node::NodeOutputType = vn.size.try_into().map_err(|_| {
+        anyhow::anyhow!(
+            "varnode size {} has no NodeOutputType — calling-convention \
+             register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
+             8, 10, 16, 32, 64 bytes)",
+            vn.size,
+            vn,
+        )
+    })?;
     let nid = graph.graph.create_node(
         ir::node::NodeKind::InitialVar(vn),
         [],
         [ir::node::NodeOutputKind::OutputType(ty)],
     );
-    let [out] = graph.graph.node_outputs_exact::<1>(nid).ok()?;
+    let [out] = graph.graph.node_outputs_exact::<1>(nid)?;
     initial_var_index.insert(vn, out);
-    Some(out)
+    Ok(out)
 }
 
 /// Build the CFG, lift to IR, run the stable optimiser subset.

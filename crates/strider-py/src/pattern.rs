@@ -467,9 +467,19 @@ fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
             let result = py_func.call_bound(py, args, None);
             // Always invalidate the proxy's graph pointer so any
             // subsequent use from Python doesn't deref a stale ptr.
-            if let Ok(b) = py_proxy.try_borrow(py) {
-                b.clear_graph_ptr();
-            }
+            //
+            // Round 9 H-7 (Ask-8 R3 ISSUE-1): use `borrow` (panicking
+            // on conflict) instead of `try_borrow` + silent skip.
+            // `try_borrow` only fails when an active `&mut self`
+            // borrow is held; `PyPartialMatch` exposes only `&self`
+            // methods via #[pymethods] AND is `unsendable`, so that
+            // failure mode is unreachable from any synchronous path.
+            // Using `borrow` makes the unreachability explicit — a
+            // future change that adds a `&mut self` method on the
+            // proxy would surface as a clean panic instead of
+            // silently leaking the pointer past the predicate's
+            // return.
+            py_proxy.borrow(py).clear_graph_ptr();
             match result {
                 Ok(obj) => match obj.extract::<bool>(py) {
                     Ok(b) => b,
