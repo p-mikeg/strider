@@ -245,6 +245,34 @@ impl IndirectBranchResolve {
             is_tail_call: Box::new(|_| false),
         }
     }
+
+    /// Add an anchor and its calling-convention context atomically.
+    /// Round 9 V5 (R9-2D H5): canonical builder method that
+    /// populates `unresolved_anchors` and `anchor_contexts` in
+    /// lockstep so a future caller cannot accidentally desynchronise
+    /// them by populating one and forgetting the other.
+    ///
+    /// The strider orchestrator should use this method rather than
+    /// `pass.unresolved_anchors.push((...)) + pass.anchor_contexts.insert(...)`
+    /// — the lockstep contract is then type-enforced at the
+    /// add-call boundary.  The fields remain `pub` for back-compat
+    /// with existing test scaffolding.
+    pub fn add_anchor(
+        &mut self,
+        addr: AnchorAddr,
+        anchor_output: NodeOutputId,
+        ctx: AnchorCallingContext,
+    ) {
+        self.unresolved_anchors.push((addr, anchor_output));
+        self.anchor_contexts.insert(addr, ctx);
+    }
+
+    /// Clear all anchors and contexts atomically.  Mirrors
+    /// [`Self::add_anchor`]'s lockstep contract on the reset path.
+    pub fn clear_anchors(&mut self) {
+        self.unresolved_anchors.clear();
+        self.anchor_contexts.clear();
+    }
 }
 
 impl Default for IndirectBranchResolve {
