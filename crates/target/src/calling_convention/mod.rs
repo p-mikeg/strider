@@ -117,7 +117,7 @@ pub struct BuiltCallingConvention {
     pub(crate) no_memory_clobber: bool,
 }
 
-/// Owned-field bag for [`BuiltCallingConvention::from_parts`].  Used by
+/// Owned-field bag for [`BuiltCallingConvention::from_parts_unchecked`].  Used by
 /// callers (typically tests building one-off override CCs) that need to
 /// construct a `BuiltCallingConvention` without going through
 /// [`CallingConvention::build`].  Field names mirror the
@@ -155,8 +155,14 @@ impl BuiltCallingConvention {
     /// should use [`Self::try_from_parts`] (validates ABI invariants)
     /// or [`CallingConvention::build`] (resolves register names
     /// against a `SleighRegs` table and feeds [`Self::try_from_parts`]).
+    ///
+    /// **Test-only escape hatch.**  A typo overlapping `arg_passing_regs`
+    /// with `callee_saved_regs` (or any other invariant violation listed
+    /// on [`Self::try_from_parts`]) silently miscompiles downstream
+    /// pattern queries.  Use the validated path in any production code.
+    #[doc(hidden)]
     #[must_use]
-    pub fn from_parts(parts: BuiltCallingConventionParts) -> Self {
+    pub fn from_parts_unchecked(parts: BuiltCallingConventionParts) -> Self {
         let BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
@@ -281,7 +287,7 @@ impl BuiltCallingConvention {
                 parts.ret_stack_pop,
             ));
         }
-        Ok(Self::from_parts(parts))
+        Ok(Self::from_parts_unchecked(parts))
     }
 
     /// Argument-passing register varnodes, in positional order.

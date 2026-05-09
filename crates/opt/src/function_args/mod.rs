@@ -195,6 +195,16 @@ fn detect_register_args(
             [NodeOutputKind::OutputType(out_type)],
         );
         let [new_out] = fg.node_outputs_exact::<1>(new_node)?;
+        // Inherit the InitialVar's asm-fingerprint so downstream pattern
+        // queries (`m.asm_fingerprint(c, &graph)` on a captured FunctionArg)
+        // can still trace back to the contributing machine instruction.
+        // FunctionArg is exempt from the validator's non-empty-fingerprint
+        // check, but the superset-only contract still says passes may grow
+        // fingerprints — never shrink them — when replacing a node's uses.
+        // The single-source register-args path (one InitialVar in, one
+        // FunctionArg out) carries no coupling concern; the stack-args path
+        // unifies multiple Loads and intentionally skips the absorption.
+        fg.extend_asm_fingerprint_from(new_node, initial_var);
         fg.replace_all_uses(old_out, new_out)?;
         result |= OptimizationResult::Changed;
     }

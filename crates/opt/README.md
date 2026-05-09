@@ -6,14 +6,16 @@ reports a change. Three pre-built pipelines cover the common cases.
 
 ## Public surface
 
-- `Optimizer` — most passes implement this trait. `run(&mut graph) ->
-  Result<OptimizationResult>` returns whether the graph changed.
-- `OptimizerOnBuilt` — variant that runs on a `BuiltFunctionGraph` (used for
-  passes that need function-level metadata, e.g. `IfCondInversion` for
-  control-flow surgery, and post-passes like `FunctionArgDetect`).
-- `OptimizationResult` — `Changed { … }` | `Unchanged`.
-- `OptimizerPipeline` — `add(pass)`, `add_post_pass(pass)`, `run(&mut
-  graph)`. Calls `ir::validate::validate` at the end.
+- `Optimizer` — `optimize(&self, graph: &mut Graph, entry: NodeId) ->
+  Result<OptimizationResult>` returns whether the graph changed. Some passes
+  implement this directly (e.g. `IndirectBranchResolve`).
+- `OptimizerOnBuilt` — companion trait whose `optimize_built(&self,
+  function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult>` is
+  wrapped via a blanket impl so both kinds of pass slot into the same
+  pipeline. Most passes implement this rather than `Optimizer` directly.
+- `OptimizationResult` — `Changed | NoChange` (both unit variants).
+- `OptimizerPipeline` — `add(pass)`, `add_post_pass(pass)`, `run(&mut Graph,
+  NodeId)`. Calls `ir::validate::validate` at the end.
 - `default_pipeline()` / `stable_default_pipeline()` /
   `destructive_default_pipeline()` — the three pre-built pipelines.
 - Passes (each one is a unit-struct that implements `Optimizer` and lives in

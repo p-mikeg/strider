@@ -570,9 +570,21 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // "no fold" in LoadReadOnly with no diagnostic.  The
             // contract is still `Option<u64>` (we can't propagate
             // through this trait) but the user gets a visible warning.
+            //
+            // Control-flow exceptions (`KeyboardInterrupt`, `SystemExit`)
+            // are re-raised so Ctrl-C in an interactive Python session
+            // can interrupt a long `LoadReadOnly` pass instead of being
+            // silently absorbed.  Mirrors the wrap_when fix from round 9
+            // wave 31 (H-8).
             let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
                 Ok(r) => r,
                 Err(e) => {
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                        return None;
+                    }
                     eprintln!(
                         "strider: ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"
                     );

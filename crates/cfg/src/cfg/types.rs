@@ -116,9 +116,10 @@ pub struct RegionInstruction {
 /// outgoing edges in the [`RegionGraph`] but also record cases that have
 /// no outgoing edge (e.g. `Return`, `TailCall`).
 ///
-/// `Switch` is **reserved** for the future jump-table resolver and is
-/// not constructed by the cfg builder today — it is part of the API so
-/// that adding jump-table support is a purely additive change.
+/// `Switch` is constructed by `cfg::builder::region_builder` when the
+/// indirect-branch resolver classifies a `BranchIndirect` as a
+/// jump-table dispatch with a known multi-target set.  See the per-arm
+/// doc on [`RegionTerminator::Switch`] for the construction contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegionTerminator {
     /// No terminator opcode; control falls into the next region.  This
@@ -217,7 +218,10 @@ pub enum RegionTerminator {
 pub struct Region {
     /// Address of the first pcode instruction in this region.
     pub start_addr: PcodeInsnAddr,
-    /// All pcode instructions, in program order.  Never empty.
+    /// All pcode instructions, in program order.  Empty only when the
+    /// terminator is `Branch` and arose from the single-instruction
+    /// CondBranch-with-OOB-successor fold (see `add_region` in the cfg
+    /// builder).  Otherwise non-empty.
     pub insns: Vec<RegionInstruction>,
     /// How this region ends — see [`RegionTerminator`].
     pub terminator: RegionTerminator,
@@ -227,13 +231,16 @@ impl Region {
     /// Returns `true` when `addr` lies within the instruction range of this
     /// region, i.e. `start_addr <= addr <= last_insn.addr`.
     ///
-    /// Returns `false` for regions with no instructions (an invariant violation
-    /// that `add_region` prevents, but handled gracefully here).
+    /// Empty regions (only valid for `Branch`-terminated post-fold cases —
+    /// see [`Region::insns`]) own exactly their `start_addr`.  Returning
+    /// `false` for empty regions previously made `find_region_containing_addr`
+    /// miss the start-address query, letting the work queue build a duplicate
+    /// region for the same edge target.
     #[must_use]
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         match self.insns.last() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,
-            None => false,
+            None => self.start_addr == addr,
         }
     }
 }

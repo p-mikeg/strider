@@ -100,7 +100,9 @@ impl PyCapture {
         // The Capture's globally-unique u32 id is the stable hash key.
         // (Earlier this used `format!("{:?}", self.inner).len()` which
         // collapsed every same-decimal-digit-count id to one bucket.)
-        self.inner.id() as isize
+        // Round through `i64` so 32-bit-isize platforms don't sign-wrap
+        // for ids above 2^31; on 64-bit isize the cast is a no-op.
+        self.inner.id() as i64 as isize
     }
 }
 
@@ -248,6 +250,8 @@ pub enum PatLike<'py> {
     StackStorePat(Bound<'py, PyStackStorePat>),
     StackStorePhiPat(Bound<'py, PyStackStorePhiPat>),
     PhiPat(Bound<'py, PyPhiPat>),
+    MemPhiPat(Bound<'py, PyMemPhiPat>),
+    ValuePhiPat(Bound<'py, PyValuePhiPat>),
     FunctionArgPat(Bound<'py, PyFunctionArgPat>),
     IntBinaryPat(Bound<'py, PyIntBinaryPat>),
     BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
@@ -278,6 +282,8 @@ impl PatLike<'_> {
             PatLike::StackStorePat(b) => Ok(b.borrow().finalise()),
             PatLike::StackStorePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::PhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::MemPhiPat(b) => Ok(b.borrow().finalise()),
+            PatLike::ValuePhiPat(b) => Ok(b.borrow().finalise()),
             PatLike::FunctionArgPat(b) => Ok(b.borrow().finalise()),
             PatLike::IntBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),

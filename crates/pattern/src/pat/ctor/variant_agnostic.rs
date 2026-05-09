@@ -66,7 +66,13 @@ macro_rules! impl_variant_any {
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }
@@ -104,7 +110,13 @@ macro_rules! impl_variant_any {
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }
@@ -136,7 +148,13 @@ macro_rules! impl_variant_any {
             )
             .with_post_match(Arc::new(move |ctx, node, b| {
                 if matches!(ctx.graph.node_kind(node), NodeKind::$op_enum(_)) {
-                    b.bind_capture(c, Binding::new(node, None))
+                    // Populate the value output too so callers can use
+                    // both `Match::get_*_op(c, &graph)` (op-variant) AND
+                    // typed extractors / `Match::output(c)` (value).
+                    let value_out = ctx.graph.node_outputs(node).into_iter().find(|&o| {
+                        ctx.graph.output_kind(o).is_value()
+                    });
+                    b.bind_capture(c, Binding::new(node, value_out))
                 } else {
                     false
                 }

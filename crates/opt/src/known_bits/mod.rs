@@ -276,7 +276,15 @@ pub fn node_known_bits(
             let [input] = fg.node_inputs_exact::<1>(node_id)?;
             let input_kind = fg.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
-            let input_mask = u64_type_mask(input_ty).unwrap_or(0);
+            // Bail when the input width is unsupported (U80/U128/U256) —
+            // mirrors the SignExtend arm below.  Returning `Ok(None)`
+            // leaves the output's KB at "fully unknown"; the previous
+            // `unwrap_or(0)` here would have set `input_mask = 0` and
+            // marked every bit as known-zero, silently corrupting
+            // analysis on wide-to-wider ZeroExtends.
+            let Some(input_mask) = u64_type_mask(input_ty) else {
+                return Ok(None);
+            };
             let kb = known[input];
             Kb {
                 ones: kb.ones,

@@ -60,9 +60,9 @@ pub struct GraphRewriter<'a> {
     /// The graph to rewrite.  Held as `&mut Graph` rather than
     /// `&mut BuiltFunctionGraph` to align with the optimizer pass
     /// contract `(&mut Graph, NodeId)`.  `pattern::rewrite_rule`'s
-    /// closure expects `&mut BuiltFunctionGraph`, so [`Self::apply_rule`]
-    /// swaps the graph into a short-lived `BuiltFunctionGraph` per
-    /// call (via `mem::take` — same trick as `opt::with_built`).
+    /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
+    /// builds a fresh `RewriteCtx::new(&mut *self.graph, self.entry)`
+    /// per call — same shape as `opt::with_rewrite_ctx`.
     graph: &'a mut Graph,
     /// The function's entry [`NodeId`] — needed by the validator's
     /// reachable-set walk and by [`opt::OptimizerPipeline::run`].

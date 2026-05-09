@@ -568,8 +568,9 @@ impl FunctionBuilder {
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
         // Conservative CallOther clobber default: every tracked variable
         // except the stack pointer.  The order here matches the iteration
-        // order used by `build_call_other` so the i-th clobber output of a
-        // CallOther node corresponds to `call_other_clobbered[i]`.
+        // order used by `build_call_other_modeled` / `build_call_other_terminal`
+        // so the i-th clobber output of a CallOther node corresponds to
+        // `call_other_clobbered[i]`.
         let stack_ptr_vn = self.stack_ptr_vn;
         let call_other_clobbered: Box<[rsleigh::Vn]> = self
             .variables

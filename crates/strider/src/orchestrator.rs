@@ -417,7 +417,7 @@ where
         let (next_known, in_place_edits) = self.classify_and_partition()?;
         self.apply_in_place_edits(&in_place_edits)?;
         let prev_unresolved_len = self.unresolved.len();
-        let unresolved_after_edits = self.recompute_unresolved(&in_place_edits);
+        let unresolved_after_edits = self.recompute_unresolved(&in_place_edits)?;
 
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&self.known_targets);
         if !edge_set_changed && in_place_edits.is_empty() {
@@ -596,23 +596,31 @@ where
     /// Filter `self.unresolved` against the post-edit graph: drop
     /// entries whose placeholder Return was detached by an in-place
     /// edit.  No-op when no edits fired (returns the unmodified vec).
+    ///
+    /// Returns `Err` when the loop's graph has somehow been cleared while
+    /// in-place edits are pending — that's a state-machine bug in the
+    /// orchestrator (the graph must be populated before edits can fire),
+    /// and silently returning an empty vec would mask it.
     fn recompute_unresolved(
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
-    ) -> Vec<(PcodeInsnAddr, ir::Value)> {
+    ) -> Result<Vec<(PcodeInsnAddr, ir::Value)>> {
         let unresolved = std::mem::take(&mut self.unresolved);
         if in_place_edits.is_empty() {
-            return unresolved;
+            return Ok(unresolved);
         }
-        let Some(graph) = self.graph.as_ref() else {
-            return Vec::new();
-        };
-        unresolved
+        let graph = self.graph.as_ref().ok_or_else(|| {
+            anyhow!(
+                "LoopState::recompute_unresolved: in_place_edits is non-empty but \
+                 self.graph is None — orchestrator state machine invariant broken"
+            )
+        })?;
+        Ok(unresolved
             .into_iter()
             .filter(|(_, anchor)| {
                 opt::find_placeholder_return_for_anchor(&graph.graph, *anchor).is_some()
             })
-            .collect()
+            .collect())
     }
 
     fn graph_mut(&mut self) -> Result<&mut ir::BuiltFunctionGraph> {

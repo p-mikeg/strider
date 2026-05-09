@@ -28,7 +28,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
-    let override_cc = BuiltCallingConvention::from_parts(BuiltCallingConventionParts {
+    let override_cc = BuiltCallingConvention::from_parts_unchecked(BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![rax, rdx, xmm0, xmm1],
         ret_val_regs: vec![],

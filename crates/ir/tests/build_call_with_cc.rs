@@ -64,7 +64,7 @@ fn build_call_with_cc_all_preserving_clobbers_nothing() {
     b.set_region(region);
 
     // Override CC: every tracked variable is callee-saved → 0 clobbers.
-    let override_cc = BuiltCallingConvention::from_parts(target::BuiltCallingConventionParts {
+    let override_cc = BuiltCallingConvention::from_parts_unchecked(target::BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![rax, rdi, rdx, xmm0, xmm1],
         ret_val_regs: vec![],
@@ -129,7 +129,7 @@ fn build_call_with_no_memory_clobber_preserves_memory_chain() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
 
-    let override_cc = BuiltCallingConvention::from_parts(target::BuiltCallingConventionParts {
+    let override_cc = BuiltCallingConvention::from_parts_unchecked(target::BuiltCallingConventionParts {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![],
         ret_val_regs: vec![],

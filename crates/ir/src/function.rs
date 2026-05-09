@@ -150,10 +150,10 @@ impl BuiltFunctionGraph {
     /// empty `variables` / `call_clobbered` / `ret_val_regs`.
     ///
     /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
-    /// fields.**  Used by `opt::with_built` and `strider::rewrite::
-    /// GraphRewriter` to bridge `(&mut Graph, NodeId)` callers to
-    /// `&mut BuiltFunctionGraph`-typed helpers (the `pattern` crate's
-    /// rewrite machinery is typed against `BuiltFunctionGraph`).
+    /// fields.**  Used by `compact`'s test fixture and a few pattern test
+    /// scaffolds that intentionally bypass the build path.  The opt-side
+    /// rewrite-only path moved to `pattern::RewriteCtx` in round 9 wave
+    /// 28 (`opt::with_rewrite_ctx` replaced the older `opt::with_built`).
     ///
     /// # Contract — caller responsibility
     ///
@@ -167,17 +167,12 @@ impl BuiltFunctionGraph {
     ///
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
     ///
-    /// Round 9 H-9/D2 (R9-2D H1) — partial-state ctor.  Migration to
-    /// `pattern::RewriteCtx { graph: &mut Graph, entry: NodeId }`
-    /// (round-8 addition) is the long-term direction, but the two
-    /// production callers (`opt::with_built` and `compact`'s test
-    /// fixture) consume `&mut BuiltFunctionGraph` because their
-    /// downstream traits (`OptimizerOnBuilt::optimize_built`,
-    /// `BuiltFunctionGraph::compact`) take that type.  Migrating
-    /// would require changing those trait signatures across every
-    /// opt pass — multi-day refactor deferred.  The
-    /// `#[doc(hidden)]` attribute discourages external adoption while
-    /// the migration is pending.
+    /// Partial-state ctor.  Migration to `pattern::RewriteCtx { graph:
+    /// &mut Graph, entry: NodeId }` is the long-term direction; the
+    /// `opt::with_rewrite_ctx` adapter already uses it.  The remaining
+    /// callers are `compact`'s test fixture and a handful of pattern
+    /// test scaffolds that intentionally bypass the build path.  The
+    /// `#[doc(hidden)]` attribute discourages external adoption.
     #[doc(hidden)]
     #[must_use]
     pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {

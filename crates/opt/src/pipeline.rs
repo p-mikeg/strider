@@ -134,7 +134,7 @@ pub trait Optimizer: Send + Sync {
 /// [`with_rewrite_ctx`] adapter so the pass slots into the pipeline.
 ///
 /// Round 9 wave 28 (H-9/D2): parameter type was migrated from
-/// `&mut pattern::RewriteCtx<'_>` to `&mut pattern::RewriteCtx<'_>`.  Audit
+/// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.  Audit
 /// of every existing `OptimizerOnBuilt` impl confirmed none of them
 /// touch the BFG CC fields, so the rewrite-only context is sufficient.
 /// `RewriteCtx` provides `Deref<Target=Graph>` + `preorder()` /
@@ -359,12 +359,12 @@ mod tests {
         Ok(())
     }
 
-    /// `run(graph, entry)` validates the final graph just like the
-    /// historical `run(&mut pattern::RewriteCtx<'_>)` did — i.e. an invalid
-    /// graph in the post-pass output surfaces as `ValidationFailed`.
-    /// Smoke test using an empty post-pass list and a valid input —
-    /// run must succeed (no validation error) and the graph must be
-    /// unchanged.
+    /// `run(graph, entry)` validates the final graph — an invalid graph
+    /// in the post-pass output surfaces as a `ValidationErrors`-bearing
+    /// `crate::Error::IrError` (downcastable via `anyhow::Error::
+    /// downcast_ref::<ir::validate::ValidationErrors>()`).  Smoke test
+    /// using an empty post-pass list and a valid input — run must
+    /// succeed (no validation error) and the graph must be unchanged.
     #[test]
     fn pipeline_run_validates_final_graph_on_clean_input() -> crate::Result<()> {
         let mut g = one_const_fn(3);

@@ -12,11 +12,11 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 
 /// Build a rewrite-rule closure from an LHS and RHS [`Pat`].
 ///
-/// The returned closure takes `&mut BuiltFunctionGraph` and a candidate root
+/// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
 /// [`NodeId`], attempts the match, and on success materializes the RHS
 /// template via [`crate::pat::traits::Pattern::try_build`] and redirects
 /// the root's value output to the built output via
-/// [`BuiltFunctionGraph::replace_all_uses`].
+/// [`ir::Graph::replace_all_uses`].
 ///
 /// Returns `Ok(true)` if the rule fired and at least one use was redirected,
 /// `Ok(false)` if the match failed, the RHS produced a skip, or
@@ -158,7 +158,7 @@ pub struct RewriteCtx<'g> {
 
 impl<'g> RewriteCtx<'g> {
     /// Constructs a `RewriteCtx` from a raw `(graph, entry)` pair —
-    /// the rewrite-only path used by `opt::with_built`,
+    /// the rewrite-only path used by `opt::with_rewrite_ctx`,
     /// `strider::rewrite::GraphRewriter::apply_rule`, and similar.
     pub fn new(graph: &'g mut Graph, entry: NodeId) -> Self {
         Self { graph, entry }
