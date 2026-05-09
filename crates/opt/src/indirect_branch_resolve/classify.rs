@@ -223,91 +223,11 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
-        // Width-conversion peeling: `Extend(IntConst(K))` and
-        // `Truncate(IntConst(K))` produce a value that's a deterministic
-        // function of `K`, so the dispatch is `Single(K & out_mask)` for
-        // truncation and `Single(K)` (zero/sign-extended) for extension.
-        // SOUND because:
-        //   - `Truncate` masks the input to the declared output width;
-        //   - `Extend(Zero)` zero-fills upper bits;
-        //   - `Extend(Sign)` sign-fills based on the input's high bit.
-        // All three are deterministic with the original `K`.
-        //
-        // This shape arises when a compiler stores a target into a
-        // narrower register (e.g. 32-bit `MOV r4, #target; BX r4` on
-        // 32-bit ARM, where the `BX r4` lift may zero-extend r4's
-        // value to 64-bit — even though the architectural pointer is
-        // 32-bit, the IR's NodeOutputType for the dispatch slot may be
-        // U64 to match the target's address width).
-        //
-        // Truncate's output mask is the truncated width; the lower bits
-        // of K are the dispatch target.  Extend preserves K's value
-        // when the input fits the output width.
-        NodeKind::Truncate => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer_id).into_iter().collect();
-            if let Some(&inner) = inputs.first()
-                && let NodeKind::IntConst(k) = graph.kind_of_output(inner)
-            {
-                // Output type narrower than input — mask K to the
-                // output width.  `output_kind(anchor_output).as_value()`
-                // gives the declared output type, whose bit_mask_u128
-                // covers exactly the kept bits.
-                if let Some(out_ty) = graph.output_kind(anchor_output).as_value() {
-                    let masked = (*k) & out_ty.bit_mask_u128();
-                    #[allow(clippy::cast_possible_truncation)]
-                    let truncated = masked as u64;
-                    return Some(ResolvedTargets::Single(truncated));
-                }
-            }
-            None
-        }
-        NodeKind::Extend(op) => {
-            let inputs: Vec<NodeOutputId> =
-                graph.node_inputs(producer_id).into_iter().collect();
-            if let Some(&inner) = inputs.first()
-                && let NodeKind::IntConst(k) = graph.kind_of_output(inner)
-            {
-                // Round 9 IMPORTANT (R9-1C Issue 1): correctly handle
-                // both extension flavours.  Pre-fix the arm used
-                // `(*k) as u64` for both, which is wrong for
-                // `SignExtend(IntConst(neg_value, narrow_ty))` — the
-                // u128 storage holds the narrow value with zero high
-                // bits, so a sign-negative narrow constant would be
-                // truncated to u64 with the high bits cleared instead
-                // of sign-filled.
-                //
-                // In production this arm is normally dead because
-                // `ConstantFold` rules 5/6 fold `Zero/SignExtend(IntConst)`
-                // before the classifier runs and `extend_if_needed`
-                // folds at build time.  But the unit-test path can
-                // bypass both, and a future caller that constructs the
-                // shape directly should still get the correct answer.
-                let truncated = match op {
-                    ir::ExtendOp::ZeroExtend => {
-                        // Zero-extension is the identity in u128
-                        // storage (the inner IntConst already has
-                        // zeros in the high bits).
-                        #[allow(clippy::cast_possible_truncation)]
-                        let v = (*k) as u64;
-                        v
-                    }
-                    ir::ExtendOp::SignExtend => {
-                        // Sign-extend: read the inner constant as a
-                        // signed value at its declared input width,
-                        // then mask to the dispatch slot's output
-                        // width (typically 64-bit).
-                        let in_ty = graph.output_kind(inner).as_value()?;
-                        let signed = in_ty.get_signed_int(*k)?;
-                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                        let v = signed as u64;
-                        v
-                    }
-                };
-                return Some(ResolvedTargets::Single(truncated));
-            }
-            None
-        }
+        // No dedicated `Truncate(IntConst)` / `Extend(IntConst)` arm:
+        // ConstantFold rules 4-6 fold those shapes to `IntConst` before
+        // the classifier runs, and `truncate_if_needed` /
+        // `extend_if_needed` fold them at build time.  The folded
+        // `IntConst` flows through the `NodeKind::IntConst` arm above.
         _ => None,
     }
 }

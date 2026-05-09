@@ -87,9 +87,6 @@ verdicts to rewrite the IR.
 - `LoadReadOnly` is stable per the spec but is not in `default_pipeline()`
   because it requires a caller-supplied ROM image. The strider crate's
   `Strider::build_optimizer_pipeline` layers it on top.
-- CallOther no-op handling is no longer a pass — it now happens at lift time
-  in `target::call_other_abi::classify`. The pre-existing `CallOtherElide`
-  pass was deleted.
 
 ## Tests
 

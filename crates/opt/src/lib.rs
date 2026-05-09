@@ -161,11 +161,6 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
 ///    strips dead control edges.  A later iteration could re-make the
 ///    condition phi-dependent, but the branch is already gone.
-///
-/// CallOther no-op handling is now done at construction time in
-/// `target::call_other_abi::classify` — the pre-existing `CallOtherElide`
-/// pass is gone.  See
-/// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
 #[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -194,10 +189,6 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 4. [`IfCondInversion`] — `If(BoolNeg(C)) → If(C)` with branches swapped
 /// 5. [`RedundantPhis`] — `VarPhi` / `MemPhi` / `ControlState` elimination
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
-///
-/// CallOther no-op handling is now done at construction time in
-/// `target::call_other_abi::classify` — the pre-existing `CallOtherElide`
-/// pass is gone.
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
