@@ -370,6 +370,14 @@ impl PyGraph {
         let raw = matcher.find_all(&pat);
         drop(graph_guard);
         drop(g_borrow);
+        // Round 9 H-8: if a `.when()` predicate restored a control-flow
+        // exception (KeyboardInterrupt / SystemExit) via PyErr::restore,
+        // the exception state is set on this thread.  Surface it as
+        // Err so PyO3 raises rather than panicking with
+        // "returned a result with an exception set".
+        if let Some(err) = PyErr::take(py) {
+            return Err(err);
+        }
         let mut out = Vec::with_capacity(raw.len());
         for m in raw {
             out.push(crate::matcher::PyMatch {
@@ -437,6 +445,11 @@ impl PyGraph {
         let raw = matcher.find_all_requirements(&pat_refs);
         drop(graph_guard);
         drop(g_borrow);
+        // Round 9 H-8: same propagation as `find_all` — restored
+        // exceptions from `.when()` predicates surface here.
+        if let Some(err) = PyErr::take(py) {
+            return Err(err);
+        }
         let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());
         for tuple in raw {
             let mut py_tuple: Vec<crate::matcher::PyMatch> = Vec::with_capacity(tuple.len());

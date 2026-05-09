@@ -440,10 +440,18 @@ impl PyPartialMatch {
 }
 
 /// Build a `Pat::when_match` closure that calls a Python predicate with
-/// a transient `PyPartialMatch` proxy.  All failure modes (proxy alloc
-/// failure, predicate exception, non-bool return) are surfaced to
-/// stderr and treated as `false` (no match) — aborting `find_all`
-/// mid-walk on a buggy predicate would be worse than continuing.
+/// a transient `PyPartialMatch` proxy.  Most failure modes (proxy alloc
+/// failure, non-bool return, ordinary predicate exceptions) are
+/// surfaced to stderr and treated as `false` (no match) — aborting
+/// `find_all` mid-walk on a buggy predicate would be worse than
+/// continuing.
+///
+/// Round 9 H-8: `KeyboardInterrupt` and `SystemExit` are
+/// **re-raised** rather than swallowed, so Ctrl-C in an interactive
+/// Python session can interrupt a slow `find_all` walk that's stuck
+/// inside a predicate.  Re-raising via `PyErr::restore` defers the
+/// exception to the next GIL re-entry point, which the matcher's
+/// shallow loop re-checks naturally.
 fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
     inner.when_match(move |graph, _ty, bindings| {
         Python::with_gil(|py| {
@@ -473,10 +481,22 @@ fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
                     }
                 },
                 Err(e) => {
-                    // Surface the predicate's exception to stderr but
-                    // treat it as "no match" to avoid aborting
-                    // find_all in the middle of a walk.
-                    e.print(py);
+                    // Round 9 H-8: control-flow exceptions
+                    // (KeyboardInterrupt, SystemExit) must propagate
+                    // — Ctrl-C in an interactive session must be able
+                    // to interrupt a slow find_all walk.  PyErr::restore
+                    // sets the active exception state; the next time
+                    // Python regains control (typically the next pyo3
+                    // boundary in the matcher), it's re-raised.
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                    } else {
+                        // Ordinary predicate bug: surface to stderr,
+                        // treat as no-match so `find_all` continues.
+                        e.print(py);
+                    }
                     false
                 }
             }

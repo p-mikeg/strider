@@ -113,3 +113,74 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
             "Mutating call from inside .when() predicate must raise StriderError "
             "(not deadlock and not silently succeed)"
         )
+
+
+# ── Round 9 H-8 regression: KeyboardInterrupt / SystemExit propagation ───
+
+
+def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
+    """Round 9 H-8: a `.when()` predicate that raises `KeyboardInterrupt`
+    must propagate the exception out of `find_all` rather than being
+    silently swallowed.  Without the fix, Ctrl-C in an interactive
+    Python session is unable to interrupt a slow `find_all` walk
+    that's stuck inside a predicate.
+    """
+    import pytest
+
+    from strider.pattern import any_int_const
+
+    g, _ = _build_graph(x86_memory_elf)
+    counter = [0]
+
+    def predicate(_m):
+        counter[0] += 1
+        if counter[0] >= 1:
+            raise KeyboardInterrupt
+        return True
+
+    c = Capture()
+    pat = any_int_const(c).when(predicate)
+    with pytest.raises(KeyboardInterrupt):
+        g.find_all(pat)
+
+
+def test_when_predicate_system_exit_propagates(x86_memory_elf):
+    """Round 9 H-8: a `.when()` predicate that raises `SystemExit` must
+    propagate (not be swallowed and treated as no-match).
+    """
+    import pytest
+
+    from strider.pattern import any_int_const
+
+    g, _ = _build_graph(x86_memory_elf)
+
+    def predicate(_m):
+        raise SystemExit(0)
+
+    c = Capture()
+    pat = any_int_const(c).when(predicate)
+    with pytest.raises(SystemExit):
+        g.find_all(pat)
+
+
+def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
+    """Round 9 H-8 companion: ordinary predicate exceptions
+    (`ValueError`, etc.) should still be swallowed and treated as
+    no-match — a buggy predicate must not abort the entire `find_all`
+    walk.  Only control-flow exceptions (`KeyboardInterrupt` /
+    `SystemExit`) propagate.
+    """
+    from strider.pattern import any_int_const
+
+    g, _ = _build_graph(x86_memory_elf)
+
+    def predicate(_m):
+        raise ValueError("predicate is buggy")
+
+    c = Capture()
+    pat = any_int_const(c).when(predicate)
+    # Must NOT raise — find_all completes, returning whatever it
+    # found (every match counted as no-match because the predicate
+    # raised).
+    hits = g.find_all(pat)
+    assert isinstance(hits, list)
