@@ -62,7 +62,12 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// scan.  Promoted from [`super::builder::Builder`]'s field of the
     /// same name at construction.  Maintained by the indirect-branch
     /// resolver when it splices new regions in via `add_region`.
-    pub start_addr_to_region_id:
+    ///
+    /// Round 9 V6 (R9-2D M2): tightened to `pub(crate)`.  The map is a
+    /// derived lookup index — mutating it directly without updating the
+    /// `graph` field (or vice versa) would silently break
+    /// `region_id_at_start`.  Consumers should go through that accessor.
+    pub(crate) start_addr_to_region_id:
         std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
 }
 
