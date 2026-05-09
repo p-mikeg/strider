@@ -1,6 +1,7 @@
 //! Rule composition: [`rewrite_rule`], [`apply_rules_in_order`], [`BoxedRule`],
 //! [`boxed_rule`].
 
+use cranelift_entity::EntityRef;
 use ir::Graph;
 use ir::node::NodeId;
 
@@ -63,7 +64,11 @@ pub fn rewrite_rule(
         // 3. Materialize RHS.  A closure inside the tree may opt out of the
         //    rewrite by returning `Err(pattern::Error::skip())`; catch that
         //    sentinel here and convert it to "no change" instead of a hard
-        //    error.  All other errors propagate.
+        //    error.  All other errors propagate.  Snapshot the next-NodeId
+        //    BEFORE the build so we can identify which interior nodes are
+        //    freshly allocated (vs returned as cache hits on pre-existing
+        //    nodes) — see the asm-fingerprint walk after `BuildOutcome::Out`.
+        let pre_build_node_id = ctx.graph.next_node_id();
         let outcome = {
             let mut bctx = BuildCtx {
                 graph: ctx.graph,
@@ -81,15 +86,55 @@ pub fn rewrite_rule(
         match outcome {
             BuildOutcome::Skip => Ok(false),
             BuildOutcome::Out(new_out) => {
-                // Absorb the rewritten root's asm-fingerprint into the new
-                // node BEFORE redirecting uses.  This is the single funnel
-                // where every pattern-driven rewrite preserves the
-                // contributing-asm-instruction history; whether the RHS
-                // built a fresh node or hit the dedup cache, the union
-                // semantics of `extend_asm_fingerprint_from` keep us
-                // superset-correct.
+                // Absorb the rewritten root's asm-fingerprint into EVERY
+                // freshly-created interior node of the RHS subtree, not
+                // just the outermost root.  Multi-node rules (e.g.
+                // ConstantFold's `rule_and_dist`:
+                // `((a&C1)|(b&C2))&C3 → (a&(C1&C3)) | (b&(C2&C3))`)
+                // build fresh interior `And` / `IntConst` nodes that
+                // would otherwise pass `validate` but fail
+                // `validate_with_options(check_asm_fingerprints: true)`.
+                //
+                // The walk is bounded by `pre_build_node_id`: any
+                // NodeId allocated before the build is pre-existing
+                // (a captured LHS value, a pre-existing constant the
+                // dedup cache returned, etc.) and stays untouched.
+                // Fresh nodes (id ≥ snapshot) all inherit the
+                // contributor's history via the union semantics of
+                // `extend_asm_fingerprint_from`.
                 let new_node = ctx.graph.get_node_from_output(new_out);
+                // Always attribute the rewrite root: even when the dedup
+                // cache returns a pre-existing node, it now ALSO carries
+                // the rewritten root's history (union semantics).
                 ctx.graph.extend_asm_fingerprint_from(new_node, node);
+                // Walk freshly-allocated interior nodes (id >= snapshot)
+                // and absorb the contributor's history into each one.
+                // Pre-existing input nodes (id < snapshot) bound the
+                // walk: they're outside the rewrite and stay untouched.
+                let mut visited: std::collections::HashSet<NodeId> =
+                    std::collections::HashSet::new();
+                visited.insert(new_node);
+                let mut stack: Vec<NodeId> = ctx
+                    .graph
+                    .node_inputs(new_node)
+                    .into_iter()
+                    .map(|inp| ctx.graph.get_node_from_output(inp))
+                    .collect();
+                while let Some(cur) = stack.pop() {
+                    if !visited.insert(cur) {
+                        continue;
+                    }
+                    if cur.index() < pre_build_node_id.index() {
+                        // Pre-existing node — outside the rewrite.
+                        continue;
+                    }
+                    ctx.graph.extend_asm_fingerprint_from(cur, node);
+                    let inputs: Vec<_> = ctx.graph.node_inputs(cur).into_iter().collect();
+                    for inp in inputs {
+                        stack.push(ctx.graph.get_node_from_output(inp));
+                    }
+                }
+
                 let changed = ctx.graph.replace_all_uses(root_out, new_out)?;
                 Ok(changed)
             }

@@ -160,6 +160,110 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     );
 }
 
+/// Round 9 H-2 (EA1 Finding 1) regression — `pattern::rewrite_rule` must
+/// attribute every fresh non-exempt node in a multi-node RHS, not only
+/// the outermost root.
+///
+/// The `rule_and_dist` rule rewrites
+/// `((a & C1) | (b & C2)) & C3 → (a & (C1&C3)) | (b & (C2&C3))`, building
+/// fresh `Or`, two `And`s and (if not cached) two `IntConst` nodes.
+/// Pre-fix, only the outermost `Or` got attribution; the inner `And` /
+/// `IntConst` nodes were left with empty fingerprints and would fail
+/// `validate_with_options(check_asm_fingerprints: true)`.
+#[test]
+fn constant_fold_rule_and_dist_attributes_inner_nodes() {
+    use ir::node::NodeOutputKind;
+    use ir::test_utils::{make_fn_with_var, reg_vn};
+    use ir::validate::{validate_with_options, ValidateOptions};
+
+    // Two distinct non-const inputs `a` and `b`, both derived from the
+    // tracked variable `v` so they survive ConstantFold (Add(v, K) is
+    // not foldable to a const because v is symbolic).
+    let v_vn = reg_vn(0x10, 8);
+    let (mut fg, _v_val) = make_fn_with_var(v_vn, |b, v| {
+        b.set_lift_addr(Some(0x100));
+        let one = b.build_int_const(1u64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x104));
+        let two = b.build_int_const(2u64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x108));
+        let a = b.build_int_binary_operation(v, one, IntBinaryOp::Add, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x10c));
+        let b_val =
+            b.build_int_binary_operation(v, two, IntBinaryOp::Add, NodeOutputType::U64)?;
+
+        // C1 = 0xFFFF, C2 = 0xFFFF_0000, C3 = 0x00FF_FF00.
+        // C1 & C3 = 0x0000_FF00 (fresh non-cached IntConst).
+        // C2 & C3 = 0x00FF_0000 (fresh non-cached IntConst).
+        // The output values differ from any of C1/C2/C3 so the dedup
+        // cache won't unify them with pre-existing constants.
+        b.set_lift_addr(Some(0x110));
+        let c1 = b.build_int_const(0xFFFFu64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x114));
+        let c2 = b.build_int_const(0xFFFF_0000u64, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x118));
+        let c3 = b.build_int_const(0x00FF_FF00u64, NodeOutputType::U64)?;
+
+        b.set_lift_addr(Some(0x11c));
+        let and_a_c1 =
+            b.build_int_binary_operation(a, c1, IntBinaryOp::And, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x120));
+        let and_b_c2 =
+            b.build_int_binary_operation(b_val, c2, IntBinaryOp::And, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x124));
+        let or_node =
+            b.build_int_binary_operation(and_a_c1, and_b_c2, IntBinaryOp::Or, NodeOutputType::U64)?;
+        b.set_lift_addr(Some(0x128));
+        let outer = b.build_int_binary_operation(or_node, c3, IntBinaryOp::And, NodeOutputType::U64)?;
+        // Leave lift_addr set so the trailing `Return` (built by
+        // make_fn_with_var) inherits a fingerprint too.
+        b.set_lift_addr(Some(0x12c));
+        Ok(outer)
+    })
+    .expect("make_fn_with_var");
+
+    // Sanity: the input graph passes the opt-in fingerprint check
+    // because every node was created under a non-None lift_addr.
+    validate_with_options(
+        &fg.graph,
+        fg.entry,
+        ValidateOptions { check_asm_fingerprints: true },
+    )
+    .expect("input graph: every non-exempt node has a fingerprint");
+
+    // Run ConstantFold — fires `rule_and_dist`.
+    let _ = ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap();
+
+    // After the rewrite, every reachable non-exempt node must still carry a
+    // non-empty fingerprint (the round-9 H-2 contract).
+    validate_with_options(
+        &fg.graph,
+        fg.entry,
+        ValidateOptions { check_asm_fingerprints: true },
+    )
+    .expect("post-ConstantFold: rewrite_rule must attribute every fresh interior node");
+
+    // Belt-and-suspenders: explicitly confirm at least one fresh inner
+    // And carries the rewritten outer-And's address (0x128).
+    let inner_ands: Vec<NodeId> = fg
+        .preorder()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::And)))
+        .collect();
+    assert!(
+        !inner_ands.is_empty(),
+        "expected at least one And node post-rewrite"
+    );
+    for and_node in &inner_ands {
+        let fp = fg.graph.asm_fingerprint(*and_node);
+        assert!(
+            !fp.is_empty(),
+            "fresh inner And {and_node:?} has empty fingerprint: violates Round 9 H-2 contract"
+        );
+    }
+    // Suppress unused-warning for NodeOutputKind import keepers that
+    // future test edits may need.
+    let _ = NodeOutputKind::Memory;
+}
+
 /// O2 — Asm-fingerprint shrink-prevention across the full default pipeline.
 ///
 /// Snapshots the fingerprint set of every reachable node *before* running

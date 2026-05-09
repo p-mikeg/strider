@@ -101,6 +101,21 @@ impl Graph {
         self.outputs[output_id].source_id
     }
 
+    /// Returns the [`NodeId`] that the next [`Self::create_node`] (cache
+    /// miss) would assign.
+    ///
+    /// Snapshot before a rewrite RHS build to identify which `NodeId`s
+    /// are freshly created during the build versus pre-existing — every
+    /// `id >= snapshot` is fresh, every `id < snapshot` was already in
+    /// the arena.  Used by `pattern::rewrite_rule` to walk the freshly
+    /// built RHS subtree and propagate asm-fingerprint contributors
+    /// into every interior new node, not just the outermost root.
+    #[inline]
+    #[must_use]
+    pub fn next_node_id(&self) -> NodeId {
+        self.nodes.next_key()
+    }
+
     /// Returns the single [`NodeOutputId`] of `node_id` whose kind is
     /// [`NodeOutputKind::Memory`].
     ///
