@@ -6,10 +6,11 @@ reports a change. Three pre-built pipelines cover the common cases.
 
 ## Public surface
 
-- `Optimizer` — every pass implements this trait. `run(&mut graph) ->
+- `Optimizer` — most passes implement this trait. `run(&mut graph) ->
   Result<OptimizationResult>` returns whether the graph changed.
 - `OptimizerOnBuilt` — variant that runs on a `BuiltFunctionGraph` (used for
-  post-passes that need the function-level metadata).
+  passes that need function-level metadata, e.g. `IfCondInversion` for
+  control-flow surgery, and post-passes like `FunctionArgDetect`).
 - `OptimizationResult` — `Changed { … }` | `Unchanged`.
 - `OptimizerPipeline` — `add(pass)`, `add_post_pass(pass)`, `run(&mut
   graph)`. Calls `ir::validate::validate` at the end.

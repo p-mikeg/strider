@@ -1,9 +1,16 @@
 //! Whole-graph validator for the IR.
 //!
 //! The validator walks a built [`Graph`] starting from an entry [`NodeId`] and
-//! checks structural invariants (signatures, reachability, use-list
-//! consistency, etc.).  This module currently contains only the skeleton;
-//! concrete checks are added by later tasks.
+//! checks structural invariants across three layers:
+//!   - **Layer A** ([`layer_a`]): per-node local typing against
+//!     [`crate::node_signature::expected_signature`] (reachability-scoped).
+//!   - **Layer B** ([`layer_b`]): bidirectional use-list consistency
+//!     (reachability-scoped on the source side).
+//!   - **Layer C** ([`layer_c`]): graph-level invariants — Entry/InitialMemory
+//!     uniqueness, ControlState predecessor kinds, phi-token ownership, phi
+//!     per-predecessor arity, FunctionArg uniqueness, wide-const consistency,
+//!     and (opt-in via [`ValidateOptions::check_asm_fingerprints`]) non-empty
+//!     asm-fingerprints on every reachable non-exempt node.
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
 //! aggregates every [`ValidationError`] it found during a single pass, so

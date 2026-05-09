@@ -1,4 +1,4 @@
-//! Computed-goto fixture tests for the tier-2 indirect-branch resolver.
+//! Computed-goto fixture tests for the IR-level indirect-branch resolver.
 //!
 //! `fixtures/cases/indirect_branch.c::indirect_branch_resolved` lowers
 //! the indirect goto to a load from a local stack array of label
@@ -11,21 +11,22 @@
 //!
 //! Resolving this lowering requires **cross-region stack-load
 //! forwarding** (`StackStoreDetect` + `StackLoadForward` joined
-//! across the function's region graph) — the initial round of the
-//! indirect-branch fixed-point design does not yet implement that
-//! layer.  the cfg-time mini-graph resolver's mini-graph runs `ConstantFold` + `KnownBits` on
+//! across the function's region graph), routed through the
+//! IR-level resolver's stack-array classifier arm
+//! (`opt::indirect_branch_resolve::classify_stack_array`).  The
+//! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
 //! a single region only and cannot prove the loaded target is one of
-//! the pushed label addresses.  the IR-level orchestrator resolver in round 1 has the
-//! `LinkRegister` / `IntConst` / `Multiple-of-IntConsts` arms but
-//! no stack-array-of-labels arm.
+//! the pushed label addresses; the IR-level resolver gets visibility
+//! into cross-region flow + `StackLoadForward` results and resolves
+//! the dispatch into `ResolvedTargets::Multiple`.
 //!
-//! Consequence: every arch's lifted CFG carries an
-//! `UnresolvedIndirectBranch` terminator at the goto site for the arches
-//! whose lifter shape doesn't yet match the F3 stack-array arm.  Those
-//! arches keep `#[ignore]` reasons describing the specific gap; when the
-//! gap closes, the ignore can be lifted and the assertion ("no
-//! `UnresolvedIndirectBranch` terminator survives") will start holding
-//! without any test rewrite.
+//! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32
+//! pass end-to-end.  Seven arches keep `#[ignore]` for specific
+//! lifter-shape gaps documented on each test (AArch64-BE `Or(SP,K)` +
+//! `Truncate`-wrapped labels, MIPS64 PIC GOT-indirect, PPC32/64).
+//! When a gap closes, the ignore can be lifted and the assertion
+//! ("no `UnresolvedIndirectBranch` terminator survives") will start
+//! holding without any test rewrite.
 //!
 //! See:
 //!   - docs/superpowers/specs/2026-04-27-indirect-branch-fixedpoint-design.md
@@ -88,7 +89,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         cfg_opts_b = cfg_opts_b.set_link_register(lr);
     }
     let cfg_opts = cfg_opts_b.build();
-    let cfg = cfg::Builder::with_endianness(sleigh, addr, cfg_opts, sleigh_arch.endianness)
+    let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for indirect_branch_resolved: {e:?}"));
 

@@ -253,7 +253,7 @@ use target::{SleighArch, CallingConvention};
 let arch = SleighArch::x86_64();
 let mem  = reader::ElfFileMemReader::open("path/to/binary.elf")?;
 let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem)?;
-let cc = CallingConvention::x86_64_systemv_abi().build(sleigh.regs()?)?;
+let cc = CallingConvention::x86_64_systemv().build(sleigh.regs()?)?;
 let strider = strider::Strider::new(arch, sleigh.regs()?, cc)?;
 
 let graph = run(RunConfig {

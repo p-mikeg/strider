@@ -46,7 +46,9 @@ sub-registers (e.g. write to `al`) but the IR tracks one `VarId` per
 `Truncate` / `Extend` / `Insert { lsb, len }` / `Extract { lsb, len }`
 nodes so the IR sees consistent register-sized values regardless of which
 sub-slot the source operation named. Width support: 1, 2, 4, 8, 10
-(x87 80-bit extended), 16 (XMM/q-register) bytes.
+(x87 80-bit extended), 16 (XMM/q-register), 32 (YMM), 64 (ZMM) bytes.
+Widths 32 and 64 use a degraded `u128::MAX` mask; sub-register aliasing
+within > 16-byte containers raises an error.
 
 The lifter is split out from `strider` so two callers can reuse it:
 [`strider`](../strider)'s per-region IR translator (the main consumer), and

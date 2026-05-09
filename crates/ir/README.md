@@ -47,7 +47,9 @@ value tokens flow through their own dedicated edges.
 
 `src/node/` defines the core data: `NodeKind` (the variant enum covering every
 op the IR supports), `NodeOutputKind` (`Control`, `Memory`, `PhiToken`, or
-`OutputType(_)`), `NodeOutputType` (`Bool` / `U8`–`U256` / `F32` / `F64`).
+`OutputType(_)`), `NodeOutputType` (`Bool` / `U8` / `U16` / `U32` / `U64` /
+`U80` (x87 80-bit) / `U128` / `U256` / `U512` (AVX-512 zmm) / `F32` / `F64` /
+`F80` (x87 extended-precision)).
 `src/node_signature.rs` is the **single source of truth** for each NodeKind's
 expected input and output slot kinds — both the validator and the builder
 consult it.

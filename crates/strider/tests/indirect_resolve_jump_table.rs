@@ -13,10 +13,11 @@
 //!     reproduces the shape directly.
 //!   * The classifier under test is graph-shape-driven, not
 //!     CFG-driven; every byte path eventually goes through
-//!     `analyze_cfg_with_unresolved` which builds the same IR shapes.
-//!   * Real-binary integration tests for jump tables land in R5;
-//!     R4 just proves the classifier shape + bound + read mechanics
-//!     work in isolation.
+//!     `analyze_cfg` (which returns an `AnalyzeOutcome` carrying the
+//!     `unresolved_branches` list) and builds the same IR shapes.
+//!   * This file proves the classifier shape + bound + read mechanics
+//!     work in isolation; real-binary integration tests for jump
+//!     tables live in `indirect_branch.rs` and `jump_table_lifting.rs`.
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values
 //! at fixed offsets; it stands in for the ELF's `.rodata` view that

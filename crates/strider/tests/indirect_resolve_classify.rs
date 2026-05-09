@@ -1,14 +1,15 @@
 //! Integration tests for [`strider::indirect_resolve::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `Strider::analyze_cfg_with_unresolved`, runs the strider
-//! optimiser pipeline, then calls `classify_anchor` on the placeholder
-//! anchor that was recorded at lift time.  The fixture builders live
-//! in `common::indirect_resolve_helpers`.
+//! to IR via `Strider::analyze_cfg` (which returns an `AnalyzeOutcome`
+//! carrying the `unresolved_branches` placeholder list), runs the
+//! strider optimiser pipeline, then calls `classify_anchor` on the
+//! placeholder anchor that was recorded at lift time.  The fixture
+//! builders live in `common::indirect_resolve_helpers`.
 //!
 //! These tests exercise the classifier end-to-end against optimised IR
-//! — i.e. the exact graph shapes the orchestrator (R3) will hand to
-//! the classifier in production.
+//! — i.e. the exact graph shapes the orchestrator hands to the
+//! classifier in production.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

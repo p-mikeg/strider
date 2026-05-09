@@ -7,11 +7,13 @@
 
 pub type Result<T> = anyhow::Result<T>;
 
-/// Returned by [`crate::FunctionBuilder::build_call_other`] when the
-/// supplied user-op `name` has no entry in
+/// Constructed by the strider lifter (in `crates/strider/src/strider/insn/`)
+/// when a `pcode::CallOther` opcode's user-op `name` has no entry in
 /// [`target::call_other_abi::classify`].  Strict-on-emission policy: any
 /// new user-op surfaced by a real lift must be classified before the
-/// lift can succeed.
+/// lift can succeed.  Builders [`crate::FunctionBuilder::build_call_other_modeled`]
+/// and [`crate::FunctionBuilder::build_call_other_terminal`] consume an
+/// already-classified `CallOtherClass` and never raise this error.
 ///
 /// Recover via `anyhow::Error::downcast_ref::<UnknownCallOtherError>()`.
 #[derive(Debug, thiserror::Error)]

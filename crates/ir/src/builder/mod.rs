@@ -544,10 +544,11 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ValidationFailed` wrapping a
+    /// Returns an [`anyhow::Error`] wrapping a
     /// [`crate::validate::ValidationErrors`] bundle if the built graph fails
     /// any of validate's three layers (local typing, use-list consistency,
-    /// graph-level invariants).
+    /// graph-level invariants).  Recover the bundle via
+    /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
     pub fn build(self) -> crate::Result<crate::function::BuiltFunctionGraph> {
         // Conservative CallOther clobber default: every tracked variable
         // except the stack pointer.  The order here matches the iteration

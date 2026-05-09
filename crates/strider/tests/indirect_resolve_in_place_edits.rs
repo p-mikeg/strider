@@ -6,10 +6,8 @@
 //! consistent, and `ir::validate::validate` keeps passing post-edit.
 //!
 //! The fixtures use the existing helper at
-//! `tests/common/indirect_resolve_helpers.rs` (which lifts an x86_64 byte
-//! sequence + runs the strider optimiser pipeline).  `apply_tail_call`
-//! is round-2 work; tests here only pin its current "returns
-//! Unimplemented" contract.
+//! `tests/common/indirect_resolve_helpers/orchestrator.rs` (which lifts an
+//! x86_64 byte sequence + runs the strider optimiser pipeline).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

@@ -156,7 +156,8 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
         .expect("lr varnode");
 
     let opts = OptionsBuilder::new().set_link_register(lr).build();
-    let cfg = Builder::new(sleigh, base, opts)
+    let arm = target::SleighArch::arm();
+    let cfg = Builder::for_arch(&arm, sleigh, base, opts)
         .build()
         .expect("Builder::build");
 

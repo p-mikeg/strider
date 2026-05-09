@@ -27,7 +27,7 @@ fn build_unresolved_jmp_rax_cfg() -> cfg::Cfg<BufMemReader<Vec<u8>>> {
     let arch = target::SleighArch::x86_64();
     let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
     let opts = OptionsBuilder::new().build();
-    Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    Builder::for_arch(&arch, sleigh, base, opts)
         .build()
         .expect("build")
 }
@@ -68,7 +68,7 @@ fn with_known_targets_link_register_overrides_to_return() {
     let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known.insert(unresolved_addr, ResolvedTargets::LinkRegister);
 
-    let cfg_v2 = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg_v2 = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known)
         .build()
         .expect("build with known_targets");
@@ -101,7 +101,7 @@ fn with_known_targets_empty_map_falls_through_to_cfg_time() {
     let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
     let opts = OptionsBuilder::new().build();
 
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(HashMap::new())
         .build()
         .expect("build with empty known_targets");
@@ -140,7 +140,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     let cfg_v1 = {
         let reader2 = BufMemReader::new(vec![0xff, 0xe0u8], base);
         let sleigh2 = Sleigh::new(arch.sla_spec, arch.pspec, reader2).expect("sleigh");
-        Builder::with_endianness(sleigh2, base, OptionsBuilder::new().build(), arch.endianness)
+        Builder::for_arch(&arch, sleigh2, base, OptionsBuilder::new().build())
             .build()
             .expect("v1 build")
     };
@@ -155,7 +155,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
         ResolvedTargets::Multiple(vec![0x1004, 0x9000]),
     );
 
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known)
         .build()
         .expect("build must succeed; mixed Multiple defers via UnresolvedIndirectBranch");
@@ -200,7 +200,7 @@ fn known_multiple_in_range_targets_produces_switch() {
         ResolvedTargets::Multiple(vec![0x1004, 0x1008]),
     );
 
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known)
         .build()
         .expect("build with in-range Multiple must succeed");
