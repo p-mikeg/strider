@@ -2,14 +2,12 @@
 //! the `let arch = …; let regs = arch.probe_regs()…; Strider::new(arch,
 //! regs, cc)?` boilerplate at every test site.
 //!
-//! Exported under `#[cfg(any(feature = "test-utils", test))]` so it's
-//! available to:
-//! 1. Unit tests inside `crates/strider/src/`.
-//! 2. Integration tests under `crates/strider/tests/` (test profile
-//!    auto-enables the `cfg(test)` half of the gate).
-//! 3. Other crates that opt in via
-//!    `strider = { workspace = true, features = ["test-utils"] }` in
-//!    `[dev-dependencies]`.
+//! Exported as an unconditional `pub mod` (no `cfg(feature)` gate) so
+//! integration tests under `crates/strider/tests/` can use it without
+//! adding a circular dev-dep on their own crate.  See `strider/src/lib.rs`'s
+//! `pub mod test_utils;` for the rationale.  The helpers carry no
+//! runtime weight (thin wrappers around `Strider::new`) so always-public
+//! is the simplest sound choice.
 //!
 //! Promoted from the per-test-file inline pattern flagged by
 //! `reviews/round8-repetition-sweep.md` (#5) — 18 sites duplicated the

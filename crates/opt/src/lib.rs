@@ -10,13 +10,30 @@
 //!
 //! # Passes
 //!
+//! Default pipeline (`default_pipeline()` — fixed-point loop):
+//!
 //! | Pass | What it does |
 //! |------|-------------|
-//! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, …) |
+//! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, AND-mask merging, …) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
-//! | [`RedundantPhis`] | Eliminates `VarPhi`, `MemPhi`, and `ControlState` nodes with a single reachable predecessor |
+//! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
+//! | [`IfCondInversion`] | `If(BoolNeg(C)){A}{B}` → `If(C){B}{A}` |
+//! | [`RedundantPhis`] | Eliminates `VarPhi` / `MemPhi` / `ControlState` with a single reachable predecessor |
 //! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
-//! | [`LoadReadOnly`] | Folds constant-address loads by reading from a caller-supplied read-only memory region |
+//!
+//! Layered on top by `Strider::build_optimizer_pipeline` (not in
+//! `default_pipeline()` because they need calling-convention or ROM data):
+//!
+//! | Pass | What it does |
+//! |------|-------------|
+//! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
+//! | [`StackStoreDetect`] | Promotes SP-relative `Store` to `StackStore { offset }` |
+//! | [`StackLoadForward`] | Forwards values from `StackStore` to subsequent same-offset `Load` |
+//! | [`FunctionArgDetect`] (post-pass) | Canonicalises register/stack arg reads to `FunctionArg` |
+//! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
+//!
+//! Indirect-branch resolution is driven separately by the orchestrator;
+//! [`IndirectBranchResolve`] is not in any pre-built pipeline.
 
 #![cfg_attr(
     test,

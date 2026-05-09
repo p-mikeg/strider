@@ -80,9 +80,9 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error when `output_type` is not an integer type, or is
-    /// `U256` (which is not yet representable in the u128 storage that
-    /// `IntConst` uses).
+    /// Returns an error when `output_type` is not an integer type, or
+    /// when it is `U256` / `U512` (not representable in the `u128` storage
+    /// that `IntConst` uses — use [`Self::build_int_const_wide`] instead).
     pub fn build_int_const(
         &mut self,
         val: impl Into<u128>,

@@ -348,11 +348,13 @@ def test_int_cmp_op_recovery():
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].int_cmp_op(c)
-    assert op_name in {
-        "Equal", "Less", "LessEqual",
-        "Sless", "SlessEqual",
-        "Carry", "Scarry", "Sborrow", "Borrow",
-    }
+    # Round 9 D19 (R9-1F-01): the previous allowed set included
+    # `LessEqual`, `SlessEqual`, `Borrow` — none of these exist in
+    # `ir::IntCmpOp`; they are lift-time-lowered shapes, never emitted
+    # as primitive nodes.  Listing them was a phantom assertion: the
+    # test passed for the wrong reason because the actual return is
+    # always one of the six real names.  Narrow to the truth.
+    assert op_name in {"Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow"}
 
 
 def test_get_vn_returns_vn_for_initial_var_capture():

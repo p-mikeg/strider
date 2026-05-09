@@ -84,9 +84,8 @@ impl std::fmt::Display for AnalyzeOutcome {
 
 /// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
 /// defaults match the [`Strider::analyze_cfg(cfg)`] convenience
-/// behaviour (which is the standard public entry, not deprecated):
-/// the orchestrator uses this with both fields set; strider-py's
-/// custom-pipeline path uses it with `per_address_ccs` set.
+/// behaviour: the orchestrator uses this with both fields set;
+/// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
     /// [`Strider::find_all_unique_vns`] itself.  When `Some`, must be
@@ -210,12 +209,13 @@ impl Strider {
     /// iterations of the indirect-branch fixed-point orchestrator.
     ///
     /// Composed of passes whose rewrites survive a later iteration that
-    /// adds new phi inputs: `ConstantFold`, `KnownBits`,
-    /// `StackStoreDetect`, `StackLoadForward`, and the
-    /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`RedundantPhis` / `DeadBranchElimination`) are deferred to the
-    /// final iteration because they remove nodes that the
-    /// orchestrator's per-iteration index pins.
+    /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
+    /// `FlagCmpCanonicalize`, and `IfCondInversion` from
+    /// `opt::stable_default_pipeline()`, then adds `StackStoreDetect`,
+    /// `StackLoadForward`, and the `FunctionArgDetect` post-pass.  The
+    /// destructive passes (`RedundantPhis` / `DeadBranchElimination`)
+    /// are deferred to the final iteration because they remove nodes
+    /// that the orchestrator's per-iteration index pins.
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> opt::OptimizerPipeline {
         let mut p = opt::stable_default_pipeline();

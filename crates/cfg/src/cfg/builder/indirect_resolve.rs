@@ -39,9 +39,13 @@
 //!
 //! ## Multi-target / jump tables
 //!
-//! [`ResolvedTargets::Multiple`] is reserved for the future jump-table
-//! resolver and is not constructed by this round; the variant exists so
-//! adding jump-table support later is purely additive.
+//! This cfg-time mini-graph resolver only ever returns `Single` /
+//! `LinkRegister` / `None` — never `Multiple`.  The IR-level
+//! resolver in `opt::indirect_branch_resolve` (jump-table arm,
+//! stack-array arm) is the path that constructs
+//! [`ResolvedTargets::Multiple`], routed through the strider
+//! orchestrator's indirect-branch fixed-point loop after the stable
+//! optimiser pipeline runs.
 
 use opt::ReadOnlyMemory;
 

@@ -581,7 +581,13 @@ pub fn apply_elf_relocations(
             RelocationTarget::Section(idx) => match obj.section_by_index(idx) {
                 Ok(sec) => sec.address(),
                 Err(_) => {
-                    stats.skipped_unresolved_target += 1;
+                    // Bad section index — structurally malformed, NOT a
+                    // legitimate weak-extern.  Round 9 M3 (R9-EA1 Finding 2):
+                    // matches the GOT-PLT path's classification at line 538
+                    // and the bad-symbol-index path at line 572, so callers
+                    // inspecting RelocationStats see a consistent
+                    // "malformed" bucket regardless of which arm fires.
+                    stats.skipped_malformed_target += 1;
                     continue;
                 }
             },

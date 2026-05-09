@@ -78,10 +78,8 @@ fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallO
         // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
         // (up to 7), r0 = return value.  See `arch/arm/kernel/entry-common.S`
         // and the EABI variant in `arch/arm/include/uapi/asm/unistd.h`.
-        // ARM Linux SVC / SWI ABI: r7 = syscall number, r0..r6 = args
-        // (up to 7), r0 = return value.  All three 32-bit ARM presets
-        // share this ABI; if Thumb ever needs a different one, split the
-        // alternation into separate arms.
+        // All three 32-bit ARM presets share this ABI; if Thumb ever
+        // needs a different one, split the alternation into separate arms.
         (crate::ArchPreset::Arm | crate::ArchPreset::ArmBe | crate::ArchPreset::ArmThumb,
          "swi") => Some(CallOtherClass::Call(CallOtherAbi {
             implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
