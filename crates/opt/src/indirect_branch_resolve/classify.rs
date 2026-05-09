@@ -210,6 +210,63 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
+        // Width-conversion peeling: `Extend(IntConst(K))` and
+        // `Truncate(IntConst(K))` produce a value that's a deterministic
+        // function of `K`, so the dispatch is `Single(K & out_mask)` for
+        // truncation and `Single(K)` (zero/sign-extended) for extension.
+        // SOUND because:
+        //   - `Truncate` masks the input to the declared output width;
+        //   - `Extend(Zero)` zero-fills upper bits;
+        //   - `Extend(Sign)` sign-fills based on the input's high bit.
+        // All three are deterministic with the original `K`.
+        //
+        // This shape arises when a compiler stores a target into a
+        // narrower register (e.g. 32-bit `MOV r4, #target; BX r4` on
+        // 32-bit ARM, where the `BX r4` lift may zero-extend r4's
+        // value to 64-bit — even though the architectural pointer is
+        // 32-bit, the IR's NodeOutputType for the dispatch slot may be
+        // U64 to match the target's address width).
+        //
+        // Truncate's output mask is the truncated width; the lower bits
+        // of K are the dispatch target.  Extend preserves K's value
+        // when the input fits the output width.
+        NodeKind::Truncate => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer_id).into_iter().collect();
+            if let Some(&inner) = inputs.first()
+                && let NodeKind::IntConst(k) = graph.kind_of_output(inner)
+            {
+                // Output type narrower than input — mask K to the
+                // output width.  `output_kind(anchor_output).as_value()`
+                // gives the declared output type, whose bit_mask_u128
+                // covers exactly the kept bits.
+                if let Some(out_ty) = graph.output_kind(anchor_output).as_value() {
+                    let masked = (*k) & out_ty.bit_mask_u128();
+                    #[allow(clippy::cast_possible_truncation)]
+                    let truncated = masked as u64;
+                    return Some(ResolvedTargets::Single(truncated));
+                }
+            }
+            None
+        }
+        NodeKind::Extend(_) => {
+            let inputs: Vec<NodeOutputId> =
+                graph.node_inputs(producer_id).into_iter().collect();
+            if let Some(&inner) = inputs.first()
+                && let NodeKind::IntConst(k) = graph.kind_of_output(inner)
+            {
+                // Zero-extend / sign-extend of a constant: the constant
+                // value carries through (zero-extend leaves it as-is in
+                // u128 storage; sign-extend would re-fill upper bits, but
+                // the inner IntConst's u128 representation already
+                // reflects what the writer stored).  Branch targets are
+                // 64-bit, so truncate to u64.
+                #[allow(clippy::cast_possible_truncation)]
+                let truncated = (*k) as u64;
+                return Some(ResolvedTargets::Single(truncated));
+            }
+            None
+        }
         _ => None,
     }
 }

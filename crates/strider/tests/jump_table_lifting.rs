@@ -28,7 +28,7 @@ use ir::node::NodeKind;
 use ir::BuiltFunctionGraph;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, SleighArch, Strider};
+use strider::SleighArch;
 
 mod common;
 
@@ -79,14 +79,12 @@ fn analyze_with_known_targets(
     };
     known_targets.insert(key, ResolvedTargets::Multiple(targets));
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build with Multiple known target");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
-        .expect("Strider::new");
+    let strider = strider::test_utils::strider_x86_64();
     strider.analyze_cfg(&cfg).expect("analyze_cfg").graph
 }
 
@@ -224,14 +222,12 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
-        .expect("Strider::new");
+    let strider = strider::test_utils::strider_x86_64();
     let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");
     let mut graph = outcome.graph;
 

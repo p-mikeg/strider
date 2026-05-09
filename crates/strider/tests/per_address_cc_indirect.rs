@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, RunConfig, SleighArch, Strider};
+use strider::{RunConfig, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 /// x86_64: `mov eax, 5; jmp $TAIL_TARGET`.  With `fn_max_size = 10`
@@ -25,9 +25,7 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv()).unwrap()
+    strider::test_utils::strider_x86_64()
 }
 
 #[test]

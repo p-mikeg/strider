@@ -590,4 +590,98 @@ mod tests {
             "Err message must name the contract violation; got: {msg}"
         );
     }
+
+    /// New resolver shape (round 8 follow-up): the classifier peels
+    /// through `Truncate(IntConst(K))` to surface `Single(K & out_mask)`.
+    /// Without this, a compiler that emits `MOV r4, #target; trunc r4
+    /// to 32-bit; BX r4` would have its target_value anchored to a
+    /// `Truncate` node and the resolver would fail closed.
+    #[test]
+    fn classify_truncate_of_int_const_resolves_to_single() {
+        use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+        use crate::indirect_branch_resolve::classify::classify_anchor_with_rom_and_sp;
+
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        // Build IntConst(0xC0DE_DEAD) at U64, then Truncate to U32 →
+        // dispatch target is `0xDEAD` (low 32 bits = 0xC0DE_DEAD; the
+        // declared output is U32 so the masked value fits).
+        let const_64 = b
+            .build_int_const(0xC0DE_DEADu64, NodeOutputType::U64)
+            .unwrap();
+        let trunc = b.body_mut().graph.create_node(
+            NodeKind::Truncate,
+            [const_64],
+            [NodeOutputKind::OutputType(NodeOutputType::U32)],
+        );
+        let trunc_out = b
+            .body_mut()
+            .graph
+            .node_outputs(trunc)
+            .into_iter()
+            .next()
+            .unwrap();
+        b.build_indirect_branch(trunc_out).unwrap();
+        let built = b.build().unwrap();
+
+        let placeholder = built
+            .all_node_ids()
+            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
+            .unwrap();
+        let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
+        let anchor = inputs[2];
+        let known = crate::analyze_known_bits(&built).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        assert_eq!(
+            resolved,
+            Some(ResolvedTargets::Single(0xC0DE_DEAD)),
+            "Truncate(IntConst(0xC0DE_DEAD), U32) must resolve to Single(0xC0DE_DEAD)"
+        );
+    }
+
+    /// Sibling shape: `Extend(IntConst(K))` (e.g. zero-extend a 32-bit
+    /// register holding a target into the 64-bit dispatch slot) must
+    /// also resolve to `Single(K)`.
+    #[test]
+    fn classify_extend_of_int_const_resolves_to_single() {
+        use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+        use crate::indirect_branch_resolve::classify::classify_anchor_with_rom_and_sp;
+
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        // IntConst(0xDEAD) at U32 — zero-extended to U64 stays 0xDEAD.
+        let const_32 = b.build_int_const(0xDEADu64, NodeOutputType::U32).unwrap();
+        let ext = b.body_mut().graph.create_node(
+            NodeKind::Extend(ir::ExtendOp::ZeroExtend),
+            [const_32],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let ext_out = b
+            .body_mut()
+            .graph
+            .node_outputs(ext)
+            .into_iter()
+            .next()
+            .unwrap();
+        b.build_indirect_branch(ext_out).unwrap();
+        let built = b.build().unwrap();
+
+        let placeholder = built
+            .all_node_ids()
+            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
+            .unwrap();
+        let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
+        let anchor = inputs[2];
+        let known = crate::analyze_known_bits(&built).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        assert_eq!(
+            resolved,
+            Some(ResolvedTargets::Single(0xDEAD)),
+            "Extend(IntConst(0xDEAD), U64) must resolve to Single(0xDEAD)"
+        );
+    }
 }

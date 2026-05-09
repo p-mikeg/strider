@@ -8,7 +8,7 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, RunConfig, SleighArch, Strider};
+use strider::{RunConfig, SleighArch, Strider};
 
 /// Minimal x86_64 function: `mov rax, 42; ret`.
 fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
@@ -20,9 +20,7 @@ fn x86_64_call_then_ret_bytes() -> (Vec<u8>, u64) {
 }
 
 fn make_strider() -> Strider {
-    let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv()).unwrap()
+    strider::test_utils::strider_x86_64()
 }
 
 fn run_with(compact: bool) -> ir::BuiltFunctionGraph {

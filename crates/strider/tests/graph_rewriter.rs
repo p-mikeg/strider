@@ -33,7 +33,7 @@ use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{CallingConvention, GraphRewriter, SleighArch, Strider};
+use strider::{GraphRewriter, SleighArch, Strider};
 
 // ── Common fixture builders (private to this test crate) ────────────────────
 
@@ -76,14 +76,12 @@ fn analyze_with_known_targets(
         ResolvedTargets::Multiple(targets),
     );
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::with_endianness(sleigh, base, opts, arch.endianness)
+    let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .with_known_targets(known_targets)
         .build()
         .expect("cfg build");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
-        .expect("Strider::new");
+    let strider = strider::test_utils::strider_x86_64();
     let graph = strider.analyze_cfg(&cfg).expect("analyze_cfg").graph;
     (graph, strider)
 }

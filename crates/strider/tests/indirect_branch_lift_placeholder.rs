@@ -22,7 +22,7 @@
 use cfg::{Builder, OptionsBuilder};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider::{CallingConvention, SleighArch, Strider};
+use strider::SleighArch;
 
 /// Build a synthetic x86-64 CFG containing a single region whose
 /// terminator is `UnresolvedIndirectBranch{target_vn=RAX, addr=...}`.
@@ -65,9 +65,8 @@ fn make_unresolved_indirect_branch_cfg(
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
-        .expect("Strider::new");
+    let _ = arch; // arch is the SleighArch the cfg was built with; unused here
+    let strider = strider::test_utils::strider_x86_64();
     let graph = strider
         .analyze_cfg(&cfg)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
@@ -108,9 +107,8 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (cfg, arch) = make_unresolved_indirect_branch_cfg();
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = Strider::new(arch, regs, CallingConvention::x86_64_systemv())
-        .expect("Strider::new");
+    let _ = arch; // arch is the SleighArch the cfg was built with; unused here
+    let strider = strider::test_utils::strider_x86_64();
     let outcome = strider
         .analyze_cfg(&cfg)
         .expect("analyze_cfg");

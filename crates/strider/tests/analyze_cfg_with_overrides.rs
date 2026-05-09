@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use ir::node::NodeKind;
 use rsleigh::mem_readers::BufMemReader;
-use strider::{AnalyzeOptions, CallingConvention, SleighArch, Strider};
+use strider::{AnalyzeOptions, SleighArch, Strider};
 use target::CallingConvention as TargetCC;
 
 /// Same fixture as `tests/per_address_cc.rs::x86_64_call_then_ret`:
@@ -22,9 +22,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 fn make_strider() -> Strider {
-    let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    Strider::new(arch, regs, CallingConvention::x86_64_systemv()).unwrap()
+    strider::test_utils::strider_x86_64()
 }
 
 #[test]
