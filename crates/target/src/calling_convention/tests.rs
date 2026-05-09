@@ -151,7 +151,9 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v1,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            callee_saved_count: 19,
+            // r2 + r14..r31 (18) + LR — round 9 wave 24 added LR per
+            // CLAUDE.md deliberate-tradeoff (consistent with PPC32).
+            callee_saved_count: 20,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
@@ -163,7 +165,8 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v2,
             arch: crate::arch::SleighArch::ppc64le,
             arg_count: 8,
-            callee_saved_count: 19,
+            // See PowerPC ELFv1 (BE) above.
+            callee_saved_count: 20,
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",

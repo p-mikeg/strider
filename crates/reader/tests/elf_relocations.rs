@@ -62,12 +62,47 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
         "expected ≥4 dispatch-table relocations applied; stats = {stats:?}"
     );
 
+    // Round 9 M-2 (R9-EA1 Finding 2 / R9-1E MED) regression: a
+    // well-formed ELF must produce zero malformed-target counts.
+    // Pre-fix the GOT-PLT path bucketed Section-bad-index errors as
+    // `skipped_malformed_target` while the generic-symbol path
+    // bucketed the same shape as `skipped_unresolved_target`; this
+    // assertion plus the post-fix code-inspection of the three
+    // malformed-bucket sites (elf.rs lines 538, 572, 584) pin the
+    // consistent classification.
+    assert_eq!(
+        stats.skipped_malformed_target, 0,
+        "a well-formed ELF must report zero malformed targets; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_unresolved_target, 0,
+        "a well-formed ELF (no weak externs) must report zero unresolved targets; stats = {stats:?}"
+    );
+
     // Post-condition: every dispatch_table slot now reads its helper.
     assert_eq!(read_u64_le(&regions, table_addr), Some(helper_a));
     assert_eq!(read_u64_le(&regions, table_addr + 8), Some(helper_b));
     assert_eq!(read_u64_le(&regions, table_addr + 16), Some(helper_c));
     assert_eq!(read_u64_le(&regions, table_addr + 24), Some(helper_d));
 }
+
+// Round 9 M-2 (R9-EA1 Finding 2): the dedicated synthetic-ELF unit
+// test for the malformed-target bucket invariant remains deferred —
+// constructing an ET_DYN with a bad-symbol-index Rela through
+// `object::write::elf::Writer` requires writing a full dynamic table
+// + dynsym + dynstr + rela.dyn + program headers.  The wave-1 M3 fix
+// is verified by:
+// (1) code inspection — elf.rs:538 (GOT-PLT path), elf.rs:572 (bad
+//     symbol index in generic path), elf.rs:584 (bad section index in
+//     generic path) all increment the same `skipped_malformed_target`
+//     counter post-fix; the pre-fix Section path used the wrong
+//     bucket.
+// (2) the existing positive-path test
+//     `apply_elf_relocations_patches_dispatch_table_x86_64` now
+//     asserts `stats.skipped_malformed_target == 0` and
+//     `stats.skipped_unresolved_target == 0` (a well-formed ELF
+//     produces zero in both buckets — any future regression that
+//     leaks a malformed-bucket increment into a clean path fails).
 
 #[test]
 fn default_loader_omits_data_rel_ro() {
