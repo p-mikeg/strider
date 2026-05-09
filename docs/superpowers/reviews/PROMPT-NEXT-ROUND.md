@@ -24,7 +24,9 @@ I want you to do another round of deep code review on the strider workspace at `
 
 ## Two emphases this round
 
-This round has two top-level emphases that override the per-ask priorities below when they conflict.  When in doubt, lean into these:
+This round has two top-level emphases that override the per-ask priorities below when they conflict.  When in doubt, lean into these — and when they conflict with each other, **emphasis A wins**: a simplification proposal that changes observable behaviour is rejected, even when it shrinks the codebase.
+
+The two emphases are intentionally complementary: emphasis A drives the bar up on correctness; emphasis B drives the bar down on size and cognitive load.  Together they're what "ship-quality" means for a tool whose job is to produce a faithful IR of arbitrary machine code.
 
 ### Emphasis A — correctness of the code against itself AND against the lifted representation AND against the underlying assembly
 
@@ -51,20 +53,72 @@ Three triangulation axes:
 
 For each finding under emphasis A, the fix proposal must include a concrete regression test that lifts a real instruction and asserts the resulting IR shape — fixture-based, not hand-built mock graphs.
 
-### Emphasis B — code that can be unified / generalised
+**Cross-tie to emphasis B**: every simplification proposal must explicitly prove behavioural equivalence with the pre-simplification code.  When the proposed change is "delete this dead branch", show that no input reaches the branch.  When the change is "merge two passes", show that the merged pass produces the same IR for every reachable input.  When the change is "inline this helper", show that no caller relied on the helper's typed boundary (e.g. an `expect`-on-`?` boundary) for error context.  Behaviour-preserving simplifications are wins; behaviour-changing simplifications are out-of-scope (they're correctness fixes that happen to shrink code, and they belong under emphasis A's bucket with a regression test).
 
-Round 7 and round 8 each landed targeted helper extractions (`PyMatch::with_graph`, `cc::build_cc_for_sleigh`, `pure_pass_class!` macro, `pat_builder_finalise!` macro using `multiple-pymethods`, `count_reachable` promoted to `crates/opt/src/test_support.rs`).  This round does an exhaustive sweep for the *remaining* duplication.
+### Emphasis B — simplification: extract, delete, merge, inline (in that order of leverage)
 
-Per-finding criteria for proposals under emphasis B:
+Round 7 and round 8 each landed targeted helper extractions (`PyMatch::with_graph`, `cc::build_cc_for_sleigh`, `pure_pass_class!` macro, `pat_builder_finalise!` macro using `multiple-pymethods`, `count_reachable` promoted to `crates/opt/src/test_support.rs`, `crates/strider/src/test_utils.rs` exposing `strider_x86_64()` / per-arch wrappers).  This round does an exhaustive simplification sweep — and "simplification" here is broader than just extracting helpers.
 
-- **Three-occurrence threshold.**  Patterns repeated ≥ 3 times, ≥ 3 LOC each.  Two-occurrence repetition is a LOW finding; three+ is MED or HIGH depending on per-occurrence size.
-- **Load-bearing-different vs accidentally-different.**  When two repetitions look the same but produce different runtime behaviour (e.g. one site uses `unwrap_or(default)` and another uses `expect("...")`), the difference is *load-bearing* — propose unifying only after explicitly noting why each variant exists.  The pattern crate's per-builder `capture` / `cap` / `when` / `into_pat` repetition was unified via `pat_builder_finalise!` in round 8 because the four methods were truly identical; the per-PyO3-pass constructors that build a `BuiltCallingConvention` from a `PySleigh` were unified via `cc::build_cc_for_sleigh` because the four sites differed only in their downstream `from_convention(&built_cc)` call (truly extractable).  If a candidate site has subtly different ordering, error handling, or ownership shape, document the difference and decide skip vs. unify per-case.
-- **Propose the helper signature.**  For each accepted candidate, write the proposed helper's signature, its location (which crate / which module), and the migration shape at every call site.  Aim for "drop-in replace this 5-LOC block with a 1-line call".
-- **Don't force-fit `macro_rules!`.**  Use `macro_rules!` only for syntactic patterns that genuinely repeat (the `pure_pass_class!` / `pat_builder_finalise!` shapes).  For semantic repetition (data-flow patterns, walks, error-wrap-and-propagate), prefer a function or extension trait.  Macros lose IDE support, defeat type inference, and are read-once / write-many.
-- **Visibility tightening as a side-effect.**  Once a helper is extracted, the original implementation may have been over-public.  For every helper extraction, propose the minimum visibility (`pub(crate)` first, `pub` only if a downstream consumer outside the helper's home crate needs it).
-- **Propose alternatives when extraction isn't worth it.**  If the duplicated pattern is fewer than 3 LOC AND the call sites are fewer than 5, the indirection cost may exceed the duplication cost.  Document the decision and skip.
+The brief is: **reduce total LOC AND reduce reader cognitive load** (the second condition matters because a one-line "clever" replacement of three obvious lines is a regression).  Every proposal must net out positive on both axes.
 
-The Round 5 simplifications report should land at `reviews/round9-simplifications.md` with sections: code to delete, helper consolidation, visibility tightening, naming consolidation, performance migrations.  Aim for 30–50 concrete entries.
+The simplification toolkit, ranked by leverage:
+
+1. **Delete dead code.**  The biggest LOC win and the lowest risk.  Hunt for:
+   - `pub` items with zero external consumers (verify by `grep` across the workspace AND across `strider-py`'s Python surface).  An `unused_must_use`-style audit, but for whole functions / structs / variants / trait impls / CC presets / `SleighArch` presets / pattern free constructors.
+   - Test fixtures that no test in the workspace references.
+   - `#[cfg(any())]`-disabled or commented-out code.
+   - `// removed:` tombstone comments referencing symbols that have already been deleted (round-8 noted some `CallOtherElide` tombstones in `opt/src/lib.rs:148-151,181-183`; round 7 explicitly preserved them as breadcrumbs — verify whether that justification still applies, then either delete or note "intentional historical breadcrumb").
+   - `Default` impls / `Clone` derives / etc. that nothing constructs.
+   - Re-exports for items that aren't reached from any external consumer.
+
+2. **Merge similar code.**  Includes both helper extraction (the round-8 emphasis) AND structural merges:
+   - Two opt passes that do nearly-the-same work merged into one with a config flag.
+   - Two `NodeKind` variants that the lifter / opt / pattern paths always handle identically (e.g. `IntCmpOp::Less` and `IntCmpOp::Sless` if the entire codebase always treats them via a `is_less_family()` helper — which is unlikely but worth checking).
+   - Two trait impls on the same type that overlap (e.g. `From<T>` and a `to_pat()` method that does the same thing).
+   - Two error variants that always coincide.
+   - Two test helpers in `tests/common/mod.rs` and `src/test_support.rs` that do the same job (round 8 promoted helpers from `tests/common` to `src/test_support`; verify no third copy survives).
+
+3. **Inline single-callsite helpers.**  The inverse of extraction.  When a `fn helper(...)` is called from exactly one place AND the helper's body is < 5 lines, inline it — the abstraction is paying no rent.  Especially common for:
+   - `pub(super)` helpers in opt passes that only the parent module uses.
+   - `fn build_X(...)` helpers in `flag_cmp_canonicalize` / `if_cond_inversion` rule builders called from one rule each.
+   - Any helper whose body is `self.field.foo()` or `(*self.inner).clone()`.
+
+4. **Replace bespoke patterns with stdlib idioms.**  Often the original author didn't know about a stdlib feature.  Examples to scan for:
+   - Manual `.iter().filter(|n| reachable.contains(n)).filter(|n| pred(...))` chains where `reachable.intersection(...)` or a single combined predicate is shorter (when the result is the same).
+   - Hand-rolled `let Some(x) = opt else { return None; }` chains where `?` would suffice (caller's return type permitting).
+   - `match x { Some(v) => v, None => return None }` → `x?`.
+   - `.collect::<Vec<_>>().len()` → `.count()`.
+   - `for item in vec.iter() { mem.push(item.clone()) }` → `mem.extend_from_slice(&vec)`.
+   - Manual saturating-arithmetic patterns where `usize::saturating_add` / `i64::checked_add` apply.
+   - `.unwrap_or_else(|_| f())` where the closure's only purpose is `f()` — use `.unwrap_or_else(f)` directly.
+
+5. **Tighten visibility (fewer `pub` = smaller API surface = simpler).**  Round 8 deferred this with the rationale that several items are needed cross-crate.  Verify each `pub` declaration's actual external consumer; if there's none, propose `pub(crate)` or `pub(super)`.  A smaller `pub` set is a smaller API contract — the codebase is simpler from the outside-in.
+
+6. **Drop redundant wrappers.**  Newtypes that don't carry an invariant or a method are pure overhead.  If `pub struct Foo(Inner);` has no methods and the `Inner` type is already public, just expose `Inner` directly.  Examples to check: any `struct WrapperPat(Pat)` with an `impl From<Pat> for WrapperPat` and nothing else; any `struct Built<X>(X)` that's only ever `.0`-accessed.
+
+7. **Collapse partial-state types into proper sum types.**  When a `struct` has fields populated to "zero/None/empty" sentinels in some construction paths and to "real" values in others, that's a partial-state type — model it as `enum { Real { ... }, Empty }` instead.  Round 8 noted `BuiltFunctionGraph::from_graph_and_entry_for_rewrite` produces a partial-state form; propose either making the partiality explicit in the type OR converting all consumers to use the full form.
+
+Per-finding criteria (every proposal must answer all of these):
+
+- **Net LOC delta.**  After applying the proposal, does the codebase have fewer lines?  A 1-LOC helper that replaces a 1-LOC pattern is net zero (skip).
+- **Net cognitive delta.**  After the proposal, is the call site easier to read?  A `macro_rules!` that hides 4 lines but makes the call site `pure_pass_class!("Foo" => PyFoo)` is a win because the macro name is self-documenting; a `helper_X!()` that hides 4 lines but the call site is now `helper_X!(state, ctx, mode)` with no clarity about what's happening is a loss.
+- **Three-occurrence threshold (for extraction).**  Patterns repeated ≥ 3 times, ≥ 3 LOC each are MED; ≥ 5 occurrences OR ≥ 6 LOC each are HIGH.  Two-occurrence repetition is a LOW finding.
+- **Load-bearing-different vs accidentally-different (for extraction).**  When two repetitions look the same but produce different runtime behaviour, the difference is *load-bearing* — propose unifying only after explicitly noting why each variant exists.  If a candidate site has subtly different ordering, error handling, or ownership shape, document the difference and decide skip vs. unify per-case.
+- **Don't force-fit `macro_rules!`.**  Use `macro_rules!` only for syntactic patterns that genuinely repeat (e.g. the `pure_pass_class!` / `pat_builder_finalise!` shapes).  For semantic repetition (data-flow patterns, walks, error-wrap-and-propagate), prefer a function or extension trait.  Macros lose IDE support, defeat type inference, and are read-once / write-many.
+- **Visibility tightening as a side-effect.**  When a helper is extracted, the original implementation may have been over-public — propose the minimum visibility for the new helper.
+- **Skip when the indirection cost exceeds the duplication cost.**  If a proposed helper is < 3 LOC AND the call sites are < 5, document the decision and skip.
+
+The Round 5 simplifications report should land at `reviews/round9-simplifications.md` with sections matching the toolkit above:
+
+1. Code to delete (largest expected LOC win).
+2. Code to merge (helper extractions + structural merges).
+3. Single-callsite helpers to inline.
+4. Bespoke patterns to replace with stdlib idioms.
+5. Visibility to tighten.
+6. Wrappers to drop.
+7. Partial-state types to convert.
+
+Aim for 50–80 concrete entries with a per-category total LOC delta at the top.  Round 8's simplifications report had 30 entries; this round goes broader.
 
 ## Coverage requirement — every line of source must be inspected
 
@@ -131,13 +185,15 @@ When you launch multiple subagents for independent work, send them in a **single
    - Per-arch CallOther entries fire correctly (e.g. ARM `swi` is reading r7/r0..r6 and writing r0; AArch64 HVC/SMC are reading x0..x7 and writing x0..x3).
    - Every fix proposal includes a regression test that lifts the relevant instruction.
 
-4. **Simplicity — exhaustive helper extraction sweep** *(emphasis B)*.  Identify modules / functions / passes / structs / API surface to delete or merge without sacrificing correctness.  Look for:
-   - Duplicated patterns across opt passes (≥ 3 occurrences, ≥ 3 LOC each).
-   - Redundant wrapper types (a `struct Foo(Inner)` with no methods worth wrapping for).
-   - Dead test-only `pub` (visibility wider than required).
-   - Unused features (per `target::CallingConvention` preset, per `SleighArch` preset, per pattern free constructor, per NodeKind variant, per pcode opcode arm in `pcode_lift::value::*` — verify each via `grep` for at least one external consumer).
-   - Stale `#[ignore]` test reasons that no longer match what the test does (the round-8 sweep cleaned R1/R2/Tier-N — check if more accumulated).
-   - Helper extraction candidates organised by their Three-occurrence + load-bearing analysis (per emphasis B's per-finding criteria).
+4. **Simplicity — exhaustive simplification sweep** *(emphasis B)*.  Apply the seven-category toolkit (delete dead code, merge similar code, inline single-callsite helpers, replace bespoke patterns with stdlib idioms, tighten visibility, drop redundant wrappers, collapse partial-state types).  For every entry, answer the per-finding criteria (net LOC delta, net cognitive delta, three-occurrence threshold for extraction, load-bearing distinction, indirection-cost veto).  Specific things to look for that prior rounds either missed or under-explored:
+   - **Dead code that's been hiding behind a `#[allow(dead_code)]` or `pub(crate)` re-export with no actual consumer**: walk every `pub`/`pub(crate)` item and verify at least one consumer exists.
+   - **Redundant wrapper types** (a `struct Foo(Inner)` with no methods worth wrapping for; verify by checking whether all `Foo` consumers immediately destructure to `Inner`).
+   - **Unused features**: every `target::CallingConvention` preset, every `SleighArch` preset, every pattern free constructor, every NodeKind variant, every pcode opcode arm in `pcode_lift::value::*`, every `#[pyfunction]` exported from `strider-py` — verify each via `grep` for at least one external consumer.  Items with zero consumers go in the delete bucket.
+   - **Stale `#[ignore]` test reasons** that no longer match what the test does (the round-8 sweep cleaned R1/R2/Tier-N — check if more accumulated, especially the 7 ignored `indirect_branch_resolved_*` tests whose ignore-reasons claim specific lifter shapes — verify the shapes are still what the lifter produces).
+   - **Helper extraction candidates** organised by the three-occurrence + load-bearing analysis.
+   - **Single-callsite helpers** that should be inlined (the inverse).
+   - **Hand-rolled patterns** where stdlib has a one-line equivalent (`?` instead of `let Some(_) = _ else { return None }`, `.count()` instead of `.collect::<Vec<_>>().len()`, etc.).
+   - **Partial-state types** (a struct populated to sentinel values in some paths and to real values in others) candidate for sum-type rewrite.
 
 5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere — not just round-7's `tier1`/`tier2` and round-8's `x86_64_systemv_abi`/`r1_placeholder`.  Verify that the meaning of every term in CLAUDE.md / per-crate README / SKILL.md matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role.  Propose a concrete rename mapping for every flagged identifier.
 
@@ -211,7 +267,17 @@ Six `feature-dev:code-reviewer` agents, one per crate group:
 `feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round9-test-plan.md`.
 
 ### Round 5 — consolidation + simplification
-`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round9-simplifications.md` per emphasis B's structure (code to delete, helper consolidation, visibility tightening, naming consolidation, performance migrations).  30–50 entries.
+`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round9-simplifications.md` per emphasis B's seven-category toolkit:
+
+1. Code to delete.
+2. Code to merge.
+3. Single-callsite helpers to inline.
+4. Bespoke patterns to replace with stdlib idioms.
+5. Visibility to tighten.
+6. Wrappers to drop.
+7. Partial-state types to convert.
+
+50–80 entries with per-category LOC delta + projected post-implementation workspace LOC reduction at the top.
 
 ### Round 6 — skill audit
 Skim every existing skill against the current code.  Propose new skills or revisions.
@@ -229,7 +295,7 @@ The summary must include a "what's-new-vs-round-8" section: which findings are g
 
 - [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round9-summary.md` with concrete actions.
 - [ ] Emphasis A (correctness against itself + against pcode + against assembly) produces three reports: `reviews/round9-correctness-self-vs-self.md`, `reviews/round9-correctness-ir-vs-pcode.md`, `reviews/round9-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
-- [ ] Emphasis B (helper extraction) produces `reviews/round9-simplifications.md` with 30–50 entries grouped per the emphasis B structure.
+- [ ] Emphasis B (simplification) produces `reviews/round9-simplifications.md` with 50–80 entries grouped into the seven-category toolkit (delete, merge, inline, stdlib idioms, visibility, drop wrappers, sum-type partial states).  Header includes the per-category total LOC delta and the projected post-implementation workspace LOC reduction.
 - [ ] Ask 8 (multi-round correctness) produces five separate reports — `round9-correctness-types.md`, `round9-correctness-invariants.md`, `round9-correctness-borrowing.md`, `round9-correctness-edge-cases.md`, `round9-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
 - [ ] Round 9 summary lists every HIGH-severity finding with `file:line` + a proposed fix + (for emphasis A findings) the regression test scaffolding.
 - [ ] CLAUDE.md correctness diff lists every drift from the current code.
@@ -277,7 +343,7 @@ The review is itself a research effort — the "verification" is the quality of 
 - How many findings were genuinely new (post-round-8) vs. pre-existing bugs round 8 missed vs. pre-existing-and-deferred.
 - Which subagents found load-bearing items the others missed (the multi-round signal).
 - For emphasis A: the count of findings per axis (code-vs-code, IR-vs-pcode, IR-vs-assembly).
-- For emphasis B: the total LOC eliminated by the proposed extractions vs. the total LOC of helper code introduced.
+- For emphasis B: per-category total LOC delta (delete / merge / inline / stdlib / visibility / wrappers / partial-state), the workspace's pre-review LOC, the projected post-implementation LOC, and the per-category cognitive-load assessment (subjective, but called out for the top 5 entries per category).
 
 === END PROMPT ===
 
