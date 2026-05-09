@@ -197,6 +197,49 @@ enum Decision {
     Rebuild,
 }
 
+/// Stall-guard helper for the fixed-point loop's `step` method.
+/// Round 9 wave 27 (I-7): extracted to a free function so the
+/// invariant can be unit-tested directly without constructing a
+/// real `LoopState` (which requires a `Sleigh<R>`, `BuiltFunctionGraph`,
+/// and full CFG state).
+///
+/// Fires `Err` when an in-place-only iteration's unresolved count
+/// **strictly grew** AND the budget is exhausted.  Count-stable
+/// iterations (`unresolved_after == prev_unresolved`) do NOT
+/// consume budget: they may represent real progress through an
+/// anchor-replacement chain (one anchor resolved, one new
+/// placeholder materialised).  The outer
+/// `cap = 2 * pending_at_iter_0 + 4` bound still terminates
+/// count-stable infinite loops.
+///
+/// Pre-fix (round 9 Ask-8 R2 F7) the comparison was `>=`, which
+/// incorrectly consumed budget on every count-stable iteration.
+///
+/// # Errors
+///
+/// Returns `Err` when `!edge_set_changed && unresolved_after >
+/// unresolved_before && *stall_budget == 0`.  Otherwise decrements
+/// `stall_budget` (when both growth and no-edge-change conditions
+/// hold) and returns `Ok(())`.
+fn apply_stall_guard(
+    stall_budget: &mut usize,
+    edge_set_changed: bool,
+    unresolved_after: usize,
+    unresolved_before: usize,
+) -> Result<()> {
+    if !edge_set_changed && unresolved_after > unresolved_before {
+        if *stall_budget == 0 {
+            bail!(
+                "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
+                unresolved_after,
+                unresolved_before,
+            );
+        }
+        *stall_budget -= 1;
+    }
+    Ok(())
+}
+
 /// The fixed-point loop's spanning state.
 struct LoopState<'a, R>
 where
@@ -393,26 +436,13 @@ where
             return Ok(Decision::FixedPoint);
         }
 
-        // Track stall: an in-place-only iteration whose unresolved
-        // count *grew* without an edge-set change is a real stall —
-        // the resolver is producing more unresolved anchors than it
-        // resolves.  Round 9 Ask-8 R2 F7: the previous `>=` form also
-        // fired on count-stable iterations (one anchor resolved, one
-        // new placeholder materialised), which can be legitimate
-        // progress through an anchor-replacement chain.  The
-        // `cap = 2 * pending_at_iter_0 + 4` outer bound still
-        // terminates count-stable infinite loops; this stall guard
-        // catches the strictly-growing pathology earlier.
-        if !edge_set_changed && unresolved_after_edits.len() > prev_unresolved_len {
-            if self.stall_budget == 0 {
-                bail!(
-                    "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
-                    unresolved_after_edits.len(),
-                    prev_unresolved_len,
-                );
-            }
-            self.stall_budget -= 1;
-        }
+        // Track stall guard via the apply_stall_guard helper.
+        apply_stall_guard(
+            &mut self.stall_budget,
+            edge_set_changed,
+            unresolved_after_edits.len(),
+            prev_unresolved_len,
+        )?;
 
         self.unresolved = unresolved_after_edits;
         if !edge_set_changed {
@@ -985,6 +1015,81 @@ mod tests {
             per_address_built_ccs: HashMap::new(),
         }
     }
+
+    // ── apply_stall_guard tests (Round 9 wave 27 / I-7) ───────────────────
+    //
+    // These tests pin the wave-2 fix (`>=` → `>`) by exercising the
+    // stall-guard behavior directly via the extracted helper.  Each
+    // case names the relevant scenario from the orchestrator's
+    // fixed-point loop.
+
+    #[test]
+    fn apply_stall_guard_no_change_in_count_does_not_consume_budget() {
+        // Round 9 Ask-8 R2 F7 regression: a count-stable in-place-only
+        // iteration (one anchor resolved, one new placeholder
+        // materialised) is legitimate progress and must NOT consume
+        // budget.  Pre-fix (`>=`) this ate one budget per stable
+        // iteration; post-fix (`>`) the budget stays full.
+        let mut budget = 3usize;
+        for _ in 0..5 {
+            apply_stall_guard(&mut budget, /* edge_set_changed */ false, 4, 4)
+                .expect("count-stable iteration must not error");
+        }
+        assert_eq!(budget, 3, "budget must stay full across 5 count-stable iterations");
+    }
+
+    #[test]
+    fn apply_stall_guard_count_decrease_does_not_consume_budget() {
+        // The natural progress shape: count strictly decreases.  Budget
+        // stays full.
+        let mut budget = 3usize;
+        apply_stall_guard(&mut budget, false, 3, 4)
+            .expect("count-decrease must not error");
+        assert_eq!(budget, 3);
+    }
+
+    #[test]
+    fn apply_stall_guard_count_growth_consumes_budget() {
+        // Strictly-growing count (resolver producing more anchors than
+        // it resolves) is the real stall pathology.  Each growth step
+        // decrements budget; reaching zero raises Err.
+        let mut budget = 2usize;
+        // Iter 1: 4 → 5 (grew by 1). Budget: 2 → 1.
+        apply_stall_guard(&mut budget, false, 5, 4).expect("first growth ok");
+        assert_eq!(budget, 1);
+        // Iter 2: 5 → 6. Budget: 1 → 0.
+        apply_stall_guard(&mut budget, false, 6, 5).expect("second growth ok");
+        assert_eq!(budget, 0);
+        // Iter 3: 6 → 7. Budget: 0 — bail.
+        let err = apply_stall_guard(&mut budget, false, 7, 6)
+            .expect_err("third growth must surface the stall");
+        assert!(
+            err.to_string().contains("in-place edits stalled"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_stall_guard_edge_set_change_skips_check() {
+        // When edge_set_changed (Rebuild path), the stall guard is
+        // entirely skipped.  Budget stays untouched even on growth.
+        let mut budget = 1usize;
+        apply_stall_guard(&mut budget, /* edge_set_changed */ true, 100, 1)
+            .expect("rebuild path skips stall check");
+        assert_eq!(budget, 1, "edge-set change must not consume budget");
+    }
+
+    #[test]
+    fn apply_stall_guard_zero_budget_with_no_growth_is_ok() {
+        // Budget 0 + no growth = no stall fires.  Documents that
+        // exhausted budget plus benign progress remains progress.
+        let mut budget = 0usize;
+        apply_stall_guard(&mut budget, false, 4, 4).expect("count-stable + 0-budget ok");
+        apply_stall_guard(&mut budget, false, 3, 4).expect("count-decrease + 0-budget ok");
+        apply_stall_guard(&mut budget, true, 100, 4).expect("edge-change + 0-budget ok");
+    }
+
+    // ── existing edge-set tests ───────────────────────────────────────────
 
     #[test]
     fn edge_set_of_empty_map_is_empty() {
