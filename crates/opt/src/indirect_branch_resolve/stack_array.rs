@@ -351,7 +351,26 @@ fn flatten_add_tree(
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
     // `Neg(IntConst)`, so the per-term decompose step downstream catches
     // that constant via the `None` arm at line ~307.
-    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) = (
+    // Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave): also flatten
+    // `IntBinaryOp::Or` when used as add-equivalent.  AArch64-BE's
+    // Sleigh lift can emit `Or(sp, K)` for stack-pointer-plus-offset
+    // address computation when `sp`'s upper bits are guaranteed zero
+    // (which they are for any address in the canonical 48-bit virtual
+    // range), making OR and ADD bitwise equivalent for non-overlapping
+    // operands.  The downstream per-term decompose still needs to see
+    // through this to attribute the operand back to `InitialVar(sp)`.
+    //
+    // SOUND: when both operands have non-overlapping bit footprints,
+    // `Or(a, b) == Add(a, b)`.  The classifier's existing per-term
+    // soundness checks (every term either resolves to a constant, an
+    // InitialVar(sp) reference, or an idx-scaled-by-stride pattern)
+    // re-validate the shape downstream.  Misclassification surfaces
+    // as a per-term `None` (defer-via-unresolved) rather than a
+    // wrong dispatch.
+    if let (
+        NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Or),
+        Ok([lhs, rhs]),
+    ) = (
         graph.node_kind(node),
         graph.node_inputs_exact::<2>(node),
     ) {
