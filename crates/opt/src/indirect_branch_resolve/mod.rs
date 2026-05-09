@@ -684,4 +684,57 @@ mod tests {
             "Extend(IntConst(0xDEAD), U64) must resolve to Single(0xDEAD)"
         );
     }
+
+    /// Round 9 IMPORTANT (R9-1C Issue 1) regression: a hand-built
+    /// `Extend(SignExtend, IntConst(neg_value, U32), U64)` shape — bypassing
+    /// `ConstantFold` rule 6 and `extend_if_needed` — must classify to
+    /// the *sign-extended* dispatch target, not the zero-extended one.
+    /// Before the fix the classifier used `(*k) as u64` for both
+    /// extension flavours, masking off the high bits for sign-negative
+    /// narrow constants.
+    #[test]
+    fn classify_sign_extend_of_negative_int_const_resolves_to_sign_extended_single() {
+        use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+        use crate::indirect_branch_resolve::classify::classify_anchor_with_rom_and_sp;
+
+        let mut b = FunctionBuilder::empty().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        // 32-bit value with the sign bit set: 0xFFFF_FFFF (= -1 in i32).
+        // Sign-extension to U64 must produce 0xFFFF_FFFF_FFFF_FFFF.
+        // We construct the SignExtend node directly (bypassing the
+        // builder's eager fold) so the classifier's arm gets the live
+        // shape rather than a constant-folded `IntConst(0xFFFF_FFFF_FFFF_FFFF)`.
+        let const_32 = b.build_int_const(0xFFFF_FFFFu64, NodeOutputType::U32).unwrap();
+        let sext = b.body_mut().graph.create_node(
+            NodeKind::Extend(ir::ExtendOp::SignExtend),
+            [const_32],
+            [NodeOutputKind::OutputType(NodeOutputType::U64)],
+        );
+        let sext_out = b
+            .body_mut()
+            .graph
+            .node_outputs(sext)
+            .into_iter()
+            .next()
+            .unwrap();
+        b.build_indirect_branch(sext_out).unwrap();
+        let built = b.build().unwrap();
+
+        let placeholder = built
+            .all_node_ids()
+            .find(|&n| matches!(built.graph.node_kind(n), NodeKind::IndirectBranch))
+            .unwrap();
+        let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
+        let anchor = inputs[2];
+        let known = crate::analyze_known_bits(&built).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        assert_eq!(
+            resolved,
+            Some(ResolvedTargets::Single(0xFFFF_FFFF_FFFF_FFFFu64)),
+            "Extend(SignExtend, IntConst(0xFFFF_FFFF, U32), U64) must \
+             sign-fill to Single(0xFFFF_FFFF_FFFF_FFFF), not Single(0xFFFF_FFFF)"
+        );
+    }
 }

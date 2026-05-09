@@ -62,17 +62,23 @@ pub(super) fn check_layer_c_control_state(
         if !matches!(graph.node_kind(node), NodeKind::ControlState) {
             continue;
         }
+        // Round 9 Ask-8 R2 F2: gate the entire ControlState check on
+        // reachability, not just the empty-input branch.  A non-reachable
+        // ControlState zombie with stale non-Control inputs (left by some
+        // future pass that surgery-edits without scrubbing) would
+        // otherwise produce a false-positive
+        // `ControlStateNonControlPredecessor` error and mask real
+        // problems elsewhere.  The validator's stated tolerance for
+        // detached zombies (see `validate`'s doc) requires this gate to
+        // apply to both branches.
+        if !reachable.contains(node) {
+            continue;
+        }
         let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
-            // Zero-predecessor ControlStates are *expected* for zombies left
-            // behind by `RedundantPhis::detach_unreachable_nodes`; they live
-            // in the arena but are not reachable from the entry. The
-            // invariant only applies to reachable ControlState nodes.
-            if reachable.contains(node) {
-                errs.push(ValidationError::EmptyControlStatePredecessors {
-                    control_state: node,
-                });
-            }
+            errs.push(ValidationError::EmptyControlStatePredecessors {
+                control_state: node,
+            });
             continue;
         }
         for (idx, target) in inputs.into_iter().enumerate() {

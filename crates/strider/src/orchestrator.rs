@@ -393,15 +393,22 @@ where
             return Ok(Decision::FixedPoint);
         }
 
-        // Track stall: an in-place-only iteration must strictly
-        // reduce the unresolved count, or we've found a fixed point
-        // in disguise.  Surface as a typed error so a misclassifying
-        // resolver shows up before exhausting the cap.
-        if !edge_set_changed && unresolved_after_edits.len() >= prev_unresolved_len {
+        // Track stall: an in-place-only iteration whose unresolved
+        // count *grew* without an edge-set change is a real stall —
+        // the resolver is producing more unresolved anchors than it
+        // resolves.  Round 9 Ask-8 R2 F7: the previous `>=` form also
+        // fired on count-stable iterations (one anchor resolved, one
+        // new placeholder materialised), which can be legitimate
+        // progress through an anchor-replacement chain.  The
+        // `cap = 2 * pending_at_iter_0 + 4` outer bound still
+        // terminates count-stable infinite loops; this stall guard
+        // catches the strictly-growing pathology earlier.
+        if !edge_set_changed && unresolved_after_edits.len() > prev_unresolved_len {
             if self.stall_budget == 0 {
                 bail!(
-                    "in-place edits stalled: {} unresolved branches after edit, no edge-set growth",
-                    unresolved_after_edits.len()
+                    "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
+                    unresolved_after_edits.len(),
+                    prev_unresolved_len,
                 );
             }
             self.stall_budget -= 1;

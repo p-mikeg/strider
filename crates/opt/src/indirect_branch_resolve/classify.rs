@@ -263,20 +263,54 @@ pub fn classify_anchor_with_rom_and_sp(
             }
             None
         }
-        NodeKind::Extend(_) => {
+        NodeKind::Extend(op) => {
             let inputs: Vec<NodeOutputId> =
                 graph.node_inputs(producer_id).into_iter().collect();
             if let Some(&inner) = inputs.first()
                 && let NodeKind::IntConst(k) = graph.kind_of_output(inner)
             {
-                // Zero-extend / sign-extend of a constant: the constant
-                // value carries through (zero-extend leaves it as-is in
-                // u128 storage; sign-extend would re-fill upper bits, but
-                // the inner IntConst's u128 representation already
-                // reflects what the writer stored).  Branch targets are
-                // 64-bit, so truncate to u64.
-                #[allow(clippy::cast_possible_truncation)]
-                let truncated = (*k) as u64;
+                // Round 9 IMPORTANT (R9-1C Issue 1): correctly handle
+                // both extension flavours.  Pre-fix the arm used
+                // `(*k) as u64` for both, which is wrong for
+                // `SignExtend(IntConst(neg_value, narrow_ty))` — the
+                // u128 storage holds the narrow value with zero high
+                // bits, so a sign-negative narrow constant would be
+                // truncated to u64 with the high bits cleared instead
+                // of sign-filled.
+                //
+                // In production this arm is normally dead because
+                // `ConstantFold` rules 5/6 fold `Zero/SignExtend(IntConst)`
+                // before the classifier runs and `extend_if_needed`
+                // folds at build time.  But the unit-test path can
+                // bypass both, and a future caller that constructs the
+                // shape directly should still get the correct answer.
+                let truncated = match op {
+                    ir::ExtendOp::ZeroExtend => {
+                        // Zero-extension is the identity in u128
+                        // storage (the inner IntConst already has
+                        // zeros in the high bits).
+                        #[allow(clippy::cast_possible_truncation)]
+                        let v = (*k) as u64;
+                        v
+                    }
+                    ir::ExtendOp::SignExtend => {
+                        // Sign-extend: read the inner constant as a
+                        // signed value at its declared input width,
+                        // then mask to the dispatch slot's output
+                        // width (typically 64-bit).
+                        let in_ty = match graph.output_kind(inner).as_value() {
+                            Some(t) => t,
+                            None => return None,
+                        };
+                        let signed = match in_ty.get_signed_int(*k) {
+                            Some(s) => s,
+                            None => return None,
+                        };
+                        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                        let v = signed as u64;
+                        v
+                    }
+                };
                 return Some(ResolvedTargets::Single(truncated));
             }
             None

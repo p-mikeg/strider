@@ -669,26 +669,39 @@ fn link_register_vn_none_for_stack_push_presets() {
     }
 }
 
-/// On ARM AAPCS the link register is callee-saved.  Pin that the
-/// resolved `link_register_vn` is the same varnode as the `lr` entry in
-/// `callee_saved_regs` — guards against the two lookup paths (the new
-/// `link_register_reg_name` and the existing `callee_saved_regs` list)
-/// diverging silently if one preset drops the `lr` entry.
+/// CLAUDE.md "Note (link-register handling)" documents that
+/// `aarch64_aapcs64`, `arm_aapcs`, MIPS o32/n64, and the PowerPC
+/// presets list their LR in `callee_saved_regs` — even though the
+/// official ABI specs mark them caller-saved/volatile — so the
+/// indirect-branch resolver's `LinkRegister` arm fires on functions
+/// returning via the entry LR.  Pin that the two lookup paths (the
+/// `link_register_reg_name` resolution AND the `callee_saved_regs`
+/// list) agree for every link-register preset.  Round 9 Ask-8 R5 I-1:
+/// previously only ARM was pinned; AArch64 / MIPS / PPC could drop
+/// their LR from `callee_saved_regs` without triggering this test.
 #[test]
 fn link_register_vn_resolves_to_callee_saved_lr() {
-    let regs = regs_for(crate::arch::SleighArch::arm());
-    let built = CallingConvention::arm_aapcs()
-        .build(&regs)
-        .unwrap_or_else(|e| panic!("ARM AAPCS build failed: {e:?}"));
-    let lr_vn = regs
-        .name_to_vn("lr")
-        .unwrap_or_else(|| panic!("ARM AAPCS: 'lr' must resolve"));
-    assert_eq!(built.link_register_vn(), Some(lr_vn));
-    assert!(
-        built.callee_saved_regs().contains(&lr_vn),
-        "ARM AAPCS: 'lr' must also be present in callee_saved_regs, got {:?}",
-        built.callee_saved_regs(),
-    );
+    for c in link_reg_cases() {
+        let Some(_) = c.expected_lr_name else {
+            // Stack-push ISAs (x86 / x86_64) have no LR — already
+            // covered by `link_register_vn_none_for_stack_push_presets`.
+            continue;
+        };
+        let regs = regs_for((c.arch)());
+        let built = (c.cc)()
+            .build(&regs)
+            .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
+        let lr_vn = built
+            .link_register_vn()
+            .unwrap_or_else(|| panic!("{}: link_register_vn must be Some", c.name));
+        assert!(
+            built.callee_saved_regs().contains(&lr_vn),
+            "{}: link-register varnode must be present in callee_saved_regs \
+             (CLAUDE.md deliberate-tradeoff invariant); got callee_saved_regs={:?}",
+            c.name,
+            built.callee_saved_regs(),
+        );
+    }
 }
 
 /// An unknown `stack_ptr_reg_name` must surface as `UnknownRegName`, the
