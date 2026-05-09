@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
+
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Tests for `RegionTerminator` — the per-region terminator enum that

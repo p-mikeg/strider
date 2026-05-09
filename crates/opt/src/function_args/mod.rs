@@ -205,8 +205,7 @@ fn detect_register_args(
         // FunctionArg out) carries no coupling concern; the stack-args path
         // unifies multiple Loads and intentionally skips the absorption.
         fg.extend_asm_fingerprint_from(new_node, initial_var);
-        fg.replace_all_uses(old_out, new_out)?;
-        result |= OptimizationResult::Changed;
+        result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, new_out)?);
     }
     Ok(result)
 }
@@ -342,7 +341,7 @@ fn detect_stack_args(
                 // to absorb the load's fingerprint into it (and doing so
                 // would couple FunctionArg's identity to the loads it
                 // happens to subsume).
-                fg.replace_all_uses(old_out, new_out)?;
+                result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, new_out)?);
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
                 let trunc = fg.create_node(
@@ -355,11 +354,10 @@ fn detect_stack_args(
                 // the rewritten Load's fingerprint so the contributing
                 // machine instruction's address survives the rewrite.
                 fg.extend_asm_fingerprint_from(trunc, load);
-                fg.replace_all_uses(old_out, trunc_out)?;
+                result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, trunc_out)?);
             }
             fg.detach_node_inputs(load);
         }
-        result |= OptimizationResult::Changed;
     }
     Ok(result)
 }

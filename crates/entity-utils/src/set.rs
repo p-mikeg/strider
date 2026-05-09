@@ -57,6 +57,15 @@ impl<E: EntityRef> DenseEntitySet<E> {
     /// newly inserted, `false` if it was already present — matching
     /// `std::collections::HashSet::insert`'s contract so callers can
     /// switch implementations without changing the call shape.
+    ///
+    /// **Implementation note:** `cranelift_bitset::CompoundBitSet::insert`
+    /// returns `()`, so we read with `contains` first to know whether
+    /// the entry was already present.  That's two index operations
+    /// per `insert` — a future cranelift-bitset that exposes a
+    /// `test_and_set -> bool` would let us collapse to one.  Hot
+    /// graph-traversal paths that don't need the novel-insertion
+    /// signal can skip this overhead by calling `bitset.insert(...)`
+    /// directly through the public field accessor (none today).
     pub fn insert(&mut self, entity: E) -> bool {
         let already = self.bitset.contains(entity.index());
         self.bitset.insert(entity.index());

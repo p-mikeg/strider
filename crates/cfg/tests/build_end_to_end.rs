@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
+
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 //! End-to-end tests for `Builder::build` driven by small hand-crafted

@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
+
 #![allow(dead_code, clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 //! Shared test-fixture helpers (synthetic `Builder`s, regions, addresses,

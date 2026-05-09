@@ -238,6 +238,22 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // IntBitsToFloat and the optimizer ends up dropping the chain).
         let reg_ty: ir::ValueType = reg.size.try_into()?;
         let shift_value = self.calculate_reg_shift_from_container(reg, &container_reg);
+        // Defensive bound: any shift ≥ container_bits is undefined per the
+        // IR's `ShiftRight` semantics.  By construction the largest legitimate
+        // sub-register offset is `(container.size - 1) * 8`, well below the
+        // bit width.  A debug-build assertion catches any future Sleigh spec
+        // emission that would land outside that range before it silently
+        // corrupts the IR.
+        debug_assert!(
+            shift_value < (container_reg.size as u64) * 8,
+            "read_reg_vn: shift {shift_value} >= container bit width {} \
+             (container size {} bytes); sub-register {:?} is structurally \
+             outside container {:?}",
+            (container_reg.size as u64) * 8,
+            container_reg.size,
+            reg,
+            container_reg,
+        );
         let shifted = if shift_value == 0 {
             curr_reg_val
         } else {
@@ -301,6 +317,16 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let container_ty: ir::ValueType = container_reg.size.try_into()?;
         let container_reg_val = self.builder.read_variable(&container_reg)?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
+        // Defensive bound — see read_reg_vn for the rationale.
+        debug_assert!(
+            shift_bits < (container_reg.size as u64) * 8,
+            "write_reg_vn: shift_bits {shift_bits} >= container bit width {} \
+             (container size {} bytes); sub-register {:?} outside container {:?}",
+            (container_reg.size as u64) * 8,
+            container_reg.size,
+            reg,
+            container_reg,
+        );
 
         // Extend `val` to container width first, then shift it into position.
         // Shifting at container width is the only way the mask AND afterwards

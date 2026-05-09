@@ -68,6 +68,17 @@ impl<R: rsleigh::MemReader> Builder<R> {
         if split_index == 0 {
             return Ok(region_id);
         }
+        // No-op when `addr` lands at/past the last insn — the second
+        // region would be empty + retain the original (non-Branch)
+        // terminator, which `add_region` correctly rejects but
+        // `split_region` mutates in place rather than going through
+        // it.  Returning the original id is the right "split is a
+        // no-op" answer; the caller's `contains_addr` check should
+        // already preclude a query past the last insn, so this guard
+        // is purely defensive.
+        if split_index >= second_region.insns.len() {
+            return Ok(region_id);
+        }
         // `split_off(at)` returns elements at-and-after `at`, leaving elements before `at`
         // in `second_region.insns`. Swap them so `second_region` keeps its identity but
         // owns the second half of the original instruction stream.

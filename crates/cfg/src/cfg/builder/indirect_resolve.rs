@@ -249,6 +249,14 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
 /// after the with-rom load-folding pass to propagate any constants
 /// that loads exposed.  Hoisted into a helper so both call sites pin
 /// the same pass set.
+///
+/// `RedundantPhis` IS needed: the mini-graph's lone region has a
+/// single predecessor (the function entry), so the lifter creates
+/// trivial `VarPhi(vn)` nodes for every variable read.  The
+/// classifier's `LinkRegister` arm matches `InitialVar(lr_vn)` rather
+/// than `VarPhi(lr_vn)` — without `RedundantPhis` collapsing the
+/// trivial single-predecessor phi back to its `InitialVar` input, the
+/// `bx lr` shape never resolves.
 fn make_resolver_pipeline() -> opt::OptimizerPipeline {
     let mut pipeline = opt::OptimizerPipeline::new();
     pipeline.add(opt::ConstantFold);

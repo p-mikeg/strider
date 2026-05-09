@@ -70,9 +70,13 @@ fn try_detect_stack_store(
         }
     };
 
-    fg.replace_all_uses(old_mem_out, new_mem_out)?;
+    // Only report `Changed` when at least one consumer was rewired.  The
+    // old Store node is detached either way (no consumers means it's
+    // already a zombie post-rewrite); but a no-op rewrite shouldn't
+    // force a spurious extra fixed-point iteration.
+    let changed = fg.replace_all_uses(old_mem_out, new_mem_out)?;
     fg.detach_node_inputs(node_id);
-    Ok(OptimizationResult::Changed)
+    Ok(OptimizationResult::from_changed(changed))
 }
 
 /// Rewrites `Store` nodes whose address is a compile-time-known SP offset

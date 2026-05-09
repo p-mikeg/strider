@@ -214,7 +214,17 @@ impl<'g> RewriteCtx<'g> {
 /// `RewriteCtxView::new`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
+    /// **Caution:** the field is `pub` only for the existing `fg.graph`
+    /// access pattern across opt passes.  Re-binding the field
+    /// (`view.graph = &other_graph`) silently redirects the view at
+    /// distance — only do so if you understand the lifetime
+    /// implications.  Prefer the `Deref<Target = Graph>` impl for
+    /// read access.
     pub graph: &'g Graph,
+    /// **Caution:** read-only by convention; mutating from external
+    /// code redirects the view's anchor.  Use [`Self::new`] /
+    /// `From<&BuiltFunctionGraph>` / `From<&RewriteCtx>` for
+    /// construction rather than struct-literal mutation.
     pub entry: NodeId,
 }
 

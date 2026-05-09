@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only fixture: Builder::new defaults LE+X86_64 which is correct here.
+
 //! Per-call test: `Strider::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
 //! `strider::run`.  Mirrors `tests/per_address_cc.rs` but exercises the

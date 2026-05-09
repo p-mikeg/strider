@@ -54,6 +54,12 @@ use crate::ReadOnlyMemory;
 /// properly-popped return addresses to `InitialVar(lr_vn)` directly
 /// — that's the shape the LinkRegister arm matches.
 ///
+/// **Single-anchor convenience.**  This helper recomputes the
+/// known-bits analysis on every call.  Callers iterating multiple
+/// anchors over the same graph should compute the analysis once via
+/// [`crate::analyze_known_bits`] and call
+/// [`classify_anchor_with_rom_and_sp`] directly with the cached map.
+///
 /// # Errors
 ///
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).

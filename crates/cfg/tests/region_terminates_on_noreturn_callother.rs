@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
+
 //! cfg::region_builder terminates a region as RegionTerminator::NoReturn
 //! when it sees a CallOther whose target::call_other_abi::classify is NoReturn.
 

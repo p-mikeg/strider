@@ -97,6 +97,15 @@ pub struct BuiltFunctionGraph {
     /// **Caution:** same as [`Self::call_clobbered`] — write only at
     /// build time; read via [`Self::call_other_clobbered_regs`].
     pub call_other_clobbered: Box<[rsleigh::Vn]>,
+    /// Function-default value of
+    /// [`target::CallingConvention::no_memory_clobber`] (carried over
+    /// from the building [`crate::FunctionBuilder`]).  When `true`,
+    /// callers under this convention preserve all observable state
+    /// including memory — `LoadReadOnly` and `StackLoadForward` may
+    /// forward across them.  Set on `x86_64_all_preserving` and
+    /// analogous transparent-hook presets (Linux-kernel `__fentry__`,
+    /// `mcount`).  Read via [`Self::no_memory_clobber`].
+    pub(crate) no_memory_clobber: bool,
 }
 
 impl std::ops::Deref for BuiltFunctionGraph {
@@ -136,6 +145,14 @@ impl BuiltFunctionGraph {
     #[must_use]
     pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
         &self.call_other_clobbered
+    }
+    /// Function-default `no_memory_clobber` flag — whether calls under
+    /// this convention preserve memory (zero-side-effect hooks like
+    /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
+    /// `StackLoadForward` may forward across calls.
+    #[must_use]
+    pub fn no_memory_clobber(&self) -> bool {
+        self.no_memory_clobber
     }
     /// Read the `VarId → Vn` map for tracked variables.
     /// Mirrors the [`Self::variables`] field.
@@ -183,6 +200,7 @@ impl BuiltFunctionGraph {
             call_clobbered: Box::new([]),
             ret_val_regs: Box::new([]),
             call_other_clobbered: Box::new([]),
+            no_memory_clobber: false,
         }
     }
 

@@ -1,3 +1,5 @@
+#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
+
 //! Integration tests for v2's precise per-op ABI lifting.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

@@ -486,19 +486,23 @@ impl PyGraph {
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
     /// robin at every reachable node.  Returns the total fire count.
-    fn rewrite_all(&self, pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>) -> PyResult<usize> {
-        Python::with_gil(|py| {
-            let mut rules: Vec<pattern::BoxedRule> = Vec::with_capacity(pairs.len());
-            for (lhs, rhs) in pairs {
-                let lhs_pat = (*lhs.borrow(py).as_inner()).clone();
-                let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
-                rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
-            }
-            let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-            let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
-            rewriter.apply_rules(&rules).map_err(|e| {
-                crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
-            })
+    fn rewrite_all(
+        &self,
+        py: Python<'_>,
+        pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
+    ) -> PyResult<usize> {
+        // GIL is already held by the #[pymethods] dispatch; take it via
+        // the parameter rather than re-acquiring with `Python::with_gil`.
+        let mut rules: Vec<pattern::BoxedRule> = Vec::with_capacity(pairs.len());
+        for (lhs, rhs) in pairs {
+            let lhs_pat = (*lhs.borrow(py).as_inner()).clone();
+            let rhs_pat = (*rhs.borrow(py).as_inner()).clone();
+            rules.push(pattern::boxed_rule(pattern::rewrite_rule(lhs_pat, rhs_pat)));
+        }
+        let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
+        let mut rewriter = strider::GraphRewriter::wrap_built(&mut graph);
+        rewriter.apply_rules(&rules).map_err(|e| {
+            crate::errors::into_rewrite_err(anyhow::anyhow!("rewrite_all failed: {e:?}"))
         })
     }
 }

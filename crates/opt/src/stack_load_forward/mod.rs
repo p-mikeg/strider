@@ -14,7 +14,8 @@ use target::Endianness;
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 use crate::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
+    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store_phi,
+    step_through_store,
 };
 use crate::worklist::WorkSet;
 
@@ -245,6 +246,23 @@ fn probe(
                 }
                 NodeKind::Store(_) => {
                     match step_through_store(fg.graph, node, sp_vn, memo, offset, load_size) {
+                        AliasStep::MayAlias => break None,
+                        AliasStep::PassThrough { prev_mem } => {
+                            mem = prev_mem;
+                            continue;
+                        }
+                    }
+                }
+                NodeKind::StackStorePhi { .. } => {
+                    // A `StackStorePhi` records every per-predecessor stack
+                    // offset on `Graph::stack_phi_offsets`; if every offset
+                    // is provably disjoint from `(offset, load_size)`, the
+                    // phi is a transparent step.  Mirrors the equivalent
+                    // arm in `function_args::mem_chain_is_dirty`.  Without
+                    // this, `Load[sp+K]` whose memory chain passes through
+                    // a stack-store phi could never be forwarded — round
+                    // 10 R10-1C I-6 fix.
+                    match step_through_stack_store_phi(fg.graph, node, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;

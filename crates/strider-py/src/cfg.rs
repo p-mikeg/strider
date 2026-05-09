@@ -43,6 +43,13 @@ pub fn build_cfg(
     }
     let opts = opts_builder.build();
 
+    // The Python `build_cfg` is arch-agnostic by design — callers pass a
+    // pre-built Sleigh.  `Builder::new` is `#[deprecated]` workspace-
+    // wide because it defaults to LE+X86_64; that's exactly what we
+    // need here (every other Python entry point that cares about the
+    // arch goes through `strider.run` which uses `Builder::for_arch`).
+    // Suppress the warning at this site only.
+    #[allow(deprecated)]
     let built = cfg::Builder::new(inner_sleigh, entry, opts)
         .build()
         .map_err(into_lift_err)?;

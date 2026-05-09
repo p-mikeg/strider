@@ -85,7 +85,11 @@ fn upgrade_to_tracked_for(
 
     // Sub-register fallback: largest tracked variable CONTAINED IN vn's
     // byte range - the function only reads that sub-register, so the
-    // bytes outside its range are unused.
+    // bytes outside its range are unused.  Tie-break by `(size, addr_off)`
+    // so the choice is deterministic across hash seeds when two equal-
+    // size sub-registers exist (rare in practice — most sleigh specs
+    // de-overlap during `new_raw`'s filter — but defensive against
+    // FxHashMap's non-deterministic iteration order).
     variable_to_id
         .keys()
         .filter(|t| {
@@ -93,7 +97,7 @@ fn upgrade_to_tracked_for(
                 && t.addr_off >= vn.addr_off
                 && t.addr_off + t.size as u64 <= vn_end
         })
-        .max_by_key(|t| t.size)
+        .max_by_key(|t| (t.size, t.addr_off))
         .copied()
 }
 
@@ -585,6 +589,7 @@ impl FunctionBuilder {
             call_clobbered: self.call_clobbered_variables.into_boxed_slice(),
             ret_val_regs: self.ret_val_vars.into_boxed_slice(),
             call_other_clobbered,
+            no_memory_clobber: self.no_memory_clobber,
         };
         crate::validate::validate(&built.graph, built.entry)?;
         Ok(built)

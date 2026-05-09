@@ -149,8 +149,14 @@ def test_lift_error_subclass_when_explicit_lift_fails():
     except errors.StriderError as e:
         raised = e
     assert raised is not None, "expected an exception from empty-MemoryMap lift"
-    assert isinstance(raised, errors.StriderError), (
-        f"expected StriderError, got {type(raised).__name__}: {raised!r}"
+    # Strengthened by round 10 R10-1F F-05: must be the typed `LiftError`
+    # subclass (or its `UnknownCallOtherError` refinement, also a
+    # LiftError descendant for our purposes).  The previous assertion
+    # against the base `StriderError` would silently pass even if the
+    # wrong converter fired.
+    assert isinstance(raised, (errors.LiftError, errors.UnknownCallOtherError)), (
+        f"expected LiftError (or UnknownCallOtherError), got "
+        f"{type(raised).__name__}: {raised!r}"
     )
 
 

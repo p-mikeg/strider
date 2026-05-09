@@ -91,8 +91,15 @@ impl Graph {
                  use build_int_const_wide for U256/U512"
             ));
         }
+        // Mask `val` to the declared output type's bit width so the
+        // dedup-cache key sees the same `IntConst(u128)` payload for
+        // semantically-equal constants — `make_int_const(0x1FF, U8)`
+        // and `make_int_const(0xFF, U8)` must dedup to the same node.
+        // `FunctionBuilder::build_int_const` already masks; mirror it
+        // here so `Graph::make_int_const` agrees.
+        let masked = u128::from(val) & ty.bit_mask_u128();
         let node = self.create_node(
-            NodeKind::IntConst(u128::from(val)),
+            NodeKind::IntConst(masked),
             [],
             [NodeOutputKind::OutputType(ty)],
         );
@@ -118,9 +125,14 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns an error when the freshly-created node does not have exactly
-    /// one output.
+    /// Returns an error when `ty` is not a float type, or when the
+    /// freshly-created node does not have exactly one output.
     pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+        if !ty.is_float() {
+            return Err(anyhow!(
+                "make_float_const called with non-float type {ty:?}"
+            ));
+        }
         let node = self.create_node(
             NodeKind::FloatConst(bits),
             [],

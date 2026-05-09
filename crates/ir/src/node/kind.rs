@@ -35,7 +35,7 @@ pub enum NodeKind {
     InitialVar(rsleigh::Vn),
     /// Canonical marker for a function argument at position `index` in the
     /// calling convention.  Introduced by
-    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args.rs) which
+    /// [`opt::FunctionArgDetect`](../../../opt/src/function_args/mod.rs) which
     /// replaces register-passed arg reads (`InitialVar(arg_reg)`) and
     /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
     ///
@@ -65,7 +65,7 @@ pub enum NodeKind {
     /// `ControlState`'s `Control` inputs.  Output: `[value]`.
     VarPhi(rsleigh::Vn),
     /// Value phi not tied to any source varnode.  Synthesized by
-    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward.rs) when
+    /// [`opt::StackLoadForward`](../../../opt/src/stack_load_forward/mod.rs) when
     /// forwarding a `Load[sp+K]` across a `MemPhi`: each predecessor
     /// resolves to a stored value, and those values are merged here.  Shape
     /// matches `VarPhi` — inputs `[phi_token, val_0, val_1, …]`, output

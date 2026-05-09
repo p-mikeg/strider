@@ -17,16 +17,6 @@ use crate::matcher::Bindings;
 use crate::pat::Pat;
 use crate::pat::traits::MatchCtx;
 
-/// If `target`'s producer is a cast node selected by
-/// `ctx.matcher.options.ignore_cast_mask`, recurse into the cast's first
-/// (value) input and try matching `pat` there.  Returns whether the
-/// recursive match succeeded.
-///
-/// Caller is responsible for snapshotting bindings (`b.mark()`) before
-/// the call and rolling back on failure — this helper does NOT manage
-/// rollback because the snapshot is shared with the direct-match attempt
-/// in `match_one`.
-///
 /// Backward walk-through of a `ControlState` (region-join) node.  If
 /// `target`'s producer is a `ControlState`, try matching `pat` against
 /// each of the ControlState's control-typed inputs (one per

@@ -236,8 +236,15 @@ impl Graph {
     /// to carry the new id assigned by the rebuilt side-table.
     ///
     /// Called from [`Self::retain_reachable`] after the node arena
-    /// remap has settled; safe to call standalone in tests / direct
-    /// mutators that want to drop unreferenced wide values.
+    /// remap has settled — at that point `self.nodes.keys()` only
+    /// iterates surviving nodes, so the live-id scan correctly excludes
+    /// zombie `IntConstWide` references.
+    ///
+    /// **Not safe to call standalone on a non-compacted graph:** the
+    /// scan would include zombie nodes' wide-const ids, defeating the
+    /// GC purpose.  `pub(crate)` rather than fully private only because
+    /// `retain_reachable` is in a sibling module; callers outside that
+    /// path should call `retain_reachable` instead.
     pub(crate) fn gc_wide_consts(&mut self) {
         use crate::node::NodeKind;
         use crate::wide_const::{WideConstId, WideConstStorage};

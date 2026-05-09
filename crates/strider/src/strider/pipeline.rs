@@ -638,6 +638,9 @@ impl SpecialTerm {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    // Test fixture is x86_64-only; the deprecated `cfg::Builder::new`
+    // defaults LE+X86_64 which is exactly what we need here.
+    #![allow(deprecated)]
 
     #[test]
     fn display_summarises_unresolved_branches_and_region_count() {

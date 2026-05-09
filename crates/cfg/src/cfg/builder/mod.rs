@@ -88,18 +88,37 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// Creates a new `Builder` that will construct a CFG starting at
     /// `start_addr` using `sleigh` to disassemble instructions.
     ///
-    /// The endianness defaults to [`target::Endianness::Little`].
-    /// Callers that analyse big-endian binaries should use
-    /// [`Self::with_endianness`].
+    /// The endianness defaults to [`target::Endianness::Little`] and
+    /// the [`target::ArchPreset`] defaults to `X86_64`.  These defaults
+    /// are correct only for x86 / x86_64 binaries — non-x86 callers
+    /// MUST use [`Self::for_arch`] to set both atomically, or arch-
+    /// specific CallOthers (e.g. AArch64 `brk`) will be silently
+    /// misclassified.
     #[must_use]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use Builder::for_arch(arch, sleigh, addr, opts) — `new` defaults to LE+X86_64 \
+                and silently misclassifies CallOthers on non-x86 binaries."
+    )]
     pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
+        #[allow(deprecated)]
         Self::with_endianness(sleigh, start_addr, options, target::Endianness::Little)
     }
 
     /// Creates a new `Builder` with an explicit endianness — required
     /// for big-endian targets so the indirect-branch resolver's mini IR
     /// loads/stores see the right byte order.
+    ///
+    /// **Deprecated:** the [`target::ArchPreset`] still defaults to
+    /// `X86_64`, so non-x86 callers must use [`Self::for_arch`] to set
+    /// endianness AND preset atomically.  This ctor remains for
+    /// historical x86-only callers and tests.
     #[must_use]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use Builder::for_arch(arch, sleigh, addr, opts) — with_endianness defaults the \
+                ArchPreset to X86_64 and silently misclassifies CallOthers on non-x86 binaries."
+    )]
     pub fn with_endianness(
         sleigh: rsleigh::Sleigh<R>,
         start_addr: u64,
