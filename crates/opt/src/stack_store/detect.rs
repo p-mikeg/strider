@@ -3,7 +3,6 @@
 //! `NodeKind::StackStorePhi` nodes. Configured with the calling convention's
 //! stack-pointer varnode.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputKind};
 
 use crate::error::Result;
@@ -15,7 +14,7 @@ use crate::worklist::WorkSet;
 /// form when its address resolves to a known SP offset (or per-branch phi of
 /// SP offsets).  Leaves the node untouched otherwise.
 fn try_detect_stack_store(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
     sp_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -29,7 +28,7 @@ fn try_detect_stack_store(
     let [old_mem_out] = fg.node_outputs_exact::<1>(node_id)?;
 
     let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-    let Some(expr) = decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting) else {
+    let Some(expr) = decompose_sp(fg.graph, addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };
 
@@ -104,7 +103,7 @@ impl StackStoreDetect {
 }
 
 impl OptimizerOnBuilt for StackStoreDetect {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Only Store nodes can be promoted to StackStore — kind-filter at
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in

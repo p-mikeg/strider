@@ -58,7 +58,7 @@ fn phi_with_identical_data_inputs_is_removed() -> crate::Result<()> {
 
     // The only VarPhi(sp) at `c` had both predecessors feeding the
     // same Sub output — must be gone after the pass.
-    let surviving_sp_phis = crate::test_support::count_reachable(&fg, |k| {
+    let surviving_sp_phis = crate::test_support::count_reachable((&fg).into(), |k| {
         matches!(k, NodeKind::VarPhi(vn) if *vn == sp)
     });
     assert_eq!(

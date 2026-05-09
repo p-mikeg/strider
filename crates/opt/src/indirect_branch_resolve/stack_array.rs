@@ -46,7 +46,7 @@
 
 use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeKind, NodeOutputId};
-use ir::{BuiltFunctionGraph, Graph, IntBinaryOp};
+use ir::{Graph, IntBinaryOp};
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 use crate::stack_load_forward::{StackStoredValueMemo, find_stack_stored_value_at_offset};
 
@@ -75,7 +75,7 @@ use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
     known: &crate::KnownBitsMap,
@@ -245,11 +245,11 @@ const MAX_STRIP_LAYERS: usize = 4;
 // `int_const_val` returned `u64`, and `get_uint` returns `u128`.
 // Real dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
     let graph = &fg.graph;
-    let matcher = Matcher::new(fg);
+    let matcher = Matcher::for_graph(fg.graph, fg.entry);
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -260,7 +260,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &and_p.into())
-            && let (Some(c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, fg.graph), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -281,7 +281,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &or_p.into())
-            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, fg), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, fg.graph), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -306,7 +306,7 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
@@ -470,7 +470,7 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
@@ -483,14 +483,14 @@ fn extract_idx_and_stride(
     use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
     let candidate_node = fg.get_node_from_output(candidate);
-    let matcher = Matcher::new(fg);
+    let matcher = Matcher::for_graph(fg.graph, fg.entry);
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const(stride_var));
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
-        let stride_u128 = m.get_uint(stride_var, fg)?;
+        let stride_u128 = m.get_uint(stride_var, fg.graph)?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -505,7 +505,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const(s_var));
     let m = matcher.match_at(candidate_node, &shl_pat.into())?;
-    let s_u128 = m.get_uint(s_var, fg)?;
+    let s_u128 = m.get_uint(s_var, fg.graph)?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject
@@ -613,8 +613,8 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        let result = classify_stack_array(&fg, load_out, sp64(), &known);
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        let result = classify_stack_array((&fg).into(), load_out, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -648,8 +648,8 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
     }
 
     #[test]
@@ -699,8 +699,8 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::analyze_known_bits(&fg).expect("kb analyze");
-        assert_eq!(classify_stack_array(&fg, load_out, sp64(), &known), None);
+        let known = crate::analyze_known_bits((&fg).into()).expect("kb analyze");
+        assert_eq!(classify_stack_array((&fg).into(), load_out, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask(&fg, anchor);
+        let (out, mask) = strip_target_mask((&fg).into(), anchor);
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
         assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
     }
@@ -791,7 +791,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, wrapped);
+        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
         assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
     }
@@ -802,7 +802,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg.graph, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, true,
         );
-        let (out, mask) = strip_target_mask(&fg, wrapped);
+        let (out, mask) = strip_target_mask((&fg).into(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
         assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
     }
@@ -820,7 +820,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, and_layer);
+        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
         assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
     }
@@ -837,7 +837,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg.graph, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, and_layer);
+        let (out, mask) = strip_target_mask((&fg).into(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
         assert_eq!(mask, 0xFFFE, "And's mask still applies");
     }
@@ -853,7 +853,7 @@ mod tests {
         let outer_and = build_binop_wrapped(
             &mut fg.graph, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::U64, false,
         );
-        let (out, mask) = strip_target_mask(&fg, outer_and);
+        let (out, mask) = strip_target_mask((&fg).into(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }

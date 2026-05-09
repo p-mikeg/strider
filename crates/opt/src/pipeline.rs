@@ -18,7 +18,7 @@ impl OptimizationResult {
         matches!(self, OptimizationResult::Changed)
     }
 
-    /// Maps the boolean return of [`BuiltFunctionGraph::replace_all_uses`] to
+    /// Maps the boolean return of [`ir::Graph::replace_all_uses`] to
     /// an `OptimizationResult`: `true` → `Changed`, `false` → `NoChange`.
     #[must_use]
     pub fn from_changed(changed: bool) -> Self {
@@ -33,26 +33,24 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// The fingerprint absorption preserves the superset-only contract
-    /// (see `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`):
-    /// every contributing machine-instruction address present in the
-    /// rewritten producer survives the rewrite by being unioned into
-    /// the surviving producer.
+    /// Round 9 wave 28 (H-9/D2): parameter type changed from
+    /// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.
+    /// `RewriteCtx::Deref<Target=Graph>` makes the body identical to
+    /// the old form — only the callers' trait-impl boundary changes.
     ///
     /// # Errors
     ///
-    /// Propagates errors from
-    /// [`ir::BuiltFunctionGraph::replace_all_uses`].
+    /// Propagates errors from [`ir::Graph::replace_all_uses`].
     pub fn after_replace(
         self,
-        fg: &mut ir::BuiltFunctionGraph,
+        function: &mut pattern::RewriteCtx<'_>,
         old: ir::node::NodeOutputId,
         new: ir::node::NodeOutputId,
     ) -> crate::Result<Self> {
-        let old_node = fg.get_node_from_output(old);
-        let new_node = fg.get_node_from_output(new);
-        fg.extend_asm_fingerprint_from(new_node, old_node);
-        Ok(self | OptimizationResult::from_changed(fg.replace_all_uses(old, new)?))
+        let old_node = function.get_node_from_output(old);
+        let new_node = function.get_node_from_output(new);
+        function.extend_asm_fingerprint_from(new_node, old_node);
+        Ok(self | OptimizationResult::from_changed(function.replace_all_uses(old, new)?))
     }
 }
 
@@ -74,33 +72,23 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
-/// Bridge helper for opt-pass impls that internally still operate on
-/// `&mut ir::BuiltFunctionGraph` (because their helper functions and the
-/// `pattern` crate's rewrite machinery are typed against it).  Wraps a
-/// `(&mut Graph, NodeId)` pair into a temporary `BuiltFunctionGraph`
-/// for the duration of the call, then restores the (potentially
-/// mutated) graph back into the caller's slot.
-///
-/// CORRECTNESS — the temporary `BuiltFunctionGraph` carries empty
-/// `variables` / `call_clobbered` / `ret_val_regs`.  Opt impls never
-/// read those fields (verified by grep — only `function.graph` and
-/// `function.entry` are touched), so the dummy values are safe.
-///
-/// CORRECTNESS — `mem::take(graph)` replaces the caller's `Graph` with
-/// `Graph::default()` (an empty graph) only for the duration of `f`.
-/// On panic the empty graph is observable, but opt passes don't
-/// catch_unwind, so this is no worse than a panic anywhere else in the
-/// pipeline.
-pub(crate) fn with_built<R>(
+/// Bridge `(&mut Graph, NodeId)` callers to a `&mut RewriteCtx`-typed
+/// closure.  Round 9 wave 28 (H-9/D2): replaces the previous
+/// `with_built` adapter that constructed a partial-state
+/// `BuiltFunctionGraph` via `from_graph_and_entry_for_rewrite`.  Audit
+/// of the 12+ `OptimizerOnBuilt` impls confirmed none of them touch
+/// the CC fields (`variables`, `call_clobbered`, `ret_val_regs`,
+/// `call_other_clobbered`) — they only read `graph` and `entry`,
+/// which `RewriteCtx` exposes natively (with `Deref<Target=Graph>` +
+/// `preorder()` mirroring BFG's API for ergonomic call-site
+/// compatibility).  No partial-state construction needed.
+pub(crate) fn with_rewrite_ctx<R>(
     graph: &mut ir::Graph,
     entry: ir::node::NodeId,
-    f: impl FnOnce(&mut ir::BuiltFunctionGraph) -> R,
+    f: impl FnOnce(&mut pattern::RewriteCtx<'_>) -> R,
 ) -> R {
-    let stolen = std::mem::take(graph);
-    let mut tmp = ir::BuiltFunctionGraph::from_graph_and_entry_for_rewrite(stolen, entry);
-    let r = f(&mut tmp);
-    *graph = tmp.graph;
-    r
+    let mut ctx = pattern::RewriteCtx::new(graph, entry);
+    f(&mut ctx)
 }
 
 /// A single IR optimization pass.
@@ -114,7 +102,7 @@ pub(crate) fn with_built<R>(
 pub trait Optimizer: Send + Sync {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
-    /// # Why `(&mut Graph, NodeId)` and not `&mut BuiltFunctionGraph`
+    /// # Why `(&mut Graph, NodeId)` and not `&mut pattern::RewriteCtx<'_>`
     ///
     /// Callers can run optimizer passes on a graph that has not yet
     /// been packaged into a final [`ir::BuiltFunctionGraph`] (e.g. on
@@ -139,15 +127,25 @@ pub trait Optimizer: Send + Sync {
     ) -> crate::Result<OptimizationResult>;
 }
 
-/// Optimizer pass that operates on a [`ir::BuiltFunctionGraph`] rather than
-/// the lower-level `(&mut Graph, NodeId)` pair.  Most passes implement this
-/// instead of [`Optimizer`] directly: the blanket impl below wires the
-/// [`with_built`] adapter so the pass slots into the pipeline.
+/// Optimizer pass that operates on a [`pattern::RewriteCtx`] (a
+/// `&mut Graph + entry` pair) rather than the lower-level
+/// `(&mut Graph, NodeId)` pair.  Most passes implement this instead of
+/// [`Optimizer`] directly: the blanket impl below wires the
+/// [`with_rewrite_ctx`] adapter so the pass slots into the pipeline.
 ///
-/// Passes that need direct `&mut Graph` access (e.g.
-/// [`crate::indirect_branch_resolve::IndirectBranchResolve`], whose
-/// in-place edits straddle `with_built` boundaries) implement
-/// [`Optimizer`] directly instead.
+/// Round 9 wave 28 (H-9/D2): parameter type was migrated from
+/// `&mut pattern::RewriteCtx<'_>` to `&mut pattern::RewriteCtx<'_>`.  Audit
+/// of every existing `OptimizerOnBuilt` impl confirmed none of them
+/// touch the BFG CC fields, so the rewrite-only context is sufficient.
+/// `RewriteCtx` provides `Deref<Target=Graph>` + `preorder()` /
+/// `preorder_kind()` mirroring BFG's API, so existing pass bodies
+/// that say `function.node_kind(_)` / `function.preorder()` /
+/// `function.create_node(_)` work unchanged.
+///
+/// Passes that need direct `&mut Graph` access without the wrapper
+/// (e.g. [`crate::indirect_branch_resolve::IndirectBranchResolve`],
+/// whose in-place edits straddle multiple `with_rewrite_ctx`-style
+/// boundaries) implement [`Optimizer`] directly instead.
 pub trait OptimizerOnBuilt: Send + Sync {
     /// Run one sweep of this pass over the function graph.  See
     /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.
@@ -157,7 +155,7 @@ pub trait OptimizerOnBuilt: Send + Sync {
     /// Returns the first error encountered by the pass.
     fn optimize_built(
         &self,
-        function: &mut ir::BuiltFunctionGraph,
+        function: &mut pattern::RewriteCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 }
 
@@ -167,7 +165,7 @@ impl<T: OptimizerOnBuilt> Optimizer for T {
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult> {
-        with_built(graph, entry, |function| self.optimize_built(function))
+        with_rewrite_ctx(graph, entry, |function| self.optimize_built(function))
     }
 }
 
@@ -362,7 +360,7 @@ mod tests {
     }
 
     /// `run(graph, entry)` validates the final graph just like the
-    /// historical `run(&mut BuiltFunctionGraph)` did — i.e. an invalid
+    /// historical `run(&mut pattern::RewriteCtx<'_>)` did — i.e. an invalid
     /// graph in the post-pass output surfaces as `ValidationFailed`.
     /// Smoke test using an empty post-pass list and a valid input —
     /// run must succeed (no validation error) and the graph must be

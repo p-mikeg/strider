@@ -9,7 +9,7 @@ use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};
 
 /// Counts how many nodes in `fg` match the predicate.
-fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
+fn count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
     fg.all_node_ids()
         .filter(|&n| pred(fg.node_kind(n)))
         .count()
@@ -40,13 +40,13 @@ fn simple_sp_minus_4_becomes_stack_store() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let stack_stores = count(&fg, |k| {
+    let stack_stores = count((&fg).into(), |k| {
         matches!(k, NodeKind::StackStore { offset: -4, .. })
     });
     assert_eq!(stack_stores, 1, "expected one StackStore at offset -4");
     // Every reachable Store must have been rewritten.
     let reachable_stores =
-        crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::Store(_)));
+        crate::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::Store(_)));
     assert_eq!(reachable_stores, 0, "no reachable Store must remain");
     Ok(())
 }
@@ -82,7 +82,7 @@ fn add_sp_with_negative_unsigned_constant_becomes_stack_store() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let stack_stores = count(&fg, |k| {
+    let stack_stores = count((&fg).into(), |k| {
         matches!(k, NodeKind::StackStore { offset: -4, .. })
     });
     assert_eq!(
@@ -120,7 +120,7 @@ fn phi_sp_collapses_to_stack_store() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 0, .. }));
+    let stack_stores = count((&fg).into(), |k| matches!(k, NodeKind::StackStore { offset: 0, .. }));
     assert_eq!(
         stack_stores, 1,
         "phi-of-single-predecessor-sp must collapse then yield StackStore at 0"
@@ -248,12 +248,12 @@ fn phi_with_equal_offsets_collapses_to_stack_store() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let stack_store_phis = count(&fg, |k| matches!(k, NodeKind::StackStorePhi { .. }));
+    let stack_store_phis = count((&fg).into(), |k| matches!(k, NodeKind::StackStorePhi { .. }));
     assert_eq!(
         stack_store_phis, 0,
         "phi with all-equal offsets must not produce a StackStorePhi"
     );
-    let stack_stores = count(&fg, |k| {
+    let stack_stores = count((&fg).into(), |k| {
         matches!(k, NodeKind::StackStore { offset: -4, .. })
     });
     assert_eq!(
@@ -345,7 +345,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     ));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + exactly 2 args = 5 inputs.
     assert_eq!(
@@ -382,12 +382,12 @@ fn non_stack_store_is_untouched() -> Result<()> {
     StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
+        count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),
         0,
         "non-stack store must not become a StackStore"
     );
     assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::Store(_))),
+        count((&fg).into(), |k| matches!(k, NodeKind::Store(_))),
         1,
         "the original Store must remain"
     );
@@ -397,7 +397,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
 // ── CallStackArgCollect tests ────────────────────────────────────────────
 
 /// Finds the unique Call node in `fg`.
-fn find_call(fg: &BuiltFunctionGraph) -> Result<NodeId> {
+fn find_call(fg: pattern::RewriteCtxView<'_>) -> Result<NodeId> {
     fg.all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))
@@ -439,7 +439,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
     // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
@@ -492,7 +492,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + stack_arg_0 — only the one we have.
     assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
@@ -543,7 +543,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target only — slot 1 was filled but slot 0's hole
     // truncates the dense prefix to empty, so no args appended.
@@ -567,7 +567,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
         Ok(())
     })?;
 
-    let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call((&fg).into())?).into_iter().count();
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -576,7 +576,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call((&fg).into())?).into_iter().count();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected"
@@ -613,7 +613,7 @@ fn detect_mixed_add_sub_reduces() -> Result<()> {
     pipeline.add(StackStoreDetect::new(sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let stack_stores = count(&fg, |k| matches!(k, NodeKind::StackStore { offset: 8, .. }));
+    let stack_stores = count((&fg).into(), |k| matches!(k, NodeKind::StackStore { offset: 8, .. }));
     assert_eq!(
         stack_stores, 1,
         "((sp+16)-4)-4 must reduce to a single StackStore at offset 8"
@@ -648,12 +648,12 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::StackStore { .. })),
+        count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),
         0,
         "non-SP base must not become a StackStore"
     );
     assert_eq!(
-        count(&fg, |k| matches!(k, NodeKind::Store(_))),
+        count((&fg).into(), |k| matches!(k, NodeKind::Store(_))),
         1,
         "the original Store must remain"
     );
@@ -707,7 +707,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     let collected_arg_consts: Vec<u128> = inputs[3..]
         .iter()
@@ -781,7 +781,7 @@ fn walker_passes_through_non_aliasing_global_store() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + 2 stack args = 5.
     assert_eq!(
@@ -852,7 +852,7 @@ fn walker_collects_stack_args_across_volatile_global_writes() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + 4 args = 7 inputs.
     assert_eq!(
@@ -930,7 +930,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     ));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -1003,7 +1003,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     ));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -1069,7 +1069,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     ));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -1142,7 +1142,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call((&fg).into())?;
     let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
     let collected: Vec<u128> = inputs[3..]
         .iter()

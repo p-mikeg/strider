@@ -2,7 +2,6 @@
 //! into each `Call` node, collects positional `StackStore` data outputs, and
 //! appends them as additional Call inputs.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::error::Result;
@@ -93,7 +92,7 @@ use crate::sp_expr::{SpExprMemo, decompose_sp};
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
@@ -135,7 +134,7 @@ fn collect_stack_args_in_chain_order(
                 let addr = inputs[1];
                 let prev = inputs[0];
                 let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-                match decompose_sp(&fg.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                match decompose_sp(fg.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;
@@ -228,7 +227,7 @@ fn dense_prefix(slots: Vec<Option<NodeOutputId>>) -> Vec<NodeOutputId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_ptr_vn: rsleigh::Vn,
@@ -247,7 +246,7 @@ fn try_collect_stack_args(
     let mem_in = inputs[1];
 
     let args =
-        collect_stack_args_in_chain_order(fg, mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
+        collect_stack_args_in_chain_order(fg.as_view(), mem_in, stack_arg_offsets, stack_ptr_vn, sp_memo);
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
@@ -299,7 +298,7 @@ impl CallStackArgCollect {
 }
 
 impl OptimizerOnBuilt for CallStackArgCollect {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let calls: Vec<NodeId> = function
             .preorder()
             .filter(|&n| matches!(function.graph.node_kind(n), NodeKind::Call))

@@ -31,7 +31,6 @@
 //! observed at that offset (register sources use the container register's
 //! natural width); narrower reads are rewired through `Truncate`.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::error::Result;
@@ -90,7 +89,7 @@ impl FunctionArgDetect {
 }
 
 impl OptimizerOnBuilt for FunctionArgDetect {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
         changed |= detect_register_args(function, &self.arg_passing_regs)?;
         changed |= detect_stack_args(
@@ -106,7 +105,7 @@ impl OptimizerOnBuilt for FunctionArgDetect {
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
         // The detach result is hygiene-only (post-pass return values are
         // ignored by the pipeline); don't escalate it into `Changed`.
-        let _ = crate::worklist::detach_unreachable_nodes(&mut function.graph, function.entry);
+        let _ = crate::worklist::detach_unreachable_nodes(function.graph, function.entry);
         Ok(changed)
     }
 }
@@ -132,7 +131,7 @@ impl OptimizerOnBuilt for FunctionArgDetect {
 /// records the actual sub-register Vn, so downstream consumers see the
 /// width the function actually reads.
 fn detect_register_args(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -212,7 +211,7 @@ fn detect_register_args(
 /// Slice 4 extends this with memory-shadow disqualification; slice 5 extends
 /// it with width merging.
 fn detect_stack_args(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     sp_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -241,7 +240,7 @@ fn detect_stack_args(
         let load_size = load_ty.byte_size() as i64;
         let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(&fg.graph, addr, sp_vn, &mut memo, &mut visiting)
+            decompose_sp(fg.graph, addr, sp_vn, &mut memo, &mut visiting)
         else {
             continue;
         };
@@ -254,7 +253,7 @@ fn detect_stack_args(
         let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
             entity_utils::DenseEntitySet::new();
         if mem_chain_is_dirty(
-            fg,
+            fg.as_view(),
             memory,
             offset,
             load_size,
@@ -408,7 +407,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 // add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
@@ -457,7 +456,7 @@ fn mem_chain_is_dirty(
                         results.push(false);
                     }
                     NodeKind::StackStore { offset: k, .. } => {
-                        match step_through_stack_store(&fg.graph, node, k, offset, load_size) {
+                        match step_through_stack_store(fg.graph, node, k, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -465,7 +464,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::StackStorePhi { .. } => {
-                        match step_through_stack_store_phi(&fg.graph, node, offset, load_size) {
+                        match step_through_stack_store_phi(fg.graph, node, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -473,7 +472,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::Store(_) => {
-                        match step_through_store(&fg.graph, node, sp_vn, sp_memo, offset, load_size)
+                        match step_through_store(fg.graph, node, sp_vn, sp_memo, offset, load_size)
                         {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {

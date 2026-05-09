@@ -1,4 +1,3 @@
-use ir::BuiltFunctionGraph;
 use ir::node::NodeKind;
 use reader::ReadOnlyMemory;
 
@@ -48,7 +47,7 @@ use crate::worklist::WorkSet;
 pub struct LoadReadOnly<M>(pub M);
 
 impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.

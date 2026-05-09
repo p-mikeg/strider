@@ -53,7 +53,7 @@
 use std::sync::LazyLock;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
+use ir::{Graph, IntCmpOp};
 use pattern::{
     Capture, Pat, add, bool_and, bool_not, bool_or, cast_to_int, int_const, int_eq, int_lt,
     int_sborrow, int_slt, neg, var, Matcher,
@@ -66,7 +66,7 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 pub struct FlagCmpCanonicalize;
 
 impl OptimizerOnBuilt for FlagCmpCanonicalize {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Pre-collect candidate roots: rules mutate the graph (rewire
         // uses), so we can't walk the live iterator.  Forward preorder
         // visits parents before children — for the larger flag-tree
@@ -112,14 +112,14 @@ struct Rule {
     rhs_capture: Option<Capture>,
 }
 
-fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) -> Result<bool> {
+fn try_apply_rule(function: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) -> Result<bool> {
     // Snapshot the matched bindings inside a tight scope so the borrow
     // ends before we mutate the graph.  Some rules (Thumb's "test bool
     // against 0") use only `lhs_capture`; `rhs_capture` defaults to the
     // same output in that case so the RHS builder, which ignores it,
     // still gets a valid argument.
     let (a_out, b_out) = {
-        let matcher = Matcher::new(function);
+        let matcher = Matcher::for_graph(function.graph, function.entry);
         let m = match matcher.match_at(node, &rule.lhs) {
             Some(m) => m,
             None => return Ok(false),
@@ -148,7 +148,7 @@ fn try_apply_rule(function: &mut BuiltFunctionGraph, node: NodeId, rule: &Rule) 
     };
 
     let [root_out] = function.graph.node_outputs_exact::<1>(node)?;
-    let new_out = (rule.build_rhs)(&mut function.graph, a_out, b_out, node);
+    let new_out = (rule.build_rhs)(function.graph, a_out, b_out, node);
     function.graph.replace_all_uses(root_out, new_out)?;
     Ok(true)
 }

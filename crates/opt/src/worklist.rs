@@ -46,7 +46,7 @@ impl WorkSet {
     /// no re-enqueue unless a rule explicitly pushes consumers) without
     /// allocating an intermediate `Vec`, and lets passes upgrade in place to
     /// cascading rewrites by calling [`WorkSet::push`] on consumers.
-    pub(crate) fn seeded_kind<P>(function: &ir::BuiltFunctionGraph, mut pred: P) -> Self
+    pub(crate) fn seeded_kind<P>(function: &pattern::RewriteCtx<'_>, mut pred: P) -> Self
     where
         P: FnMut(&NodeKind) -> bool,
     {

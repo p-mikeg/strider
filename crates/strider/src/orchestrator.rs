@@ -654,7 +654,11 @@ fn apply_in_place_edit(
                 None,
                 initial_var_index,
             )?;
-            apply_link_register(graph, placeholder, &ctx.ret_val_outputs)?;
+            apply_link_register(
+                &mut pattern::RewriteCtx::for_built(graph),
+                placeholder,
+                &ctx.ret_val_outputs,
+            )?;
             Ok(())
         }
         ResolvedTargets::Single(target) => {
@@ -668,7 +672,7 @@ fn apply_in_place_edit(
                 initial_var_index,
             )?;
             let new_return = apply_tail_call(
-                graph,
+                &mut pattern::RewriteCtx::for_built(graph),
                 placeholder,
                 *target,
                 &ctx.arg_passing_outputs,

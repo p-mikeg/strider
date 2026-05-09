@@ -49,7 +49,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -76,7 +76,7 @@ fn known_bits_popcount_range() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -98,7 +98,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -117,7 +117,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -138,7 +138,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -157,7 +157,7 @@ fn known_bits_lzcount_range() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -178,7 +178,7 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0));
     Ok(())
 }
 
@@ -203,7 +203,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -222,7 +222,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
@@ -297,7 +297,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(fg.int_const_val(val), Some(1));
     Ok(())
 }
@@ -322,7 +322,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(fg.int_const_val(val), Some(0x80));
     Ok(())
 }
@@ -355,7 +355,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(
         fg.int_const_val(val),
         Some(0),
@@ -379,7 +379,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     assert_eq!(
         fg.int_const_val(val),
         Some(0),
@@ -412,7 +412,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
-    let val = return_value(&fg)?;
+    let val = return_value((&fg).into())?;
     let semantic = fg.int_const_val(val);
     assert_eq!(
         semantic,
@@ -450,7 +450,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0x7Fu128),
         "SignExtend of (0|0x7F) (MSB=0) must fold to IntConst(0x7F) once \
          the SignExtend arm propagates known bits"
@@ -474,7 +474,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
         changed = KnownBits.optimize(&mut fg.graph, fg.entry)?.changed();
     }
     assert_eq!(
-        return_kind(&fg)?,
+        return_kind((&fg).into())?,
         NodeKind::IntConst(0xFFFF_FFFF_FFFF_FF80u128),
         "SignExtend of (0|0x80) (MSB=1) must fold to all-ones upper bits \
          once the SignExtend arm propagates known bits"

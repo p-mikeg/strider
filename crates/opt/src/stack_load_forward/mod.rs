@@ -8,7 +8,6 @@
 //! Must be wired into the pipeline with the calling convention's stack-pointer
 //! varnode and the target's endianness (see [`StackLoadForward::new`]).
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use target::Endianness;
 
@@ -58,7 +57,7 @@ impl StackLoadForward {
 }
 
 impl OptimizerOnBuilt for StackLoadForward {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
@@ -73,7 +72,7 @@ impl OptimizerOnBuilt for StackLoadForward {
 /// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
 /// were rewired.
 fn try_forward_load(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     load: NodeId,
     sp_vn: rsleigh::Vn,
     endianness: Endianness,
@@ -88,7 +87,7 @@ fn try_forward_load(
 
     let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(&fg.graph, addr, sp_vn, memo, &mut visiting)
+        decompose_sp(fg.graph, addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -182,7 +181,7 @@ enum ResolveShape {
 // clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
-    fg: &BuiltFunctionGraph,
+    fg: &pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
     offset: i64,
     load_size: i64,
@@ -245,7 +244,7 @@ fn probe(
                     }
                 }
                 NodeKind::Store(_) => {
-                    match step_through_store(&fg.graph, node, sp_vn, memo, offset, load_size) {
+                    match step_through_store(fg.graph, node, sp_vn, memo, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -339,7 +338,7 @@ fn probe(
 /// the IR rejects the requested constant; structurally the realization
 /// is a deterministic walk over the shape tree.
 fn realize(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: ir::node::NodeOutputType,
     endianness: Endianness,

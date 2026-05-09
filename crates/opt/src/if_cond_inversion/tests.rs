@@ -34,7 +34,7 @@ fn build_if_with_neg_cond() -> Result<(ir::BuiltFunctionGraph, ir::node::NodeId)
     b.build_return(Some(two), &[])?;
 
     let fg = b.build()?;
-    let if_node = find_unique_if(&fg);
+    let if_node = find_unique_if((&fg).into());
     Ok((fg, if_node))
 }
 
@@ -221,7 +221,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 
     // The BoolNeg's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
-    let if_node = find_unique_if(&fg);
+    let if_node = find_unique_if((&fg).into());
     let [_ctrl, cond_out] = fg.graph.node_inputs_exact::<2>(if_node)?;
     let inner_node = fg.graph.get_node_from_output(cond_out);
     let inner_fp = fg.graph.asm_fingerprint(inner_node);

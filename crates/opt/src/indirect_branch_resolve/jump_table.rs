@@ -46,7 +46,7 @@
 
 use super::{MAX_TABLE_ENTRIES, ResolvedTargets};
 use ir::node::{NodeId, NodeKind, NodeOutputId};
-use ir::{BuiltFunctionGraph, Graph, IntCmpOp};
+use ir::{Graph, IntCmpOp};
 use crate::ReadOnlyMemory;
 use rsleigh::VnSpace;
 
@@ -62,7 +62,7 @@ use rsleigh::VnSpace;
 /// case a future refactor needs it.
 #[must_use]
 pub fn classify_jump_table(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     _link_register_vn: Option<rsleigh::Vn>,
@@ -173,7 +173,7 @@ struct JumpTableShape {
 /// `cmp + jb`/`ja` that lifts to `Less`/`LessEqual` directly, or a
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> Option<JumpTableShape> {
     let graph = &fg.graph;
@@ -215,16 +215,16 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         mul(var(idx_var), any_int_const(stride_var)),
     ));
-    if let Some(m) = Matcher::new(fg).match_at(load_node, &mul_pat.into()) {
+    if let Some(m) = Matcher::for_graph(fg.graph, fg.entry).match_at(load_node, &mul_pat.into()) {
         // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior
         // code returned `u64` for both `base` and `stride` via
         // `int_const_val`, which itself truncates to `u64`.  We mirror
         // the truncation here.  Real jump-table bases / strides fit in
         // `u64` on every supported arch.
         #[allow(clippy::cast_possible_truncation)]
-        let base = m.get_uint(base_var, fg)? as u64;
+        let base = m.get_uint(base_var, fg.graph)? as u64;
         #[allow(clippy::cast_possible_truncation)]
-        let stride = m.get_uint(stride_var, fg)? as u64;
+        let stride = m.get_uint(stride_var, fg.graph)? as u64;
         let idx_output = m.output(idx_var)?;
         return Some(JumpTableShape {
             base,
@@ -244,10 +244,10 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         shl(var(idx_var), any_int_const(stride_var)),
     ));
-    let m = Matcher::new(fg).match_at(load_node, &shl_pat.into())?;
+    let m = Matcher::for_graph(fg.graph, fg.entry).match_at(load_node, &shl_pat.into())?;
     #[allow(clippy::cast_possible_truncation)]
-    let base = m.get_uint(base_var, fg)? as u64;
-    let shift = m.get_uint(stride_var, fg)?;
+    let base = m.get_uint(base_var, fg.graph)? as u64;
+    let shift = m.get_uint(stride_var, fg.graph)?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at
     // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
@@ -292,7 +292,7 @@ fn match_jump_table_shape(
 /// anchor so we don't re-run the worklist analysis per anchor.
 #[must_use]
 pub fn bound_via_known_bits(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     idx_output: NodeOutputId,
     known: &crate::KnownBitsMap,
 ) -> Option<u64> {
@@ -349,7 +349,7 @@ pub fn bound_via_known_bits(
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
 pub fn bound_via_predecessor_if(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,
 ) -> Option<u64> {
@@ -406,7 +406,7 @@ fn find_anchor_consumer_placeholder(
 /// is undone before the next predecessor starts, so the same node
 /// can legitimately appear on multiple incoming paths to a join.
 fn walk_control_for_if_bound_iter(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     initial_control_out: NodeOutputId,
     idx_output: NodeOutputId,
 ) -> Option<u64> {
@@ -610,7 +610,7 @@ fn walk_control_for_if_bound_iter(
 /// resolution.  Falling through to the catch-all `None` surfaces
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     cond_out: NodeOutputId,
     idx_output: NodeOutputId,
     on_true_branch: bool,
@@ -633,12 +633,12 @@ fn bound_from_if_condition(
         let n_var = Capture::new();
         let idx_var = Capture::new();
         let pat = bool_not(int_cmp_any(op_var, any_int_const(n_var), var(idx_var)));
-        if let Some(m) = Matcher::new(fg).match_at(cmp_node, &pat) {
+        if let Some(m) = Matcher::for_graph(fg.graph, fg.entry).match_at(cmp_node, &pat) {
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
-                let op = m.get_int_cmp_op(op_var, fg)?;
+                let op = m.get_int_cmp_op(op_var, fg.graph)?;
                 if matches!(op, IntCmpOp::Less | IntCmpOp::Sless) {
-                    let n = u64::try_from(m.get_uint(n_var, fg)?).ok()?;
+                    let n = u64::try_from(m.get_uint(n_var, fg.graph)?).ok()?;
                     return n.checked_add(1);
                 }
             }
@@ -650,7 +650,7 @@ fn bound_from_if_condition(
     let idx_var = Capture::new();
     let n_var = Capture::new();
     let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
-    let m = Matcher::new(fg).match_at(cmp_node, &pat)?;
+    let m = Matcher::for_graph(fg.graph, fg.entry).match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_output`.  `same_value` walks through trivial
@@ -662,8 +662,8 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_output) {
         return None;
     }
-    let n = u64::try_from(m.get_uint(n_var, fg)?).ok()?;
-    let op = m.get_int_cmp_op(op_var, fg)?;
+    let n = u64::try_from(m.get_uint(n_var, fg.graph)?).ok()?;
+    let op = m.get_int_cmp_op(op_var, fg.graph)?;
 
     match op {
         // idx < N (true) → bound = N.

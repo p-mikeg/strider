@@ -300,17 +300,17 @@ impl Optimizer for IndirectBranchResolve {
         entry: NodeId,
     ) -> Result<OptimizationResult> {
         // Wrap once over the whole loop: the classifier and the in-place
-        // editors all operate on `&mut BuiltFunctionGraph`, and
+        // editors all operate on `&mut pattern::RewriteCtx<'_>`, and
         // `analyze_known_bits` is a per-call read-only analysis we want
         // to compute once and reuse across all anchors.
-        crate::pipeline::with_built(graph, entry, |fg| self.optimize_built(fg))
+        crate::pipeline::with_rewrite_ctx(graph, entry, |fg| self.optimize_built(fg))
     }
 }
 
 impl IndirectBranchResolve {
     fn optimize_built(
         &self,
-        fg: &mut ir::BuiltFunctionGraph,
+        fg: &mut pattern::RewriteCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Cache the known-bits analysis up-front: classify_anchor's
         // jump-table and stack-array arms used to call analyze_known_bits
@@ -319,11 +319,11 @@ impl IndirectBranchResolve {
         // (the LinkRegister edit appends slots; the tail-call edit
         // detaches the placeholder and emits fresh nodes — neither
         // affects bounds on existing producers).
-        let known = crate::analyze_known_bits(fg)?;
+        let known = crate::analyze_known_bits(fg.as_view())?;
         let mut changed = false;
         for (addr, anchor_output) in &self.unresolved_anchors {
             let resolved = match classify::classify_anchor_with_rom_and_sp(
-                fg,
+                fg.as_view(),
                 *anchor_output,
                 self.link_register_vn,
                 self.rom.as_deref(),
@@ -334,7 +334,7 @@ impl IndirectBranchResolve {
                 None => continue,
             };
             let Some(placeholder) =
-                find_placeholder_return_for_anchor(&fg.graph, *anchor_output)
+                find_placeholder_return_for_anchor(fg.graph, *anchor_output)
             else {
                 continue;
             };
@@ -692,8 +692,8 @@ mod tests {
             .unwrap();
         let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
         let anchor = inputs[2];
-        let known = crate::analyze_known_bits(&built).unwrap();
-        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        let known = crate::analyze_known_bits((&built).into()).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp((&built).into(), anchor, None, None, None, &known);
         assert_eq!(
             resolved,
             Some(ResolvedTargets::Single(0xC0DE_DEAD)),
@@ -736,8 +736,8 @@ mod tests {
             .unwrap();
         let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
         let anchor = inputs[2];
-        let known = crate::analyze_known_bits(&built).unwrap();
-        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        let known = crate::analyze_known_bits((&built).into()).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp((&built).into(), anchor, None, None, None, &known);
         assert_eq!(
             resolved,
             Some(ResolvedTargets::Single(0xDEAD)),
@@ -788,8 +788,8 @@ mod tests {
             .unwrap();
         let inputs: Vec<_> = built.graph.node_inputs(placeholder).into_iter().collect();
         let anchor = inputs[2];
-        let known = crate::analyze_known_bits(&built).unwrap();
-        let resolved = classify_anchor_with_rom_and_sp(&built, anchor, None, None, None, &known);
+        let known = crate::analyze_known_bits((&built).into()).unwrap();
+        let resolved = classify_anchor_with_rom_and_sp((&built).into(), anchor, None, None, None, &known);
         assert_eq!(
             resolved,
             Some(ResolvedTargets::Single(0xFFFF_FFFF_FFFF_FFFFu64)),

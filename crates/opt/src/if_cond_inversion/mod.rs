@@ -43,7 +43,6 @@
 //! Both are use-list mutations the pattern-rewrite engine doesn't do, so
 //! we hand-write the surgery.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -56,7 +55,7 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 pub struct IfCondInversion;
 
 impl OptimizerOnBuilt for IfCondInversion {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.
@@ -68,7 +67,7 @@ impl OptimizerOnBuilt for IfCondInversion {
 
         let mut result = OptimizationResult::NoChange;
         for if_node in candidates {
-            invert(&mut function.graph, if_node)?;
+            invert(function.graph, if_node)?;
             result = OptimizationResult::Changed;
         }
         Ok(result)

@@ -43,7 +43,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut graph, return_id, &[]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     assert_eq!(inputs_after.len(), 2, "target_value dropped, no ret_vals appended");
     assert_eq!(inputs_after[0], inputs_before[0], "ctrl preserved");
@@ -62,7 +62,7 @@ fn apply_link_register_to_real_lift_appends_one_ret_val() {
     let (mut graph, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let inputs_before: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
-    apply_link_register(&mut graph, return_id, &[anchor]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[anchor]).expect("apply");
     let inputs_after: Vec<_> = graph.graph.node_inputs(return_id).into_iter().collect();
     assert_eq!(inputs_after.len(), inputs_before.len(), "[ctrl, mem, ret_val_0]");
     assert_eq!(*inputs_after.last().expect("non-empty"), anchor);
@@ -79,7 +79,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0x1234_5678_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
@@ -113,7 +113,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xc0de_u64, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, 0xc0de_u64, &[], &[], &[])
         .expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(graph.graph.node_kind(new_return), NodeKind::Return));
@@ -127,7 +127,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    let new_return = apply_tail_call(&mut graph, return_id, 0xface_u64, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, 0xface_u64, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
@@ -148,7 +148,7 @@ fn apply_link_register_does_not_change_return_node_id() {
     // LinkRegister arm of `apply_in_place_edit`.
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
-    apply_link_register(&mut graph, return_id, &[]).expect("apply");
+    apply_link_register(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, &[]).expect("apply");
     // Same NodeId, same NodeKind.
     assert!(matches!(graph.graph.node_kind(return_id), NodeKind::Return));
     // The control input chain is unchanged: input #0 still flows
@@ -209,7 +209,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut graph, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&graph);
     let target = 0xdead_beef_u64;
-    let new_return = apply_tail_call(&mut graph, return_id, target, &[], &[], &[])
+    let new_return = apply_tail_call(&mut pattern::RewriteCtx::for_built(&mut graph), return_id, target, &[], &[], &[])
         .expect("apply_tail_call");
     let inputs: Vec<_> = graph.graph.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
@@ -280,7 +280,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     ];
 
     let _new_return = apply_tail_call(
-        &mut graph,
+        &mut pattern::RewriteCtx::for_built(&mut graph),
         return_id,
         0xdead_beef,
         &[arg0, arg1, arg2],

@@ -1,7 +1,7 @@
 use cranelift_entity::SecondaryMap;
 
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
-use ir::{BuiltFunctionGraph, ExtendOp, IntBinaryOp, IntUnaryOp};
+use ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
@@ -109,7 +109,7 @@ impl Kb {
 /// value output.  Returns `(output_id, Kb)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub fn node_known_bits(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
@@ -372,7 +372,7 @@ pub fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(function: &BuiltFunctionGraph) -> Result<KnownBitsMap> {
+pub fn analyze(function: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -385,7 +385,7 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<KnownBitsMap> {
     // the validator's existing scope-of-correctness boundary
     // (Layer A in `ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work = WorkSet::seeded(function.preorder());
+    let mut work = WorkSet::seeded(ir::walk::walk_graph(function.graph, function.entry));
     while let Some(node_id) = work.pop() {
         let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
             continue;
@@ -412,11 +412,11 @@ pub fn analyze(function: &BuiltFunctionGraph) -> Result<KnownBitsMap> {
 pub struct KnownBits;
 
 impl OptimizerOnBuilt for KnownBits {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(function)?;
+        let known = analyze(function.as_view())?;
 
         // Phase 2 — replace fully-determined outputs with constants.  Drive
         // via WorkSet so a rewritten node's consumers are re-checked in the

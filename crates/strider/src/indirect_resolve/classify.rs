@@ -22,7 +22,7 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    opt::classify_anchor(graph, anchor_output, link_register_vn)
+    opt::classify_anchor(graph.into(), anchor_output, link_register_vn)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -39,7 +39,7 @@ pub fn classify_anchor_with_rom(
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    opt::classify_anchor_with_rom(graph, anchor_output, link_register_vn, rom)
+    opt::classify_anchor_with_rom(graph.into(), anchor_output, link_register_vn, rom)
 }
 
 /// Classify a placeholder anchor with both an optional
@@ -59,9 +59,10 @@ pub fn classify_anchor_with_rom_and_sp(
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    let known = opt::analyze_known_bits(graph)?;
+    let view: pattern::RewriteCtxView<'_> = graph.into();
+    let known = opt::analyze_known_bits(view)?;
     Ok(opt::classify_anchor_with_rom_and_sp(
-        graph,
+        view,
         anchor_output,
         link_register_vn,
         rom,

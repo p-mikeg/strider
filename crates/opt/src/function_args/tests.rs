@@ -10,7 +10,7 @@ fn rdi_like_vn() -> rsleigh::Vn {
     reg_vn(0x38, 8)
 }
 
-fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
+fn count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
     fg.all_node_ids()
         .filter(|&n| pred(fg.node_kind(n)))
         .count()
@@ -38,7 +38,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
     pass.optimize(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| {
+    let n_fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -54,7 +54,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 
     // The original InitialVar(rdi) should have no remaining live uses
     // (the Return should now source from the FunctionArg output).
-    let reachable_initial_rdi = crate::test_support::count_reachable(&fg, |k| {
+    let reachable_initial_rdi = crate::test_support::count_reachable((&fg).into(), |k| {
         matches!(k, NodeKind::InitialVar(v) if *v == rdi)
     });
     assert_eq!(
@@ -98,7 +98,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| {
+    let n_fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -114,7 +114,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 
     // The original Load should no longer be reachable (its single consumer,
     // the Return, now sources from the FunctionArg).
-    let reachable_loads = crate::test_support::count_reachable(&fg, |k| {
+    let reachable_loads = crate::test_support::count_reachable((&fg).into(), |k| {
         matches!(k, NodeKind::Load(_))
     });
     assert_eq!(
@@ -162,7 +162,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     // Only arg 0 emitted; arg 1 absent (gap) and arg 2 MUST NOT be emitted.
-    let arg0 = count(&fg, |k| {
+    let arg0 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -171,7 +171,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
             }
         )
     });
-    let arg1 = count(&fg, |k| {
+    let arg1 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -180,7 +180,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
             }
         )
     });
-    let arg2 = count(&fg, |k| {
+    let arg2 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -194,7 +194,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     assert_eq!(arg2, 0, "arg 2 (sp+12) must be truncated by the gap");
 
     // The sp+12 load must still exist and be reachable.
-    let reachable_loads = crate::test_support::count_reachable(&fg, |k| {
+    let reachable_loads = crate::test_support::count_reachable((&fg).into(), |k| {
         matches!(k, NodeKind::Load(_))
     });
     assert_eq!(
@@ -230,7 +230,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] is shadowed by StackStore{{+4}}, not a function arg"
@@ -301,7 +301,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] reaches a MemPhi with a shadowing branch — disqualified"
@@ -349,7 +349,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     pipeline.run(&mut fg.graph, fg.entry)?;
 
     // Exactly one FunctionArg at offset 0.
-    let fa_count = count(&fg, |k| {
+    let fa_count = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -417,7 +417,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let n_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let n_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         n_fa, 0,
         "unused InitialVar(rdi) must not be labelled as FunctionArg"
@@ -468,7 +468,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa_reg0 = count(&fg, |k| {
+    let fa_reg0 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -477,7 +477,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
             } if *r == rdi
         )
     });
-    let fa_reg1 = count(&fg, |k| {
+    let fa_reg1 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -486,7 +486,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
             } if *r == rsi
         )
     });
-    let fa_stack2 = count(&fg, |k| {
+    let fa_stack2 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -535,7 +535,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Load[sp+4] overlaps with StackStore{{+0, size=8}} — must be shadowed"
@@ -575,7 +575,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa_at_4 = count(&fg, |k| {
+    let fa_at_4 = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -653,7 +653,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "MemPhi with an overlapping-range StackStore predecessor must disqualify Load[sp+4]"
@@ -679,7 +679,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "isolated sp+12 load must not be labelled without arg 0/1"
@@ -715,7 +715,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -777,7 +777,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "plain Store(sp+4, U32) overlaps Load[sp+4]: chain must be dirty"
@@ -823,7 +823,7 @@ fn mem_chain_is_dirty_passes_through_non_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -871,7 +871,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {
@@ -955,7 +955,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let any_fa = count(&fg, |k| matches!(k, NodeKind::FunctionArg { .. }));
+    let any_fa = count((&fg).into(), |k| matches!(k, NodeKind::FunctionArg { .. }));
     assert_eq!(
         any_fa, 0,
         "Store with SpExpr::Phi address must conservatively mark chain dirty: no FunctionArg"
@@ -999,7 +999,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let fa = count(&fg, |k| {
+    let fa = count((&fg).into(), |k| {
         matches!(
             k,
             NodeKind::FunctionArg {

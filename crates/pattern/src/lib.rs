@@ -142,7 +142,7 @@ mod pat;
 mod rewrite;
 mod var;
 
-pub use rewrite::{BoxedRule, RewriteCtx, apply_rules_in_order, boxed_rule, rewrite_rule};
+pub use rewrite::{BoxedRule, RewriteCtx, RewriteCtxView, apply_rules_in_order, boxed_rule, rewrite_rule};
 pub use pat::traits::BuildCtx;
 pub use pat::ctor::consts::first_value_input_type;
 pub use pat::ctor::consts::{bool_const_with_fn, float_const_with_fn, int_const_with_fn};

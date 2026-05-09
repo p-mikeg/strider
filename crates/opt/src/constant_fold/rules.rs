@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use ir::node::NodeId;
-use ir::{BuiltFunctionGraph, IntUnaryOp};
+use ir::IntUnaryOp;
 
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
@@ -93,12 +93,11 @@ static REASSOC_AND_MASK_RULES: LazyLock<Vec<pattern::BoxedRule>> =
 /// - `(a & C1) & C2 → a & (C1 & C2)`
 /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
 pub(super) fn apply_reassoc_and_mask_rules(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let mut __ctx = pattern::RewriteCtx::for_built(fg);
-    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(&mut __ctx, node)?;
+    let changed = apply_rules_in_order(&REASSOC_AND_MASK_RULES)(fg, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -278,12 +277,11 @@ static BITCAST_EXTEND_RULES: LazyLock<Vec<pattern::BoxedRule>> =
 /// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
 /// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
 pub(super) fn apply_bitcast_extend_rules(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let mut __ctx = pattern::RewriteCtx::for_built(fg);
-    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(&mut __ctx, node)?;
+    let changed = apply_rules_in_order(&BITCAST_EXTEND_RULES)(fg, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -368,12 +366,11 @@ static IDENTITY_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build_i
 /// - `x | 0 → x`, `x | x → x`
 /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
 pub(super) fn apply_identity_rules(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let mut __ctx = pattern::RewriteCtx::for_built(fg);
-    let changed = apply_rules_in_order(&IDENTITY_RULES)(&mut __ctx, node)?;
+    let changed = apply_rules_in_order(&IDENTITY_RULES)(fg, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -581,12 +578,11 @@ static CONST_EVAL_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build
 /// integer comparisons, truncate, extend (zero/sign), popcount, lzcount,
 /// cast_to_bool, and cast_to_int.
 pub(super) fn apply_const_eval_rules(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let mut __ctx = pattern::RewriteCtx::for_built(fg);
-    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(&mut __ctx, node)?;
+    let changed = apply_rules_in_order(&CONST_EVAL_RULES)(fg, node)?;
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -730,12 +726,11 @@ static BOOL_FLOAT_RULES: LazyLock<Vec<pattern::BoxedRule>> = LazyLock::new(build
 /// - `x ^ true → !x` (commutative)
 /// - `!!x → x`
 pub(super) fn apply_bool_float_rules(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
     use pattern::apply_rules_in_order;
-    let mut __ctx = pattern::RewriteCtx::for_built(fg);
-    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(&mut __ctx, node)?;
+    let changed = apply_rules_in_order(&BOOL_FLOAT_RULES)(fg, node)?;
     // CastToFloat lowering is too stateful for a rule (it does graph surgery);
     // handle it separately after the rule sweep.
     let cast_changed = try_lower_cast_to_float(fg, node)?;

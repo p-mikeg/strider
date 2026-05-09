@@ -10,7 +10,6 @@
 //! results from the classifier directly into
 //! `cfg::Builder::with_known_targets`.
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeKind, NodeOutputId};
 
 use super::ResolvedTargets;
@@ -59,7 +58,7 @@ use crate::ReadOnlyMemory;
 ///
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 pub fn classify_anchor(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
@@ -93,7 +92,7 @@ pub fn classify_anchor(
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 /// See [`classify_anchor`] for full Result-shape semantics.
 pub fn classify_anchor_with_rom(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -132,7 +131,7 @@ pub fn classify_anchor_with_rom(
 /// approximating.
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -298,14 +297,8 @@ pub fn classify_anchor_with_rom_and_sp(
                         // signed value at its declared input width,
                         // then mask to the dispatch slot's output
                         // width (typically 64-bit).
-                        let in_ty = match graph.output_kind(inner).as_value() {
-                            Some(t) => t,
-                            None => return None,
-                        };
-                        let signed = match in_ty.get_signed_int(*k) {
-                            Some(s) => s,
-                            None => return None,
-                        };
+                        let in_ty = graph.output_kind(inner).as_value()?;
+                        let signed = in_ty.get_signed_int(*k)?;
                         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
                         let v = signed as u64;
                         v

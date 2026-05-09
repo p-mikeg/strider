@@ -9,7 +9,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId};
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
 fn try_detach_dead_inputs(
-    function: &mut ir::BuiltFunctionGraph,
+    function: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> OptimizationResult {
     let all_unused = function
@@ -29,7 +29,7 @@ fn try_detach_dead_inputs(
 /// Attempts to simplify the phi-like node `node_id` given the set of
 /// CFG-reachable nodes.  Returns `Changed` if any transformation was applied.
 fn remove_phis(
-    function: &mut ir::BuiltFunctionGraph,
+    function: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
@@ -174,13 +174,13 @@ impl Optimizer for RedundantPhis {
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_built(graph, entry, |function| self.optimize_built(function))
+        crate::pipeline::with_rewrite_ctx(graph, entry, |function| self.optimize_built(function))
     }
 }
 
 impl RedundantPhis {
-    fn optimize_built(&self, function: &mut ir::BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
-        let reachable = ir::walk::cfg_reachable(&function.graph, function.entry);
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+        let reachable = ir::walk::cfg_reachable(function.graph, function.entry);
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
         // walk every node — pre-filter on the kinds we care about.
@@ -203,7 +203,7 @@ impl RedundantPhis {
         // no other pass can act on the result.  Run it for hygiene but do
         // NOT escalate it into a `Changed` signal — that just costs the
         // pipeline one extra fixed-point iteration with no work to do.
-        let _ = crate::worklist::detach_unreachable_nodes(&mut function.graph, function.entry);
+        let _ = crate::worklist::detach_unreachable_nodes(function.graph, function.entry);
         Ok(res)
     }
 }

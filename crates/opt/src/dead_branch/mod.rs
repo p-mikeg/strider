@@ -1,5 +1,4 @@
 
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -37,7 +36,7 @@ mod tests;
 /// and `VarPhi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     // Only handle If nodes.
@@ -89,8 +88,8 @@ fn try_eliminate_dead_branch(
     // edges apart on subsequent iterations as joins collapse, then a later
     // DBE iteration will be free to detach).  If no, the dead subgraph is
     // self-contained and detaching is safe.
-    let dead_subgraph = collect_dead_subgraph(fg, &dead_uses);
-    let dead_subgraph_escapes = dead_subgraph_has_live_data_consumer(fg, &dead_subgraph);
+    let dead_subgraph = collect_dead_subgraph(fg.as_view(), &dead_uses);
+    let dead_subgraph_escapes = dead_subgraph_has_live_data_consumer(fg.as_view(), &dead_subgraph);
 
     // Idempotency:
     //   * `live_uses_count == 0` ⇒ live side already rewired.
@@ -99,7 +98,7 @@ fn try_eliminate_dead_branch(
     //     case we deliberately won't strip / detach this iteration so
     //     re-visiting can't make further progress.
     if live_uses_count == 0
-        && (dead_uses.is_empty() || dead_subgraph_escapes || dead_uses_all_zero_input(fg, &dead_uses))
+        && (dead_uses.is_empty() || dead_subgraph_escapes || dead_uses_all_zero_input(fg.as_view(), &dead_uses))
     {
         return Ok(OptimizationResult::NoChange);
     }
@@ -182,7 +181,7 @@ fn try_eliminate_dead_branch(
 /// has zero inputs — i.e. a previous DBE iteration already stripped them.
 /// Used by the idempotency check to avoid spinning the outer pipeline loop.
 fn dead_uses_all_zero_input(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> bool {
     dead_uses.iter().all(|(n, _)| {
@@ -196,7 +195,7 @@ fn dead_uses_all_zero_input(
 /// `ControlState`s mark merge points and are *not* recursed through — they
 /// are part of the "boundary" where dead and live control flow can rejoin.
 fn collect_dead_subgraph(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> entity_utils::DenseEntitySet<NodeId> {
     let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -229,7 +228,7 @@ fn collect_dead_subgraph(
 /// dead subgraph reachable through backward-data from those live consumers
 /// and the still-attached If would fail Layer A's input-count check.
 fn dead_subgraph_has_live_data_consumer(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|node| {
@@ -254,7 +253,7 @@ fn dead_subgraph_has_live_data_consumer(
 pub struct DeadBranchElimination;
 
 impl OptimizerOnBuilt for DeadBranchElimination {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // DBE only fires on `If` nodes whose outputs are control edges. We
         // drain the seeded preorder once: chained constant-branch patterns
         // (where one elimination exposes another) are caught by the outer

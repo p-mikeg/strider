@@ -21,7 +21,7 @@ pub(crate) use ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
 /// The output id that the (unique) Return node receives as its value
 /// argument (input[2]: input[0]=ctrl, input[1]=mem).
-pub(crate) fn return_value(fg: &BuiltFunctionGraph) -> crate::Result<Value> {
+pub(crate) fn return_value(fg: pattern::RewriteCtxView<'_>) -> crate::Result<Value> {
     let ret = fg
         .all_node_ids()
         .find(|&n| matches!(fg.graph.node_kind(n), NodeKind::Return))
@@ -30,13 +30,13 @@ pub(crate) fn return_value(fg: &BuiltFunctionGraph) -> crate::Result<Value> {
 }
 
 /// `NodeKind` of the return-value producer.
-pub(crate) fn return_kind(fg: &BuiltFunctionGraph) -> crate::Result<NodeKind> {
+pub(crate) fn return_kind(fg: pattern::RewriteCtxView<'_>) -> crate::Result<NodeKind> {
     let val = return_value(fg)?;
     Ok(*fg.graph.kind_of_output(val))
 }
 
 /// Counts nodes matching `pred` (full arena, including detached zombies).
-pub(crate) fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) -> usize {
+pub(crate) fn count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
     fg.all_node_ids()
         .filter(|&n| pred(fg.graph.node_kind(n)))
         .count()
@@ -45,7 +45,7 @@ pub(crate) fn count<F: Fn(&NodeKind) -> bool>(fg: &BuiltFunctionGraph, pred: F) 
 /// Counts CFG-reachable nodes matching `pred` — the form most tests
 /// actually want (zombies left by `RedundantPhis` etc. don't count).
 pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
-    fg: &BuiltFunctionGraph,
+    fg: pattern::RewriteCtxView<'_>,
     pred: F,
 ) -> usize {
     let reachable: entity_utils::DenseEntitySet<NodeId> = fg.preorder().collect();

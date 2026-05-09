@@ -1,4 +1,3 @@
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -21,7 +20,7 @@ use rules::*;
 /// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
 /// - Input is any other integer type → lowered to `IntBitsToFloat`.
 fn try_lower_cast_to_float(
-    fg: &mut BuiltFunctionGraph,
+    fg: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     if !matches!(*fg.node_kind(node_id), NodeKind::CastToFloat) {
@@ -60,7 +59,7 @@ fn try_lower_cast_to_float(
 pub struct ConstantFold;
 
 impl OptimizerOnBuilt for ConstantFold {
-    fn optimize_built(&self, function: &mut BuiltFunctionGraph) -> crate::Result<OptimizationResult> {
+    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running

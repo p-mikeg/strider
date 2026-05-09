@@ -39,7 +39,7 @@ fn load_from_rom_const_addr() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U64)
     })?;
     assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(42));
     Ok(())
 }
 
@@ -131,7 +131,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
         b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::U8)
     })?;
     assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind((&fg).into())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 
@@ -148,7 +148,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     assert!(LoadReadOnly(TestRom).optimize(&mut fg.graph, fg.entry)?.changed());
     // Both loads must have folded out of the reachable subgraph.
     let remaining_loads =
-        crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::Load(_)));
+        crate::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
     Ok(())
 }

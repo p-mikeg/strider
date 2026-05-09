@@ -181,6 +181,7 @@ impl<'g> RewriteCtx<'g> {
     /// `OptimizerOnBuilt::optimize_built` from `&mut BuiltFunctionGraph`
     /// to `&mut RewriteCtx` can switch the parameter type without
     /// rewriting every pass body that calls `function.preorder()`.
+    #[must_use] 
     pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
         ir::walk::walk_graph(self.graph, self.entry)
     }
@@ -193,6 +194,66 @@ impl<'g> RewriteCtx<'g> {
     {
         self.preorder()
             .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
+    /// Lightweight read-only `(graph, entry)` view.  Used by the
+    /// public read-only opt API (`analyze_known_bits`,
+    /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
+    /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
+    /// pass the same `RewriteCtxView<'_>`.
+    #[must_use] 
+    pub fn as_view(&self) -> RewriteCtxView<'_> {
+        RewriteCtxView { graph: self.graph, entry: self.entry }
+    }
+}
+
+/// Read-only `(&Graph, NodeId)` view used by opt's read-only public
+/// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
+/// (via `as_view`), `&BuiltFunctionGraph` (via
+/// `From<&BuiltFunctionGraph>`), or raw `(&Graph, NodeId)` (via
+/// `RewriteCtxView::new`).
+#[derive(Clone, Copy)]
+pub struct RewriteCtxView<'g> {
+    pub graph: &'g Graph,
+    pub entry: NodeId,
+}
+
+impl<'g> RewriteCtxView<'g> {
+    #[must_use] 
+    pub fn new(graph: &'g Graph, entry: NodeId) -> Self {
+        Self { graph, entry }
+    }
+
+    #[must_use] 
+    pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
+        ir::walk::walk_graph(self.graph, self.entry)
+    }
+
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&ir::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+}
+
+impl<'g> From<&'g ir::BuiltFunctionGraph> for RewriteCtxView<'g> {
+    fn from(bfg: &'g ir::BuiltFunctionGraph) -> Self {
+        Self { graph: &bfg.graph, entry: bfg.entry }
+    }
+}
+
+impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
+    fn from(ctx: &'a RewriteCtx<'g>) -> Self {
+        ctx.as_view()
+    }
+}
+
+impl<'g> std::ops::Deref for RewriteCtxView<'g> {
+    type Target = Graph;
+    fn deref(&self) -> &Graph {
+        self.graph
     }
 }
 

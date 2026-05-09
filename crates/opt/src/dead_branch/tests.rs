@@ -157,7 +157,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     pipeline.add(RedundantPhis);
     pipeline.run(&mut fg.graph, fg.entry)?;
 
-    let if_count = crate::test_support::count_reachable(&fg, |k| matches!(k, NodeKind::If));
+    let if_count = crate::test_support::count_reachable((&fg).into(), |k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
     Ok(())
 }
