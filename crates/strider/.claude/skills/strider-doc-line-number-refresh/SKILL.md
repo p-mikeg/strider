@@ -58,7 +58,7 @@ Triggers:
 
 ## Examples (round-9 phase A applied these)
 
-- `strider-fingerprint-audit/SKILL.md:24` — `store.rs:108-160` was stale; actual `asm_fingerprint` is at line 132 and `extend_asm_fingerprint_from` is at line 184. Updated to `:127-200`.
+- `strider-fingerprint-audit/SKILL.md:24` — `store.rs:108-160` was stale; actual `asm_fingerprint` is at line 132 and `extend_asm_fingerprint_from` is at line 184. Updated to `:132-184`.
 - `strider-opt-pass-author/SKILL.md:30` — `store.rs:160` for `extend_asm_fingerprint_from` was stale. Updated to `:184`.
 - `crates/ir/README.md:50` — `NodeOutputType` listed `U8`–`U256` only; missing `U80`, `U512`, `F80`. Updated to enumerate all 12 variants.
 - `crates/pcode-lift/README.md:49` — `vn_mask` width list said "1, 2, 4, 8, 10, 16"; missing 32 (YMM) and 64 (ZMM). Added.

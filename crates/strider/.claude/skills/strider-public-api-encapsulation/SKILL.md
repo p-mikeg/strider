@@ -41,7 +41,7 @@ Triggers:
 
 - **V1**: `read_variable_optional` `pub` → `pub(super)` (Phase C).  Single sibling caller; pure visibility tightening.
 - **V4**: `BuiltCallingConvention::try_from_parts` (Wave 11).  Validating-constructor pattern.
-- **V6**: `cfg::Cfg::start_addr_to_region_id` `pub` → `pub(crate)` (Wave 3).  Visibility tightening, derived lookup index.
+- **V6** (deferred): `cfg::Cfg::start_addr_to_region_id` was tightened to `pub(crate)` then reverted in round 9 because `cfg/tests/cfg_query.rs` constructs `Cfg` via struct-literal syntax. The `region_id_at_start` accessor is the recommended path for new code; the field stays `pub` until the test scaffold migrates.
 - **V9**: `opt::Optimizer` / `OptimizerOnBuilt` add `Send + Sync` bound (Phase C).  Trait-bound tightening, prep for parallelism.
 - **P5**: `ResolvedTargets::multiple` validating constructor (Wave 12).  Additive validating ctor — variant tuple-construct retained for pattern matching.
 - **D1**: `LiftAddrGuard` `pub` re-export deletion (Phase C).  Zero-callers — purely a deletion, but same shape (don't expose what isn't used).

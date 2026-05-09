@@ -31,11 +31,11 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 
 ## Procedure
 
-1. **Pick the closest existing preset and copy its block.** The preset table in `crates/target/src/calling_convention/mod.rs` is alphabetised by family. Closest mirrors:
-   - x86 family: `x86_cdecl` (line 590ish), `x86_64_systemv` (line 278ish), `x86_64_all_preserving` (line 321ish — the zero-side-effect variant).
-   - AArch64 / ARM: `aarch64_aapcs64` (line 359), `arm_aapcs` (line 399).
-   - MIPS: `mips_o32` (line 440), `mips_n64` (line 460ish).
-   - PPC: `powerpc_sysv32` (line 501), `powerpc64_elf_v1` (line 538), `powerpc64_elf_v2` (line 572).
+1. **Pick the closest existing preset and copy its block.** Locate by symbol name rather than line number — the preset table in `crates/target/src/calling_convention/mod.rs` shifts as new presets are added.  Use `grep -n "pub fn x86_64_systemv\|pub fn aarch64_aapcs64\|…" crates/target/src/calling_convention/mod.rs` to find the current entry point of each preset.  Closest mirrors per family:
+   - x86 family: `x86_cdecl`, `x86_64_systemv`, `x86_64_all_preserving` (the zero-side-effect variant).
+   - AArch64 / ARM: `aarch64_aapcs64`, `arm_aapcs`.
+   - MIPS: `mips_o32`, `mips_n64`.
+   - PPC: `powerpc_sysv32`, `powerpc64_elf_v1`, `powerpc64_elf_v2`.
 
 2. **Preserve field order in the struct literal.** The canonical order is: `stack_ptr_reg_name`, `arg_passing_regs`, `callee_saved_regs`, `ret_val_regs`, `ret_val_regs_float`, `stack_arg_offsets`, `ret_stack_pop`, `link_register_reg_name`, `syscall_number_reg_name`, `no_memory_clobber`. Out-of-order fields compile but make audits harder.
 

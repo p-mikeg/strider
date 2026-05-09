@@ -37,8 +37,15 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Kb {
     /// Bits that are definitely 1.
+    ///
+    /// **Caution:** the `ones & zeros == 0` invariant is enforced by
+    /// [`Kb::merge`] and [`Kb::from_const`].  External code constructing
+    /// a `Kb` via struct-literal syntax (`Kb { ones: 0xFF, zeros: 0xFF }`)
+    /// silently violates it, producing nonsensical analysis results.
+    /// Prefer `Kb::default()` (`{ ones: 0, zeros: 0 }` — no info)
+    /// followed by `merge(...)`.
     pub ones: u64,
-    /// Bits that are definitely 0.
+    /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
     pub zeros: u64,
 }
 

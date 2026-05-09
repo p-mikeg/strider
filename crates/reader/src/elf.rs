@@ -401,6 +401,13 @@ pub struct RelocationStats {
     /// relocation tables to identify each.  Empty when
     /// `skipped_unsupported_kind == 0`.
     pub unsupported_r_types: Vec<u32>,
+    /// Number of times the autoload region-extender encountered a
+    /// section whose `data()` parse failed.  These appeared in the
+    /// pre-fix path only on stderr; surfacing the count programmatically
+    /// lets callers detect malformed-ELF cases that would otherwise
+    /// look like clean `skipped_no_region` entries.  Zero in healthy
+    /// ELFs.
+    pub autoload_section_parse_failures: usize,
 }
 
 /// Patches relocations in `regions` in-place using the ELF's
@@ -736,8 +743,10 @@ pub fn apply_elf_relocations_autoload(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
 ) -> Result<RelocationStats> {
-    apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
-        let Some(sec) = find_loadable_section_containing(obj, site_addr) else {
+    let mut parse_failures: usize = 0;
+    let mut stats = apply_elf_relocations_with_extender(regions, obj, |site_addr, obj| {
+        let Some(sec) = find_loadable_section_containing(obj, site_addr, &mut parse_failures)
+        else {
             return Ok(None);
         };
         let data = sec.data().context("failed to parse ELF")?;
@@ -745,7 +754,13 @@ pub fn apply_elf_relocations_autoload(
             return Ok(None);
         }
         Ok(Some(MemRegion::new(sec.address(), data.to_vec())?))
-    })
+    })?;
+    // Round 10 H10-S3: surface autoload section-parse failures via a
+    // counter on the returned stats, in addition to the eprintln on
+    // stderr.  Programmatic callers can detect malformed-ELF without
+    // scraping stderr.
+    stats.autoload_section_parse_failures = parse_failures;
+    Ok(stats)
 }
 
 /// Returns the first section in `obj` that contains `addr` and is
@@ -756,6 +771,7 @@ pub fn apply_elf_relocations_autoload(
 fn find_loadable_section_containing<'data, 'a>(
     obj: &'a object::File<'data>,
     addr: u64,
+    parse_failure_count: &mut usize,
 ) -> Option<object::read::Section<'data, 'a>> {
     obj.sections().find(|sec| {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
@@ -767,8 +783,10 @@ fn find_loadable_section_containing<'data, 'a>(
         // SHT_NOBITS sections (BSS) and sections whose data fails to
         // parse both yield no usable bytes — treat them identically as
         // "skip this section for site-coverage", but distinguish the
-        // parse-failure case in the eprintln so a malformed ELF doesn't
-        // hide silently inside autoload search.
+        // parse-failure case via both `eprintln!` AND a counter the
+        // caller surfaces in `RelocationStats::autoload_section_parse_failures`,
+        // so programmatic callers can detect malformed-ELF without
+        // scraping stderr.
         match sec.data() {
             Ok(d) => {
                 if d.is_empty() {
@@ -780,6 +798,7 @@ fn find_loadable_section_containing<'data, 'a>(
                     "strider: ELF section {:?} data parse failed: {e}; skipping for site-coverage",
                     sec.name().unwrap_or("?"),
                 );
+                *parse_failure_count += 1;
                 return false;
             }
         }

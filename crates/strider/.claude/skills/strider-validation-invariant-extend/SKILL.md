@@ -55,7 +55,7 @@ User wants to add a new structural invariant to the IR validator. Triggers inclu
 
    Why: optimization passes (notably `RedundantPhis::detach_unreachable_nodes`) leave **zombie nodes** in the arena. They have no inputs, no live use-list entries, and are unreachable from `entry`, but they still occupy `NodeId`s in `graph.nodes.keys()`. Without scoping, a Layer-C check would false-positive on a perfectly-valid post-`RedundantPhis` graph because (e.g.) two `FunctionArg` nodes with the same index exist — one zombie + one live.
 
-   The exception is `check_layer_c_uniqueness` (Entry/InitialMemory uniqueness), which deliberately scans the entire arena to catch a duplicate created and orphaned by a buggy pass. Anything else (`check_layer_c_function_arg_uniqueness` was changed in round 8 to be reachability-scoped, see `crates/ir/src/validate/layer_c.rs:228-253` and the comment at lines 222-227) should pass `reachable: &NodeIdSet` and gate on it.
+   The exception is `check_layer_c_uniqueness` (Entry/InitialMemory uniqueness), which deliberately scans the entire arena to catch a duplicate created and orphaned by a buggy pass. Anything else (`check_layer_c_function_arg_uniqueness` was changed in round 8 to be reachability-scoped, see `crates/ir/src/validate/layer_c.rs:234-258` and the comment at lines 224-232) should pass `reachable: &NodeIdSet` and gate on it.
 
    Layer A is already reachability-scoped at the entry (`mod.rs:90`). Layer B uses `reachable` to filter what it walks.
 

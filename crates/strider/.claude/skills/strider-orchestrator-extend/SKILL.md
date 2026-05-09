@@ -33,7 +33,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Procedure
 
-1. **Identify the CFG construction call site.** The orchestrator constructs CFGs at `crates/strider/src/orchestrator.rs:837`. The canonical post-round-8 form is:
+1. **Identify the CFG construction call site.** The orchestrator constructs CFGs at `crates/strider/src/orchestrator.rs:908`. The canonical post-round-8 form is:
 
    ```rust
    let cfg: Cfg<R> = Builder::for_arch(opts.strider.arch(), sleigh, opts.start_addr, cfg_opts)
@@ -74,7 +74,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Exit criteria
 
-- All three orchestrator-equivalent CFG construction sites (`orchestrator.rs:837`, `tests/common/mod.rs:220`, `benches/scaling.rs:93`) use the same canonical constructor (`Builder::for_arch` post-round-8). Any change here propagates to all three.
+- All three orchestrator-equivalent CFG construction sites (`orchestrator.rs:908`, `tests/common/mod.rs:220`, `benches/scaling.rs:93`) use the same canonical constructor (`Builder::for_arch` post-round-8). Any change here propagates to all three.
 - New `Decision` variants are exhaustively handled in `LoopState::step` and the top-level dispatch.
 - No `if let Decision::...` shortcuts that would silently drop new variants.
 - `RegionIndex` is rebuilt on every `Rebuild` (no stale `NodeId` references).

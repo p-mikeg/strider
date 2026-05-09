@@ -52,7 +52,7 @@ Round 8 (`round8-17-graph-soundness.md`) flagged four explicit fixture gaps that
 
 4. **Match the per-case naming convention.** `fixtures/cases/<case>.c` containing one or more `__attribute__((noinline))` C functions. Each function becomes a per-arch test entry via `per_arch_test!("<case>", "<fn_name>", <assertion_fn>)` where `<case>` matches the C-file basename and `<fn_name>` matches a function in that file.
 
-5. **Write the test using `per_arch_test!`.** The macro lives at `crates/strider/tests/common/mod.rs:410` and expands to one `#[test]` per arch (15 today: x86, x86_kernel, x64, aarch64, aarch64be, arm, arm_be, arm_thumb, mips32le, mips32be, mips64le, mips64be, ppc32be, ppc32le, ppc64be, ppc64le). Basic form:
+5. **Write the test using `per_arch_test!`.** The macro lives in `crates/strider/tests/common/mod.rs` (search for `macro_rules! per_arch_test`) and expands to one `#[test]` per arch (16 today: x86, x86_kernel, x64, aarch64, aarch64be, arm, arm_be, arm_thumb, mips32le, mips32be, mips64le, mips64be, ppc32be, ppc32le, ppc64be, ppc64le). Basic form:
 
    ```rust
    per_arch_test!("<case>", "<fn_name>", <assertion_fn>);

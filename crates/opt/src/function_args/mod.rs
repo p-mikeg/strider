@@ -271,7 +271,7 @@ fn detect_stack_args(
             &mut memo,
             &mut seen,
             &mut shadow_memo,
-        ) {
+        )? {
             disqualified.insert(j);
             groups.remove(&j);
             continue;
@@ -425,10 +425,10 @@ fn mem_chain_is_dirty(
     sp_memo: &mut SpExprMemo,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
-) -> bool {
+) -> Result<bool> {
     let entry_key = (mem, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
-        return cached;
+        return Ok(cached);
     }
 
     /// Work-stack frame.  Either a fresh `Visit` of a mem node, or a
@@ -528,10 +528,20 @@ fn mem_chain_is_dirty(
     }
 
     // The walk pushed exactly one final result for the original `mem`.
-    debug_assert_eq!(results.len(), 1, "mem_chain_is_dirty: result-stack invariant");
-    let result = results.pop().unwrap_or(true);
+    // Round 10 H10-S6 (R10-2C): surface the invariant violation as `Err`
+    // instead of silently assuming `true` in release builds.  Any
+    // result-stack count other than 1 is a walker bug, not a property
+    // of the input graph.
+    if results.len() != 1 {
+        return Err(anyhow::anyhow!(
+            "mem_chain_is_dirty: result-stack invariant broken — expected 1 final result, \
+             got {} (walker bug)",
+            results.len()
+        ));
+    }
+    let result = results.pop().expect("len == 1 just checked");
     memo.insert(entry_key, result);
-    result
+    Ok(result)
 }
 
 #[cfg(test)]
