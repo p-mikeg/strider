@@ -157,50 +157,94 @@ def test_lift_error_subclass_when_explicit_lift_fails():
 # ── RewriteError ───────────────────────────────────────────────────────────
 
 
-@pytest.mark.skip(
-    reason="Triggering RewriteError requires constructing a rewrite whose "
-    "RHS materialisation fails (e.g. multi-output root with a single-output "
-    "redirect).  The Python `Graph.rewrite` API matches LHS-then-replace and "
-    "the typical failure surface is `Ok(false)`, not an error.  Needs a "
-    "specific fixture that reaches `node_outputs_exact::<1>`'s error arm; "
-    "tracked for follow-up."
-)
-def test_rewrite_error_via_invalid_substitution():
-    """Placeholder: see skip reason."""
+def test_rewrite_error_via_multi_output_lhs_root():
+    """Round 9 wave 25 (I-10): trigger `RewriteError` by attempting
+    a rewrite whose LHS root is a `Call` node — `Call` has 11 value
+    outputs (Control, Memory, ret_val regs, clobber regs).  The
+    rewrite-rule engine's `node_outputs_exact::<1>` (which it uses
+    to redirect the matched root's value output) rejects multi-output
+    roots, surfacing `RewriteError` from the
+    `into_rewrite_err`-wrapped `Graph::rewrite` boundary.
+
+    Bytes: `E8 05 00 00 00; C3` = `call +5; ret`.  The function body
+    contains exactly one Call node; the rewrite attempt fails on
+    its multi-output structure rather than ever firing.
+    """
+    bytes_ = b"\xe8\x05\x00\x00\x00\xc3\x00\x00\x00\x00\x00\xc3"
+    mem = strider.MemoryMap()
+    mem.add_region(0x1000, bytes_)
+    arch = strider.SleighArch.x86_64()
+    cc = strider.CallingConvention.x86_64_systemv()
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, 0x1000, function_max_size=0x100)
+    g = s.analyze_cfg(cfg).graph
+
+    from strider.pattern import call, int_const
+
+    with pytest.raises(errors.RewriteError):
+        g.rewrite(find=call(), replace=int_const(0))
 
 
 # ── UnknownCallOtherError ──────────────────────────────────────────────────
 
 
-@pytest.mark.skip(
-    reason="Triggering UnknownCallOtherError requires lifting code that "
-    "decodes to a Sleigh CallOther name not in the call_other_abi table — "
-    "e.g. x86 INT 0x80 (lifts to 'swi' with no arch-specific entry).  No "
-    "checked-in fixture exercises this path yet; the tests in "
-    "`tests/python/test_call_builder.py` and the Rust-side coverage in "
-    "`call_other_precise_abi.rs` already pin the typed error from Rust.  "
-    "End-to-end Python coverage is tracked for follow-up."
-)
-def test_unknown_call_other_error_via_x86_int_instruction():
-    """Placeholder: see skip reason."""
+def test_unknown_call_other_error_via_x86_clflush_instruction():
+    """Round 9 wave 25 (I-10): trigger `UnknownCallOtherError` by
+    lifting x86 `clflush [eax]` (opcode `0F AE 38`) — Sleigh emits a
+    CallOther named `"clflush"` which is **not** classified in
+    `target::call_other_abi::classify`.  The strict-on-emission
+    policy raises `UnknownCallOtherError` instead of silently
+    producing an empty CallOther.
+
+    Bytes: `0F AE 38 C3` = `clflush [eax]; ret`.  The `clflush` insn
+    is at the function entry; the lift fails before reaching the
+    `ret`.
+
+    Why clflush in particular: most common x86 user-ops (cpuid,
+    rdtsc, swapgs, in/out, mfence/sfence/lfence, syscall, …) ARE in
+    the table.  `clflush` is the canonical uncovered cache-line
+    flush; if a future contributor adds it to the table the test
+    must be ported to a new uncovered user-op (e.g. `clflushopt`,
+    `clwb`).
+    """
+    bytes_ = b"\x0f\xae\x38\xc3"
+    mem = strider.MemoryMap()
+    mem.add_region(0x1000, bytes_)
+    arch = strider.SleighArch.x86_64()
+    cc = strider.CallingConvention.x86_64_systemv()
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, 0x1000)
+
+    with pytest.raises(errors.UnknownCallOtherError):
+        s.analyze_cfg(cfg)
 
 
 # ── UnresolvedIndirectBranchError ──────────────────────────────────────────
 
 
-@pytest.mark.skip(
-    reason="Triggering UnresolvedIndirectBranchError end-to-end requires "
-    "a binary whose dispatch site cannot be resolved by the orchestrator's "
-    "fixed-point loop.  The existing Python smoke fixtures (memory.elf, "
-    "switch.elf, indirect_branch.elf) are intentionally resolvable.  "
-    "`test_arm64_kernel_lift_bugs.py` exercises the typed-error machinery "
-    "via real FreeBSD kernel fixtures that are gated by Git LFS / external "
-    "trees; that file is the canonical home for this coverage.  We pin the "
-    "static type-hierarchy here in `test_typed_subclasses_inherit_strider_error` "
-    "instead."
-)
-def test_unresolved_indirect_branch_error_via_unresolvable_dispatch():
-    """Placeholder: see skip reason."""
+def test_unresolved_indirect_branch_error_via_jmp_rax():
+    """Round 9 wave 25 (I-10): trigger `UnresolvedIndirectBranchError`
+    via a bare `jmp rax` where RAX is the function-entry value of
+    rax (`InitialVar(rax)`).  None of the classifier arms match:
+    - `IntConst(_)` requires a folded constant — RAX is not constant.
+    - `InitialVar(lr)` requires lr_vn to be set — x86_64 has no LR.
+    - `ValuePhi`, jump-table, stack-array all require additional
+      shape that's absent here.
+
+    Bytes: `FF E0` = `jmp rax`.  The orchestrator's fixed-point loop
+    fails to resolve the placeholder and surfaces
+    `UnresolvedIndirectBranchError` after the cap.
+    """
+    bytes_ = b"\xff\xe0"
+    mem = strider.MemoryMap()
+    mem.add_region(0x1000, bytes_)
+    arch = strider.SleighArch.x86_64()
+    cc = strider.CallingConvention.x86_64_systemv()
+
+    with pytest.raises(errors.UnresolvedIndirectBranchError):
+        strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
 
 
 # ── Mixed: catch-all parent class still catches every subclass ─────────────
