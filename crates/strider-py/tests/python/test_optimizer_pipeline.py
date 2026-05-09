@@ -191,3 +191,29 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     assert g.node_count() >= 1
     # Also: pre/post should be sensible integers.
     assert pre >= 1
+
+
+def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
+    """Round 9 H-IMP I-5 (R9-1F-03) regression: a wrapper that has
+    already been drained by a prior `Graph.optimize` (or
+    `strider.run`) call must surface a typed error on a second call,
+    not silently no-op with an empty pipeline.
+    """
+    import pytest
+
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    arch = strider.SleighArch.x86()
+    cc = strider.CallingConvention.x86_cdecl()
+    mem = strider.MemoryMap()
+    mem.add_region_from_elf(str(x86_memory_elf))
+    sleigh = strider.Sleigh(arch, mem)
+    s = strider.Strider(arch, sleigh, cc)
+    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    g = s.analyze_cfg(cfg).graph
+
+    pipe = strider.OptimizerPipeline.empty()
+    pipe.add(strider.opt.ConstantFold())
+    g.optimize(pipe)  # drains pipe
+    # Second call: must raise StriderError, not silently succeed.
+    with pytest.raises(strider.errors.StriderError):
+        g.optimize(pipe)

@@ -63,6 +63,22 @@ fn int_const_any_of_matches_set_membership() {
     a::none(&g, call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])));
 }
 
+/// Round 9 test-plan I-11: an empty `int_const_any_of(_)` set
+/// vacuously fails — every IntConst lookup runs `.iter().any(_)`
+/// against an empty iterator, which returns false.  Mirrors the
+/// existing `call_at_any_empty_set_never_matches` contract for
+/// `CallPat::at_any` and the `StackStorePat::offset_any` contract.
+/// Pinning the empty-set behaviour at the standalone primitive
+/// level (not just through the typed builders) so a future
+/// change to the matcher loop can't silently flip empty-set to
+/// "match-anything".
+#[test]
+fn int_const_any_of_empty_set_never_matches() {
+    let g = shapes::call_at(0x1234);
+    a::none(&g, call().target(int_const_any_of(std::iter::empty::<u64>())));
+    a::none(&g, call().target(int_const_any_of([] as [u64; 0])));
+}
+
 #[test]
 fn call_captures_node() {
     let g = shapes::call_at(0x1234);

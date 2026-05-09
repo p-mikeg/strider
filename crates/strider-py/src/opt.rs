@@ -162,11 +162,26 @@ impl PyOptimizerPipeline {
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
     /// need to keep it.
+    ///
+    /// Round 9 H-IMP I-5 (R9-1F-03): returns `Err(StriderError)` if
+    /// the wrapper has already been drained (both pass lists empty).
+    /// Without this guard a second `Graph.optimize(pipe)` would
+    /// silently run an empty pipeline and report success — masking
+    /// caller bugs where the same wrapper is reused after a previous
+    /// `optimize` / `strider.run` consumed it.
     pub(crate) fn drain_into_pipeline(&self) -> PyResult<opt::OptimizerPipeline> {
         let mut state = self
             .state
             .lock()
             .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))?;
+        if state.passes.is_empty() && state.post_passes.is_empty() {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "OptimizerPipeline is empty — already drained by a prior \
+                 Graph.optimize() / strider.run().  Build a fresh pipeline \
+                 (e.g. OptimizerPipeline.default()) or re-add passes before \
+                 calling again."
+            )));
+        }
         let mut pipe = opt::OptimizerPipeline::new();
         for p in state.passes.drain(..) {
             pipe.add(ForwardPass(p));
