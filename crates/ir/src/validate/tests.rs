@@ -1024,7 +1024,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     );
 }
 
-/// Round 9 IMPORTANT (Ask-8 R2 F2 / I-2) regression: a non-reachable
+/// regression: a non-reachable
 /// `ControlState` zombie with stale non-Control inputs must not
 /// produce a false-positive `ControlStateNonControlPredecessor`
 /// error.  Pre-fix, the empty-input branch was correctly

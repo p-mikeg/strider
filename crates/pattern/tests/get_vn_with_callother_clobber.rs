@@ -1,3 +1,5 @@
+#![allow(deprecated)] // partial-state ctor used intentionally for matcher-only test scaffolding
+
 //! `Match::get_vn` returns the right varnode for a CallOther's
 //! clobber output slot.  Both the function-default
 //! (`BuiltFunctionGraph::call_other_clobbered`) and the per-CallOther

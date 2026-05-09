@@ -78,7 +78,7 @@ pub struct BuiltFunctionGraph {
     /// `Return` node input slots `2..2+ret_val_regs.len()`.
     ///
     /// **Caution:** same as [`Self::call_clobbered`] — write only at
-    /// build time; read via [`Self::ret_val_regs_slice`].
+    /// build time; read via [`Self::ret_val_regs_as_slice`].
     pub ret_val_regs: Box<[rsleigh::Vn]>,
     /// Function-default clobber list for every `CallOther` node.
     ///
@@ -121,7 +121,7 @@ impl std::ops::DerefMut for BuiltFunctionGraph {
     }
 }
 
-// Round 9 V2 (R9-2D H4): canonical read-only accessors for the CC
+// canonical read-only accessors for the CC
 // fields.  The fields themselves remain `pub` for back-compat (the
 // workspace has ~30+ direct-field readers), but new code should use
 // these accessors — they're the migration path for tightening field
@@ -137,7 +137,7 @@ impl BuiltFunctionGraph {
     /// Read the calling convention's return-value varnode list.
     /// Mirrors the [`Self::ret_val_regs`] field.
     #[must_use]
-    pub fn ret_val_regs_slice(&self) -> &[rsleigh::Vn] {
+    pub fn ret_val_regs_as_slice(&self) -> &[rsleigh::Vn] {
         &self.ret_val_regs
     }
     /// Read the function-default CallOther clobber list.
@@ -192,6 +192,14 @@ impl BuiltFunctionGraph {
     /// `#[doc(hidden)]` attribute discourages external adoption.
     #[doc(hidden)]
     #[must_use]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Partial-state ctor — every CC field is empty.  Use \
+                `pattern::RewriteCtx::new(&mut graph, entry)` for the \
+                rewrite-only path; `FunctionBuilder::build` for fully-formed \
+                BFGs.  Retained `#[doc(hidden)]` only because a small set of \
+                pattern-test scaffolds intentionally bypass the build path."
+    )]
     pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
         Self {
             graph,
@@ -274,6 +282,8 @@ impl BuiltFunctionGraph {
 #[cfg(test)]
 mod compact_tests {
     #![allow(clippy::unwrap_used)]
+    // Test scaffolds intentionally use the partial-state ctor.
+    #![allow(deprecated)]
 
     use super::*;
     use crate::node::{NodeKind, NodeOutputKind};

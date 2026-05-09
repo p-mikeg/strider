@@ -679,8 +679,7 @@ fn link_register_vn_none_for_stack_push_presets() {
 /// indirect-branch resolver's `LinkRegister` arm fires on functions
 /// returning via the entry LR.  Pin that the two lookup paths (the
 /// `link_register_reg_name` resolution AND the `callee_saved_regs`
-/// list) agree for every link-register preset.  Round 9 Ask-8 R5 I-1:
-/// previously only ARM was pinned; AArch64 / MIPS / PPC could drop
+/// list) agree for every link-register preset.  /// previously only ARM was pinned; AArch64 / MIPS / PPC could drop
 /// their LR from `callee_saved_regs` without triggering this test.
 #[test]
 fn link_register_vn_resolves_to_callee_saved_lr() {

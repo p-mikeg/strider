@@ -194,7 +194,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // KnownBits then propagate the new `IntConst` outputs through any
     // address-arithmetic chain (e.g. `Add(loaded_const, K)`) so that
     // chained `Load(Load(const_addr))` shapes resolve in subsequent
-    // sweeps.  Round 9 wave 31 (R9-1B F4) closed the prior single-pass
+    // sweeps.  closed the prior single-pass
     // gap that left multi-hop ROM pointer chains unresolved.
     if let Some(rom) = rom {
         while resolve_const_loads(&mut fg, rom)? {

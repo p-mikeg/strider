@@ -456,7 +456,7 @@ impl PyPartialMatch {
 /// `find_all` mid-walk on a buggy predicate would be worse than
 /// continuing.
 ///
-/// Round 9 H-8: `KeyboardInterrupt` and `SystemExit` are
+/// `KeyboardInterrupt` and `SystemExit` are
 /// **re-raised** rather than swallowed, so Ctrl-C in an interactive
 /// Python session can interrupt a slow `find_all` walk that's stuck
 /// inside a predicate.  Re-raising via `PyErr::restore` defers the
@@ -478,7 +478,7 @@ fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
             // Always invalidate the proxy's graph pointer so any
             // subsequent use from Python doesn't deref a stale ptr.
             //
-            // Round 9 H-7 (Ask-8 R3 ISSUE-1): use `borrow` (panicking
+            // use `borrow` (panicking
             // on conflict) instead of `try_borrow` + silent skip.
             // `try_borrow` only fails when an active `&mut self`
             // borrow is held; `PyPartialMatch` exposes only `&self`
@@ -501,7 +501,7 @@ fn wrap_when(inner: pattern::Pat, py_func: PyObject) -> pattern::Pat {
                     }
                 },
                 Err(e) => {
-                    // Round 9 H-8: control-flow exceptions
+                    // control-flow exceptions
                     // (KeyboardInterrupt, SystemExit) must propagate
                     // — Ctrl-C in an interactive session must be able
                     // to interrupt a slow find_all walk.  PyErr::restore

@@ -27,9 +27,9 @@ use crate::ReadOnlyMemory;
 ///   `UnresolvedIndirectBranch` at fixed point."
 /// - `Err(_)` — `analyze_known_bits` returned a `Kb::merge`
 ///   contradiction (incompatible constants reaching the same
-///   output).  Round 9 H-6: surface the diagnostic instead of
-///   masking it as `None`; KB contradiction is a real IR-level bug
-///   the caller should see explicitly.
+///   output).  Surfaces the diagnostic instead of masking it as
+///   `None`; KB contradiction is a real IR-level bug the caller
+///   should see explicitly.
 ///
 /// Equivalent to [`classify_anchor_with_rom`] with `rom == None`.
 /// The jump-table arm becomes a no-op in that case because

@@ -163,7 +163,7 @@ impl PyOptimizerPipeline {
     /// "transfer" cycle and rebuild the wrapper afterwards if you
     /// need to keep it.
     ///
-    /// Round 9 H-IMP I-5 (R9-1F-03): returns `Err(StriderError)` if
+    /// returns `Err(StriderError)` if
     /// the wrapper has already been drained (both pass lists empty).
     /// Without this guard a second `Graph.optimize(pipe)` would
     /// silently run an empty pipeline and report success — masking

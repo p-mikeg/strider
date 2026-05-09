@@ -1,3 +1,5 @@
+#![allow(deprecated)] // partial-state ctor used intentionally for matcher-only test scaffolding
+
 //! `Match::get_vn` consults per-Call clobber-list override before
 //! falling back to `BuiltFunctionGraph::call_clobbered`.
 

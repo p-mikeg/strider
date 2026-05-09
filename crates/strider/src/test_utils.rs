@@ -61,3 +61,35 @@ pub fn strider_aarch64() -> Strider {
 pub fn strider_arm() -> Strider {
     strider_for_arch(SleighArch::arm(), CallingConvention::arm_aapcs())
 }
+
+/// Construct a `Strider` for MIPS-O32 (little-endian).
+#[must_use]
+pub fn strider_mips_o32() -> Strider {
+    strider_for_arch(SleighArch::mipsle32(), CallingConvention::mips_o32())
+}
+
+/// Construct a `Strider` for MIPS-O32 big-endian.
+#[must_use]
+pub fn strider_mips_o32_be() -> Strider {
+    strider_for_arch(SleighArch::mipsbe32(), CallingConvention::mips_o32())
+}
+
+/// Construct a `Strider` for PowerPC SysV 32-bit big-endian.
+#[must_use]
+pub fn strider_ppc32() -> Strider {
+    strider_for_arch(SleighArch::ppc32be(), CallingConvention::powerpc_sysv32())
+}
+
+/// Construct a `Strider` for PowerPC ELF v2 64-bit little-endian
+/// (the modern Linux convention).
+#[must_use]
+pub fn strider_ppc64le() -> Strider {
+    strider_for_arch(SleighArch::ppc64le(), CallingConvention::powerpc64_elf_v2())
+}
+
+/// Construct a `Strider` for PowerPC ELF v1 64-bit big-endian
+/// (legacy convention).
+#[must_use]
+pub fn strider_ppc64be() -> Strider {
+    strider_for_arch(SleighArch::ppc64be(), CallingConvention::powerpc64_elf_v1())
+}

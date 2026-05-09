@@ -15,8 +15,8 @@ use opt::ReadOnlyMemory;
 /// # Errors
 ///
 /// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
-/// contradiction (real IR-level bug — round 9 H-6).  See
-/// [`opt::classify_anchor`] for the full Result-shape semantics.
+/// contradiction (real IR-level bug).  See [`opt::classify_anchor`]
+/// for the full Result-shape semantics.
 pub fn classify_anchor(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
@@ -50,8 +50,8 @@ pub fn classify_anchor_with_rom(
 /// # Errors
 ///
 /// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
-/// contradiction.  Round 9 H-6: surface the real bug instead of
-/// masking it as `Ok(None)`.
+/// contradiction.  Surfaces the real bug instead of masking it as
+/// `Ok(None)`.
 pub fn classify_anchor_with_rom_and_sp(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,

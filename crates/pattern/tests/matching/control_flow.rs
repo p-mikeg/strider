@@ -1,3 +1,5 @@
+#![allow(deprecated)] // partial-state ctor used intentionally for matcher-only test scaffolding
+
 //! `Call`, `CallOther`, `Return`, and `If` node patterns.
 //!
 //! Covers: call targets (literal + pattern), call args (single/multi/index),
@@ -63,7 +65,7 @@ fn int_const_any_of_matches_set_membership() {
     a::none(&g, call().target(int_const_any_of([0x1000u64, 0xDEADBEEF])));
 }
 
-/// Round 9 test-plan I-11: an empty `int_const_any_of(_)` set
+///  an empty `int_const_any_of(_)` set
 /// vacuously fails — every IntConst lookup runs `.iter().any(_)`
 /// against an empty iterator, which returns false.  Mirrors the
 /// existing `call_at_any_empty_set_never_matches` contract for

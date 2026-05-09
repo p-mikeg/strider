@@ -153,7 +153,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
-        // Round 9 IMP-4: `Neg`'s width must match `rhs`'s read width,
+        //  `Neg`'s width must match `rhs`'s read width,
         // not `out_ty`.  In practice Sleigh always emits `IntSub` with
         // input_size == output_size, but using `inputs[1].size`
         // explicitly makes the lift robust if a future Sleigh spec ever

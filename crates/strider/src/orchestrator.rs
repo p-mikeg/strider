@@ -169,7 +169,7 @@ where
     R: rsleigh::MemReader,
 {
     let mut state = LoopState::new(config)?;
-    state.build_iter_0()?;
+    state.build_initial_iteration()?;
     if state.no_unresolved() {
         return state.finalize();
     }
@@ -198,7 +198,7 @@ enum Decision {
 }
 
 /// Stall-guard helper for the fixed-point loop's `step` method.
-/// Round 9 wave 27 (I-7): extracted to a free function so the
+/// extracted to a free function so the
 /// invariant can be unit-tested directly without constructing a
 /// real `LoopState` (which requires a `Sleigh<R>`, `BuiltFunctionGraph`,
 /// and full CFG state).
@@ -272,7 +272,7 @@ where
     /// in-place-only iteration that didn't reduce `unresolved`; reaching
     /// zero is a misclassifying-resolver bug, surfaced as a typed error.
     stall_budget: usize,
-    /// Per-iteration region index, rebuilt by `build_iter_0` /
+    /// Per-iteration region index, rebuilt by `build_initial_iteration` /
     /// `rebuild` from the latest `RegionLiftHandles` snapshot.
     region_index: RegionIndex,
     /// Cached link-register / stack-pointer varnodes (stable across
@@ -284,7 +284,7 @@ where
     /// every iteration; threaded into each fresh `cfg::Builder` so
     /// machine-instruction decodes are paid once per address per run.
     decode_cache: DecodeCache,
-    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // TODO: remove after incremental indirect-resolve lands —
     // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     /// Cached set of varnodes seen so far across all CFG iterations.
     /// `find_all_unique_vns` would otherwise re-scan every region's
@@ -365,8 +365,8 @@ where
 
     /// Iteration 0: build the CFG, lift, run stable opt, snapshot the
     /// region index.
-    fn build_iter_0(&mut self) -> Result<()> {
-        self.lift_and_seat("build_iter_0")?;
+    fn build_initial_iteration(&mut self) -> Result<()> {
+        self.lift_and_seat("build_initial_iteration")?;
         self.pending_at_iter_0 = self.unresolved.len();
         // Allow an in-place-only stall for at most `pending_at_iter_0`
         // iterations: each in-place edit must remove at least one
@@ -378,7 +378,7 @@ where
 
     /// Drive `build_lift_stable` once and seat the resulting graph,
     /// region index, and unresolved-branch list onto `self`.  Shared
-    /// helper between [`Self::build_iter_0`] (initial lift) and
+    /// helper between [`Self::build_initial_iteration`] (initial lift) and
     /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` names the
     /// caller for the error message when the Sleigh handle is
     /// missing.
@@ -414,9 +414,16 @@ where
 
     /// Run one iteration of the loop.
     fn step(&mut self) -> Result<Decision> {
+        // Snapshot `prev_unresolved_len` BEFORE `apply_in_place_edits` so the
+        // stall-guard's "before" count is the count entering this `step`.
+        // Today `apply_in_place_edits` doesn't mutate `self.unresolved` (it
+        // only mutates the graph), so reading after would be accidentally
+        // correct — but a future change that prunes the list during edits
+        // would silently break the stall-guard baseline.  Capture early so
+        // the data dependency is explicit.
+        let prev_unresolved_len = self.unresolved.len();
         let (next_known, in_place_edits) = self.classify_and_partition()?;
         self.apply_in_place_edits(&in_place_edits)?;
-        let prev_unresolved_len = self.unresolved.len();
         let unresolved_after_edits = self.recompute_unresolved(&in_place_edits)?;
 
         let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&self.known_targets);
@@ -717,12 +724,29 @@ fn apply_in_place_edit(
 /// since per-address-CC override recording is best-effort and a
 /// missed shape is correctness-neutral (the Call still works, just
 /// without an override side-table entry).
+///
+/// Walks two levels to handle both shapes the splicer can produce:
+///   * `Call -> Return` (direct): one walk hop.
+///   * `Call -> ControlState -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &ir::BuiltFunctionGraph, ret: NodeId) -> Option<NodeId> {
     let inputs: Vec<_> = graph.graph.node_inputs(ret).into_iter().collect();
     let ctrl_in = *inputs.first()?;
     let (producer, _slot) = graph.graph.output_definition(ctrl_in);
     if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::Call) {
         return Some(producer);
+    }
+    // ControlState bridge: walk the ControlState's first control input
+    // and check if THAT producer is a Call.  Mirrors the splice shape
+    // when `apply_tail_call`'s freshly-spliced Call feeds an existing
+    // ControlState that the new Return then consumes.
+    if matches!(graph.graph.node_kind(producer), ir::node::NodeKind::ControlState) {
+        let cs_inputs: Vec<_> = graph.graph.node_inputs(producer).into_iter().collect();
+        for cs_in in cs_inputs {
+            let (cs_producer, _) = graph.graph.output_definition(cs_in);
+            if matches!(graph.graph.node_kind(cs_producer), ir::node::NodeKind::Call) {
+                return Some(cs_producer);
+            }
+        }
     }
     None
 }
@@ -758,7 +782,7 @@ fn build_anchor_calling_context(
     // O(arg_count) instead of the previous O(N) arena scan.
 
     for vn in cc.arg_passing_regs() {
-        // Round 9 H-4: surface unsupported reg sizes as Err instead
+        // surface unsupported reg sizes as Err instead
         // of silently dropping the slot (which under-models the Call
         // and can cause downstream pattern queries to miss args).
         let out = read_or_init_var(graph, region, initial_var_index, *vn)?;
@@ -777,7 +801,7 @@ fn build_anchor_calling_context(
         Box::new(graph.call_clobbered.iter())
     };
     for vn in clobber_iter {
-        // Round 9 H-5: surface unsupported clobber-reg sizes as Err
+        // surface unsupported clobber-reg sizes as Err
         // (same reasoning as H-4 above).
         let ty = ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
             anyhow::anyhow!(
@@ -827,7 +851,7 @@ fn override_clobber_vars<'a>(
 /// Order: (1) region exit `vn_to_value`, (2) existing `InitialVar(vn)`
 /// in the graph, (3) freshly-created `InitialVar(vn)`.
 ///
-/// Round 9 H-4: returns an error (instead of silently dropping the
+/// returns an error (instead of silently dropping the
 /// varnode) when its byte size has no matching `NodeOutputType`.  In
 /// practice every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10,
 /// 16, 32, 64} which all map cleanly; the Err arm exists so a future
@@ -1028,7 +1052,7 @@ mod tests {
         }
     }
 
-    // ── apply_stall_guard tests (Round 9 wave 27 / I-7) ───────────────────
+    // ── apply_stall_guard tests (/ I-7) ───────────────────
     //
     // These tests pin the wave-2 fix (`>=` → `>`) by exercising the
     // stall-guard behavior directly via the extracted helper.  Each
@@ -1037,7 +1061,7 @@ mod tests {
 
     #[test]
     fn apply_stall_guard_no_change_in_count_does_not_consume_budget() {
-        // Round 9 Ask-8 R2 F7 regression: a count-stable in-place-only
+        // regression: a count-stable in-place-only
         // iteration (one anchor resolved, one new placeholder
         // materialised) is legitimate progress and must NOT consume
         // budget.  Pre-fix (`>=`) this ate one budget per stable

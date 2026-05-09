@@ -179,8 +179,7 @@ impl Tb {
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
     }
-    /// Two's-complement negation (`-x`).  Round 9 D20 (R9-1D MED):
-    /// previously dispatched to `IntUnaryOp::BitNot` despite the
+    /// Two's-complement negation (`-x`).      /// previously dispatched to `IntUnaryOp::BitNot` despite the
     /// method name — a future test author writing `t.neg(b)` to
     /// construct `Add(a, Neg(b))` (the canonical `sub` lowering)
     /// would have built `Add(a, BitNot(b))` silently.

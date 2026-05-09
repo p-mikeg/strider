@@ -15,15 +15,6 @@ mod nodes;
 mod tests;
 mod vars;
 
-// Round 9 D1: `LiftAddrGuard` (formerly in `mod lift_addr`) was a `pub`
-// re-export with zero call sites anywhere in the workspace.  The
-// strider per-region driver explicitly uses the manual
-// `set_lift_addr(Some) … set_lift_addr(None)` pair (see
-// `crates/strider/src/strider/insn/mod.rs`) to avoid the borrow
-// conflict the guard would create.  The guard module was deleted in
-// round 9 phase C; if a future use case has a callable shape it can
-// be re-introduced as `pub(crate)`.
-
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VarId(u32);
@@ -416,8 +407,7 @@ impl FunctionBuilder {
     /// the address of an enclosing insn).
     ///
     /// Panic-safe: an unwinding panic inside `body` still triggers the
-    /// restore via the inner guard's `Drop` impl.  Round 9 wave 31
-    /// (R9-1A I3) closed the prior leak path where a panic would leave
+    /// restore via the inner guard's `Drop` impl.      /// (R9-1A I3) closed the prior leak path where a panic would leave
     /// `addr` set on the outer scope.
     pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
     where

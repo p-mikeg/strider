@@ -652,7 +652,8 @@ fn bound_from_if_condition_signed_less_treated_as_unsigned_bound() {
     // Pin the current behavior so any tightening (e.g. requiring a
     // dominating `Sless 0` test, or limiting to types where the
     // signed/unsigned ranges coincide) surfaces here.  Documented
-    // limitation; flagged in R5 for follow-up.
+    // limitation; a future tightening pass should require a dominating
+    // signed-positive precondition before tightening this bound.
     let mut builder = FunctionBuilder::empty().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();

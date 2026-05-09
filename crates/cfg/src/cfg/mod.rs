@@ -63,7 +63,7 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// same name at construction.  Maintained by the indirect-branch
     /// resolver when it splices new regions in via `add_region`.
     ///
-    /// Round 9 V6 (R9-2D M2): kept `pub` (was tightened to `pub(crate)`
+    /// kept `pub` (was tightened to `pub(crate)`
     /// then reverted) because `cfg/tests/cfg_query.rs` constructs `Cfg`
     /// via struct-literal syntax for hand-built petgraph fixtures.
     /// External readers should still go through

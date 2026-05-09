@@ -62,7 +62,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
         "expected ≥4 dispatch-table relocations applied; stats = {stats:?}"
     );
 
-    // Round 9 M-2 (R9-EA1 Finding 2 / R9-1E MED) regression: a
+    // regression: a
     // well-formed ELF must produce zero malformed-target counts.
     // Pre-fix the GOT-PLT path bucketed Section-bad-index errors as
     // `skipped_malformed_target` while the generic-symbol path
@@ -86,7 +86,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
     assert_eq!(read_u64_le(&regions, table_addr + 24), Some(helper_d));
 }
 
-// Round 9 M-2 (R9-EA1 Finding 2): the dedicated synthetic-ELF unit
+// the dedicated synthetic-ELF unit
 // test for the malformed-target bucket invariant remains deferred —
 // constructing an ET_DYN with a bad-symbol-index Rela through
 // `object::write::elf::Writer` requires writing a full dynamic table

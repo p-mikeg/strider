@@ -33,7 +33,7 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// Round 9 wave 28 (H-9/D2): parameter type changed from
+    /// parameter type changed from
     /// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.
     /// `RewriteCtx::Deref<Target=Graph>` makes the body identical to
     /// the old form — only the callers' trait-impl boundary changes.
@@ -73,7 +73,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 }
 
 /// Bridge `(&mut Graph, NodeId)` callers to a `&mut RewriteCtx`-typed
-/// closure.  Round 9 wave 28 (H-9/D2): replaces the previous
+/// closure.  replaces the previous
 /// `with_built` adapter that constructed a partial-state
 /// `BuiltFunctionGraph` via `from_graph_and_entry_for_rewrite`.  Audit
 /// of the 12+ `OptimizerOnBuilt` impls confirmed none of them touch
@@ -133,7 +133,7 @@ pub trait Optimizer: Send + Sync {
 /// [`Optimizer`] directly: the blanket impl below wires the
 /// [`with_rewrite_ctx`] adapter so the pass slots into the pipeline.
 ///
-/// Round 9 wave 28 (H-9/D2): parameter type was migrated from
+/// parameter type was migrated from
 /// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.  Audit
 /// of every existing `OptimizerOnBuilt` impl confirmed none of them
 /// touch the BFG CC fields, so the rewrite-only context is sufficient.

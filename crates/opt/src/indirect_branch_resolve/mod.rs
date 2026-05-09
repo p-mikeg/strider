@@ -272,7 +272,7 @@ impl IndirectBranchResolve {
     }
 
     /// Add an anchor and its calling-convention context atomically.
-    /// Round 9 V5 (R9-2D H5): canonical builder method that
+    /// canonical builder method that
     /// populates `unresolved_anchors` and `anchor_contexts` in
     /// lockstep so a future caller cannot accidentally desynchronise
     /// them by populating one and forgetting the other.

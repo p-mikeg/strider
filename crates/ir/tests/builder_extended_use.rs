@@ -23,7 +23,7 @@ use ir::FunctionBuilder;
 /// to point at the same node, and `graph_mut()` must keep producing
 /// fresh node ids.
 #[test]
-fn analysis_loop_without_build_round_trips() {
+fn in_place_mutations_without_build_preserve_graph_validity() {
     let mut b = FunctionBuilder::empty().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();

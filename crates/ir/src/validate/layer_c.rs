@@ -62,7 +62,7 @@ pub(super) fn check_layer_c_control_state(
         if !matches!(graph.node_kind(node), NodeKind::ControlState) {
             continue;
         }
-        // Round 9 Ask-8 R2 F2: gate the entire ControlState check on
+        // gate the entire ControlState check on
         // reachability, not just the empty-input branch.  A non-reachable
         // ControlState zombie with stale non-Control inputs (left by some
         // future pass that surgery-edits without scrubbing) would

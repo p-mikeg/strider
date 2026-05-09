@@ -194,7 +194,7 @@ fn json_quote(s: &str) -> String {
             '<' => out.push_str("\\u003c"),
             c if (c as u32) < 0x20 => {
                 use std::fmt::Write;
-                // Round 9 S1 (R9-2C OK table): writing to a `String`
+                // writing to a `String`
                 // via `Write` is infallible — `let _ = std::fmt::write(...)`
                 // was hiding a non-failing call.  `write!` over a
                 // `String` returns `fmt::Result` whose `Err` arm only

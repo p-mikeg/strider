@@ -10,7 +10,7 @@ impl FunctionBuilder {
     /// Returns the current `NodeOutputId` for `var` in the active region, or
     /// `None` if the variable is not known.
     ///
-    /// Round 9 V1: only consumer is sibling `builder/call.rs`; no
+    /// only consumer is sibling `builder/call.rs`; no
     /// external crate uses it.  Demoted to `pub(super)`.
     ///
     /// # Errors

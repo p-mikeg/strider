@@ -33,7 +33,7 @@ fn check_node_output_kinds(
 }
 
 #[track_caller]
-fn check_node_output_defintions(
+fn check_node_output_definitions(
     graph: &Graph,
     node_id: NodeId,
     expected: impl IntoIterator<Item = (NodeId, u32)>,
@@ -65,7 +65,7 @@ fn create_single_node() {
         node_id,
         vec![NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    check_node_output_defintions(&graph, node_id, vec![(node_id, 0)]);
+    check_node_output_definitions(&graph, node_id, vec![(node_id, 0)]);
 }
 
 /// `kind_of_output` agrees with the two-step `node_kind(get_node_from_output(out))`

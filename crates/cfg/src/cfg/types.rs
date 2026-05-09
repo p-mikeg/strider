@@ -38,7 +38,7 @@ impl From<u64> for MachineInsnAddr {
 }
 
 impl MachineInsnAddr {
-    /// Read the raw u64 address.  Round 9 V3 (R9-2D H2): canonical
+    /// Read the raw u64 address.  canonical
     /// accessor for the migration path that will eventually tighten
     /// the `addr` field to `pub(crate)`.  New code should prefer this
     /// over `.addr`.
@@ -76,8 +76,7 @@ impl PcodeInsnAddr {
         }
     }
 
-    /// Read the parent machine instruction's address.  Round 9 V3
-    /// (R9-2D H2): canonical accessor for the migration path that
+    /// Read the parent machine instruction's address.      /// (R9-2D H2): canonical accessor for the migration path that
     /// will eventually tighten the field to `pub(crate)`.
     #[must_use]
     pub fn machine_addr(self) -> MachineInsnAddr {
@@ -85,7 +84,7 @@ impl PcodeInsnAddr {
     }
 
     /// Read the pcode-op index within the machine instruction.
-    /// Round 9 V3 (R9-2D H2): canonical accessor.
+    /// canonical accessor.
     #[must_use]
     pub fn insn_index(self) -> u64 {
         self.insn_index
@@ -93,7 +92,7 @@ impl PcodeInsnAddr {
 
     /// Read the parent machine instruction's u64 address — convenience
     /// wrapper for the common `.machine_addr.addr` triple-dot pattern.
-    /// Round 9 V3 (R9-2D H2): canonical accessor.
+    /// canonical accessor.
     #[must_use]
     pub fn machine_addr_u64(self) -> u64 {
         self.machine_addr.addr

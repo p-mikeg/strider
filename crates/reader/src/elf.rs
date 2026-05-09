@@ -589,8 +589,7 @@ pub fn apply_elf_relocations(
                 Ok(sec) => sec.address(),
                 Err(_) => {
                     // Bad section index — structurally malformed, NOT a
-                    // legitimate weak-extern.  Round 9 M3 (R9-EA1 Finding 2):
-                    // matches the GOT-PLT path's classification at line 538
+                    // legitimate weak-extern.                      // matches the GOT-PLT path's classification at line 538
                     // and the bad-symbol-index path at line 572, so callers
                     // inspecting RelocationStats see a consistent
                     // "malformed" bucket regardless of which arm fires.
@@ -697,10 +696,20 @@ where
             staged.push(region);
         }
     }
+    let base_len = regions.len();
     regions.extend(staged);
 
-    // Pass 2 — the patch loop.
-    apply_elf_relocations(regions, obj)
+    // Pass 2 — the patch loop.  Roll back the staged extension on Err so
+    // callers see `regions` in its pre-call shape (matches the documented
+    // "extender error mid-pass leaves it untouched" intent for the full
+    // function, not just pass 1).  Round 10 R10-1E I-2.
+    match apply_elf_relocations(regions, obj) {
+        Ok(stats) => Ok(stats),
+        Err(e) => {
+            regions.truncate(base_len);
+            Err(e)
+        }
+    }
 }
 
 /// Like [`apply_elf_relocations`], but pre-walks the dynamic
@@ -876,6 +885,38 @@ fn image_relative_reloc(
         {
             4
         }
+        // PPC64 RELATIVE / IRELATIVE — type codes shared with PPC32 in
+        // the ELF spec (`R_PPC64_RELATIVE = R_PPC_RELATIVE = 22`).
+        // PPC64 ET_DYN binaries (Linux distributions) commonly use this
+        // for function-pointer tables; without this arm those relocs
+        // fall through to `skipped_unsupported_kind` and the resulting
+        // pointer reads as zero.
+        A::PowerPc64
+            if r_type == object::elf::R_PPC64_RELATIVE
+                || r_type == object::elf::R_PPC64_IRELATIVE =>
+        {
+            8
+        }
+        A::PowerPc
+            if r_type == object::elf::R_PPC_RELATIVE
+                || r_type == object::elf::R_PPC_IRELATIVE =>
+        {
+            4
+        }
+        // MIPS32 REL32 — closest analogue to RELATIVE on MIPS.
+        // `R_MIPS_REL32` (type 3) writes `S + A` (symbol value plus
+        // addend); for an undefined symbol with index 0 it reduces to
+        // image-relative.  MIPS does not define a separate IRELATIVE.
+        A::Mips
+            if r_type == object::elf::R_MIPS_REL32 =>
+        {
+            4
+        }
+        A::Mips64
+            if r_type == object::elf::R_MIPS_REL32 =>
+        {
+            8
+        }
         _ => return None,
     };
     // For image-relative, the addend is the resolved value (image
@@ -931,6 +972,30 @@ fn got_or_plt_slot_reloc_size(
                 || r_type == object::elf::R_ARM_JUMP_SLOT =>
         {
             Some(4)
+        }
+        A::PowerPc64
+            if r_type == object::elf::R_PPC64_GLOB_DAT
+                || r_type == object::elf::R_PPC64_JMP_SLOT =>
+        {
+            Some(8)
+        }
+        A::PowerPc
+            if r_type == object::elf::R_PPC_GLOB_DAT
+                || r_type == object::elf::R_PPC_JMP_SLOT =>
+        {
+            Some(4)
+        }
+        A::Mips
+            if r_type == object::elf::R_MIPS_GLOB_DAT
+                || r_type == object::elf::R_MIPS_JUMP_SLOT =>
+        {
+            Some(4)
+        }
+        A::Mips64
+            if r_type == object::elf::R_MIPS_GLOB_DAT
+                || r_type == object::elf::R_MIPS_JUMP_SLOT =>
+        {
+            Some(8)
         }
         _ => None,
     }

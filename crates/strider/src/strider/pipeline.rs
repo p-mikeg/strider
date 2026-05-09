@@ -40,7 +40,7 @@ pub struct RegionLiftHandles {
     /// Wrapped in `Arc` so the orchestrator's per-iteration
     /// `RegionIndex::from_handles` can `Arc::clone` instead of
     /// deep-cloning the map (the map is never mutated post-build).
-    // TODO(Task17): remove after incremental indirect-resolve lands —
+    // TODO: remove after incremental indirect-resolve lands —
     // see docs/superpowers/plans/2026-05-01-incremental-indirect-resolve.md
     pub exit_vn_to_value:
         std::sync::Arc<std::collections::HashMap<rsleigh::Vn, ir::node::NodeOutputId>>,
@@ -83,7 +83,7 @@ impl std::fmt::Display for AnalyzeOutcome {
 }
 
 /// A `Vec<Vn>` known to be sorted by `pcode_lift::vn_sort_key`.
-/// Round 9 P3 (R9-2D M3): canonical newtype that codifies the
+/// canonical newtype that codifies the
 /// `AnalyzeOptions::all_vns` sort invariant in the type.
 ///
 /// Construct via [`Self::try_from_vec`] (validates) or
@@ -156,7 +156,7 @@ pub struct AnalyzeOptions<'a> {
     /// `Some(cached_vns)` so it shares one vn table across rebuild
     /// iterations.
     ///
-    /// Round 9 P3 (R9-2D M3): use [`SortedVns::try_from_vec`] /
+    /// use [`SortedVns::try_from_vec`] /
     /// [`SortedVns::from_sorted_unchecked`] in new code to encode
     /// the sort invariant in the type.  The raw-Vec form here is
     /// retained for back-compat.

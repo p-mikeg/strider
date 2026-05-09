@@ -114,7 +114,7 @@ pub fn classify_stack_array(
             &mut memo,
             &mut walk_memo,
         )?;
-        // Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave): peel
+        // peel
         // `Truncate(IntConst)` and `Extend(IntConst)` wrappers before
         // checking for a constant.  AArch64-BE's lifter wraps stored
         // label addresses in `Truncate` for 32-bit ARM Thumb-interworking
@@ -138,7 +138,7 @@ pub fn classify_stack_array(
 
 /// Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers and return
 /// the inner constant masked to its consumer-declared output width.
-/// Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave) companion to the
+/// companion to the
 /// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
 /// label addresses in `Truncate(IntConst, U32)` (32-bit ARM
 /// Thumb-interworking); ConstantFold normally folds these but the
@@ -423,7 +423,7 @@ fn flatten_add_tree(
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
     // `Neg(IntConst)`, so the per-term decompose step downstream catches
     // that constant via the `None` arm at line ~307.
-    // Round 9 IMPORTANT (R9-EA3 IMP-1 / arch wave): also flatten
+    // also flatten
     // `IntBinaryOp::Or` when used as add-equivalent.  AArch64-BE's
     // Sleigh lift can emit `Or(sp, K)` for stack-pointer-plus-offset
     // address computation when `sp`'s upper bits are guaranteed zero

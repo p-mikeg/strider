@@ -643,7 +643,7 @@ impl CallingConvention {
                 "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
                 "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
                 "r30", "r31",
-                // Round 9 wave 24: include `LR` per the CLAUDE.md
+                // include `LR` per the CLAUDE.md
                 // "Note (link-register handling)" deliberate tradeoff
                 // (consistent with `powerpc_sysv32`).  PPC64 ELFv1
                 // §3.4 marks LR as volatile/caller-saved, but listing
@@ -686,7 +686,7 @@ impl CallingConvention {
                 "r14", "r15", "r16", "r17", "r18", "r19", "r20", "r21",
                 "r22", "r23", "r24", "r25", "r26", "r27", "r28", "r29",
                 "r30", "r31",
-                // Round 9 wave 24: see powerpc64_elf_v1 above for
+                // see powerpc64_elf_v1 above for
                 // the CLAUDE.md deliberate-tradeoff rationale.
                 "LR",
             ],

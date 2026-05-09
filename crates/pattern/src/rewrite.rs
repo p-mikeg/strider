@@ -175,7 +175,7 @@ impl<'g> RewriteCtx<'g> {
         }
     }
 
-    /// Round 9 wave 26 (H-9/D2 groundwork): pre-order graph walk
+    /// pre-order graph walk
     /// starting at [`Self::entry`].  Mirrors
     /// `BuiltFunctionGraph::preorder` so a future migration of
     /// `OptimizerOnBuilt::optimize_built` from `&mut BuiltFunctionGraph`
@@ -186,7 +186,7 @@ impl<'g> RewriteCtx<'g> {
         ir::walk::walk_graph(self.graph, self.entry)
     }
 
-    /// Round 9 wave 26 (H-9/D2 groundwork): kind-filtered pre-order
+    /// kind-filtered pre-order
     /// walk.  Mirrors `BuiltFunctionGraph::preorder_kind`.
     pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
     where
@@ -267,7 +267,7 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
     }
 }
 
-// Round 9 wave 26 (H-9/D2 groundwork): allow Graph methods to be
+// allow Graph methods to be
 // called on `RewriteCtx` directly via Deref.  Mirrors
 // `BuiltFunctionGraph::Deref<Target=Graph>` so a future migration
 // of `OptimizerOnBuilt::optimize_built` to `&mut RewriteCtx` keeps

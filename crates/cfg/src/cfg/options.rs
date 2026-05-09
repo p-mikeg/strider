@@ -6,8 +6,7 @@ use opt::ReadOnlyMemory;
 use crate::cfg::builder::ResolvedTargets;
 use crate::cfg::types::PcodeInsnAddr;
 
-/// Function-extent boundary for tail-call classification.  Round 9 P2
-/// (R9-2D M3): the previous `(Option<u64>, bool)` pair carried the
+/// Function-extent boundary for tail-call classification.  /// (R9-2D M3): the previous `(Option<u64>, bool)` pair carried the
 /// implicit-but-unenforced rule "when `fn_max_size.is_some()`,
 /// `allow_code_before_start_addr` is ignored" — see CLAUDE.md's
 /// `is_addr_tail_call` description.  This sum type makes the rule
@@ -97,8 +96,7 @@ pub struct Options {
 
 impl Options {
     /// Returns the function-extent boundary derived from
-    /// `(fn_max_size, allow_code_before_start_addr)`.  Round 9 P2
-    /// (R9-2D M3): canonical accessor that resolves the documented
+    /// `(fn_max_size, allow_code_before_start_addr)`.      /// (R9-2D M3): canonical accessor that resolves the documented
     /// "ignored when bounded" coupling — `Some(max_size)` always
     /// produces [`FunctionBoundary::Bounded`], regardless of the
     /// `allow_code_before_start_addr` flag.  New consumer code should
@@ -163,7 +161,7 @@ impl PartialEq for Options {
 /// ```
 #[derive(Clone, Debug, Default)]
 pub struct OptionsBuilder {
-    lifter_options: Options,
+    options: Options,
 }
 
 impl OptionsBuilder {
@@ -179,7 +177,7 @@ impl OptionsBuilder {
     /// will be treated as a tail call.
     #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
-        self.lifter_options.fn_max_size = Some(max_size);
+        self.options.fn_max_size = Some(max_size);
         self
     }
 
@@ -191,7 +189,7 @@ impl OptionsBuilder {
     /// binary layout places shared or out-of-order code before the entry point.
     #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
-        self.lifter_options.allow_code_before_start_addr = true;
+        self.options.allow_code_before_start_addr = true;
         self
     }
 
@@ -206,7 +204,7 @@ impl OptionsBuilder {
     /// default) on those.
     #[must_use]
     pub fn set_link_register(mut self, vn: rsleigh::Vn) -> Self {
-        self.lifter_options.link_register_vn = Some(vn);
+        self.options.link_register_vn = Some(vn);
         self
     }
 
@@ -216,13 +214,13 @@ impl OptionsBuilder {
     /// see (typically the binary's mapped `.rodata` / `.text`).
     #[must_use]
     pub fn set_read_only_memory(mut self, rom: Arc<dyn ReadOnlyMemory>) -> Self {
-        self.lifter_options.read_only_memory = Some(rom);
+        self.options.read_only_memory = Some(rom);
         self
     }
 
     /// Consumes the builder and returns the final [`Options`].
     #[must_use]
     pub fn build(self) -> Options {
-        self.lifter_options
+        self.options
     }
 }

@@ -160,7 +160,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     );
 }
 
-/// Round 9 H-2 (EA1 Finding 1) regression — `pattern::rewrite_rule` must
+/// regression — `pattern::rewrite_rule` must
 /// attribute every fresh non-exempt node in a multi-node RHS, not only
 /// the outermost root.
 ///
@@ -256,7 +256,7 @@ fn constant_fold_rule_and_dist_attributes_inner_nodes() {
         let fp = fg.graph.asm_fingerprint(*and_node);
         assert!(
             !fp.is_empty(),
-            "fresh inner And {and_node:?} has empty fingerprint: violates Round 9 H-2 contract"
+            "fresh inner And {and_node:?} has empty fingerprint: violates contract"
         );
     }
     // Suppress unused-warning for NodeOutputKind import keepers that
