@@ -10,27 +10,35 @@ use ir::node::NodeOutputId;
 use opt::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`].  Delegates to
-/// [`opt::classify_anchor`].
-#[must_use]
+/// [`ResolvedTargets`].  Delegates to [`opt::classify_anchor`].
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
+/// contradiction (real IR-level bug — round 9 H-6).  See
+/// [`opt::classify_anchor`] for the full Result-shape semantics.
 pub fn classify_anchor(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
-) -> Option<ResolvedTargets> {
+) -> anyhow::Result<Option<ResolvedTargets>> {
     opt::classify_anchor(graph, anchor_output, link_register_vn)
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
 /// for the jump-table arm.  Delegates to
 /// [`opt::classify_anchor_with_rom`].
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
+/// contradiction.
 pub fn classify_anchor_with_rom(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> Option<ResolvedTargets> {
+) -> anyhow::Result<Option<ResolvedTargets>> {
     opt::classify_anchor_with_rom(graph, anchor_output, link_register_vn, rom)
 }
 
@@ -38,31 +46,28 @@ pub fn classify_anchor_with_rom(
 /// [`ReadOnlyMemory`] (for the rodata jump-table arm) and an optional
 /// stack-pointer varnode (for the stack-array-of-labels arm).
 /// Delegates to [`opt::classify_anchor_with_rom_and_sp`].
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails on a `Kb::merge`
+/// contradiction.  Round 9 H-6: surface the real bug instead of
+/// masking it as `Ok(None)`.
 pub fn classify_anchor_with_rom_and_sp(
     graph: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
-) -> Option<ResolvedTargets> {
-    let known = match opt::analyze_known_bits(graph) {
-        Ok(k) => k,
-        Err(e) => {
-            eprintln!(
-                "strider: classify_anchor_with_rom_and_sp: analyze_known_bits failed: {e:?}"
-            );
-            return None;
-        }
-    };
-    opt::classify_anchor_with_rom_and_sp(
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = opt::analyze_known_bits(graph)?;
+    Ok(opt::classify_anchor_with_rom_and_sp(
         graph,
         anchor_output,
         link_register_vn,
         rom,
         stack_ptr_vn,
         &known,
-    )
+    ))
 }
 #[cfg(test)]
 mod tests {
@@ -120,7 +125,7 @@ mod tests {
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, NodeOutputType::U64).unwrap()
         });
-        let result = classify_anchor(&graph, anchor, None);
+        let result = classify_anchor(&graph, anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -133,7 +138,7 @@ mod tests {
             fb.build_int_const(0xfeed_face_u64, NodeOutputType::U64).unwrap()
         });
         assert_eq!(
-            classify_anchor(&graph, anchor, None),
+            classify_anchor(&graph, anchor, None).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -182,7 +187,7 @@ mod tests {
             producer_output = inputs[1];
         }
 
-        let result = classify_anchor(&graph, producer_output, Some(lr_vn));
+        let result = classify_anchor(&graph, producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -223,7 +228,7 @@ mod tests {
             producer_output = inputs[1];
         }
 
-        let result = classify_anchor(&graph, producer_output, Some(lr_vn));
+        let result = classify_anchor(&graph, producer_output, Some(lr_vn)).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -261,7 +266,7 @@ mod tests {
             producer_output = inputs[1];
         }
 
-        let result = classify_anchor(&graph, producer_output, None);
+        let result = classify_anchor(&graph, producer_output, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -344,7 +349,7 @@ mod tests {
         // Phi(IntConst(7), IntConst(3), IntConst(7)) →
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
         let (graph, anchor) = build_value_phi_graph(&[7, 3, 7]);
-        let result = classify_anchor(&graph, anchor, None);
+        let result = classify_anchor(&graph, anchor, None).expect("classify");
         match result {
             Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
             other => panic!("expected Multiple([3, 7]); got {other:?}"),
@@ -358,7 +363,7 @@ mod tests {
         // guess by collapsing to Single, since the orchestrator
         // treats Multiple-of-len-1 identically).
         let (graph, anchor) = build_value_phi_graph(&[42]);
-        let result = classify_anchor(&graph, anchor, None);
+        let result = classify_anchor(&graph, anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
     }
 
@@ -404,7 +409,7 @@ mod tests {
 
         // No lr supplied: the InitialVar arm doesn't accidentally
         // classify as LinkRegister either.
-        assert_eq!(classify_anchor(&graph, vp_out, None), None);
+        assert_eq!(classify_anchor(&graph, vp_out, None).expect("classify"), None);
     }
 
     #[test]
@@ -421,7 +426,7 @@ mod tests {
         // the normal lift path, but DeadBranchElim's input-detach
         // can leave a zero-input phi observable transiently.
         let (graph, anchor) = build_value_phi_graph(&[]);
-        let result = classify_anchor(&graph, anchor, None);
+        let result = classify_anchor(&graph, anchor, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -444,6 +449,6 @@ mod tests {
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
-        assert_eq!(classify_anchor(&graph, anchor, None), None);
+        assert_eq!(classify_anchor(&graph, anchor, None).expect("classify"), None);
     }
 }

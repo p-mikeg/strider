@@ -18,10 +18,19 @@ use super::jump_table::classify_jump_table;
 use crate::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`].  Returns `None` when the producer doesn't
-/// match any of the known sound shapes — the orchestrator interprets
-/// `None` as "still unresolved at this iteration; try again or
-/// surface as `UnresolvedIndirectBranch` at fixed point."
+/// [`ResolvedTargets`].
+///
+/// Returns:
+/// - `Ok(Some(_))` — successful classification.
+/// - `Ok(None)` — producer doesn't match any of the known sound
+///   shapes; the orchestrator interprets this as "still unresolved at
+///   this iteration; try again or surface as
+///   `UnresolvedIndirectBranch` at fixed point."
+/// - `Err(_)` — `analyze_known_bits` returned a `Kb::merge`
+///   contradiction (incompatible constants reaching the same
+///   output).  Round 9 H-6: surface the diagnostic instead of
+///   masking it as `None`; KB contradiction is a real IR-level bug
+///   the caller should see explicitly.
 ///
 /// Equivalent to [`classify_anchor_with_rom`] with `rom == None`.
 /// The jump-table arm becomes a no-op in that case because
@@ -45,24 +54,24 @@ use crate::ReadOnlyMemory;
 /// We rely on `StackLoadForward` having already simplified
 /// properly-popped return addresses to `InitialVar(lr_vn)` directly
 /// — that's the shape the LinkRegister arm matches.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 pub fn classify_anchor(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
-) -> Option<ResolvedTargets> {
-    let known = match crate::analyze_known_bits(fg) {
-        Ok(k) => k,
-        Err(e) => {
-            // Surface the diagnostic — analyze_known_bits returns Err only
-            // on Kb::merge contradiction (incompatible constants reaching
-            // the same output), which signals a real IR-level bug we want
-            // visible rather than silently treated as "no classification".
-            eprintln!("strider: classify_anchor: analyze_known_bits failed: {e:?}");
-            return None;
-        }
-    };
-    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, None, None, &known)
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = crate::analyze_known_bits(fg)?;
+    Ok(classify_anchor_with_rom_and_sp(
+        fg,
+        anchor_output,
+        link_register_vn,
+        None,
+        None,
+        &known,
+    ))
 }
 
 /// Classify a placeholder anchor with an optional [`ReadOnlyMemory`]
@@ -78,21 +87,26 @@ pub fn classify_anchor(
 /// always the ELF's `.rodata` + `.text` view), so the entries the
 /// classifier reads agree with the entries downstream consumers
 /// see.
-#[must_use]
+///
+/// # Errors
+///
+/// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
+/// See [`classify_anchor`] for full Result-shape semantics.
 pub fn classify_anchor_with_rom(
     fg: &BuiltFunctionGraph,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> Option<ResolvedTargets> {
-    let known = match crate::analyze_known_bits(fg) {
-        Ok(k) => k,
-        Err(e) => {
-            eprintln!("strider: classify_anchor_with_rom: analyze_known_bits failed: {e:?}");
-            return None;
-        }
-    };
-    classify_anchor_with_rom_and_sp(fg, anchor_output, link_register_vn, rom, None, &known)
+) -> anyhow::Result<Option<ResolvedTargets>> {
+    let known = crate::analyze_known_bits(fg)?;
+    Ok(classify_anchor_with_rom_and_sp(
+        fg,
+        anchor_output,
+        link_register_vn,
+        rom,
+        None,
+        &known,
+    ))
 }
 
 /// Classify a placeholder anchor with both an optional

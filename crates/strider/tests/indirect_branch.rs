@@ -170,7 +170,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 lr_vn,
                 Some(rom_for_classify.as_ref()),
                 sp_vn,
-            );
+            )
+            .expect("classify_anchor_with_rom_and_sp ok in test");
             if resolved.is_some() {
                 any_resolved = true;
                 break;

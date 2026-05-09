@@ -38,7 +38,7 @@ use common::indirect_resolve_helpers::{
 #[test]
 fn int_const_to_single() {
     let (graph, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::Single(0x0000_0123)));
 }
 
@@ -50,7 +50,7 @@ fn int_const_to_single() {
 #[test]
 fn initial_var_lr_to_link_register() {
     let (graph, anchor, lr_vn) = build_bx_lr_scenario();
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(result, Some(ResolvedTargets::LinkRegister));
 }
 
@@ -64,7 +64,7 @@ fn initial_var_non_lr_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
     // No link register on x86_64; the classifier must not classify
     // `InitialVar(rax)` as LinkRegister.
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(result, None);
 }
 
@@ -80,7 +80,7 @@ fn initial_var_non_lr_returns_none() {
 #[test]
 fn phi_of_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
-    let result = classify_anchor(&graph, anchor, None);
+    let result = classify_anchor(&graph, anchor, None).expect("classify");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             // Output is sort + dedup'd by the classifier; assert the
@@ -99,7 +99,7 @@ fn phi_of_int_consts_to_multiple() {
 #[test]
 fn phi_of_three_int_consts_to_multiple() {
     let (graph, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
-    let result = classify_anchor(&graph, anchor, None);
+    let result = classify_anchor(&graph, anchor, None).expect("classify");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![0x1000, 0x2000, 0x3000]),
         other => panic!("expected Multiple([0x1000, 0x2000, 0x3000]); got {other:?}"),
@@ -130,7 +130,7 @@ fn phi_of_three_int_consts_to_multiple() {
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
     let (graph, anchor, lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::LinkRegister),
@@ -160,7 +160,7 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
     let (graph, anchor, lr_vn) = build_push_target_pop_pc_scenario(target);
-    let result = classify_anchor(&graph, anchor, Some(lr_vn));
+    let result = classify_anchor(&graph, anchor, Some(lr_vn)).expect("classify");
     assert_eq!(
         result,
         Some(ResolvedTargets::Single(target)),
@@ -197,7 +197,8 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let result = classify_anchor_with_rom_and_sp(
         &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
-    );
+    )
+    .expect("classify");
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -213,7 +214,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let (graph, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
     let result = classify_anchor_with_rom_and_sp(
         &graph, anchor, /* lr */ None, /* rom */ None, Some(sp),
-    );
+    )
+    .expect("classify");
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -235,7 +237,8 @@ fn stack_array_returns_none_without_sp_varnode() {
     let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let result = classify_anchor_with_rom_and_sp(
         &graph, anchor, /* lr */ None, /* rom */ None, /* sp */ None,
-    );
+    )
+    .expect("classify");
     assert_eq!(
         result, None,
         "no SP varnode → stack-array arm short-circuits, no other arm matches → None",
@@ -250,7 +253,7 @@ fn stack_array_returns_none_without_sp_varnode() {
 fn stack_array_returns_none_via_bare_classify_anchor() {
     let targets = [0x401190u64, 0x401180u64];
     let (graph, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
-    let result = classify_anchor(&graph, anchor, /* lr */ None);
+    let result = classify_anchor(&graph, anchor, /* lr */ None).expect("classify");
     assert_eq!(
         result, None,
         "bare classify_anchor (no SP/no rom) cannot resolve stack-array shape",
@@ -269,7 +272,7 @@ fn stack_array_returns_none_via_bare_classify_anchor() {
 #[test]
 fn opaque_target_returns_none() {
     let (graph, anchor) = build_initial_var_target_scenario_x86_64();
-    let result = classify_anchor(&graph, anchor, /* link_register */ None);
+    let result = classify_anchor(&graph, anchor, /* link_register */ None).expect("classify");
     assert_eq!(
         result, None,
         "opaque target must classify as None — no panic, no error, no \

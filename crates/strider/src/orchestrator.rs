@@ -485,7 +485,7 @@ where
                 self.lr_vn,
                 rom_ref,
                 self.sp_vn,
-            );
+            )?;
             let Some(resolved) = resolved_opt else {
                 continue;
             };
