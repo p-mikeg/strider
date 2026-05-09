@@ -174,6 +174,45 @@ impl<'g> RewriteCtx<'g> {
             entry: bfg.entry,
         }
     }
+
+    /// Round 9 wave 26 (H-9/D2 groundwork): pre-order graph walk
+    /// starting at [`Self::entry`].  Mirrors
+    /// `BuiltFunctionGraph::preorder` so a future migration of
+    /// `OptimizerOnBuilt::optimize_built` from `&mut BuiltFunctionGraph`
+    /// to `&mut RewriteCtx` can switch the parameter type without
+    /// rewriting every pass body that calls `function.preorder()`.
+    pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
+        ir::walk::walk_graph(self.graph, self.entry)
+    }
+
+    /// Round 9 wave 26 (H-9/D2 groundwork): kind-filtered pre-order
+    /// walk.  Mirrors `BuiltFunctionGraph::preorder_kind`.
+    pub fn preorder_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
+    where
+        P: FnMut(&ir::node::NodeKind) -> bool + 'a,
+    {
+        self.preorder()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+}
+
+// Round 9 wave 26 (H-9/D2 groundwork): allow Graph methods to be
+// called on `RewriteCtx` directly via Deref.  Mirrors
+// `BuiltFunctionGraph::Deref<Target=Graph>` so a future migration
+// of `OptimizerOnBuilt::optimize_built` to `&mut RewriteCtx` keeps
+// `function.node_kind(_)` / `function.create_node(_)` ergonomics
+// without body changes.
+impl<'g> std::ops::Deref for RewriteCtx<'g> {
+    type Target = Graph;
+    fn deref(&self) -> &Graph {
+        self.graph
+    }
+}
+
+impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
+    fn deref_mut(&mut self) -> &mut Graph {
+        self.graph
+    }
 }
 
 /// Compose a list of rewrite-rule closures into a single closure.
