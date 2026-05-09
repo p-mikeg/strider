@@ -153,9 +153,15 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
+        // Round 9 IMP-4: `Neg`'s width must match `rhs`'s read width,
+        // not `out_ty`.  In practice Sleigh always emits `IntSub` with
+        // input_size == output_size, but using `inputs[1].size`
+        // explicitly makes the lift robust if a future Sleigh spec ever
+        // emits a width-mismatched `IntSub`.
+        let neg_ty = insn.inputs[1].size.try_into()?;
         let neg_rhs = self
             .builder
-            .build_int_unary_operation(rhs, IntUnaryOp::Neg, out_ty)?;
+            .build_int_unary_operation(rhs, IntUnaryOp::Neg, neg_ty)?;
         let sum =
             self.builder
                 .build_int_binary_operation(lhs, neg_rhs, IntBinaryOp::Add, out_ty)?;

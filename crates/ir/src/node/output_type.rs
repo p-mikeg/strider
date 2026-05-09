@@ -119,7 +119,8 @@ impl NodeOutputType {
     /// Whether a constant of this type fits in a `u64` (i.e. `byte_size <= 8`).
     ///
     /// Returns `true` for `Bool`, `U8`, `U16`, `U32`, `U64`, `F32`, and `F64`.
-    /// Returns `false` for `U128` and `U256`.
+    /// Returns `false` for `U80` (10 bytes), `U128`, `U256`, `U512`, and `F80`
+    /// (10 bytes).
     #[inline]
     #[must_use]
     pub fn fits_u64(self) -> bool {
@@ -193,6 +194,12 @@ impl NodeOutputType {
     /// For widths >= 128 returns `val` unchanged (the carrier is `u128`, so
     /// `U128` returns its full mask and `U256` returns `val` as-is - callers
     /// that need to distinguish the two must check the type explicitly).
+    ///
+    /// **Bool exception.**  `Bool` is excluded even though
+    /// [`Self::bit_mask_u128`] returns `1` for it: `Bool` is its own
+    /// category in [`NodeKind`], so callers reading a `Bool` constant
+    /// should match the `BoolConst` arm directly rather than going
+    /// through this helper.
     #[must_use]
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {

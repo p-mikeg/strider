@@ -149,8 +149,12 @@ fn try_apply_rule(function: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &R
 
     let [root_out] = function.graph.node_outputs_exact::<1>(node)?;
     let new_out = (rule.build_rhs)(function.graph, a_out, b_out, node);
-    function.graph.replace_all_uses(root_out, new_out)?;
-    Ok(true)
+    // Round 9 wave 31 (R9-1C Issue 2): only report `Changed` when
+    // `replace_all_uses` actually rewired at least one consumer.
+    // Matching a dead/orphaned node and "replacing" with no live uses
+    // would otherwise force a spurious extra fixed-point iteration.
+    let changed = function.graph.replace_all_uses(root_out, new_out)?;
+    Ok(changed)
 }
 
 // ── RHS builders ──────────────────────────────────────────────────────────

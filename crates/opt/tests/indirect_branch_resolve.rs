@@ -40,10 +40,7 @@ fn pass_runs_inside_optimizer_pipeline() {
     let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
     let mut pass = IndirectBranchResolve::new();
-    let anchor_addr = opt::AnchorAddr {
-        machine_addr: 0x1000,
-        insn_index: 0,
-    };
+    let anchor_addr = opt::AnchorAddr::from_packed(0x1000, 0);
     pass.unresolved_anchors.push((anchor_addr, anchor));
     // Pair with a default (empty-ABI) calling context: the pass now
     // requires `unresolved_anchors` and `anchor_contexts` in lockstep.
@@ -86,10 +83,7 @@ fn pass_round_trips_through_existing_orchestrator() {
     let (mut graph, entry, anchor) = placeholder_graph_with_int_const(0xc0de);
 
     let mut pass = IndirectBranchResolve::new();
-    let anchor_addr = opt::AnchorAddr {
-        machine_addr: 0x2000,
-        insn_index: 0,
-    };
+    let anchor_addr = opt::AnchorAddr::from_packed(0x2000, 0);
     pass.unresolved_anchors.push((anchor_addr, anchor));
     pass.anchor_contexts
         .insert(anchor_addr, opt::AnchorCallingContext::default());

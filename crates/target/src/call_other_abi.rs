@@ -304,10 +304,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         "UnkSytemRegRead" => PURE,
 
         // x86 SWAPGS — exchanges IA32_GS_BASE ↔ IA32_KERNEL_GS_BASE.
-        // No general-reg or RAM effect on its own, but every subsequent
-        // %gs:-relative load/store depends on the new base, so it must be
-        // on the memory chain or forwarding passes will reorder %gs:-loads
-        // across the swap.  Analogous to wr{fs,gs}base above.
+        // No GPR or RAM write on its own, but the MSR swap silently
+        // changes the virtual base used by every subsequent `%gs:`-relative
+        // load/store.  Without memory_edge = true, StackLoadForward /
+        // LoadReadOnly would forward `%gs:`-loads from before the swap
+        // into uses after the swap (or vice versa), reading the wrong
+        // base.  Analogous to wr{fs,gs}base above.
         "swapgs" => PURE_WITH_MEM_EDGE,
 
         // ARM permanently-undefined instruction — Sleigh emits

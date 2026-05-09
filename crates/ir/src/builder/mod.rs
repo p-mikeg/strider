@@ -411,22 +411,34 @@ impl FunctionBuilder {
     /// duration, then restore the previous value (typically `None` or
     /// the address of an enclosing insn).
     ///
-    /// The previous value is restored on `body`'s normal return —
-    /// both `Ok(_)` and `Err(_)`.  A panic inside `body` leaks `addr`
-    /// into the outer scope (no RAII restore — the borrow checker
-    /// rejects the standard `Drop`-guard form because the closure also
-    /// borrows `self`); strider lifters propagate failure through
-    /// `Result` rather than `panic!`, so this is acceptable in
-    /// practice.
+    /// Panic-safe: an unwinding panic inside `body` still triggers the
+    /// restore via the inner guard's `Drop` impl.  Round 9 wave 31
+    /// (R9-1A I3) closed the prior leak path where a panic would leave
+    /// `addr` set on the outer scope.
     pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
+        struct Guard<'a> {
+            inner: &'a mut FunctionBuilder,
+            prev: Option<u64>,
+        }
+        impl<'a> Drop for Guard<'a> {
+            fn drop(&mut self) {
+                self.inner.lift_addr = self.prev;
+            }
+        }
+        impl<'a> std::ops::Deref for Guard<'a> {
+            type Target = FunctionBuilder;
+            fn deref(&self) -> &FunctionBuilder { self.inner }
+        }
+        impl<'a> std::ops::DerefMut for Guard<'a> {
+            fn deref_mut(&mut self) -> &mut FunctionBuilder { self.inner }
+        }
         let prev = self.lift_addr;
         self.lift_addr = Some(addr);
-        let out = body(self);
-        self.lift_addr = prev;
-        out
+        let mut guard = Guard { inner: self, prev };
+        body(&mut guard)
     }
 
     /// Creates a node in the graph with the given kind, inputs, and

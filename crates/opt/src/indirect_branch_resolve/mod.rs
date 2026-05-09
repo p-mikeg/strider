@@ -221,12 +221,37 @@ pub struct AnchorCallingContext {
 /// allocation and to keep the type cheaply `Copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnchorAddr {
+    pub(crate) machine_addr: u64,
+    pub(crate) insn_index: u64,
+}
+
+impl AnchorAddr {
+    /// Construct from the packed `(machine_addr, insn_index)` pair.
+    /// Strider passes its `cfg::PcodeInsnAddr` through this ctor.
+    #[must_use]
+    pub fn from_packed(machine_addr: u64, insn_index: u64) -> Self {
+        Self { machine_addr, insn_index }
+    }
+
     /// Machine address of the placeholder's BranchIndirect — opaque
     /// payload; opt does not interpret it.
-    pub machine_addr: u64,
+    #[must_use]
+    pub fn machine_addr(self) -> u64 {
+        self.machine_addr
+    }
+
     /// Sub-machine pcode-insn index — opaque payload; opt does not
     /// interpret it.
-    pub insn_index: u64,
+    #[must_use]
+    pub fn insn_index(self) -> u64 {
+        self.insn_index
+    }
+
+    /// Decompose into the packed pair, mirroring [`Self::from_packed`].
+    #[must_use]
+    pub fn parts(self) -> (u64, u64) {
+        (self.machine_addr, self.insn_index)
+    }
 }
 
 impl IndirectBranchResolve {

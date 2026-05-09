@@ -145,6 +145,13 @@ pub trait IntoPat: Into<Pat> + Sized {
         }))
     }
     /// After matching, additionally run `f` — fails if it returns `false`.
+    ///
+    /// **Zero-value-output kinds.**  `f` receives the matched root's
+    /// single value output.  Roots that produce zero value outputs
+    /// (control-flow nodes — `If`, `Return`, `ControlState`, …) cannot
+    /// satisfy this signature; the guard silently fails (no match) on
+    /// such roots.  Use [`Pat::when_match`] (which receives the full
+    /// bindings instead) when guarding control-flow patterns.
     fn when<F>(self, f: F) -> Pat
     where
         F: Fn(&ir::Graph, NodeOutputType, NodeOutputId) -> bool + Send + Sync + 'static,

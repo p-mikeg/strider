@@ -705,13 +705,11 @@ mod tests {
 
     // ── strip_target_mask characterization tests ──────────────────
     //
-    // These tests pin the contract of `strip_target_mask` before R2's
-    // refactor migrates the manual NodeKind matching to `pattern::and` /
-    // `pattern::or`.  The pre-refactor implementation hand-rolled
-    // commutative operand checks; pattern's auto-commutative `and` /
-    // `or` express the same shape with auto-handled operand swapping.
-    // We therefore pin both operand orderings explicitly so the
-    // refactor cannot accidentally narrow what we accept.
+    // These tests pin both operand orderings explicitly so a future
+    // refactor of `strip_target_mask` cannot accidentally narrow what
+    // we accept.  `pattern::and` / `pattern::or` are auto-commutative,
+    // so a regression that drops one ordering would still pass the
+    // commutative-pair check but fail this characterization.
     //
     // The target shapes covered:
     //   * Bare anchor — no wrapper, returns `(anchor, !0)`.

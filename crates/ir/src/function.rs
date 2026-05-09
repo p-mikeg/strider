@@ -48,6 +48,13 @@ pub struct BuiltFunctionGraph {
     /// The `Entry` node; use as the root for any graph walk.
     pub entry: NodeId,
     /// Map from [`VarId`] to the corresponding [`rsleigh::Vn`] varnode.
+    ///
+    /// **Caution:** mutating this map post-`build()` desynchronises it
+    /// from the graph's `InitialVar` / phi nodes (which key on `VarId`
+    /// indices) and silently breaks pattern queries that resolve a
+    /// `VarId` via `Match::get_vn`.  Only [`crate::FunctionBuilder::build`]
+    /// and the partial-state ctor [`Self::from_graph_and_entry_for_rewrite`]
+    /// should write this field.
     pub variables: PrimaryMap<VarId, rsleigh::Vn>,
     /// Ordered list of varnodes clobbered by every `Call` node.
     /// The i-th clobbered output of any Call (output index `i + 2`) corresponds
@@ -56,12 +63,22 @@ pub struct BuiltFunctionGraph {
     /// The first `ret_val_regs.len()` entries are the calling convention's
     /// return registers in ABI order (see [`BuiltFunctionGraph::ret_val_regs`]);
     /// the rest are remaining caller-clobbered registers.
+    ///
+    /// **Caution:** mutating this list post-`build()` desynchronises it
+    /// from existing `Call` nodes' clobber output slots and silently
+    /// breaks `Match::get_vn` (which indexes the slot list by varnode
+    /// position).  Only [`crate::FunctionBuilder::build`] and the
+    /// partial-state ctor should write this field; consumers read via
+    /// [`Self::call_clobbered_regs`].
     pub call_clobbered: Box<[rsleigh::Vn]>,
     /// The calling convention's return-value registers, in ABI order.
     /// Matches the first `ret_val_regs.len()` entries of
     /// [`BuiltFunctionGraph::call_clobbered`] when those regs are caller-clobbered
     /// (they normally are — callee-saved ret regs are unusual), and matches
     /// `Return` node input slots `2..2+ret_val_regs.len()`.
+    ///
+    /// **Caution:** same as [`Self::call_clobbered`] — write only at
+    /// build time; read via [`Self::ret_val_regs_slice`].
     pub ret_val_regs: Box<[rsleigh::Vn]>,
     /// Function-default clobber list for every `CallOther` node.
     ///
@@ -76,6 +93,9 @@ pub struct BuiltFunctionGraph {
     /// "everything except SP" set used by every CallOther unless a
     /// per-CallOther override on
     /// [`crate::Graph::call_clobbered_overrides`] shadows it.
+    ///
+    /// **Caution:** same as [`Self::call_clobbered`] — write only at
+    /// build time; read via [`Self::call_other_clobbered_regs`].
     pub call_other_clobbered: Box<[rsleigh::Vn]>,
 }
 

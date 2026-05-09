@@ -80,8 +80,11 @@
 //! Binary operations that are mathematically commutative (`add`, `mul`, `and`,
 //! `or`, `xor`, `bool_and`, `bool_or`, `bool_xor`, `float_add`, `float_mul`)
 //! automatically try both operand orderings.  Symmetric integer comparisons
-//! (`int_eq`, `int_carry`, `int_scarry`) and float comparisons (`float_eq`,
-//! `float_ne`) likewise retry with swapped operands.  Variant-agnostic
+//! (`int_eq`, `int_carry`, `int_scarry`) and `float_eq` likewise retry with
+//! swapped operands.  `float_ne` is **not** primitive: the lifter lowers
+//! `FLOAT_NOTEQUAL(a, b)` to `BoolNeg(FloatEqual(a, b))`, and the inner
+//! `FloatEqual` is what's auto-commutative — `float_ne` inherits the
+//! commutativity through that lowering.  Variant-agnostic
 //! constructors (`int_binary_any`, `bool_binary_any`, `float_binary_any`,
 //! `int_cmp_any`, `float_cmp_any`) inspect the matched op and apply the
 //! same rule per-match.  Call `.ordered()` on the returned builder to opt

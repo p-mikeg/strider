@@ -299,10 +299,14 @@ impl PatLike<'_> {
 #[pyclass(name = "PartialMatch", module = "strider.pattern", unsendable)]
 pub struct PyPartialMatch {
     bindings: pattern::Bindings,
-    /// Raw pointer to the graph the matcher is operating on.  Boxed in
-    /// `Arc<Mutex<...>>` so the Python predicate can hold the proxy
-    /// across Rust ↔ Python boundaries safely; the wrapper code clears
-    /// the pointer back to `None` right after the predicate returns.
+    /// Raw pointer to the graph the matcher is operating on.  Wrapped
+    /// in `Mutex<Option<...>>`: `Mutex` so PyO3's `&self`-only access
+    /// from Python can still mutate (clear) the slot, and `Option` so
+    /// the wrapper can replace it with `None` on predicate exit and any
+    /// subsequent Python access from a leaked proxy returns `None`
+    /// instead of dereferencing a dangling pointer.  PyPartialMatch is
+    /// `unsendable`, so no `Arc` is needed — the proxy never crosses
+    /// threads.
     graph_ptr: Mutex<Option<*const ir::Graph>>,
 }
 

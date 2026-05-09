@@ -189,10 +189,17 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // nothing new for ConstantFold + KnownBits + RedundantPhis to
     // chew on, so the second sweep would converge in zero rewrites
     // (Task 15).
-    if let Some(rom) = rom
-        && resolve_const_loads(&mut fg, rom)?
-    {
-        make_resolver_pipeline().run_on_built(&mut fg)?;
+    // Iterate to fixed point: each `resolve_const_loads` sweep folds
+    // every Load whose address is currently constant.  ConstantFold +
+    // KnownBits then propagate the new `IntConst` outputs through any
+    // address-arithmetic chain (e.g. `Add(loaded_const, K)`) so that
+    // chained `Load(Load(const_addr))` shapes resolve in subsequent
+    // sweeps.  Round 9 wave 31 (R9-1B F4) closed the prior single-pass
+    // gap that left multi-hop ROM pointer chains unresolved.
+    if let Some(rom) = rom {
+        while resolve_const_loads(&mut fg, rom)? {
+            make_resolver_pipeline().run_on_built(&mut fg)?;
+        }
     }
 
     // Classify by inspecting the `Return` node's value-input (slot
