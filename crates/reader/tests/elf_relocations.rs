@@ -276,3 +276,13 @@ fn apply_elf_relocations_autoload_no_op_when_no_dynamic_table() {
         assert_eq!(regions.len(), regions_before, "no dynamic table ⇒ no autoload work");
     }
 }
+
+#[test]
+fn relocation_stats_default_includes_autoload_parse_failure_counter() {
+    // Pin the field's default so a future field rename / removal trips a
+    // build-level signal — programmatic callers depend on this counter
+    // to detect malformed-ELF cases that would otherwise look like
+    // benign `skipped_no_region` entries.
+    let stats = reader::elf::RelocationStats::default();
+    assert_eq!(stats.autoload_section_parse_failures, 0);
+}
