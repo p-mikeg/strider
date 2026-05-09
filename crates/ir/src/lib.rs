@@ -57,7 +57,7 @@ pub mod wide_const;
 pub use wide_const::{WideConstId, WideConstStorage};
 
 pub use crate::error::Result;
-pub use builder::{FunctionBuilder, LiftAddrGuard, VarId};
+pub use builder::{FunctionBuilder, VarId};
 pub use ops::{
     BoolBinaryOp, BoolUnaryOp, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,

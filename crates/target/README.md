@@ -116,8 +116,8 @@ cargo test --package target
   not by mutating presets.
 - `mips_o32` and `mips_n64` differ in stack-arg offsets and integer/float
   reg sets — pick the correct one for the binary's ABI.
-- `x86_64_systemv` was renamed from `x86_64_systemv_abi`; the old name is
-  retained as a deprecated alias (`x86_64_systemv_abi()` calls through to
-  `x86_64_systemv()`). New code should use `x86_64_systemv`.
+- `x86_64_systemv` was renamed from `x86_64_systemv_abi` in round 8;
+  the deprecated alias was deleted in round 9 phase C. Use
+  `x86_64_systemv` directly.
 - Depends only on `rsleigh` and `anyhow`. No dependency on
   [`ir`](../ir), [`opt`](../opt), or [`pattern`](../pattern).

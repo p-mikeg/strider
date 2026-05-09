@@ -10,13 +10,19 @@ use crate::region::Region;
 
 mod call;
 mod coerce;
-mod lift_addr;
 mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
 
-pub use lift_addr::LiftAddrGuard;
+// Round 9 D1: `LiftAddrGuard` (formerly in `mod lift_addr`) was a `pub`
+// re-export with zero call sites anywhere in the workspace.  The
+// strider per-region driver explicitly uses the manual
+// `set_lift_addr(Some) … set_lift_addr(None)` pair (see
+// `crates/strider/src/strider/insn/mod.rs`) to avoid the borrow
+// conflict the guard would create.  The guard module was deleted in
+// round 9 phase C; if a future use case has a callable shape it can
+// be re-introduced as `pub(crate)`.
 
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,9 +417,7 @@ impl FunctionBuilder {
     /// rejects the standard `Drop`-guard form because the closure also
     /// borrows `self`); strider lifters propagate failure through
     /// `Result` rather than `panic!`, so this is acceptable in
-    /// practice.  See [`LiftAddrGuard`] for the RAII alternative when
-    /// the caller can give up the entire `&mut FunctionBuilder` borrow
-    /// for the guard's duration.
+    /// practice.
     pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
     where
         F: FnOnce(&mut Self) -> R,

@@ -32,16 +32,14 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // born from a pcode insn picks up its parent machine-instruction
         // address; later optimisation passes only ever absorb fingerprints,
         // never set them.
-        // Set the lift-addr context for every node `process_insn_inner`
-        // produces, then clear it afterwards so region-setup helpers
-        // emitted between insns stay unattributed.  We can't use
-        // `FunctionBuilder::lift_at` here because the inner method also
-        // borrows the rest of `self` (cfg / strider / vn-cache); same
-        // story for `LiftAddrGuard`.  The manual pair is fine in
-        // practice because `process_insn_inner` returns a Result the
-        // caller propagates — the only way the post-clear is skipped
-        // is a panic, and Sleigh / IR builder errors all surface as
-        // typed `Result::Err` from this path.
+        //
+        // We can't use `FunctionBuilder::lift_at` here because the inner
+        // method also borrows the rest of `self` (cfg / strider / vn-cache).
+        // The manual `set_lift_addr(Some) … set_lift_addr(None)` pair is
+        // fine in practice because `process_insn_inner` returns a Result
+        // the caller propagates — the only way the post-clear is skipped
+        // is a panic, and Sleigh / IR builder errors all surface as typed
+        // `Result::Err` from this path.
         let machine_addr = addr.machine_addr.addr;
         self.builder.set_lift_addr(Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);

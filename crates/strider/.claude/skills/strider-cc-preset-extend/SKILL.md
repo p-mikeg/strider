@@ -39,7 +39,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 
 2. **Preserve field order in the struct literal.** The canonical order is: `stack_ptr_reg_name`, `arg_passing_regs`, `callee_saved_regs`, `ret_val_regs`, `ret_val_regs_float`, `stack_arg_offsets`, `ret_stack_pop`, `link_register_reg_name`, `syscall_number_reg_name`, `no_memory_clobber`. Out-of-order fields compile but make audits harder.
 
-3. **Note the renamed `x86_64_systemv` preset.** Round 8 renamed `x86_64_systemv_abi` → `x86_64_systemv` (drops the `_abi` suffix for naming consistency with other presets). The old name is retained as a `#[deprecated]` shim that delegates to the new one. New presets should follow the bare-name convention (no `_abi` suffix). Do NOT use `x86_64_systemv_abi` in new code.
+3. **Note the renamed `x86_64_systemv` preset.** Round 8 renamed `x86_64_systemv_abi` → `x86_64_systemv` (drops the `_abi` suffix for naming consistency with other presets). The deprecated alias was deleted in round 9 phase C. New presets should follow the bare-name convention (no `_abi` suffix).
 
 4. **Link-register-as-callee-saved tradeoff (round-8 finding B-1/B-2/B-3).** This is the single most important call-out for AAPCS64, AAPCS, PPC SysV, PPC ELFv1, and PPC ELFv2. The ABI specs say LR is **caller-saved** (the caller is responsible for preserving it across calls), but strider intentionally lists it under `callee_saved_regs` so:
 
@@ -94,7 +94,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 - **Wrong `ret_stack_pop` silently corrupts `CallStackArgCollect`.** It's `0` on every link-register arch. Copy from the closest existing preset.
 - **Sleigh register name typos fail at runtime, not compile time.** AArch64 needs `"x30"` (not `"X30"`, not `"lr"`); ARM needs lowercase `"lr"`; MIPS needs `"ra"` (not `"r31"`).
 - **Forgetting `no_memory_clobber: true` on a zero-side-effect hook.** `__fentry__`-style instrumentation breaks `StackLoadForward` on every caller without it.
-- **Using `x86_64_systemv_abi` in new code.** The name was renamed to `x86_64_systemv` in round 8; the `_abi` form is `#[deprecated]` and only exists for back-compat.
+- **Using `x86_64_systemv_abi` in new code.** The name was renamed to `x86_64_systemv` in round 8; the `_abi` deprecated alias was deleted in round 9 phase C.
 - **Skipping the Python mirror.** Cross-arch tests in `strider-py` won't cover the new CC if there's no Python factory.
 
 ## Worked example: adding `mips_n32`

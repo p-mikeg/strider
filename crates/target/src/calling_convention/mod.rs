@@ -296,16 +296,6 @@ impl CallingConvention {
         }
     }
 
-    /// Deprecated alias for [`Self::x86_64_systemv`].  The `_abi`
-    /// suffix was inconsistent with the other CC presets
-    /// (`x86_cdecl`, `arm_aapcs`, `aarch64_aapcs64`, etc., which all
-    /// omit it).  Kept for one cycle so external callers can migrate.
-    #[must_use]
-    #[deprecated(since = "0.1.0", note = "renamed to `x86_64_systemv` (drops the `_abi` suffix for naming consistency with other CC presets)")]
-    pub fn x86_64_systemv_abi() -> CallingConvention {
-        Self::x86_64_systemv()
-    }
-
     /// "All-preserving" x86_64 calling convention: every userland
     /// caller-clobbered register is listed as callee-saved.  Empty
     /// arg-passing list, empty ret-val list.  Used for sites like

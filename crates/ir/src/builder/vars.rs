@@ -10,11 +10,14 @@ impl FunctionBuilder {
     /// Returns the current `NodeOutputId` for `var` in the active region, or
     /// `None` if the variable is not known.
     ///
+    /// Round 9 V1: only consumer is sibling `builder/call.rs`; no
+    /// external crate uses it.  Demoted to `pub(super)`.
+    ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
-    pub fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
+    pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
         if let Some(variable_id) = self.variable_to_id.get(var) {
             Ok(Some(self.read_variable_from_id(*variable_id)?))
         } else {
