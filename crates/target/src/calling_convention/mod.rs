@@ -149,10 +149,12 @@ pub struct BuiltCallingConventionParts {
 
 impl BuiltCallingConvention {
     /// Constructs a `BuiltCallingConvention` from an explicit
-    /// [`BuiltCallingConventionParts`] bag.  Use this in tests building
-    /// override / synthesised CCs; production code goes through
-    /// [`CallingConvention::build`] instead so register names get
-    /// resolved against a `SleighRegs` table.
+    /// [`BuiltCallingConventionParts`] bag, **without validation**.
+    /// Use this only in tests building override / synthesised CCs
+    /// where the inputs are known well-formed; production code
+    /// should use [`Self::try_from_parts`] (validates ABI invariants)
+    /// or [`CallingConvention::build`] (resolves register names
+    /// against a `SleighRegs` table and feeds [`Self::try_from_parts`]).
     #[must_use]
     pub fn from_parts(parts: BuiltCallingConventionParts) -> Self {
         let BuiltCallingConventionParts {
@@ -179,6 +181,107 @@ impl BuiltCallingConvention {
             syscall_number_vn,
             no_memory_clobber,
         }
+    }
+
+    /// Validating constructor (round 9 V4 / R9-2D H3).  Builds a
+    /// `BuiltCallingConvention` from explicit parts and checks the
+    /// canonical ABI invariants:
+    ///
+    /// - `arg_passing_regs ∩ callee_saved_regs == ∅`
+    /// - `ret_val_regs ∩ callee_saved_regs == ∅`
+    /// - `ret_val_regs_float ∩ callee_saved_regs == ∅`
+    /// - `stack_ptr_vn` is not in any of the four register lists
+    /// - No duplicates within any single list
+    /// - When `link_register_vn` is `Some`, it must be present in
+    ///   `callee_saved_regs` (CLAUDE.md "Note (link-register
+    ///   handling)" deliberate tradeoff)
+    /// - `ret_stack_pop` is non-negative
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` describing the first invariant violation
+    /// detected.  The error is intentionally specific so a CC author
+    /// debugging a typo (e.g. listing the same Vn in both
+    /// `arg_passing_regs` and `callee_saved_regs`) sees the offending
+    /// names rather than a downstream miscompile.
+    pub fn try_from_parts(
+        parts: BuiltCallingConventionParts,
+    ) -> std::result::Result<Self, anyhow::Error> {
+        // Disjointness: arg-passing must not overlap callee-saved.
+        for vn in &parts.arg_passing_regs {
+            if parts.callee_saved_regs.contains(vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: varnode {:?} appears in both \
+                     arg_passing_regs and callee_saved_regs (a single varnode \
+                     cannot be both caller-supplied and callee-preserved)",
+                    vn,
+                ));
+            }
+        }
+        // Ret-val regs must not overlap callee-saved (the callee writes
+        // them to deliver results — they cannot be required-preserved).
+        for vn in parts.ret_val_regs.iter().chain(parts.ret_val_regs_float.iter()) {
+            if parts.callee_saved_regs.contains(vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: varnode {:?} appears in both \
+                     ret_val_regs/ret_val_regs_float and callee_saved_regs",
+                    vn,
+                ));
+            }
+        }
+        // Stack-pointer must not be in any reg-list.
+        for (list_name, list) in [
+            ("arg_passing_regs", &parts.arg_passing_regs),
+            ("callee_saved_regs", &parts.callee_saved_regs),
+            ("ret_val_regs", &parts.ret_val_regs),
+            ("ret_val_regs_float", &parts.ret_val_regs_float),
+        ] {
+            if list.contains(&parts.stack_ptr_vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: stack_ptr_vn {:?} appears in {} \
+                     (the SP is implicit and must not be in any reg list)",
+                    parts.stack_ptr_vn,
+                    list_name,
+                ));
+            }
+        }
+        // No duplicates within a list.
+        for (list_name, list) in [
+            ("arg_passing_regs", &parts.arg_passing_regs),
+            ("callee_saved_regs", &parts.callee_saved_regs),
+            ("ret_val_regs", &parts.ret_val_regs),
+            ("ret_val_regs_float", &parts.ret_val_regs_float),
+        ] {
+            for (i, vn) in list.iter().enumerate() {
+                if list[i + 1..].contains(vn) {
+                    return Err(anyhow::anyhow!(
+                        "BuiltCallingConvention: duplicate varnode {:?} in {}",
+                        vn,
+                        list_name,
+                    ));
+                }
+            }
+        }
+        // Link-register-as-callee-saved invariant (CLAUDE.md note).
+        if let Some(lr) = parts.link_register_vn
+            && !parts.callee_saved_regs.contains(&lr)
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: link_register_vn {:?} must also \
+                 be present in callee_saved_regs (CLAUDE.md deliberate \
+                 tradeoff so InitialVar(lr) propagates through call sites)",
+                lr,
+            ));
+        }
+        // ret_stack_pop is non-negative (a negative value would mean the
+        // callee's `ret` *grew* the stack, which no real ABI does).
+        if parts.ret_stack_pop < 0 {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: ret_stack_pop must be >= 0, got {}",
+                parts.ret_stack_pop,
+            ));
+        }
+        Ok(Self::from_parts(parts))
     }
 
     /// Argument-passing register varnodes, in positional order.
