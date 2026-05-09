@@ -1,6 +1,6 @@
 # Strider — Next-Round Code Review Prompt
 
-> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes the previous round (round 7) has already landed — see `reviews/round7-*.md` for the prior outputs — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
+> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes both round 7 and round 8 have already landed — see `reviews/round7-*.md` and `reviews/round8-*.md` for the prior outputs — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
 
 ---
 
@@ -12,24 +12,68 @@ Paste everything between the `=== BEGIN PROMPT ===` and `=== END PROMPT ===` mar
 
 === BEGIN PROMPT ===
 
-I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **8** — round 7's outputs live under `reviews/round7-*.md` and round 7's clearing/finalize plans live under `docs/superpowers/plans/2026-05-08-*.md`.
+I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **9** — round 7's outputs live under `reviews/round7-*.md`, round 8's under `reviews/round8-*.md`, and round 8's implementation commits were `8920d8a` / `d3e0d10` / `339b3f6` on branch `review/ai2`.
 
 ## Trust model — strict
 
-- **Do NOT read `reviews/round7-*.md` or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written.
-- **Do NOT trust comments, docstrings, CLAUDE.md, or per-crate READMEs as evidence.**  They are inputs to be *verified* against code.
+- **Do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written.  In particular, round-8 fixed every HIGH finding it identified; the resolver classifier surface, the orchestrator's `Builder::for_arch` migration, the `pat_builder_finalise!` macro, the `pure_pass_class!` macro, the `crates/strider/src/test_utils.rs` module, the `count_reachable` helper in `crates/opt/src/test_support.rs`, the `multiple-pymethods` PyO3 feature, and the `KnownBitsMap` SecondaryMap migration are all *new shape* relative to round 7's snapshot — so a "round 7 said X" reference is doubly stale here.
+- **Do NOT trust comments, docstrings, CLAUDE.md, or per-crate READMEs as evidence.**  They are inputs to be *verified* against code.  CLAUDE.md was edited in round 8 to reflect the new shape; verify each claim against the source nonetheless.
 - **Do NOT trust the previous reviews' conclusions.**  Each finding in your final summary must cite a code location (`file:line`) and explain its reasoning from code shape alone.
 - Verify all rsleigh-touching claims by reading `../rsleigh/sleigh/src/**` directly — that crate is the upstream authority for pcode opcode behaviour, varnode semantics, and the per-arch SLA / PSPEC files.
-- Verify ABI claims against published specs (System V x86_64, AAPCS / AAPCS64, MIPS o32 / n64, PPC ELF v1 / v2) — names them in your finding, but trust the *implementation* of `target::CallingConvention::*` against those specs first.
+- Verify ABI claims against published specs (System V x86_64, AAPCS / AAPCS64, MIPS o32 / n64, PPC ELF v1 / v2) — name them in your finding, but trust the *implementation* of `target::CallingConvention::*` against those specs first.
+
+## Two emphases this round
+
+This round has two top-level emphases that override the per-ask priorities below when they conflict.  When in doubt, lean into these:
+
+### Emphasis A — correctness of the code against itself AND against the lifted representation AND against the underlying assembly
+
+Round 8 verified specific HIGH-severity correctness bugs (orchestrator preset, U512 type confusion, BoolNeg fingerprint drop, etc.) and shipped fixes.  This round goes a layer deeper: every layer of the system must agree with every adjacent layer.
+
+Three triangulation axes:
+
+1. **Code-vs-code self-consistency.**  When the same operation is performed in two or more places (e.g. SP decomposition in `decompose_sp` AND in `match_stack_array_shape` AND in `CallStackArgCollect`; CallOther dispatch in `cfg::region_builder` AND in `strider::IrStrider::handle_call_other`; varnode-aliasing in `pcode_lift::vn_io::read_vn` AND in `write_vn`; commutativity tables in `pattern::matcher::commutativity` AND in the build-RHS path; lift-time canonicalisation in `pcode_lift::value::*` AND in the pattern crate's lowered aliases like `sub` / `int_le`), do the implementations agree on every input?  Pin a finding for every divergence — even a documentation drift counts here.  Look for places where the same invariant is *declared* in one comment and *enforced* in only some of the consumers.
+
+2. **IR-vs-lifted-representation correctness.**  Every IR `NodeKind` must precisely model what the underlying pcode opcode does, with no information loss and no information addition:
+   - For arithmetic: the IR's `IntBinaryOp::Add` on `(a, b)` must produce the same numeric result as rsleigh's `OpBehaviorIntAdd::evaluateBinary(a, b)` for *every* input, including `INT_MIN + INT_MIN`, `0 + 0`, sub-byte operands, mismatched-width operands.  Similarly for every cmp / cast / shift / unary.
+   - For memory: `Load(VnSpace)` must read from exactly the same VnSpace the pcode `LOAD` opcode reads from, with the same byte order, the same effective-width semantics, and the same memory-chain ordering against `Store` / `Call`.
+   - For control: `If(cond) { true_branch, false_branch }` must dispatch on `cond ≠ 0` (the C-true convention sleigh uses), not on a boolean type.  `IndirectBranch(target)` must lift to the same address-set the underlying `BRANCHIND` opcode would dispatch to.
+   - For sub-register aliasing: `pcode_lift::vn_io` must produce the *exact* shift+mask sequence the architecture uses to read AL from RAX, AH from EAX, S0 from D0/Q0, etc.  Verify against the Intel SDM / ARM ARM byte-level semantics — the AArch64 V0/D0/S0 overlap rule, x87 80-bit ST*-as-byte-array, x86 AH-as-second-byte-of-AX vs EAX-low.
+   - For lift-time canonicalisations: `IntSub(a, b)` lowers to `Add(a, Neg(b))`; verify on `a - INT_MIN` (the case where the modular negation matters) that the IR's result matches rsleigh's `OpBehaviorIntSub::evaluateBinary(a, INT_MIN)`.  Same scrutiny for every other canonicalisation.
+   - For CallOther: the per-op `implicit_reads` / `implicit_writes` / `memory_edge` must match the ISA reference's documented semantics for every entry in the table.  Spot-check by tracing what pcode rsleigh actually emits for the user-op (e.g. for `cpuid`, rsleigh writes the EAX/EBX/ECX/EDX results via separate post-CALLOTHER pcode `LOAD`s of a temp pointer; this means `implicit_writes` for `cpuid` is correctly empty — but verify by reading the relevant SLA spec).
+   - For asm-fingerprints: the contract is that every reachable non-exempt node must carry every contributing-asm-instruction address.  Verify the contract holds end-to-end by lifting a real binary and walking every non-exempt node — do all of them have at least one fingerprint entry, and does each entry trace back to a real machine address that the lifter actually visited?
+
+3. **Lifted-IR-vs-assembly correctness.**  Pick a real binary on each supported arch and verify the IR's behaviour matches what the binary *actually does* at runtime.  This is the deepest check — it catches bugs neither code-vs-code nor IR-vs-pcode can catch (an architectural pcode bug in rsleigh, a missing canonicalisation, a clobber-set mismatch).
+   - **Return-value flow.**  For each arch, lift a function returning `int`, `long`, `struct{int,int}`, `float`, `double`, `__int128` — verify the IR's `Return` node's value inputs precisely match the registers the ABI specifies AND match what `objdump -d` shows the callee writing before `ret`.
+   - **Clobber footprint per Call.**  Verify both the *positive* case (caller-saved IS clobbered post-call) AND the *negative* case (callee-saved is NOT — its value flows through the Call unchanged).  A function that reads RBX before AND after a call must show the same `NodeOutputId` in both reads in the IR.
+   - **Memory chain after a call.**  `LoadReadOnly` and `StackLoadForward` must stop forwarding across normal calls AND must forward across `x86_64_all_preserving` calls (`__fentry__` / `mcount` hooks).  Pick a real Linux-kernel binary with `__fentry__` and verify that rodata loads after the hook still fold to constants.
+   - **Indirect-branch resolution against ground truth.**  For each shape the resolver claims to handle (link-register return, jump-table, stack-array dispatch, tail-call, the new `Truncate(IntConst)` and `Extend(IntConst)` arms landed in round-8 follow-up), find a real binary exhibiting that shape and verify the resolved target set matches the symbol-table truth (`nm` / `addr2line`) for at least three call sites per shape.  The 7 ignored tests in `crates/strider/tests/indirect_branch.rs` document specific shapes that fail (`aarch64-be Or(SP,K) + Truncate-wrapped labels`, `mips64 PIC GOT-indirect`, `ppc32/64 uncharacterised`); the documented fix paths in those test ignore-reasons should be fact-checked here — does the actual lifter produce what they claim?
+
+For each finding under emphasis A, the fix proposal must include a concrete regression test that lifts a real instruction and asserts the resulting IR shape — fixture-based, not hand-built mock graphs.
+
+### Emphasis B — code that can be unified / generalised
+
+Round 7 and round 8 each landed targeted helper extractions (`PyMatch::with_graph`, `cc::build_cc_for_sleigh`, `pure_pass_class!` macro, `pat_builder_finalise!` macro using `multiple-pymethods`, `count_reachable` promoted to `crates/opt/src/test_support.rs`).  This round does an exhaustive sweep for the *remaining* duplication.
+
+Per-finding criteria for proposals under emphasis B:
+
+- **Three-occurrence threshold.**  Patterns repeated ≥ 3 times, ≥ 3 LOC each.  Two-occurrence repetition is a LOW finding; three+ is MED or HIGH depending on per-occurrence size.
+- **Load-bearing-different vs accidentally-different.**  When two repetitions look the same but produce different runtime behaviour (e.g. one site uses `unwrap_or(default)` and another uses `expect("...")`), the difference is *load-bearing* — propose unifying only after explicitly noting why each variant exists.  The pattern crate's per-builder `capture` / `cap` / `when` / `into_pat` repetition was unified via `pat_builder_finalise!` in round 8 because the four methods were truly identical; the per-PyO3-pass constructors that build a `BuiltCallingConvention` from a `PySleigh` were unified via `cc::build_cc_for_sleigh` because the four sites differed only in their downstream `from_convention(&built_cc)` call (truly extractable).  If a candidate site has subtly different ordering, error handling, or ownership shape, document the difference and decide skip vs. unify per-case.
+- **Propose the helper signature.**  For each accepted candidate, write the proposed helper's signature, its location (which crate / which module), and the migration shape at every call site.  Aim for "drop-in replace this 5-LOC block with a 1-line call".
+- **Don't force-fit `macro_rules!`.**  Use `macro_rules!` only for syntactic patterns that genuinely repeat (the `pure_pass_class!` / `pat_builder_finalise!` shapes).  For semantic repetition (data-flow patterns, walks, error-wrap-and-propagate), prefer a function or extension trait.  Macros lose IDE support, defeat type inference, and are read-once / write-many.
+- **Visibility tightening as a side-effect.**  Once a helper is extracted, the original implementation may have been over-public.  For every helper extraction, propose the minimum visibility (`pub(crate)` first, `pub` only if a downstream consumer outside the helper's home crate needs it).
+- **Propose alternatives when extraction isn't worth it.**  If the duplicated pattern is fewer than 3 LOC AND the call sites are fewer than 5, the indirection cost may exceed the duplication cost.  Document the decision and skip.
+
+The Round 5 simplifications report should land at `reviews/round9-simplifications.md` with sections: code to delete, helper consolidation, visibility tightening, naming consolidation, performance migrations.  Aim for 30–50 concrete entries.
 
 ## Coverage requirement — every line of source must be inspected
 
-This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/src/`, every `.rs` file under `crates/*/tests/` and `crates/*/benches/`, every `.py` file under `crates/strider-py/tests/python/`, every `Cargo.toml`, every `*.md` file under `reviews/round8-*.md`'s scope (CLAUDE.md, every per-crate README, every existing skill SKILL.md, the root README) must be **read in full** by at least one subagent during the rounds below.
+This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/src/`, every `.rs` file under `crates/*/tests/` and `crates/*/benches/`, every `.py` file under `crates/strider-py/tests/python/`, every `Cargo.toml`, every `*.md` file under `crates/*/README.md` + the root README + CLAUDE.md + `crates/strider/.claude/skills/*/SKILL.md`, must be **read in full** by at least one subagent during the rounds below.
 
 Concretely:
 
-- **Inventory first.**  The Round 0 orientation step must produce `reviews/round8-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set above).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
-- **No globbing skips.**  If a file is short, glance through it and tick it.  If a file is long (e.g. `crates/opt/src/constant_fold/rules.rs`, `crates/pattern/src/matcher/mod.rs`, `crates/strider/src/orchestrator.rs`), read it in 200-line chunks until the whole file is covered — don't read the first 200 lines and call it done.  When a subagent reports its findings it should also report which files it covered fully, partially, or not at all; partial / not-at-all entries become Round 1.5 follow-up tasks for a fresh subagent.
+- **Inventory first.**  The Round 0 orientation step must produce `reviews/round9-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
+- **No globbing skips.**  If a file is short, glance through it and tick it.  If a file is long (e.g. `crates/opt/src/constant_fold/rules.rs`, `crates/pattern/src/matcher/mod.rs`, `crates/strider/src/orchestrator.rs`, `crates/strider-py/src/pattern.rs`), read it in 200-line chunks until the whole file is covered.  When a subagent reports its findings it should also report which files it covered fully, partially, or not at all; partial / not-at-all entries become Round 1.5 follow-up tasks for a fresh subagent.
 - **Tests count.**  Test files surface missing-coverage and stale-fixture issues that source-only review misses — read every `tests/` and `benches/` file too, including the strider-py `tests/python/`.
 - **Generated / auto-formatted code is in scope** if it lives under `crates/*/src/`.  Skip only `target/`, `.git/`, `node_modules/`, `__pycache__/`, build artefacts.
 - **Exception (allowed skips):** the `../rsleigh` upstream crate is *consulted* (verifying claims) but not *audited* — it's a third-party dep, out of scope for this review.
@@ -58,177 +102,182 @@ Spawn fresh subagents in **parallel** for independent rounds.  Each agent must:
 
 1. Receive a self-contained prompt — assume the agent has zero context for this conversation.
 2. Read code directly via `Read`/`Grep`/`Glob` — not via inherited memory.
-3. Be told explicitly: do NOT read `reviews/round7-*.md` or any earlier-round output.
-4. Produce a single Markdown report at `reviews/round8-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
+3. Be told explicitly: do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, or any earlier-round output.
+4. Produce a single Markdown report at `reviews/round9-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
 5. Output format per finding:
    ```
    ### <Finding title>
    - **Severity:** HIGH/MED/LOW
    - **Where:** crates/foo/src/bar.rs:42-58
    - **What's wrong:** <evidence from code, not from comments>
-   - **Verified against:** <rsleigh path / IR signature / sibling pass / ABI spec>
+   - **Verified against:** <rsleigh path / IR signature / sibling pass / ABI spec / objdump trace>
    - **Fix:** <concrete patch or rewrite plan>
+   - **Regression test (when applicable):** <fixture-based test pinning the fix>
    ```
 
 When you launch multiple subagents for independent work, send them in a **single message with multiple Agent tool uses** so they run concurrently.
 
 ## Concrete asks (numbered)
 
-1. **Correctness.**  Graph must faithfully represent the assembly across all edge cases — register aliasing (every width in `vn_mask`), bounded lift (`is_addr_tail_call` half-open semantics), indirect branches (every shape the resolver claims to handle), memory-edge clobbering, phi shapes (VarPhi/MemPhi/StackStorePhi/ValuePhi arity rules), NaN ordering, sign / zero extension, NaN-aware float comparisons, lift-time canonicalisations (`IntSub`, `IntLessEqual`, `IntSlessEqual`, `IntNotEqual`, `FloatSub`, `FloatNotEqual`, `FloatLessEqual`, `FLOAT_NAN`), CallOther ABI classifications.  Verify the asm-fingerprint superset contract holds across every opt pass.
-2. **Simplicity.**  Identify modules / functions / passes / structs / API surface to delete or merge without sacrificing correctness.  Look for duplicated patterns across opt passes, redundant wrapper types, dead test-only `pub`, unused features (per `target::CallingConvention` presets, per `SleighArch` presets, per pattern free constructor, per NodeKind variant).
-3. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere — not just `tier1`/`tier2`.  Verify that meaning of every term in CLAUDE.md / per-crate README matches the actual code.
-4. **Unused features.**  Confirm by code inspection that every `pub` item has at least one external consumer (within the workspace OR via Python bindings).  Items unreachable from any consumer are candidates for deletion.
-5. **Python binding parity.**  Verify every IR / pattern / opt / target / strider feature accessible from Rust is also reachable from `strider-py`'s Python API, OR is documented as deliberately Rust-only (with rationale).  GIL handling correctness on every callback path.  Typed exception coverage on every fallible Python entry.
-6. **Multiple rounds.**  Run **at least 2 independent rounds** of audit on every code area.  The previous review found that 6B caught a HIGH-severity bug (IfCondInversion VarPhi corruption) after 1C, 1E, 2D had all read the same file without spotting it — multi-round, no shared state, fresh subagents is what moves the needle.
-7. **Test plan.**  Where coverage is sparse, propose specific tests with file path, scope (unit / integration / property / scale), exact harness/fixture, expected assertions.  Use TDD discipline — failing test FIRST, then fix.
-8. **Stale comments.**  Verify every `pub` item's docstring matches the actual code.  Hunt for `TODO`s linked to closed work, references to deleted symbols, half-rename leftovers, comments that describe behaviour the surrounding code doesn't implement.
-9. **Production panics.**  No `panic!` / `unwrap()` / `expect()` / `unreachable!()` / `assert!()` in non-test code paths.  Audit every occurrence; if not justified by a by-construction invariant, propose `Result` propagation.  Annotate justified ones with `#[allow(clippy::expect_used)]` and a code comment naming the invariant.
-10. **CLAUDE.md / READMEs / doc consistency.**  Verify the root README's claims, every per-crate README's public-surface enumeration, every `pub fn` doc.  Trust ONLY the code; flag every drift.
-11. **Skills.**  Skim the existing `crates/strider/.claude/skills/*/SKILL.md` set.  Identify any new skill that would help future contributors (or any existing skill that has decayed against the current code).
-12. **Scale.**  Verify behaviour at ~10k IR nodes — recursion-induced stack-overflow risk in any function that walks a memory or control chain without an explicit depth bound and without an iterative form, asymptotic complexity in hot paths (`Matcher::find_all`, `find_all_requirements`, `validate`, `create_node` dedup, opt pipeline iteration, orchestrator fixed-point), memory growth (zombie pollution after the destructive pipeline, side-table bloat), Python GIL hold-time on long-running analyses.
-13. **Type design.**  Audit every `pub` struct / enum / trait for: leaky encapsulation (public fields where invariants exist), primitive obsession (`u32` where a newtype would express intent), types that fail to express their invariants, partial-state types (struct with all fields populated to "valid" sentinels rather than `Option<_>` or a sum type for the genuine states).
-14. **Silent failures.**  Hunt every `unwrap_or` / `unwrap_or_default` / `if let Ok` followed by ignore-Err / `.ok()?` / `match … _ => return None` swallowing real errors.  Distinguish "intentional fallback for a documented optional path" from "swallowed bug".
-15. **Helpers / generalization.**  Identify recurring patterns across the codebase (graph traversal, error-wrapping boilerplate, opt-pass scaffolding, side-table mutations) and propose helpers / newtypes / extension traits that consolidate them.  But do NOT force-fit — if a candidate generalisation has 3 sites with subtly different semantics, document the differences and recommend skip.
+1. **Correctness — code vs code self-consistency** *(emphasis A axis 1)*.  For every operation implemented in 2+ sites, verify the implementations agree on every input.  Sites to start from: SP decomposition, CallOther dispatch, varnode aliasing, commutativity tables, lift-time canonicalisations.  Pin every divergence as a HIGH finding, even if it's documentation-only drift.
 
-16. **Performance at thousands-of-nodes scale.**  Beyond the round 7 stack-overflow checks, **verify the codebase is *optimised* for ~10k–100k IR nodes, not merely correct.**  Per hot path, derive the asymptotic complexity from the code (don't trust comments), then check:
-    - **Allocation per call.**  `Vec::new()` / `HashMap::new()` / `Box::new(...)` inside loops over reachable nodes.  Even when the inner Vec is small, M iterations × per-call allocator hit dominates real-world cost.  Propose `SmallVec<[_; N]>`, reused scratch buffers, or pre-sized-with-capacity allocations.
-    - **Hash sets / maps over `NodeId` / `NodeOutputId` / `NodeInputId`.**  Replace with `entity_utils::DenseEntitySet` / `cranelift_entity::SecondaryMap` where the entity is dense — the bit-vector / array shape skips the FxHash entirely and gets cache-local indexing.  Round 7 covered the obvious sites; this round looks for the missed ones.
-    - **Repeated full-graph scans inside fixed-point loops.**  Anything in `OptimizerPipeline::run`'s loop body or `strider::orchestrator::step` that walks `graph.all_node_ids()` is O(N) per iteration; in the orchestrator's worst case (`2 * pending_at_iter_0 + 4` iterations) this is multiplicative.  Identify scans that can be cached / amortised across iterations or replaced with a worklist.
-    - **`HashMap` keys with heap allocations.**  `Graph::node_to_id`'s key is `(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>)`.  Round 7 swapped to `hashbrown::raw_entry` for the lookup path; this round verifies *every* hot HashMap doesn't unnecessarily clone keys on insert.
-    - **`Match::find_all_requirements` cross-product blowup** (round7-scale.md B2).  For shared-capture queries with M patterns each matching N nodes, the worst case is O(N^M).  The current code lacks early-exit pruning beyond `acc.is_empty()`; verify whether better pruning (sort by pattern selectivity, prune at first disagreement instead of full-scan) is feasible without breaking the binding-agreement contract.
-    - **Worst-case wall-clock budget.**  For a synthetic 10k-node graph through `default_pipeline()`, the audit must produce a measured P50 / P95 from the existing benchmark harness in `crates/strider/benches/scaling.rs`.  Any pass exceeding 100 ms / 10k nodes flags as a performance hot-spot.
-    - **Memory residency.**  After `orchestrator::run` finishes, what's still alive?  Side-tables (`asm_fingerprints`, `wide_consts`, `call_other_names`, `stack_phi_offsets`) keyed on detached-zombie `NodeId`s are wasted bytes.  Verify `compact()` is called when expected and that all side-tables are GCed by it.
-    - **Python GIL hold-time on long lifts.**  `strider.run`'s pure-Rust `MemoryMap` path now releases the GIL via `py.allow_threads`; verify the callback-reader path (where the inner reader re-acquires GIL per read) doesn't ping-pong the GIL excessively for I/O-intensive workloads.
+2. **Correctness — IR vs lifted representation** *(emphasis A axis 2)*.  Every `NodeKind` must precisely model the underlying pcode opcode.  Verify by lifting one real instruction per opcode family and comparing IR shape to rsleigh's documented semantics.  Cover: arithmetic (Add/Sub/Mul/Div/Mod, signed and unsigned), shifts (Shl/Shr/Sar), bit-ops (And/Or/Xor/Not), comparisons (Equal/Less/Sless and the lowered Le/Sle/Ne shapes), casts (Truncate/ZeroExtend/SignExtend, IntToFloat/FloatToInt/FloatToFloat, IntBitsToFloat/FloatBitsToInt), float arith (Add/Mul/Div, Sub-as-lowered, NaN-aware Less/Equal/LessEqual), memory (Load/Store with VnSpace), control (If/IndirectBranch/Call/CallOther/Return), phis (VarPhi/MemPhi/ValuePhi/StackStorePhi), wide constants (`IntConstWide` U256/U512), sub-register aliasing.  Sample at least 30 instruction-IR pairs.
 
-17. **Graph-soundness vs real assembly — return / clobber correctness.**  This is the deepest correctness check: **every Call in the IR must reflect what real-world callers / callees observe at the assembly level**, not just what the lifter produced.  Per architecture:
-    - **Return-value flow.**  Pick representative real binaries from each supported arch (x86_64 SystemV, x86 cdecl, AArch64 AAPCS64, ARM AAPCS, MIPS o32, MIPS n64, PowerPC ELF v1/v2).  For each, lift a function that returns `int`, `long`, `struct {int,int}`, `float`, `double`, and `__int128`.  Verify the IR's `Return` node's value inputs precisely match what the ABI says the caller reads (RAX/RDX, X0/X1, V0, etc.) and the callee actually wrote.  Cross-check against the ABI spec table and against `objdump -d` of a real toolchain output.
-    - **Clobber footprint.**  For each `Call` node, the IR's clobber output set must equal the caller-saved register set per the resolved CC.  Verify both the *positive* case (caller-saved regs ARE clobbered post-call) AND the *negative* case (callee-saved regs are NOT clobbered — their values flow through the Call unchanged).  Compare against real assembly: a function that reads a callee-saved reg before AND after a call must have the IR show the same value being read both times.
-    - **Memory chain after a call.**  Calls advance the memory edge by default (modulo `no_memory_clobber`).  Verify that `LoadReadOnly` and `StackLoadForward` correctly stop forwarding across normal calls AND correctly forward across `x86_64_all_preserving` calls (`__fentry__` / `mcount` hooks).  Pick a real Linux-kernel binary with `__fentry__` instrumentation and verify the rodata loads after the hook still fold to constants.
-    - **CallOther implicit reads / writes.**  For each entry in `target::call_other_abi::classify`, fetch the Intel SDM / ARM ARM / MIPS Reference / PowerPC ISA reference for the underlying instruction and verify `implicit_reads` covers every register the instruction reads and `implicit_writes` covers every register it writes.  Sample at least 20 entries — `cpuid`, `rdtsc`, `rdtscp`, `rdmsr`, `wrmsr`, `swapgs`, `wrgsbase`, `wrfsbase`, `mfence`, `sfence`, `lfence`, `cmpxchg16b`, `xsetbv`, `xgetbv`, `monitor`, `mwait`, `int 0x80`, `syscall`, `sysret`, `sysenter`.
-    - **Indirect-branch resolution against real targets.**  For each shape the resolver claims to handle (link-register return, jump-table, stack-array dispatch, tail-call), find a real binary exhibiting that shape and verify the resolved targets match the symbol-table truth (`nm` / `addr2line`) for at least three call sites.
-    - **Lift-time canonicalisations are bit-exact.**  Pcode lowering (`IntSub`/`IntLessEqual`/`IntSlessEqual`/`IntNotEqual`/`FloatSub`/`FloatNotEqual`/`FloatLessEqual`/`FLOAT_NAN`) was verified once; this round re-verifies on AT LEAST one real lifted instruction per canonicalisation, comparing the IR against a hand-derived expected pcode trace from rsleigh.
+3. **Correctness — lifted IR vs real assembly** *(emphasis A axis 3)*.  Per arch (x86, x86_64, ARM, ARM-BE, ARM-Thumb, AArch64, AArch64-BE, MIPS32-LE/BE, MIPS64-LE/BE, PPC32-LE/BE, PPC64-LE/BE), pick one representative function from `fixtures/out/<arch>/` and verify:
+   - Return-value registers match the ABI.
+   - Caller-saved registers are clobbered, callee-saved are not.
+   - Memory chain monotonicity (every `Store` advances the chain; every `Call` advances unless the per-address override sets `no_memory_clobber`).
+   - Indirect branches resolve to the right targets (the 7 ignored tests in `crates/strider/tests/indirect_branch.rs` document specific shapes — fact-check the documented fix path against the actual lifter output).
+   - Per-arch CallOther entries fire correctly (e.g. ARM `swi` is reading r7/r0..r6 and writing r0; AArch64 HVC/SMC are reading x0..x7 and writing x0..x3).
+   - Every fix proposal includes a regression test that lifts the relevant instruction.
 
-    **For each finding under ask 17, the fix proposal must include a regression test that lifts a real instruction and asserts the resulting IR shape — fixture-based, not hand-built mock graphs**.  Hand-built mocks were the round-7 norm; this round demands lifted-from-real-code coverage for the soundness claims.
+4. **Simplicity — exhaustive helper extraction sweep** *(emphasis B)*.  Identify modules / functions / passes / structs / API surface to delete or merge without sacrificing correctness.  Look for:
+   - Duplicated patterns across opt passes (≥ 3 occurrences, ≥ 3 LOC each).
+   - Redundant wrapper types (a `struct Foo(Inner)` with no methods worth wrapping for).
+   - Dead test-only `pub` (visibility wider than required).
+   - Unused features (per `target::CallingConvention` preset, per `SleighArch` preset, per pattern free constructor, per NodeKind variant, per pcode opcode arm in `pcode_lift::value::*` — verify each via `grep` for at least one external consumer).
+   - Stale `#[ignore]` test reasons that no longer match what the test does (the round-8 sweep cleaned R1/R2/Tier-N — check if more accumulated).
+   - Helper extraction candidates organised by their Three-occurrence + load-bearing analysis (per emphasis B's per-finding criteria).
 
-18. **Multiple correctness rounds with rotating focus.**  Ask 6 already requires "≥ 2 independent rounds on every code area".  This round adds a TYPE-rotation discipline: between rounds, **rotate the kind of error each agent searches for**, so the same code is read with different mental models.  Required rotation:
-    - **Round-1 pass (per-crate)**: typing / signature / arity errors — does the code do what its types say it does?
-    - **Round-2 pass (re-audit, fresh subagent per crate, cannot read round-1's output)**: invariant-violation errors — does this code maintain the invariants its callers depend on?  (asm-fingerprint superset, dedup-cache equivalence, validator Layer-A/B/C coverage, single-Entry / single-InitialMemory, monotonic memory chain, and so on.)
-    - **Round-3 pass (re-audit, fresh subagent per crate, cannot read round-1 or round-2)**: concurrency / aliasing / borrowing errors — for any code that holds a `&mut` while doing work that could re-enter or invalidate the borrow target, are the lifetimes provably sound?  Check unsafe blocks, raw pointers (`*const Graph` in `PyPartialMatch`), thread-safety claims (`Send` / `Sync` impls, `Mutex` / `RwLock` patterns).
-    - **Round-4 pass (re-audit, focused on edge cases)**: boundary errors — empty inputs, single-element inputs, max-arity inputs, NaN / infinity / signed-zero floats, INT_MIN sign-extension, address `u64::MAX`, instruction at `addr = start_addr` boundary, instruction at `addr + fn_max_size - 1` boundary, the very last node id in the arena, the lifetime-zero-overlap case for `StackStorePhi`, etc.
-    - **Round-5 pass (cross-arch consistency)**: pick one finding per round above and verify it across every arch — the most subtle bugs are arch-specific (e.g. AArch64 `bl` link-register semantics, MIPS branch-delay slot, x86 `cmp/jne` flag-register lift).
+5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere — not just round-7's `tier1`/`tier2` and round-8's `x86_64_systemv_abi`/`r1_placeholder`.  Verify that the meaning of every term in CLAUDE.md / per-crate README / SKILL.md matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role.  Propose a concrete rename mapping for every flagged identifier.
 
-    Each pass produces its own subagent report (`reviews/round8-correctness-types.md`, `round8-correctness-invariants.md`, `round8-correctness-borrowing.md`, `round8-correctness-edge-cases.md`, `round8-correctness-cross-arch.md`).  The Round-7 final consolidation merges them.
+6. **Unused features.**  Confirm by code inspection that every `pub` item has at least one external consumer (within the workspace OR via Python bindings).  Items unreachable from any consumer are candidates for deletion.  Check both ways: walk down from `lib.rs`'s `pub use` re-exports to find every public surface, then walk back up from each surface to find at least one external call site.
+
+7. **Python binding parity.**  Verify every IR / pattern / opt / target / strider feature accessible from Rust is also reachable from `strider-py`'s Python API, OR is documented as deliberately Rust-only (with rationale).  GIL handling correctness on every callback path.  Typed exception coverage on every fallible Python entry.  Round 8 added `multiple-pymethods` to the PyO3 feature set; verify no new code path leaks panics that the typed-exception layer should catch.
+
+8. **Multiple rounds of correctness audit, rotating focus** *(retained from round 8 with refinements)*.
+   - **Round-1 pass (per-crate)**: typing / signature / arity errors — does the code do what its types say it does?
+   - **Round-2 pass (re-audit, fresh subagent per crate, cannot read round-1's output)**: invariant-violation errors — does this code maintain the invariants its callers depend on?
+   - **Round-3 pass (re-audit, fresh subagent per crate, cannot read round-1 or round-2)**: concurrency / aliasing / borrowing errors — for any code that holds a `&mut` while doing work that could re-enter or invalidate the borrow target, are the lifetimes provably sound?
+   - **Round-4 pass (re-audit, focused on edge cases)**: boundary errors — empty / single / max-arity inputs, NaN / inf / signed-zero floats, INT_MIN sign-extension, address `u64::MAX`, instruction at `addr = start_addr` boundary, the very last node id in the arena, the lifetime-zero-overlap case for `StackStorePhi`.
+   - **Round-5 pass (cross-arch consistency)**: pick one finding per round and verify it across every arch.
+
+   Each pass produces its own subagent report (`reviews/round9-correctness-types.md`, `round9-correctness-invariants.md`, `round9-correctness-borrowing.md`, `round9-correctness-edge-cases.md`, `round9-correctness-cross-arch.md`).
+
+9. **Test plan.**  Where coverage is sparse, propose specific tests with file path, scope (unit / integration / property / scale), exact harness/fixture, expected assertions.  Use TDD discipline — failing test FIRST, then fix.
+
+10. **Stale comments.**  Verify every `pub` item's docstring matches the actual code.  Hunt for `TODO`s linked to closed work, references to deleted symbols, half-rename leftovers, comments that describe behaviour the surrounding code doesn't implement.
+
+11. **Production panics.**  No `panic!` / `unwrap()` / `expect()` / `unreachable!()` / `assert!()` in non-test code paths.  Audit every occurrence; if not justified by a by-construction invariant, propose `Result` propagation.  Annotate justified ones with `#[allow(clippy::expect_used)]` and a code comment naming the invariant.
+
+12. **CLAUDE.md / READMEs / doc consistency.**  Verify the root README's claims, every per-crate README's public-surface enumeration, every `pub fn` doc.  Round 8 landed a CLAUDE.md correctness diff and 12 per-crate READMEs (`reviews/round8-claudemd-diff.md`, `reviews/round8-readme-diffs.md`); verify against the post-round-8 state.
+
+13. **Skills.**  Skim `crates/strider/.claude/skills/*/SKILL.md`.  Identify any new skill that would help future contributors (or any existing skill that has decayed against the current code).  Round 8 added 6 new skills (orchestrator-extend, cc-preset-extend, fixture-author, flagcmp-rule-author, cli-runner, validation-invariant-extend); verify each against the actual procedure they describe.
+
+14. **Scale.**  Verify behaviour at ~10k–100k IR nodes — recursion-induced stack-overflow risk in any function that walks a memory or control chain without an explicit depth bound, asymptotic complexity in hot paths (`Matcher::find_all`, `find_all_requirements`, `validate`, `create_node` dedup, opt pipeline iteration, orchestrator fixed-point), memory growth (zombie pollution after the destructive pipeline, side-table bloat), Python GIL hold-time on long lifts.  Round 8 migrated `WorkSet`/`KnownBitsMap`/`detach_unreachable_nodes` to `DenseEntitySet`/`SecondaryMap`; verify the migrations are complete (no remaining `FxHashSet<NodeId>` / `FxHashMap<NodeOutputId, _>` in hot paths) and look for the next tier of perf wins.
+
+15. **Type design.**  Audit every `pub` struct / enum / trait for: leaky encapsulation (public fields where invariants exist), primitive obsession (`u32` where a newtype would express intent), types that fail to express their invariants, partial-state types (struct with all fields populated to "valid" sentinels rather than `Option<_>` or a sum type for the genuine states).  Round 8's deferred items included `Pattern` trait sealing, `MatchCtx::graph` tightening, `PcodeInsnAddr` field-access leak (~30 sites) — verify these are still tradeoff calls or have moved.
+
+16. **Silent failures.**  Hunt every `unwrap_or` / `unwrap_or_default` / `if let Ok` followed by ignore-Err / `.ok()?` / `match … _ => return None` swallowing real errors.  Distinguish "intentional fallback for a documented optional path" from "swallowed bug".  Round 8 cleaned the `flag_cmp_canonicalize::unwrap_or(a)` and `apply_tail_call::unwrap_or(U64)` and `anchor_contexts::unwrap_or(&empty_ctx)` instances — verify no new silent failures crept back in.
+
+17. **Helpers / generalisation** *(emphasis B; see top-level criteria above)*.  Identify recurring patterns across the codebase (graph traversal, error-wrapping boilerplate, opt-pass scaffolding, side-table mutations, test-fixture builders).  Apply the three-occurrence threshold + load-bearing-different vs. accidentally-different distinction.  For each accepted candidate, propose the helper signature, location, and migration shape at every call site.
+
+18. **Build / lint / test baseline.**  At Round 0 and at the end of Round 7, the workspace must satisfy:
+    - `cargo build --workspace --all-targets` clean.
+    - `cargo clippy --workspace --all-targets -- -D warnings` clean.
+    - `cargo test --workspace` all passing (currently 123 suites; round 8 set `[lib] test = false` on `strider-py` because the `multiple-pymethods` feature pulls in Python symbols the test harness can't resolve).
+    - `cd crates/strider-py && uv run maturin develop && uv run pytest tests/python/` all passing (currently 759 + 14 skipped).
+
+    Surface any drift in the Round 0 report; surface any regression in the Round 7 final summary.
 
 ## Recommended round structure
 
 ### Round 0 — orient
-Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README.  Build a mental model of what's in each crate.  Run `cargo build --workspace --all-targets` and `cargo clippy --workspace --all-targets --no-deps -- -D warnings` and `cargo test --workspace` to baseline the current state.  Note the warning / failure count (must be 0 for both build and clippy; tests must all pass).  Run `cd crates/strider-py && uv run maturin develop && uv run pytest tests/python/ --ignore=tests/python/test_arm64_kernel_lift_bugs.py -q` for the Python side.
+Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README, every existing `crates/strider/.claude/skills/*/SKILL.md`, the round-8 implementation commit messages (`git log --no-decorate review/ai2 -- ':!reviews/'` for the post-round-7 commits).  Build a mental model of what's in each crate.  Run the four baseline checks above.  Produce `reviews/round9-coverage-manifest.md` listing every file in scope.
 
 ### Round 1 — deep per-crate audit (parallel; 6 subagents)
 Six `feature-dev:code-reviewer` agents, one per crate group:
 
-| # | Crates | Special focus |
-|---|--------|---------------|
-| 1A | `ir` | Graph dedup correctness; asm-fingerprint contract (superset + union on cache hits); validate Layer A/B/C reachability scoping; `FunctionBuilder::lift_at` / `LiftAddrGuard` invariants; `node_signature` panic sites; type-design of `BuiltFunctionGraph` (Deref to Graph; `from_graph_and_entry_for_rewrite`'s contract) |
-| 1B | `pcode-lift` + `cfg` | `vn_io` register-aliasing for every supported width (1/2/4/8/10/16; check whether 32/64 should be added); sub-register partial-write semantics; CondBranch single-OOB-successor edge cases; bounded-lift `is_addr_tail_call`; CallOther classification dispatch |
-| 1C | `opt` | Each pass: rewrite + no-op + idempotency + ordering interactions; FlagCmpCanonicalize correctness against AArch64 cmp encoding; IfCondInversion canonicalisation invariant including phi-value swap; KnownBits soundness; StackStoreDetect / StackLoadForward partial-overlap semantics with endianness; LoadReadOnly bounds; RedundantPhis + DeadBranchElimination interaction with detached zombies; iterative vs recursive memory-chain walks (any function that walks `MemPhi` predecessors needs an iterative form for 10k-store binaries) |
-| 1D | `pattern` | Commutativity tables; capture binding agreement across patterns; `find_all_requirements` cross-product correctness + early-exit; `*_any` set-membership empty-set vacuous failure; `.when()` predicate scope (`&Graph` not `&BuiltFunctionGraph`); lift-time canonicalisation aliases match what IR actually emits; `RewriteCtx<'g>` newtype contract; `Matcher::for_graph` vs `Matcher::new` API surface |
-| 1E | `strider` + `target` + `reader` | Orchestrator fixed-point convergence + monotonicity; `Decision { FixedPoint, StableOnly, Rebuild }` semantics; stall-budget reset across Rebuild; GraphRewriter re_optimize; target CallingConvention varnode resolution per arch (verify register names exist in the corresponding sleigh spec); `apply_elf_relocations_autoload` correctness on partial regions; `BuiltCallingConvention` accessor coverage |
-| 1F | `strider-py` + `dot` + `graphwalk` + `entity-utils` | PyO3 boundary error mapping (every Rust error → typed Python exception, no panic-to-abort); GIL release in `strider.run` for the pure-Rust path; callback-reader re-acquisition; str-keyed capture interning correctness across borrows; unsafe blocks (PyO3 `set_var`, `*const Graph` in PartialMatch); Python tests calling unsupported features; graphwalk traversal termination; entity-utils `EntitySet::insert` returns `bool`; `DenseEntitySet` migration completeness |
+| # | Crates | Special focus (round 9) |
+|---|--------|-------------------------|
+| 1A | `ir` | Graph dedup correctness; asm-fingerprint contract; validate Layer A/B/C reachability scoping; `FunctionBuilder::lift_at` / `LiftAddrGuard` invariants; `node_signature` panic sites; `BuiltFunctionGraph::from_graph_and_entry_for_rewrite` partial-state (still `pub`?); `KnownBitsMap` / `WideConstStorage` / `IntConstWide` correctness against the new `make_int_const(U256/U512)` rejection guard |
+| 1B | `pcode-lift` + `cfg` | `vn_io` register-aliasing for *every* supported width (1/2/4/8/10/16/32/64; round 8 added 32 / 64); the new `Truncate(IntConst)` / `Extend(IntConst)` resolver-arm peeling at `crates/opt/src/indirect_branch_resolve/classify.rs`; `Builder::for_arch` vs `Builder::with_endianness` invariants (round 8 migrated tests/common + benches/scaling); `is_addr_tail_call` half-open semantics |
+| 1C | `opt` | Each pass: rewrite + no-op + idempotency + ordering interactions; `flag_cmp_canonicalize` `Option<Capture>` rhs binding (round 8 refactor); `IfCondInversion` BoolNeg fingerprint absorption; `KnownBits::analyze` `SecondaryMap`-based correctness (round 8 migration); `StackLoadForward` BE narrow-path attribution (round 8 fix); `decompose_sp` iterative form (round 8 conversion); `IndirectBranchResolve` `Truncate`/`Extend` peel arms (round-8 follow-up) |
+| 1D | `pattern` | `pat_builder_finalise!` macro (round-8 follow-up: 15 builders go through it; verify each invocation lands in the `multiple-pymethods` second-pymethods block correctly); `RewriteCtx<'g>` newtype; commutativity tables; `Match::get_vn` per-CallOther override length (round 8 fix); lift-time canonicalisation aliases (`sub`, `int_le`, `int_sle`); `find_all_requirements` cross-product correctness |
+| 1E | `strider` + `target` + `reader` | `crates/strider/src/test_utils.rs` (round-8 follow-up new module); orchestrator `Builder::for_arch` migration; per-Call `try_write_inner` deadlock guard (`PyGraph` mutating methods); `target::call_other_abi` table coverage incl. mfence/sfence/lfence (round 8 added); LR-as-callee-saved deliberate tradeoff for AArch64/ARM/PPC; `apply_elf_relocations_autoload` correctness |
+| 1F | `strider-py` + `dot` + `graphwalk` + `entity-utils` | PyO3 `[lib] test = false` rationale (round-8 follow-up); `multiple-pymethods` macro behaviour at compile time + runtime; `cc::build_cc_for_sleigh` helper (round-8 follow-up); `pure_pass_class!` macro (round-8 follow-up); `PyMatch::with_graph` helper (round-8 follow-up); GIL release in `strider.run`; PyO3 unsafe blocks; `DenseEntitySet`/`SecondaryMap` migration completeness |
 
 ### Round 2 — cross-cutting passes (parallel; 4 subagents)
-- **2A — production-panic hunt.**  `feature-dev:code-reviewer`.  Walk every `unwrap()` / `expect()` / `panic!()` / `unreachable!()` / `assert!()` outside `#[cfg(test)]` / `tests/` / `examples/` / `benches/`.  For each: justified by a by-construction invariant or unjustified?  If unjustified, propose error variant + propagation path.
-- **2B — naming sweep.**  List every occurrence of unclear / misleading / half-rename leftover identifiers.  Look for: `tier`, `_v1`/`_v2`, `old_`/`legacy_`/`tmp_`, `Var` vs `Capture`, leftover references to deleted symbols, file names that don't match what they contain.  Propose a concrete rename mapping.
-- **2C — silent-failure hunt.**  `pr-review-toolkit:silent-failure-hunter`.  Look for `unwrap_or`, `unwrap_or_default`, `if let Ok` followed by ignore-Err, `.ok()` discarding errors, `match … _ => return …` swallowing.  Pay special attention to: relocation autoload, CFG decoder cache, indirect-branch resolver giving up on classifier mismatch, PyO3 conversions returning default values, opt-pass classifier `.ok()?` discards.
-- **2D — type-design analyser.**  `pr-review-toolkit:type-design-analyzer`.  Audit `pattern::{Pat, Capture, Match, RewriteCtx, Matcher}`, `ir::{Graph, BuiltFunctionGraph, NodeOutputKind, NodeKind, FunctionBuilder, LiftAddrGuard}`, `target::{CallingConvention, BuiltCallingConvention, BuiltCallingConventionParts}`, `strider::{RunConfig, AnalyzeOutcome, Strider}`, `opt::{OptimizerPipeline, Optimizer, OptimizerOnBuilt}`.  Flag: leaky encapsulation, primitive obsession, types that fail to express invariants, partial-state types.
+- **2A — production-panic hunt.**  `feature-dev:code-reviewer`.  Walk every `unwrap()` / `expect()` / `panic!()` / `unreachable!()` / `assert!()` outside `#[cfg(test)]` / `tests/` / `examples/` / `benches/`.  For each: justified by a by-construction invariant or unjustified?
+- **2B — naming sweep.**  List every occurrence of unclear / misleading / half-rename leftover identifiers.  Round 8 cleaned R1/R2/Tier-N + `x86_64_systemv_abi` + `r1_placeholder.rs`; look for the next tier.
+- **2C — silent-failure hunt.**  `pr-review-toolkit:silent-failure-hunter`.  Look for `unwrap_or`, `unwrap_or_default`, `.ok()?`, `if let Ok` followed by ignore-Err.
+- **2D — type-design analyser.**  `pr-review-toolkit:type-design-analyzer`.  Audit every `pub` struct / enum / trait for: leaky encapsulation, primitive obsession, partial-state types.
 
 ### Round 3 — verification + comments (parallel; 2 subagents)
-- **3A — trust-only-the-code verification.**  Sample ≥ 25 specific claims from CLAUDE.md and per-crate READMEs.  For each, find the code and confirm or refute purely from code shape.  Emit a CLAUDE.md correctness diff and per-crate README diff.
-- **3B — stale comment sweep.**  `pr-review-toolkit:comment-analyzer`.  Flag every comment block that names a deleted symbol, has a `TODO(TaskNN)` whose task is closed (`git log` + the existing plans dir), or describes behaviour that doesn't match the surrounding code.  Especially look at `pub fn` / `pub struct` doc-strings — those are user-facing.
+- **3A — trust-only-the-code verification.**  Sample ≥ 25 specific claims from CLAUDE.md, per-crate READMEs, and every existing `SKILL.md`.  For each, find the code and confirm or refute purely from code shape.
+- **3B — stale comment sweep.**  `pr-review-toolkit:comment-analyzer`.  Flag every comment block that names a deleted symbol, has a `TODO(TaskNN)` whose task is closed, or describes behaviour that doesn't match the surrounding code.
 
 ### Round 4 — test-gap analysis
-`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round8-test-plan.md` listing each missing test with: scope, file path, harness/fixture, expected assertions, estimated effort.  Use TDD discipline — failing test FIRST.  Required gaps to investigate (not exhaustive):
-
-- Asm-fingerprint dedup-union: a node created twice from different machine addrs must merge fingerprints.
-- Asm-fingerprint shrink-prevention: invariant test that no pass produces a node whose fingerprint is a strict subset of any contributor's.
-- vn_io sub-register partial-write where parent is phi-live.
-- cfg `RegionBuilder::build` bounded-lift terminator on OOB cur_addr.
-- region_builder.rs single-instruction-CondBranch-with-one-OOB-successor edge case (round 7's B1 fix should hold; verify).
-- Stack-array dispatch resolver shape end-to-end.
-- pattern `find_all_requirements` shared-capture-disagreement filtering.
-- pattern `int_const_any_of([])` / `at_any([])` / `offset_any([])` empty-set vacuous-failure tests.
-- Multi-output `Match::output(c)` selection rules (which output binds when the matched node has 2+ value outputs?).
-- ARM/AArch64/MIPS end-to-end ELF fixture coverage.
-- CallOther ABI dispatch — coverage matrix per arch + per opcode.
-- PyO3 every typed exception (`StriderError`, `LiftError`, `ReaderError`, `PatternError`, `RewriteError`, `UnresolvedIndirectBranchError`, `UnknownCallOtherError`) raised by an end-to-end Python test.
-- Iterative-form regression for any recursive memory-chain walk: chain of 1k+ stores must not stack-overflow.
+`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round9-test-plan.md`.
 
 ### Round 5 — consolidation + simplification
-`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round8-simplifications.md` with:
-
-- Modules / functions / structs / passes / CC presets / SleighArch presets to delete and why.
-- Helper consolidation candidates (duplicated traversal, error wrapping, fixture builders).
-- API shrinkage (visibility tightening from `pub` to `pub(crate)` where external consumers don't exist; verify each via grep).
-- Generalization opportunities — but for each, check actual call sites first; if the abstraction loses load-bearing per-site semantics, document and skip.
+`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round9-simplifications.md` per emphasis B's structure (code to delete, helper consolidation, visibility tightening, naming consolidation, performance migrations).  30–50 entries.
 
 ### Round 6 — skill audit
-Skim `crates/strider/.claude/skills/*/SKILL.md` against the current code.  For each skill: does its procedure still apply?  Does it reference deleted symbols?  Are there gaps where a new skill would help?  Propose new skills or revisions.  Don't author yet — just design.
+Skim every existing skill against the current code.  Propose new skills or revisions.
 
 ### Round 7 — final consolidation
-A single `claude-md-management:revise-claude-md`-style synthesis that integrates every prior-round output into:
+A single synthesis that integrates every prior-round output into:
 
-1. `reviews/round8-summary.md` — executive summary with prioritised fix backlog (HIGH → LOW), grouped by theme (correctness, simplicity, naming, dead code, panics, tests, docs, py-parity, skills, scale, type-design, silent failures).
-2. `reviews/round8-claudemd-diff.md` — concrete CLAUDE.md edits.
-3. `reviews/round8-readme-diffs.md` — concrete per-crate README edits.
+1. `reviews/round9-summary.md` — executive summary with prioritised fix backlog.
+2. `reviews/round9-claudemd-diff.md` — concrete CLAUDE.md edits.
+3. `reviews/round9-readme-diffs.md` — concrete per-crate README edits.
+
+The summary must include a "what's-new-vs-round-8" section: which findings are genuinely new (introduced post-round-8) vs. which are pre-existing bugs round 8 missed vs. which are pre-existing-and-known-deferred.
 
 ## Acceptance criteria
 
-- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round8-summary.md` with concrete actions.
-- [ ] Ask 16 (perf at 10k+ nodes) produces a measured P50 / P95 table per pass over a synthetic 10k-node fixture; flagged hot-spots (> 100 ms) listed with proposed fixes.
-- [ ] Ask 17 (graph-soundness vs real assembly) produces a `reviews/round8-graph-soundness.md` documenting per-arch ABI verification against real binaries (≥ 1 representative function per arch + ≥ 20 CallOther entries + ≥ 3 indirect-branch sites per resolver shape).  Every finding includes the lifted-from-real-code regression test that pins it.
-- [ ] Ask 18 produces five separate correctness reports — `round8-correctness-types.md`, `round8-correctness-invariants.md`, `round8-correctness-borrowing.md`, `round8-correctness-edge-cases.md`, `round8-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.  Final summary lists which round caught which findings (the multi-round signal).
-- [ ] Round 8 summary lists every HIGH-severity finding with `file:line` + a proposed fix.
-- [ ] CLAUDE.md correctness diff exists with ≥ 25 spot-checked claims.
+- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round9-summary.md` with concrete actions.
+- [ ] Emphasis A (correctness against itself + against pcode + against assembly) produces three reports: `reviews/round9-correctness-self-vs-self.md`, `reviews/round9-correctness-ir-vs-pcode.md`, `reviews/round9-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
+- [ ] Emphasis B (helper extraction) produces `reviews/round9-simplifications.md` with 30–50 entries grouped per the emphasis B structure.
+- [ ] Ask 8 (multi-round correctness) produces five separate reports — `round9-correctness-types.md`, `round9-correctness-invariants.md`, `round9-correctness-borrowing.md`, `round9-correctness-edge-cases.md`, `round9-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
+- [ ] Round 9 summary lists every HIGH-severity finding with `file:line` + a proposed fix + (for emphasis A findings) the regression test scaffolding.
+- [ ] CLAUDE.md correctness diff lists every drift from the current code.
 - [ ] Per-crate README diff lists drift in every crate that has one.
-- [ ] Test plan lists ≥ 12 missing tests with exact `file:line` scaffolding.
+- [ ] Test plan lists ≥ 15 missing tests with exact `file:line` scaffolding.
 - [ ] Naming sweep produces a concrete rename mapping (every flagged identifier has a target name).
 - [ ] Production-panic audit lists every unjustified `unwrap`/`expect`/`panic!` with proposed `Result` plumbing.
-- [ ] Type-design audit produces a list of `pub` struct/enum candidates for visibility tightening or newtype wrapping.
+- [ ] Type-design audit produces a list of `pub` struct/enum candidates for visibility tightening or newtype wrapping, with verification that the proposed visibility is achievable.
 - [ ] Silent-failure audit produces a list of `.ok()?` / `unwrap_or` sites with a propose-or-document decision per site.
 - [ ] Skill audit produces a list of revisions or new-skill proposals.
-- [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets --no-deps -- -D warnings`, `cargo test --workspace`, and `pytest tests/python/` all green at the start AND end of the review.
-- [ ] No source code is edited during the review — this is a review effort, not implementation.  The output is the set of `reviews/round8-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
-- [ ] `reviews/round8-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent — no partial / skipped entries unaccounted for.
+- [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `pytest tests/python/` all green at the start AND end of the review.
+- [ ] No source code is edited during the review.  The output is the set of `reviews/round9-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
+- [ ] `reviews/round9-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent.
 
 ## Out of scope
 
-- **Editing source code.**  Only documentation under `reviews/round8-*.md` is allowed.
+- **Editing source code.**  Only documentation under `reviews/round9-*.md` is allowed.
 - **Authoring new tests.**  Only the test plan is in scope; writing the actual tests is follow-up.
 - **Authoring new skills.**  Only the skill design is in scope.
 - **Per-crate README rewrites.**  Only the diff is in scope.
 
 ## Critical files to consult
 
-These are the surfaces most worth starting from — but they are **not exhaustive**.  The coverage requirement above demands every `.rs` / `.py` / `Cargo.toml` under `crates/` be inspected; the list below names the high-density files where the most architectural decisions live, so the per-crate subagents have an obvious anchor to begin from.
+These are the surfaces most worth starting from — but they are **not exhaustive**.  The coverage requirement above demands every `.rs` / `.py` / `Cargo.toml` under `crates/` be inspected.
 
-- IR core: `crates/ir/src/{lib,graph/{mod,store,access},function,validate/{mod,layer_a,layer_b,layer_c},walk,node_signature,builder/{mod,lift_addr,call,nodes,vars}}.rs`
-- Lifter: `crates/pcode-lift/src/{lib,vn_io,value_lifter}.rs`
-- CFG: `crates/cfg/src/cfg/{builder/{mod,region_builder,indirect_resolve},types,decode_cache,query,options}.rs`
-- Optimizer: every `crates/opt/src/<pass>/mod.rs`, plus `pipeline.rs`, `sp_expr.rs`, `worklist.rs`, `indirect_branch_resolve/{mod,jump_table,stack_array,link_register,tail_call,classify}.rs`, `stack_load_forward/mod.rs`, `function_args/mod.rs`
-- Pattern: `crates/pattern/src/{lib,rewrite,matcher/{mod,bindings,match_result,walk,walk_through,function_arg_handle},pat/{mod,traits,node_pat,any,guards,builders/*,ctor/*}}.rs`
-- Strider: `crates/strider/src/{orchestrator,rewrite,indirect_resolve/{mod,classify,inplace},strider/{mod,pipeline,vn_io,insn/{mod,control}}}.rs`
-- Target: `crates/target/src/{arch,call_other_abi,calling_convention/mod}.rs` cross-checked against `../rsleigh/sleigh/src/**`
-- PyO3: `crates/strider-py/src/{lib,errors,pattern,graph,opt,reader,arch,cc,run,strider_cls,sleigh,cfg}.rs`
+- IR core: `crates/ir/src/{lib,graph/{mod,store,access,compact},function,validate/{mod,layer_a,layer_b,layer_c},walk,node_signature,builder/{mod,lift_addr,call,nodes,vars},wide_const,ops/{mod,builder,consts,op_kinds,rewrite}}.rs`
+- Lifter: `crates/pcode-lift/src/{lib,vn_io,value/{mod,arithmetic,boolean,cast,float,integer,mem_load,misc_value}}.rs`
+- CFG: `crates/cfg/src/cfg/{builder/{mod,region_builder,split,indirect_resolve},types,decode_cache,query,options}.rs`
+- Optimizer: every `crates/opt/src/<pass>/mod.rs`, plus `pipeline.rs`, `sp_expr.rs`, `worklist.rs`, `test_support.rs`, `indirect_branch_resolve/{mod,jump_table,stack_array,classify,inplace}.rs`, `stack_load_forward/mod.rs`, `function_args/mod.rs`, `flag_cmp_canonicalize/mod.rs`, `if_cond_inversion/mod.rs`
+- Pattern: `crates/pattern/src/{lib,rewrite,error,matcher/{mod,bindings,match_result,walk,walk_through,function_arg_handle,commutativity,cast_mask},pat/{mod,traits,node_pat,any,guards,builders/*,ctor/*}}.rs`
+- Strider: `crates/strider/src/{lib,errors,orchestrator,rewrite,test_utils,indirect_resolve/{mod,classify,inplace},strider/{mod,pipeline,vn_io,insn/{mod,control}}}.rs`
+- Target: `crates/target/src/{lib,arch,call_other_abi,calling_convention/mod}.rs` cross-checked against `../rsleigh/sleigh/src/**`
+- Reader: `crates/reader/src/{lib,elf}.rs`
+- PyO3: `crates/strider-py/src/{lib,errors,pattern,graph,opt,reader,arch,cc,run,strider_cls,sleigh,cfg,matcher,dot}.rs`
+- Skills: `crates/strider/.claude/skills/*/SKILL.md` (round 8 added 6; round 7 had 8)
+- Tests: every `crates/*/tests/*.rs`, every `crates/strider-py/tests/python/*.py`, the 7 ignored `indirect_branch_resolved_*` tests in `crates/strider/tests/indirect_branch.rs` (each ignore-reason names a specific resolver gap)
 
-After working through the anchor list, every subagent must continue through the rest of its assigned crate's source until the coverage manifest's tick-list is complete for that crate — including `lib.rs`, every sub-module, every `tests/` and `benches/` file.  Auxiliary crates (`dot`, `entity-utils`, `graphwalk`, `reader`) are smaller but still need the same exhaustive sweep.
+After working through the anchor list, every subagent must continue through the rest of its assigned crate's source until the coverage manifest's tick-list is complete for that crate — including `lib.rs`, every sub-module, every `tests/` and `benches/` file.
 
 ## Verification
 
-The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round8-summary.md` describing:
+The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round9-summary.md` describing:
 
 - Total HIGH / MED / LOW finding counts.
-- How many findings were re-derivations of round-7 items vs. genuinely new.
+- How many findings were genuinely new (post-round-8) vs. pre-existing bugs round 8 missed vs. pre-existing-and-deferred.
 - Which subagents found load-bearing items the others missed (the multi-round signal).
+- For emphasis A: the count of findings per axis (code-vs-code, IR-vs-pcode, IR-vs-assembly).
+- For emphasis B: the total LOC eliminated by the proposed extractions vs. the total LOC of helper code introduced.
 
 === END PROMPT ===
 
@@ -236,6 +285,7 @@ The review is itself a research effort — the "verification" is the quality of 
 
 ## Notes for the user
 
-- The prompt explicitly forbids reading `reviews/round7-*.md` so the next round derives findings independently.  The previous round's outputs stay on disk as historical context.
-- The prompt is sized to drive ~3 hours of subagent work plus ~1 hour of consolidation.  Approve tool prompts as they appear; don't context-switch the agent mid-run unless something is genuinely going wrong.
-- After the review lands, you'll have the `reviews/round8-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 8" runs the same play we ran for round 7.
+- The prompt explicitly forbids reading `reviews/round7-*.md` and `reviews/round8-*.md` so the next round derives findings independently.  The previous rounds' outputs stay on disk as historical context.
+- The two emphases (A: triangulated correctness, B: exhaustive helper extraction) override conflicting per-ask priorities.  The subagent prompts inherit that ordering.
+- The prompt is sized to drive ~4–5 hours of subagent work plus ~1–2 hours of consolidation (longer than round 8 because of the assembly-vs-IR ground-truth verification).  Approve tool prompts as they appear.
+- After the review lands, you'll have the `reviews/round9-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 9" runs the same play we ran for rounds 7 and 8.
