@@ -82,6 +82,66 @@ impl std::fmt::Display for AnalyzeOutcome {
     }
 }
 
+/// A `Vec<Vn>` known to be sorted by `pcode_lift::vn_sort_key`.
+/// Round 9 P3 (R9-2D M3): canonical newtype that codifies the
+/// `AnalyzeOptions::all_vns` sort invariant in the type.
+///
+/// Construct via [`Self::try_from_vec`] (validates) or
+/// [`Self::from_sorted_unchecked`] (escape hatch for pre-sorted
+/// input — caller responsibility).
+///
+/// `#[allow(dead_code)]`: this is a forward-migration newtype that
+/// no caller uses yet — `AnalyzeOptions::all_vns` retains its raw
+/// `Option<Vec<Vn>>` form for back-compat.  Suppressing dead-code
+/// warnings while readers migrate.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct SortedVns(Vec<rsleigh::Vn>);
+
+#[allow(dead_code)]
+impl SortedVns {
+    /// Construct from a `Vec<Vn>`, validating that it is sorted by
+    /// `pcode_lift::vn_sort_key`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the input is not sorted.
+    pub fn try_from_vec(vns: Vec<rsleigh::Vn>) -> std::result::Result<Self, anyhow::Error> {
+        for w in vns.windows(2) {
+            if pcode_lift::vn_sort_key(&w[0]) > pcode_lift::vn_sort_key(&w[1]) {
+                return Err(anyhow::anyhow!(
+                    "SortedVns::try_from_vec: input is not sorted by \
+                     pcode_lift::vn_sort_key (found {:?} before {:?})",
+                    w[0],
+                    w[1],
+                ));
+            }
+        }
+        Ok(Self(vns))
+    }
+
+    /// Construct from a `Vec<Vn>` without validation.  Use only when
+    /// the caller has already established the sort invariant
+    /// (e.g. the input came from a previous `try_from_vec` round-trip,
+    /// or was constructed by sorting).
+    #[must_use]
+    pub fn from_sorted_unchecked(vns: Vec<rsleigh::Vn>) -> Self {
+        Self(vns)
+    }
+
+    /// Read the inner sorted slice.
+    #[must_use]
+    pub fn as_slice(&self) -> &[rsleigh::Vn] {
+        &self.0
+    }
+
+    /// Consume and return the inner Vec.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<rsleigh::Vn> {
+        self.0
+    }
+}
+
 /// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
 /// defaults match the [`Strider::analyze_cfg(cfg)`] convenience
 /// behaviour: the orchestrator uses this with both fields set;
@@ -95,6 +155,11 @@ pub struct AnalyzeOptions<'a> {
     /// extra `InitialVar` per superfluous vn.  The orchestrator passes
     /// `Some(cached_vns)` so it shares one vn table across rebuild
     /// iterations.
+    ///
+    /// Round 9 P3 (R9-2D M3): use [`SortedVns::try_from_vec`] /
+    /// [`SortedVns::from_sorted_unchecked`] in new code to encode
+    /// the sort invariant in the type.  The raw-Vec form here is
+    /// retained for back-compat.
     pub all_vns: Option<Vec<rsleigh::Vn>>,
 
     /// Per-target-address CC override map.  Keys are direct-call
