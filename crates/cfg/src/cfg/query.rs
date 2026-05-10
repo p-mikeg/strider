@@ -128,9 +128,8 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     ///
     /// Content-keyed lookup that is stable across CFG rebuilds (same
     /// machine address always produces the same key).  Used by the
-    /// `opt` crate's `IndirectBranchResolve` pass and by `strider`'s
-    /// switch handler to correlate a machine address with the region
-    /// that owns it.
+    /// indirect-branch resolver and by `strider`'s switch handler to
+    /// correlate a machine address with the region that owns it.
     ///
     /// CORRECTNESS: only matches regions whose `start_addr.machine_addr`
     /// equals `addr` exactly.  Mid-region matches return `None` — the

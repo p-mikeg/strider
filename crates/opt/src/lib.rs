@@ -32,8 +32,8 @@
 //! | [`FunctionArgDetect`] (post-pass) | Canonicalises register/stack arg reads to `FunctionArg` |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
-//! Indirect-branch resolution is driven separately by the orchestrator;
-//! [`IndirectBranchResolve`] is not in any pre-built pipeline.
+//! Indirect-branch resolution is driven separately by the orchestrator
+//! (see [`indirect_branch_resolve`]); it is not a pipeline pass.
 
 #![cfg_attr(
     test,
@@ -72,9 +72,9 @@ pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
-    AnchorAddr, AnchorCallingContext, IndirectBranchResolve, ResolvedTargets,
-    apply_link_register, apply_tail_call, classify_anchor, classify_anchor_with_rom,
-    classify_anchor_with_rom_and_sp, find_placeholder_return_for_anchor,
+    AnchorCallingContext, ResolvedTargets, apply_link_register, apply_tail_call,
+    classify_anchor, classify_anchor_with_rom, classify_anchor_with_rom_and_sp,
+    find_placeholder_return_for_anchor,
 };
 pub use known_bits::{KnownBits, KnownBitsMap, Kb, analyze as analyze_known_bits};
 pub use load_readonly::LoadReadOnly;

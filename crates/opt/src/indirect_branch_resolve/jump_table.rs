@@ -287,9 +287,9 @@ fn match_jump_table_shape(
 /// shapes now resolve.
 ///
 /// `known` is the pre-computed result of [`crate::analyze_known_bits`] —
-/// callers (typically [`super::IndirectBranchResolve::optimize`]) compute
-/// it once per pass invocation and thread it through every classified
-/// anchor so we don't re-run the worklist analysis per anchor.
+/// callers compute it once per resolver invocation and thread it through
+/// every classified anchor so we don't re-run the worklist analysis per
+/// anchor.
 #[must_use]
 pub fn bound_via_known_bits(
     fg: pattern::RewriteCtxView<'_>,

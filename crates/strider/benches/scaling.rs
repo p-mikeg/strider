@@ -262,8 +262,8 @@ mod synthetic {
     /// dispatch with `n` targets (constants stored at contiguous
     /// SP-relative offsets, loaded via `arg & (n-1) * stride`).  `n`
     /// must be a power of 2.  The bench measures the full lift +
-    /// stable-subset cost; `IndirectBranchResolve` isn't run here —
-    /// callers can layer it on top if they want the resolve cost.
+    /// stable-subset cost; the indirect-branch resolver isn't run
+    /// here — callers can layer it on top if they want the resolve cost.
     pub fn run_jump_table_scenario(n: usize) -> BuiltFunctionGraph {
         assert!(
             n.is_power_of_two(),

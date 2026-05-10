@@ -135,9 +135,7 @@ pub trait Optimizer: Send + Sync {
 /// `function.create_node(_)` directly.
 ///
 /// Passes that need direct `&mut Graph` access without the wrapper
-/// (e.g. [`crate::indirect_branch_resolve::IndirectBranchResolve`],
-/// whose in-place edits straddle multiple `with_rewrite_ctx`-style
-/// boundaries) implement [`Optimizer`] directly instead.
+/// implement [`Optimizer`] directly instead.
 pub trait OptimizerOnBuilt: Send + Sync {
     /// Run one sweep of this pass over the function graph.  See
     /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.

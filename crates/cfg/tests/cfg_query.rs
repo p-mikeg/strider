@@ -96,9 +96,8 @@ fn region_id_at_start_returns_some_for_real_function_entry() {
     // `region_id_at_start` is `pub` (cross-crate-callable), not
     // `pub(crate)` / `test_api`-only.  This test pins the public
     // contract from the cfg crate's own test suite so an accidental
-    // visibility narrowing (which would break the
-    // `IndirectBranchResolve` orchestrator path in the opt crate)
-    // fails at the cfg boundary.
+    // visibility narrowing (which would break the indirect-branch
+    // resolver's orchestrator path) fails at the cfg boundary.
     let cfg = real_cfg("add");
     // The CFG entry's region must start at the function's entry
     // machine address; `region_id_at_start` therefore finds it.
