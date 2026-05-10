@@ -840,3 +840,28 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
     );
 }
 
+
+#[test]
+fn handle_int_sub_rejects_width_mismatch() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    // Mismatched widths: lhs is 4-byte (REGISTER), rhs is 2-byte CONST,
+    // out is 4-byte.  Sleigh's IntSub requires equal widths; the
+    // lifter must surface this as Err rather than silently coerce.
+    let insn = Insn {
+        opcode: Opcode::IntSub,
+        output: Some(reg(0)),
+        inputs: vec![reg(4), const_vn(1, 2)].into(),
+    };
+    let res = lifter.lift(&insn);
+    assert!(
+        res.is_err(),
+        "IntSub with mismatched widths must Err, got {res:?}"
+    );
+    let msg = res.unwrap_err().to_string();
+    assert!(
+        msg.contains("IntSub width mismatch"),
+        "error message should name the invariant; got {msg}"
+    );
+}

@@ -50,6 +50,29 @@ pub struct Kb {
 }
 
 impl Kb {
+    /// Build a `Kb` from `(ones, zeros)` bit masks, validating the
+    /// `ones & zeros == 0` invariant.  Returns `Err` when the masks
+    /// overlap — every bit must be definitely-one, definitely-zero,
+    /// or unknown, never two of those at once.
+    ///
+    /// Prefer this over the struct-literal constructor when the
+    /// caller has computed `ones`/`zeros` from external data (e.g. a
+    /// pattern-match capture or a user-supplied annotation).
+    /// Internal analysis paths that derive `Kb` from a known-correct
+    /// shape (`from_const`, `merge`) skip this check by construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when `ones & zeros != 0`.
+    pub fn try_new(ones: u64, zeros: u64) -> anyhow::Result<Self> {
+        if ones & zeros != 0 {
+            return Err(anyhow::anyhow!(
+                "Kb::try_new: ones & zeros must be 0, got ones={ones:#x} zeros={zeros:#x}",
+            ));
+        }
+        Ok(Self { ones, zeros })
+    }
+
     /// Build the `Kb` for an integer constant.  Returns `None` for
     /// types this analysis doesn't track (`Bool`, floats, U128, U256):
     /// the caller treats `None` as "fully unknown" and skips
