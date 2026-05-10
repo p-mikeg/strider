@@ -34,19 +34,21 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 ///
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
+///
+/// External callers construct via [`Kb::try_new`] (validates the
+/// invariant) or [`Kb::default`] (all-unknown, the canonical neutral
+/// value).  Read the bit masks via [`Kb::ones`] / [`Kb::zeros`].
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Kb {
     /// Bits that are definitely 1.
     ///
-    /// **Caution:** the `ones & zeros == 0` invariant is enforced by
-    /// [`Kb::merge`] and [`Kb::from_const`].  External code constructing
-    /// a `Kb` via struct-literal syntax (`Kb { ones: 0xFF, zeros: 0xFF }`)
-    /// silently violates it, producing nonsensical analysis results.
-    /// Prefer `Kb::default()` (`{ ones: 0, zeros: 0 }` — no info)
-    /// followed by `merge(...)`.
-    pub ones: u64,
+    /// `pub(crate)` because the `ones & zeros == 0` invariant is
+    /// enforced only by [`Kb::merge`] / [`Kb::from_const`] /
+    /// [`Kb::try_new`] — external struct-literal construction
+    /// (`Kb { ones: 0xFF, zeros: 0xFF }`) silently violates it.
+    pub(crate) ones: u64,
     /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
-    pub zeros: u64,
+    pub(crate) zeros: u64,
 }
 
 impl Kb {
@@ -130,6 +132,18 @@ impl Kb {
     #[must_use]
     pub fn max_value(self, type_mask: u64) -> u64 {
         (!self.zeros) & type_mask
+    }
+
+    /// Bits that are definitely 1.
+    #[must_use]
+    pub fn ones(self) -> u64 {
+        self.ones
+    }
+
+    /// Bits that are definitely 0.
+    #[must_use]
+    pub fn zeros(self) -> u64 {
+        self.zeros
     }
 }
 

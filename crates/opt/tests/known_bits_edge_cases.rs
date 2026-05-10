@@ -23,9 +23,9 @@ fn try_new_rejects_overlapping_bits() {
 #[test]
 fn try_new_accepts_disjoint_masks() {
     let kb = Kb::try_new(0x0F, 0xF0).expect("disjoint masks must construct");
-    assert_eq!(kb.ones, 0x0F);
-    assert_eq!(kb.zeros, 0xF0);
-    assert_eq!(kb.ones & kb.zeros, 0);
+    assert_eq!(kb.ones(), 0x0F);
+    assert_eq!(kb.zeros(), 0xF0);
+    assert_eq!(kb.ones() & kb.zeros(), 0);
 }
 
 #[test]

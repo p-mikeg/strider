@@ -151,6 +151,13 @@ pub fn rewrite_rule(
 /// Construct via `RewriteCtx::new(graph, entry)` or
 /// `RewriteCtx::for_built(&mut bfg)`.  The matcher inside `rewrite_rule`
 /// reads `ctx.graph` + `ctx.entry`; the build path mutates `ctx.graph`.
+///
+/// **Field visibility note.**  `graph` and `entry` are intentionally
+/// kept `pub` for ergonomics — opt passes in particular access
+/// `function.graph` directly across hundreds of call sites.  The
+/// supported accessors are [`Self::graph_ref`] / [`Self::graph_mut`] /
+/// [`Self::entry`]; struct-literal rebinding (`ctx.graph = &mut other`)
+/// is a logic mistake, not a soundness violation.
 pub struct RewriteCtx<'g> {
     pub graph: &'g mut Graph,
     pub entry: NodeId,
@@ -201,9 +208,26 @@ impl<'g> RewriteCtx<'g> {
     /// `classify_anchor*`) so callers that hold either `&mut RewriteCtx`,
     /// `&BuiltFunctionGraph`, or a raw `(&Graph, NodeId)` pair can all
     /// pass the same `RewriteCtxView<'_>`.
-    #[must_use] 
+    #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
         RewriteCtxView { graph: self.graph, entry: self.entry }
+    }
+
+    /// Read-only access to the wrapped `Graph`.
+    #[must_use]
+    pub fn graph_ref(&self) -> &Graph {
+        self.graph
+    }
+
+    /// Mutable access to the wrapped `Graph`.
+    pub fn graph_mut(&mut self) -> &mut Graph {
+        self.graph
+    }
+
+    /// Function-entry `NodeId` anchor.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
     }
 }
 
@@ -219,7 +243,8 @@ pub struct RewriteCtxView<'g> {
     /// (`view.graph = &other_graph`) silently redirects the view at
     /// distance — only do so if you understand the lifetime
     /// implications.  Prefer the `Deref<Target = Graph>` impl for
-    /// read access.
+    /// read access, or the [`Self::graph_ref`] / [`Self::entry`]
+    /// accessors below.
     pub graph: &'g Graph,
     /// **Caution:** read-only by convention; mutating from external
     /// code redirects the view's anchor.  Use [`Self::new`] /
@@ -245,6 +270,18 @@ impl<'g> RewriteCtxView<'g> {
     {
         self.preorder()
             .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
+    /// Read-only access to the wrapped `Graph`.
+    #[must_use]
+    pub fn graph_ref(&self) -> &'g Graph {
+        self.graph
+    }
+
+    /// Function-entry `NodeId` anchor.
+    #[must_use]
+    pub fn entry(&self) -> NodeId {
+        self.entry
     }
 }
 
