@@ -590,8 +590,7 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // Control-flow exceptions (`KeyboardInterrupt`, `SystemExit`)
             // are re-raised so Ctrl-C in an interactive Python session
             // can interrupt a long `LoadReadOnly` pass instead of being
-            // silently absorbed.  Mirrors the wrap_when fix from round 9
-            // wave 31 (H-8).
+            // silently absorbed.
             let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
                 Ok(r) => r,
                 Err(e) => {

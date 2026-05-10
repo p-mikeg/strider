@@ -348,7 +348,7 @@ def test_int_cmp_op_recovery():
     hits = g.find_all(p)
     assert len(hits) >= 1
     op_name = hits[0].int_cmp_op(c)
-    # Round 9 D19 (R9-1F-01): the previous allowed set included
+    # Regression: the previous allowed set included
     # `LessEqual`, `SlessEqual`, `Borrow` — none of these exist in
     # `ir::IntCmpOp`; they are lift-time-lowered shapes, never emitted
     # as primitive nodes.  Listing them was a phantom assertion: the

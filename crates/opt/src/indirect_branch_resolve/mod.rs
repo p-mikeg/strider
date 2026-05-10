@@ -99,8 +99,8 @@ pub enum ResolvedTargets {
 }
 
 impl ResolvedTargets {
-    /// Validating constructor for [`Self::Multiple`] (round 9 P5 /
-    /// R9-2D M6).  Rejects empty `targets` so a future arm cannot
+    /// Validating constructor for [`Self::Multiple`].  Rejects empty
+    /// `targets` so a future arm cannot
     /// silently produce an unreachable dispatch site.  The classifier
     /// arms (jump-table, stack-array, ValuePhi) already check
     /// `targets.is_empty()` and return `None` instead of constructing
@@ -677,7 +677,7 @@ mod tests {
     }
 
     // Tests for `Truncate(IntConst)` / `Extend(IntConst)` classifier
-    // arms were deleted in round 9 wave 30 (D3+D4): ConstantFold rules
+    // arms were deleted in : ConstantFold rules
     // 4-6 and the builder's `truncate_if_needed` / `extend_if_needed`
     // helpers fold those shapes to `IntConst` before the classifier
     // ever runs, so the dedicated arms were dead-in-production.  The

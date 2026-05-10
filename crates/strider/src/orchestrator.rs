@@ -212,7 +212,7 @@ enum Decision {
 /// `cap = 2 * pending_at_iter_0 + 4` bound still terminates
 /// count-stable infinite loops.
 ///
-/// Pre-fix (round 9 Ask-8 R2 F7) the comparison was `>=`, which
+/// Pre-fix the comparison was `>=`, which
 /// incorrectly consumed budget on every count-stable iteration.
 ///
 /// # Errors

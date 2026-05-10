@@ -151,7 +151,7 @@ fn cases() -> Vec<Case> {
             cc: CallingConvention::powerpc64_elf_v1,
             arch: crate::arch::SleighArch::ppc64be,
             arg_count: 8,
-            // r2 + r14..r31 (18) + LR — round 9 wave 24 added LR per
+            // r2 + r14..r31 (18) + LR — added LR per
             // CLAUDE.md deliberate-tradeoff (consistent with PPC32).
             callee_saved_count: 20,
             ret_count: 2,

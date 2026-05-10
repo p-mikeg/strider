@@ -702,7 +702,7 @@ where
     // Pass 2 — the patch loop.  Roll back the staged extension on Err so
     // callers see `regions` in its pre-call shape (matches the documented
     // "extender error mid-pass leaves it untouched" intent for the full
-    // function, not just pass 1).  Round 10 R10-1E I-2.
+    // function, not just pass 1).  audit.
     match apply_elf_relocations(regions, obj) {
         Ok(stats) => Ok(stats),
         Err(e) => {

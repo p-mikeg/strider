@@ -538,7 +538,7 @@ fn mem_chain_is_dirty(
     }
 
     // The walk pushed exactly one final result for the original `mem`.
-    // Round 10 H10-S6 (R10-2C): surface the invariant violation as `Err`
+    // surface the invariant violation as `Err`
     // instead of silently assuming `true` in release builds.  Any
     // result-stack count other than 1 is a walker bug, not a property
     // of the input graph.

@@ -190,7 +190,7 @@ impl BuiltCallingConvention {
         }
     }
 
-    /// Validating constructor (round 9 V4 / R9-2D H3).  Builds a
+    /// Validating constructor .  Builds a
     /// `BuiltCallingConvention` from explicit parts and checks the
     /// canonical ABI invariants:
     ///

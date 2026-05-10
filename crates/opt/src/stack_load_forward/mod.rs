@@ -261,7 +261,7 @@ fn probe(
                     // arm in `function_args::mem_chain_is_dirty`.  Without
                     // this, `Load[sp+K]` whose memory chain passes through
                     // a stack-store phi could never be forwarded — round
-                    // 10 R10-1C I-6 fix.
+                    // fix.
                     match step_through_stack_store_phi(fg.graph, node, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {

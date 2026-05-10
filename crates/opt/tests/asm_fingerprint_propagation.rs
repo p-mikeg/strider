@@ -234,7 +234,7 @@ fn constant_fold_rule_and_dist_attributes_inner_nodes() {
     let _ = ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap();
 
     // After the rewrite, every reachable non-exempt node must still carry a
-    // non-empty fingerprint (the round-9 H-2 contract).
+    // non-empty fingerprint (the no-shrink-fingerprint contract).
     validate_with_options(
         &fg.graph,
         fg.entry,

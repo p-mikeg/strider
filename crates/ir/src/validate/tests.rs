@@ -305,7 +305,7 @@ fn layer_c_duplicate_initial_memory() {
 #[test]
 fn layer_c_control_state_bad_predecessor() {
     // The bad ControlState must be **reachable** from entry — otherwise
-    // round 9's reachability gate (Ask-8 R2 F2 fix in `check_layer_c_control_state`)
+    // the reachability gate in `check_layer_c_control_state`
     // correctly skips it as an unreachable zombie.  Build a 2-predecessor
     // ControlState: input[0] = entry's Control (well-formed) so the walk
     // reaches it via cfg-succs, input[1] = InitialMemory's Memory (the
