@@ -54,7 +54,7 @@ User has a binary in hand (a fixture or a user-supplied ELF) and wants visual de
    cargo run -p strider --example strider
    ```
 
-   The example writes `cfg.html`, `cfg.dot`, `graph.html`, `graph.dot`, `graph-opt.html`, `graph-opt.dot` to the workspace root and prints progress to stdout. It uses `Builder::new(...)` (defaults to LE + x86_64); for non-x86 fixtures, edit the `arch` and `CallingConvention` lines around `crates/strider/examples/strider.rs:21-27`.
+   The example writes `cfg.html`, `cfg.dot`, `graph.html`, `graph.dot`, `graph-opt.html`, `graph-opt.dot` to the workspace root and prints progress to stdout. It uses `Builder::new(...)` (defaults to LE + x86_64); for non-x86 fixtures, edit the `arch` and `CallingConvention` lines around `crates/strider/examples/strider.rs:21-27`. **Note:** `Builder::new` and `Builder::with_endianness` are now `#[deprecated]` — they implicitly assume `ArchPreset::X86_64` for CallOther classification, which silently mis-classifies arch-specific user-ops on non-x86 lifts. Prefer `Builder::for_arch(arch, ...)` for any new code.
 
 3. **For a non-x86 fixture, edit the example.** The relevant lines are:
 
