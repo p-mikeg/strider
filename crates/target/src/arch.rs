@@ -142,12 +142,13 @@ impl SleighArch {
     pub fn pspec(&self) -> rsleigh::pspec::PSpec {
         self.pspec
     }
-    /// Read the byte-order.  canonical accessor.
+    /// Read the byte-order.
     #[must_use]
     pub fn endianness(&self) -> Endianness {
         self.endianness
     }
-    /// Read the arch preset discriminator.      /// canonical accessor.
+
+    /// Read the arch preset discriminator.
     #[must_use]
     pub fn preset(&self) -> ArchPreset {
         self.preset

@@ -3,7 +3,6 @@ use anyhow::anyhow;
 use crate::error::Result;
 use crate::pipeline::Optimizer;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
-use ir::BuiltFunctionGraph;
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};

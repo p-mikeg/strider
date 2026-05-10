@@ -6,7 +6,9 @@ use opt::ReadOnlyMemory;
 use crate::cfg::builder::ResolvedTargets;
 use crate::cfg::types::PcodeInsnAddr;
 
-/// Function-extent boundary for tail-call classification.  /// (R9-2D M3): the previous `(Option<u64>, bool)` pair carried the
+/// Function-extent boundary for tail-call classification.
+///
+/// The previous `(Option<u64>, bool)` pair carried the
 /// implicit-but-unenforced rule "when `fn_max_size.is_some()`,
 /// `allow_code_before_start_addr` is ignored" — see CLAUDE.md's
 /// `is_addr_tail_call` description.  This sum type makes the rule
@@ -96,9 +98,11 @@ pub struct Options {
 
 impl Options {
     /// Returns the function-extent boundary derived from
-    /// `(fn_max_size, allow_code_before_start_addr)`.      /// (R9-2D M3): canonical accessor that resolves the documented
-    /// "ignored when bounded" coupling — `Some(max_size)` always
-    /// produces [`FunctionBoundary::Bounded`], regardless of the
+    /// `(fn_max_size, allow_code_before_start_addr)`.
+    ///
+    /// Canonical accessor that resolves the documented "ignored when
+    /// bounded" coupling — `Some(max_size)` always produces
+    /// [`FunctionBoundary::Bounded`], regardless of the
     /// `allow_code_before_start_addr` flag.  New consumer code should
     /// use this instead of reading the two scalar fields separately.
     #[must_use]

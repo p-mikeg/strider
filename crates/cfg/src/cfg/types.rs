@@ -76,15 +76,16 @@ impl PcodeInsnAddr {
         }
     }
 
-    /// Read the parent machine instruction's address.      /// (R9-2D H2): canonical accessor for the migration path that
-    /// will eventually tighten the field to `pub(crate)`.
+    /// Read the parent machine instruction's address.
+    ///
+    /// Canonical accessor for the migration path that will eventually
+    /// tighten the field to `pub(crate)`.
     #[must_use]
     pub fn machine_addr(self) -> MachineInsnAddr {
         self.machine_addr
     }
 
     /// Read the pcode-op index within the machine instruction.
-    /// canonical accessor.
     #[must_use]
     pub fn insn_index(self) -> u64 {
         self.insn_index
@@ -92,7 +93,6 @@ impl PcodeInsnAddr {
 
     /// Read the parent machine instruction's u64 address — convenience
     /// wrapper for the common `.machine_addr.addr` triple-dot pattern.
-    /// canonical accessor.
     #[must_use]
     pub fn machine_addr_u64(self) -> u64 {
         self.machine_addr.addr

@@ -1,7 +1,6 @@
 use crate::pipeline::Optimizer;
-use crate::test_support::make_fn;
+use crate::test_support::{make_fn, return_kind};
 use super::*;
-use anyhow::anyhow;
 use crate::error::Result;
 use ir::node::{NodeKind, NodeOutputType};
 
@@ -17,17 +16,6 @@ impl ReadOnlyMemory for TestRom {
             _ => None,
         }
     }
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.node_inputs(ret)[2];
-    Ok(*fg.kind_of_output(val))
 }
 
 // ── original tests ────────────────────────────────────────────────────────────

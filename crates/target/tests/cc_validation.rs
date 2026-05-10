@@ -5,7 +5,7 @@
 //! in `arg_passing_regs` produces a clear validation `Err` rather
 //! than a downstream miscompile.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rsleigh::{Vn, VnSpace};
 use target::{BuiltCallingConvention, BuiltCallingConventionParts};

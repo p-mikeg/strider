@@ -15,7 +15,7 @@
 use anyhow::anyhow;
 
 use ir::node::{NodeId, NodeKind};
-use ir::{BuiltFunctionGraph, Value};
+use ir::Value;
 
 pub(crate) use ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
@@ -53,4 +53,18 @@ pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
         .filter(|n| reachable.contains(*n))
         .filter(|&n| pred(fg.graph.node_kind(n)))
         .count()
+}
+
+/// Locates the unique `If` node in `fg`.  Panics if zero or more than
+/// one is present — both indicate a fixture-construction bug.
+pub(crate) fn find_unique_if(fg: pattern::RewriteCtxView<'_>) -> NodeId {
+    let mut iter = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.graph.node_kind(n), NodeKind::If));
+    let first = iter.next().expect("test fixture must contain an If node");
+    assert!(
+        iter.next().is_none(),
+        "test fixture has more than one If node",
+    );
+    first
 }

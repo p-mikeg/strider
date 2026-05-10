@@ -7,24 +7,8 @@ use ir::{
     IntBinaryOp, IntCmpOp,
 };
 
-use crate::test_support::{make_fn, make_fn_with_var};
+use crate::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
 use ir::test_utils::reg_vn;
-
-/// Returns the output id that the Return node receives as its value
-/// argument (input[2]: input[0] is the control edge, input[1] is memory).
-fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.node_inputs(ret)[2])
-}
-
-/// Returns the `NodeKind` of the node that produces the return value.
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let val = return_value(fg)?;
-    Ok(*fg.kind_of_output(val))
-}
 
 // ── integer binary folding ────────────────────────────────────────────────
 
@@ -137,7 +121,7 @@ fn assert_add_with_const(
     expected_const: u64,
     ty: NodeOutputType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
+    let val = return_value(fg.into())?;
     let node = fg.get_node_from_output(val);
     assert!(
         matches!(
@@ -185,7 +169,7 @@ fn assert_sub_with_const(
     expected_const: u64,
     ty: NodeOutputType,
 ) -> Result<()> {
-    let val = return_value(fg)?;
+    let val = return_value(fg.into())?;
     let node = fg.get_node_from_output(val);
     assert!(
         matches!(

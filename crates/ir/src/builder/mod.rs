@@ -407,8 +407,7 @@ impl FunctionBuilder {
     /// the address of an enclosing insn).
     ///
     /// Panic-safe: an unwinding panic inside `body` still triggers the
-    /// restore via the inner guard's `Drop` impl.      /// (R9-1A I3) closed the prior leak path where a panic would leave
-    /// `addr` set on the outer scope.
+    /// restore via the inner guard's `Drop` impl.
     pub fn lift_at<R, F>(&mut self, addr: u64, body: F) -> R
     where
         F: FnOnce(&mut Self) -> R,

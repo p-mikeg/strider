@@ -1,18 +1,8 @@
 use crate::pipeline::Optimizer;
-use crate::test_support::make_fn;
+use crate::test_support::{make_fn, return_kind};
 use super::*;
-use anyhow::anyhow;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
-
-fn return_kind(fg: &ir::BuiltFunctionGraph) -> Result<NodeKind> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    let val = fg.node_inputs(ret)[2];
-    Ok(*fg.kind_of_output(val))
-}
 
 // ── Original tests ────────────────────────────────────────────────────────────
 
@@ -31,7 +21,7 @@ fn known_bits_or_then_and() -> Result<()> {
     while changed {
         changed = KnownBits.optimize(&mut fg2.graph, fg2.entry)?.changed();
     }
-    assert_eq!(return_kind(&fg2)?, NodeKind::IntConst(4));
+    assert_eq!(return_kind((&fg2).into())?, NodeKind::IntConst(4));
     Ok(())
 }
 
@@ -228,13 +218,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     Ok(())
 }
 
-fn return_value(fg: &ir::BuiltFunctionGraph) -> Result<ir::Value> {
-    let ret = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(fg.node_inputs(ret)[2])
-}
+use crate::test_support::return_value;
 
 #[test]
 fn merge_returns_err_on_contradiction() {

@@ -8,7 +8,7 @@
 //!   software interrupt; the arch-specific arm models it as a stub).
 //! - `mfence` resolves the same way under any preset (arch-independent).
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use target::ArchPreset;
 use target::call_other_abi::{CallOtherAbi, CallOtherClass, classify};

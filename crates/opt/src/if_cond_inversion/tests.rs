@@ -4,6 +4,7 @@ use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::error::Result;
 use crate::pipeline::Optimizer;
+use crate::test_support::find_unique_if;
 
 use ir::FunctionBuilder;
 use ir::node::{NodeKind, NodeOutputType};
@@ -36,17 +37,6 @@ fn build_if_with_neg_cond() -> Result<(ir::BuiltFunctionGraph, ir::node::NodeId)
     let fg = b.build()?;
     let if_node = find_unique_if((&fg).into());
     Ok((fg, if_node))
-}
-
-/// Returns the (unique) `If` node id in the graph.  Test fixtures here
-/// build a single If, so this is unambiguous.
-fn find_unique_if(fg: &ir::BuiltFunctionGraph) -> ir::node::NodeId {
-    let ifs: Vec<ir::node::NodeId> = fg
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .collect();
-    assert_eq!(ifs.len(), 1, "fixture must have exactly one If node");
-    ifs[0]
 }
 
 /// Returns the cond input (input slot 1) of the given `If` node.
