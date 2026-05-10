@@ -236,7 +236,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Propagates the variants from [`Self::link_region`] —
+    /// Propagates the variants from `link_region` —
     /// `ExpectedControl` / `ExpectedMemory`
     /// when `parent_region`'s snapshotted edges are mistyped, plus any
     /// `add_node_input` errors when wiring per-variable phi inputs.

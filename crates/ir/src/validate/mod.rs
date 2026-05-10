@@ -2,11 +2,11 @@
 //!
 //! The validator walks a built [`Graph`] starting from an entry [`NodeId`] and
 //! checks structural invariants across three layers:
-//!   - **Layer A** ([`layer_a`]): per-node local typing against
-//!     [`crate::node_signature::expected_signature`] (reachability-scoped).
-//!   - **Layer B** ([`layer_b`]): bidirectional use-list consistency
+//!   - **Layer A** (`layer_a`): per-node local typing against
+//!     `node_signature::expected_signature` (reachability-scoped).
+//!   - **Layer B** (`layer_b`): bidirectional use-list consistency
 //!     (reachability-scoped on the source side).
-//!   - **Layer C** ([`layer_c`]): graph-level invariants — Entry/InitialMemory
+//!   - **Layer C** (`layer_c`): graph-level invariants — Entry/InitialMemory
 //!     uniqueness, ControlState predecessor kinds, phi-token ownership, phi
 //!     per-predecessor arity, FunctionArg uniqueness, wide-const consistency,
 //!     and (opt-in via [`ValidateOptions::check_asm_fingerprints`]) non-empty

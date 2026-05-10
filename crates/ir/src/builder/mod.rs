@@ -147,13 +147,13 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
-    /// Returns a reference to the underlying [`FunctionGraph`].
+    /// Returns a reference to the underlying `FunctionGraph`.
     #[must_use] 
     pub fn body(&self) -> &FunctionGraph {
         &self.function
     }
 
-    /// Returns a mutable reference to the underlying [`FunctionGraph`].
+    /// Returns a mutable reference to the underlying `FunctionGraph`.
     pub fn body_mut(&mut self) -> &mut FunctionGraph {
         &mut self.function
     }

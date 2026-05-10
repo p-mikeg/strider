@@ -15,7 +15,7 @@
 //! [`node::NodeId`] is a computation or control-flow primitive.  Nodes have
 //! typed outputs ([`node::NodeOutputId`]) connected as inputs to downstream
 //! nodes.  Structurally equal nodes with the same inputs are deduplicated and
-//! cached inside [`node::Graph`].
+//! cached inside [`Graph`].
 //!
 //! # Building the IR
 //!
@@ -28,7 +28,7 @@
 //!
 //! # Key types
 //!
-//! - [`node::Graph`] — raw node/edge store
+//! - [`Graph`] — raw node/edge store
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
 //! - [`BuiltFunctionGraph`] — a finished, immutable function graph ready for
 //!   optimization and querying

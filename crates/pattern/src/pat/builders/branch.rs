@@ -8,7 +8,7 @@
 //!
 //! The compiler-inverted layout (`If(BoolNeg(C)){B}{A}` for source-level
 //! `if (c) A else B`) is handled upstream of pattern matching by the
-//! [`opt::IfCondInversion`] canonicalisation pass: it eagerly rewrites
+//! `opt::IfCondInversion` canonicalisation pass: it eagerly rewrites
 //! every `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and collapses double
 //! negations via the existing `BoolNeg(BoolNeg(x)) → x` ConstantFold rule
 //! that runs first).  By the time `Matcher` walks the graph, every `If`
@@ -37,7 +37,7 @@ impl IfPat {
         Self { cond: None, true_branch: None, false_branch: None }
     }
     /// Constrain the branch condition.  Matched directly against the
-    /// `If`'s cond input; the [`opt::IfCondInversion`] pass guarantees
+    /// `If`'s cond input; the `opt::IfCondInversion` pass guarantees
     /// every `If` is in canonical direct layout before patterns run.
     pub fn cond(mut self, p: impl Into<Pat>) -> Self {
         self.cond = Some(p.into());

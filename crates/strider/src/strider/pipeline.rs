@@ -180,7 +180,8 @@ impl Strider {
     /// convention-aware stack-argument passes:
     ///
     /// 1. All passes from [`opt::default_pipeline`] (constant folding,
-    ///    known-bits, redundant-phi, dead-branch).
+    ///    known-bits, flag-cmp canonicalisation, if-cond inversion,
+    ///    redundant-phi, dead-branch).
     /// 2. [`opt::StackStoreDetect`] inside the fixed-point loop, using the
     ///    convention's stack-pointer varnode.
     /// 3. [`opt::CallStackArgCollect`] as a post-pass (runs once after

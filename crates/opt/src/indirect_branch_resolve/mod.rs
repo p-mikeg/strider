@@ -63,7 +63,7 @@ pub use stack_array::classify_stack_array;
 ///
 /// The classifier's verdict on a placeholder anchor.  Re-exported from
 /// `cfg` so callers that build `known_targets` maps for
-/// [`cfg::Builder::with_known_targets`] use the same type the
+/// `cfg::Builder::with_known_targets` use the same type the
 /// classifier returns.
 ///
 /// ## Variants

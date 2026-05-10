@@ -96,7 +96,8 @@ pub struct CallingConvention {
 /// [`rsleigh::Vn`] varnodes.
 ///
 /// Produced by [`CallingConvention::build`] (canonical path) or
-/// [`Self::from_parts`] (test/override construction).  Fields are
+/// [`Self::try_from_parts`] / [`Self::from_parts_unchecked`]
+/// (test/override construction).  Fields are
 /// `pub(crate)`: callers read them through the typed accessors below
 /// rather than touching the storage directly.  This keeps the type
 /// immutable post-construction (no `.callee_saved_regs.push(x)` after

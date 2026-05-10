@@ -40,7 +40,7 @@ pub enum NodeKind {
     /// stack-passed arg reads (`Load[InitialVar(sp) + K]`) with this node.
     ///
     /// The per-graph invariant is that at most one `FunctionArg` node exists
-    /// per `index` (enforced by [`crate::validate::layer_c`]).  Source nodes
+    /// per `index` (enforced by `validate::layer_c`).  Source nodes
     /// may become unreferenced after rewiring; `FunctionArg` itself is not
     /// cacheable, since identity matters for the uniqueness invariant.
     ///
@@ -131,11 +131,11 @@ pub enum NodeKind {
     /// A compile-time integer constant of value `u128`.  Covers
     /// `Bool`/`U8`/`U16`/`U32`/`U64`/`U80`/`U128`.  Wider integer types
     /// (`U256`/`U512`) use [`Self::IntConstWide`] which references
-    /// [`crate::Graph::wide_consts`] off-side.
+    /// `Graph::wide_consts` off-side.
     IntConst(u128),
     /// A compile-time integer constant whose value doesn't fit in
     /// `u128` — `U256` or `U512`.  The actual byte payload lives in
-    /// [`crate::Graph::wide_consts`] and this node carries a
+    /// `Graph::wide_consts` and this node carries a
     /// [`crate::wide_const::WideConstId`] index.
     ///
     /// Interning makes structural equality work: two `IntConstWide(id)`

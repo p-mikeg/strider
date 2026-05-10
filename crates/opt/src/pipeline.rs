@@ -115,7 +115,7 @@ pub trait Optimizer: Send + Sync {
     ///
     /// Returns the first error encountered by the pass — typically an IR
     /// validation failure or a pattern-rewrite error propagated up through
-    /// [`crate::Error`].
+    /// `anyhow::Error`.
     fn optimize(
         &self,
         graph: &mut ir::Graph,
@@ -248,7 +248,7 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns the first [`crate::Error`] reported by any pass.  If every
+    /// Returns the first `anyhow::Error` reported by any pass.  If every
     /// pass and post-pass succeeds, the graph is then re-validated and any
     /// validation error is returned.  When a post-pass returns `Err`, the
     /// final validation step is skipped — the pass error wins.
@@ -353,7 +353,7 @@ mod tests {
 
     /// `run(graph, entry)` validates the final graph — an invalid graph
     /// in the post-pass output surfaces as a `ValidationErrors`-bearing
-    /// `crate::Error::IrError` (downcastable via `anyhow::Error::
+    /// `anyhow::Error` (downcastable) (downcastable via `anyhow::Error::
     /// downcast_ref::<ir::validate::ValidationErrors>()`).  Smoke test
     /// using an empty post-pass list and a valid input — run must
     /// succeed (no validation error) and the graph must be unchanged.

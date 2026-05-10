@@ -65,8 +65,8 @@ impl FunctionBuilder {
     ///
     /// Returns `UnsupportedOutputSize` when any tracked variable
     /// has a byte size with no matching [`crate::node::NodeOutputType`].
-    /// Other variants from [`Self::link_control_regions`] /
-    /// [`Self::link_memory_regions`] / [`Self::link_region_variables`] also
+    /// Other variants from `link_control_regions` /
+    /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let entry_control = self.body().entry_control;
@@ -94,7 +94,7 @@ impl FunctionBuilder {
     /// Returns `WrongOutputCount` if the freshly created
     /// `ControlState` or `MemPhi` does not have its expected output shape
     /// (this would indicate a graph-construction bug, not a user error).
-    /// Other variants from [`Self::build_control_phi`] propagate.
+    /// Other variants from `build_control_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
         let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
         let [memory] = self.graph().node_outputs_exact(memory_node)?;

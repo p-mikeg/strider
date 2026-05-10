@@ -139,7 +139,7 @@ pub fn ret() -> RetPat {
 /// `.false_branch()` to add constraints.
 ///
 /// **Direct layout only.**  By the time the matcher runs, every `If` node
-/// in the graph is in canonical direct layout — the [`opt::IfCondInversion`]
+/// in the graph is in canonical direct layout — the `opt::IfCondInversion`
 /// pass eagerly rewrites `If(BoolNeg(C)){A}{B}` into `If(C){B}{A}` (and
 /// `ConstantFold` collapses double negations first).  Patterns are
 /// matched against the canonical direct layout only; write the pattern

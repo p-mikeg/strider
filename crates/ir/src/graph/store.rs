@@ -198,7 +198,7 @@ impl Graph {
     /// node that already exists in the graph is returned instead of creating a
     /// duplicate.  Non-cacheable nodes always produce a fresh [`NodeId`].
     ///
-    /// The inputs are recorded as [`NodeInput`] entries and added to the
+    /// The inputs are recorded as `NodeInput` entries and added to the
     /// use-list of each referenced output so that consumers can be iterated.
     pub fn create_node(
         &mut self,

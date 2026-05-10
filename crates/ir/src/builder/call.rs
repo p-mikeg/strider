@@ -30,7 +30,7 @@ impl FunctionBuilder {
     /// stack_ptr` filter that produces this Call's clobber list;
     /// `cc.ret_stack_pop()` drives the post-call SP-add.  The per-Call
     /// clobber list is recorded on
-    /// [`crate::Graph::call_clobbered_overrides`] so pattern queries
+    /// `Graph::call_clobbered_overrides` so pattern queries
     /// can recover the right varnode for each clobber slot.
     ///
     /// Returns the freshly-created Call's [`NodeId`].

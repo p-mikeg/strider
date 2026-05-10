@@ -92,7 +92,7 @@ pub struct BuiltFunctionGraph {
     /// SP and is per-CC) — `call_other_clobbered` is the conservative
     /// "everything except SP" set used by every CallOther unless a
     /// per-CallOther override on
-    /// [`crate::Graph::call_clobbered_overrides`] shadows it.
+    /// `Graph::call_clobbered_overrides` shadows it.
     ///
     /// **Caution:** same as [`Self::call_clobbered`] — write only at
     /// build time; read via [`Self::call_other_clobbered_regs`].
