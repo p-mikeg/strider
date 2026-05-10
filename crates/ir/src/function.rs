@@ -168,9 +168,10 @@ impl BuiltFunctionGraph {
     ///
     /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
     /// fields.**  Used by `compact`'s test fixture and a few pattern test
-    /// scaffolds that intentionally bypass the build path.  The opt-side
-    /// rewrite-only path moved to `pattern::RewriteCtx` in round 9 wave
-    /// 28 (`opt::with_rewrite_ctx` replaced the older `opt::with_built`).
+    /// scaffolds that intentionally bypass the build path.  Production
+    /// opt-side rewrite paths use `pattern::RewriteCtx` (constructed via
+    /// `opt::with_rewrite_ctx`) instead — that path doesn't need a BFG
+    /// at all.
     ///
     /// # Contract — caller responsibility
     ///
