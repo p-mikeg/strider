@@ -414,19 +414,42 @@ impl Strider {
 
         // Link fallthrough edges.  Walk the CFG's edges directly —
         // there's no need to mirror the petgraph.
+        //
+        // Branch edges are wired by `handle_branch` inside the per-insn
+        // loop above when the trailing `Branch` pcode op is processed.
+        // **Empty-insns Branch regions** (produced by the bounded-lift
+        // CondBranch-OOB collapse: a single CondBranch where both
+        // successors are out-of-range collapses to an empty `Branch`
+        // region edge) have no pcode to process, so no per-insn wiring
+        // fires.  Walk the Branch edges here too and only link when the
+        // source region is empty — otherwise we'd double-link the
+        // non-empty case and break Layer C predecessor counts.
         for edge_idx in cfg.graph.edge_indices() {
             let Some(weight) = cfg.graph.edge_weight(edge_idx) else {
                 continue;
             };
-            if *weight != cfg::RegionEdgeKind::Fallthrough {
-                continue;
-            }
             let Some((src, tgt)) = cfg.graph.edge_endpoints(edge_idx) else {
                 continue;
             };
-            ir_strider
-                .builder
-                .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+            match weight {
+                cfg::RegionEdgeKind::Fallthrough => {
+                    ir_strider
+                        .builder
+                        .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+                }
+                cfg::RegionEdgeKind::Branch => {
+                    let src_region = cfg
+                        .graph
+                        .node_weight(src)
+                        .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
+                    if src_region.insns.is_empty() {
+                        ir_strider
+                            .builder
+                            .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+                    }
+                }
+                _ => {}
+            }
         }
 
         // Capture per-region IR handles BEFORE `build()` consumes the

@@ -216,10 +216,23 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
                 // 7. Rebind tracked variables via the aliasing-aware
                 //    write_vn (so EAX clobber updates RAX-tracked
                 //    variable through the appropriate insert/extract).
+                //
+                //    The pcode-explicit output is written first; any
+                //    implicit-writes entry that matches `out_vn` is
+                //    skipped so the clobber-slot doesn't overwrite the
+                //    modeled value.  Concrete case: `rdpkru` emits
+                //    `EAX = rdpkru_u32()` in pcode while the ABI table
+                //    also lists `EAX` as an implicit-write — without
+                //    this skip the modeled CallOther output becomes a
+                //    dead node and pattern queries reading EAX see the
+                //    clobber slot instead.
                 if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), value) {
                     self.write_vn(out_vn, val)?;
                 }
                 for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
+                    if insn.output.as_ref() == Some(vn) {
+                        continue;
+                    }
                     self.write_vn(vn, slot)?;
                 }
 

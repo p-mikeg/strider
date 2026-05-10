@@ -36,8 +36,13 @@ impl PhiPat {
         self
     }
     /// Constrain the value arriving from predecessor slot `idx`.
+    ///
+    /// Predecessor 0's value lives at raw input index 1 — input 0 is
+    /// the phi-token edge from the owning `ControlState`.  This
+    /// builder shifts `idx` by +1 so callers can address predecessor
+    /// slots directly.
     pub fn input(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.inputs.push((idx, p.into()));
+        self.inputs.push((idx + 1, p.into()));
         self
     }
 }
@@ -70,9 +75,14 @@ impl MemPhiPat {
     pub(crate) fn new() -> Self {
         Self { inputs: Vec::new() }
     }
-    /// Constrain the value arriving from predecessor slot `idx`.
+    /// Constrain the memory token arriving from predecessor slot `idx`.
+    ///
+    /// Predecessor 0 lives at raw input index 1 — input 0 is the
+    /// phi-token edge from the owning `ControlState`.  This builder
+    /// shifts `idx` by +1 so callers can address predecessor slots
+    /// directly.
     pub fn input(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.inputs.push((idx, p.into()));
+        self.inputs.push((idx + 1, p.into()));
         self
     }
 }
@@ -101,8 +111,13 @@ impl ValuePhiPat {
         Self { inputs: Vec::new() }
     }
     /// Constrain the value arriving from predecessor slot `idx`.
+    ///
+    /// Predecessor 0's value lives at raw input index 1 — input 0 is
+    /// the phi-token edge from the owning `ControlState`.  This
+    /// builder shifts `idx` by +1 so callers can address predecessor
+    /// slots directly.
     pub fn input(mut self, idx: usize, p: impl Into<Pat>) -> Self {
-        self.inputs.push((idx, p.into()));
+        self.inputs.push((idx + 1, p.into()));
         self
     }
 }
