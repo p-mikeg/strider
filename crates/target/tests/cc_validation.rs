@@ -8,7 +8,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rsleigh::{Vn, VnSpace};
-use target::{BuiltCallingConvention, BuiltCallingConventionParts};
+use target::{BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention, SleighArch};
 
 fn vn(off: u64) -> Vn {
     Vn { addr_space: VnSpace::REGISTER, addr_off: off, size: 8 }
@@ -80,4 +80,14 @@ fn try_from_parts_accepts_clean_layout() {
         no_memory_clobber: false,
     };
     BuiltCallingConvention::try_from_parts(parts).expect("clean layout must validate");
+}
+
+#[test]
+fn build_routes_through_validator_no_false_positives() {
+    let regs = SleighArch::x86_64()
+        .probe_regs()
+        .expect("probe regs");
+    CallingConvention::x86_64_systemv()
+        .build(&regs)
+        .expect("x86_64_systemv must build cleanly (T-2: build routes through try_from_parts)");
 }

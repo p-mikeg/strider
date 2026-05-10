@@ -439,4 +439,25 @@ mod tests {
         let ty: NodeOutputType = 10u32.try_into().expect("10 must convert to U80");
         assert_eq!(ty, NodeOutputType::U80);
     }
+
+    /// T-14 (round 11): `bit_mask_u128` for `U256` and `U512` must return
+    /// `u128::MAX` — the conservative `u128`-width approximation, since
+    /// these widths exceed the carrier.  Pins the `bits >= 128` guard.
+    #[test]
+    fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
+        assert_eq!(NodeOutputType::U256.bit_mask_u128(), u128::MAX);
+        assert_eq!(NodeOutputType::U512.bit_mask_u128(), u128::MAX);
+    }
+
+    /// T-14 (round 11): `get_unsigned_int` for `U256`/`U512` passes through
+    /// values within the `u128` carrier (no false rejection).
+    #[test]
+    fn get_unsigned_int_for_u256_passes_through_small_values() {
+        assert_eq!(
+            NodeOutputType::U256.get_unsigned_int(0xDEAD_BEEFu128),
+            Some(0xDEAD_BEEFu128),
+        );
+        assert_eq!(NodeOutputType::U256.get_unsigned_int(u128::MAX), Some(u128::MAX));
+        assert_eq!(NodeOutputType::U512.get_unsigned_int(42u128), Some(42u128));
+    }
 }

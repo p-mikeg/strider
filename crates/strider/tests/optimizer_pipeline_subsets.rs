@@ -138,3 +138,36 @@ fn ir_level_classification_robust_to_destructive_subset() {
         "IR-level indirect-branch resolver classification must be invariant to destructive subset",
     );
 }
+
+// ── T-17 (round 11): default pipeline composition ────────────────────────────
+
+fn pass_names_t17(p: &opt::OptimizerPipeline) -> Vec<String> {
+    p.optimizer_names().iter().map(|s| (*s).to_string()).collect()
+}
+
+#[test]
+fn stable_default_pipeline_contains_flag_cmp_canonicalize() {
+    let names = pass_names_t17(&stable_default_pipeline());
+    assert!(
+        names.iter().any(|n| n.contains("FlagCmpCanonicalize")),
+        "stable_default_pipeline missing FlagCmpCanonicalize: {names:?}"
+    );
+}
+
+#[test]
+fn stable_default_pipeline_contains_if_cond_inversion() {
+    let names = pass_names_t17(&stable_default_pipeline());
+    assert!(
+        names.iter().any(|n| n.contains("IfCondInversion")),
+        "stable_default_pipeline missing IfCondInversion: {names:?}"
+    );
+}
+
+#[test]
+fn stable_default_pipeline_base_pass_count_at_least_four() {
+    assert!(
+        stable_default_pipeline().optimizer_count() >= 4,
+        "stable_default_pipeline must have >=4 passes; got {}",
+        stable_default_pipeline().optimizer_count(),
+    );
+}

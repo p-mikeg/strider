@@ -213,4 +213,27 @@ mod tests {
         wl.enqueue(Id(1));
         let _ = format!("{wl:?}");
     }
+
+    /// T-23 (round 11): `enqueue` deduplicates at 10k-item scale.  Pins the
+    /// single-pass `if workset.insert(e) { push }` shape introduced in W9
+    /// (S4.1) — re-enqueueing the same id never duplicates the queue.
+    #[test]
+    fn enqueue_dedup_at_ten_thousand_scale() {
+        let n: u32 = 10_000;
+        let mut wl: Worklist<Id> = Worklist::new();
+        for i in 0..n {
+            wl.enqueue(Id(i));
+        }
+        assert_eq!(wl.len(), n as usize);
+        for i in 0..n {
+            wl.enqueue(Id(i));
+        }
+        assert_eq!(wl.len(), n as usize, "no duplicates after re-enqueue");
+        let mut count = 0usize;
+        while wl.dequeue().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, n as usize);
+        assert!(wl.is_empty());
+    }
 }
