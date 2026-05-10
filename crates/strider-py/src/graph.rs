@@ -6,12 +6,13 @@
 //! so the Sleigh stays alive for the graph's lifetime and is
 //! reachable through `cfg::Cfg::sleigh`.
 
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use pyo3::prelude::*;
 
 use crate::cfg::PyCfg;
-use crate::dot::{dot_style_for, dump_dot, dump_html, html_str};
+use crate::dot::dot_style_for;
 
 /// Opaque wrapper over `ir::BuiltFunctionGraph`.
 ///
@@ -99,7 +100,8 @@ impl PyGraph {
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
         let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        dump_html(&d, path)
+        d.dump_as_html(Path::new(path))
+            .map_err(crate::errors::into_strider_err)
     }
 
     #[pyo3(signature = (path,))]
@@ -111,7 +113,8 @@ impl PyGraph {
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
         let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
         let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
-        dump_dot(&d, path)
+        d.dump_as_dot(Path::new(path))
+            .map_err(crate::errors::into_strider_err)
     }
 
     #[pyo3(signature = (style=None))]
@@ -124,7 +127,7 @@ impl PyGraph {
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
         let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
-        html_str(&d)
+        d.as_html_from_dot().map_err(crate::errors::into_strider_err)
     }
 
     fn node_count(&self) -> PyResult<usize> {

@@ -159,6 +159,10 @@ pub fn find_placeholder_return_for_anchor(
         if !matches!(graph.node_kind(consumer), NodeKind::IndirectBranch) {
             continue;
         }
+        // `IndirectBranch` has the signature `[control, memory,
+        // target_value]` (see `node_signature::expected_signature`),
+        // so `node_inputs_exact::<3>` is structurally guaranteed to
+        // succeed; the `Ok(...)` arm is the only reachable branch.
         if let Ok([_, _, val]) = graph.node_inputs_exact::<3>(consumer)
             && val == anchor_output
         {

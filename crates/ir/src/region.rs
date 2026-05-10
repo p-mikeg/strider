@@ -70,6 +70,17 @@ impl FunctionBuilder {
         Ok(())
     }
 
+    /// Validates that `res.control` and `res.memory` are control/memory
+    /// edges respectively — the documented invariant for any
+    /// terminator-producing builder method (Return / Branch /
+    /// IndirectBranch / CondBranch / CallOther-terminal).  Single
+    /// callsite for the (control + memory) pair so a typo can't drop
+    /// one of the two checks.
+    pub(crate) fn require_terminator_kinds(&self, res: &TerminatedRegion) -> Result<()> {
+        self.require_control_kind(res.control)?;
+        self.require_memory_kind(res.memory)
+    }
+
     /// Returns the id of the current region, or an error if no region is set
     /// or if the region has already been terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {

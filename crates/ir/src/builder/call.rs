@@ -200,8 +200,7 @@ impl FunctionBuilder {
         // region will now correctly fail with `RegionTerminated` instead
         // of silently producing IR after a NoReturn terminator.
         let res = self.terminate_cur_region()?;
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
         output_kinds.push(NodeOutputKind::Control);
         output_kinds.push(NodeOutputKind::Memory);

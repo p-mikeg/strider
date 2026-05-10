@@ -524,8 +524,7 @@ impl FunctionBuilder {
 
         let res = self.terminate_cur_region()?;
 
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
@@ -557,8 +556,7 @@ impl FunctionBuilder {
     pub fn build_indirect_branch(&mut self, target_value: NodeOutputId) -> Result<()> {
         let res = self.terminate_cur_region()?;
 
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(std::slice::from_ref(&target_value))?;
 
         self.create_node(
@@ -579,8 +577,7 @@ impl FunctionBuilder {
     /// mistyped (graph-construction bug).
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)?;
+        self.require_terminator_kinds(&res)?;
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
 
@@ -632,18 +629,7 @@ impl FunctionBuilder {
         offset: NodeOutputId,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        let seg_kind = self.graph().output_kind(segment);
-        if !seg_kind.is_value() {
-            return Err(anyhow!(
-                "output {segment:?} is not a value edge (got {seg_kind:?})"
-            ));
-        }
-        let off_kind = self.graph().output_kind(offset);
-        if !off_kind.is_value() {
-            return Err(anyhow!(
-                "output {offset:?} is not a value edge (got {off_kind:?})"
-            ));
-        }
+        self.validate_value_inputs(&[segment, offset])?;
         Ok(self.build_single_output_pure(
             NodeKind::SegmentOp { op_id },
             [segment, offset],

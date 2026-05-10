@@ -812,15 +812,7 @@ fn build_anchor_calling_context(
     for vn in clobber_iter {
         // surface unsupported clobber-reg sizes as Err
         // (same reasoning as H-4 above).
-        let ty = ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
-            anyhow::anyhow!(
-                "clobber varnode size {} has no NodeOutputType — \
-                 calling-convention register {:?} cannot be modelled \
-                 (supported sizes are 1, 2, 4, 8, 10, 16, 32, 64 bytes)",
-                vn.size,
-                vn,
-            )
-        })?;
+        let ty = vn_size_to_node_output_type(vn)?;
         ctx.clobbered_kinds
             .push(ir::node::NodeOutputKind::OutputType(ty));
     }
@@ -829,6 +821,27 @@ fn build_anchor_calling_context(
         ctx.ret_val_outputs.push(out);
     }
     Ok(ctx)
+}
+
+/// Map a varnode's byte width to the matching [`ir::node::NodeOutputType`].
+///
+/// Used by the orchestrator's anchor-calling-context plumbing
+/// (`build_anchor_calling_context` for clobber outputs,
+/// `read_or_init_var` for freshly-created `InitialVar` nodes) to surface
+/// unsupported sizes as a typed error rather than silently dropping the
+/// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
+/// 32, 64} which all map cleanly; the Err arm exists so a future CC
+/// addition with an exotic size surfaces the gap immediately.
+fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<ir::node::NodeOutputType> {
+    ir::node::NodeOutputType::try_from(vn.size).map_err(|_| {
+        anyhow::anyhow!(
+            "varnode size {} has no NodeOutputType — calling-convention \
+             register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
+             8, 10, 16, 32, 64 bytes)",
+            vn.size,
+            vn,
+        )
+    })
 }
 
 /// Iterate the function-tracked varnodes that are *clobbered* under the
@@ -887,15 +900,7 @@ fn read_or_init_var(
     if let Some(&out) = initial_var_index.get(&vn) {
         return Ok(out);
     }
-    let ty: ir::node::NodeOutputType = vn.size.try_into().map_err(|_| {
-        anyhow::anyhow!(
-            "varnode size {} has no NodeOutputType — calling-convention \
-             register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
-             8, 10, 16, 32, 64 bytes)",
-            vn.size,
-            vn,
-        )
-    })?;
+    let ty = vn_size_to_node_output_type(&vn)?;
     let nid = graph.graph.create_node(
         ir::node::NodeKind::InitialVar(vn),
         [],

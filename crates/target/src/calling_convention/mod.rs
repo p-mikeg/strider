@@ -96,8 +96,7 @@ pub struct CallingConvention {
 /// [`rsleigh::Vn`] varnodes.
 ///
 /// Produced by [`CallingConvention::build`] (canonical path) or
-/// [`Self::try_from_parts`] / [`Self::from_parts_unchecked`]
-/// (test/override construction).  Fields are
+/// [`Self::try_from_parts`] (test/override construction).  Fields are
 /// `pub(crate)`: callers read them through the typed accessors below
 /// rather than touching the storage directly.  This keeps the type
 /// immutable post-construction (no `.callee_saved_regs.push(x)` after
@@ -118,7 +117,7 @@ pub struct BuiltCallingConvention {
     pub(crate) no_memory_clobber: bool,
 }
 
-/// Owned-field bag for [`BuiltCallingConvention::from_parts_unchecked`].  Used by
+/// Owned-field bag for [`BuiltCallingConvention::try_from_parts`].  Used by
 /// callers (typically tests building one-off override CCs) that need to
 /// construct a `BuiltCallingConvention` without going through
 /// [`CallingConvention::build`].  Field names mirror the
@@ -149,47 +148,6 @@ pub struct BuiltCallingConventionParts {
 }
 
 impl BuiltCallingConvention {
-    /// Constructs a `BuiltCallingConvention` from an explicit
-    /// [`BuiltCallingConventionParts`] bag, **without validation**.
-    /// Use this only in tests building override / synthesised CCs
-    /// where the inputs are known well-formed; production code
-    /// should use [`Self::try_from_parts`] (validates ABI invariants)
-    /// or [`CallingConvention::build`] (resolves register names
-    /// against a `SleighRegs` table and feeds [`Self::try_from_parts`]).
-    ///
-    /// **Test-only escape hatch.**  A typo overlapping `arg_passing_regs`
-    /// with `callee_saved_regs` (or any other invariant violation listed
-    /// on [`Self::try_from_parts`]) silently miscompiles downstream
-    /// pattern queries.  Use the validated path in any production code.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn from_parts_unchecked(parts: BuiltCallingConventionParts) -> Self {
-        let BuiltCallingConventionParts {
-            arg_passing_regs,
-            callee_saved_regs,
-            ret_val_regs,
-            ret_val_regs_float,
-            stack_ptr_vn,
-            stack_arg_offsets,
-            ret_stack_pop,
-            link_register_vn,
-            syscall_number_vn,
-            no_memory_clobber,
-        } = parts;
-        Self {
-            arg_passing_regs,
-            callee_saved_regs,
-            ret_val_regs,
-            ret_val_regs_float,
-            stack_ptr_vn,
-            stack_arg_offsets,
-            ret_stack_pop,
-            link_register_vn,
-            syscall_number_vn,
-            no_memory_clobber,
-        }
-    }
-
     /// Validating constructor .  Builds a
     /// `BuiltCallingConvention` from explicit parts and checks the
     /// canonical ABI invariants:
@@ -288,7 +246,30 @@ impl BuiltCallingConvention {
                 parts.ret_stack_pop,
             ));
         }
-        Ok(Self::from_parts_unchecked(parts))
+        let BuiltCallingConventionParts {
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            ret_val_regs_float,
+            stack_ptr_vn,
+            stack_arg_offsets,
+            ret_stack_pop,
+            link_register_vn,
+            syscall_number_vn,
+            no_memory_clobber,
+        } = parts;
+        Ok(Self {
+            arg_passing_regs,
+            callee_saved_regs,
+            ret_val_regs,
+            ret_val_regs_float,
+            stack_ptr_vn,
+            stack_arg_offsets,
+            ret_stack_pop,
+            link_register_vn,
+            syscall_number_vn,
+            no_memory_clobber,
+        })
     }
 
     /// Argument-passing register varnodes, in positional order.

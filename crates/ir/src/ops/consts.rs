@@ -11,9 +11,6 @@ impl Graph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type) narrowed to `u64`, or `None` if the output is not an integer
     /// constant or its value does not fit in `u64`.
-    ///
-    /// Use [`Self::int_const_val_u128`] when callers need the full payload of
-    /// `U128` / `U256` constants.
     #[must_use]
     pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
         let ty = self.output_kind(out).as_value()?;
@@ -22,22 +19,6 @@ impl Graph {
         }
         match *self.kind_of_output(out) {
             NodeKind::IntConst(v) => ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok()),
-            _ => None,
-        }
-    }
-
-    /// Returns the integer constant value of `out` masked to its declared
-    /// type at full `u128` precision, or `None` if the output is not an
-    /// integer constant.  The unmasked-narrowing companion to
-    /// [`Self::int_const_val`].
-    #[must_use]
-    pub fn int_const_val_u128(&self, out: NodeOutputId) -> Option<u128> {
-        let ty = self.output_kind(out).as_value()?;
-        if !ty.is_integer() {
-            return None;
-        }
-        match *self.kind_of_output(out) {
-            NodeKind::IntConst(v) => ty.get_unsigned_int(v),
             _ => None,
         }
     }

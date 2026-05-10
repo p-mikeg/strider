@@ -47,9 +47,18 @@ impl WideConstStorage {
     /// Returns the byte width of this storage (32 for U256, 64 for U512).
     #[must_use]
     pub fn byte_size(&self) -> usize {
+        self.limbs().len() * 8
+    }
+
+    /// Returns the limb storage as a slice — `limbs[0]` is the low
+    /// 64 bits, `limbs[N-1]` the high.  Length is 4 for `U256`, 8 for
+    /// `U512`.  Projection over the variant difference so width-agnostic
+    /// callers (`byte_size`, `to_le_bytes`) don't have to match.
+    #[must_use]
+    pub fn limbs(&self) -> &[u64] {
         match self {
-            Self::U256(_) => 32,
-            Self::U512(_) => 64,
+            Self::U256(limbs) => limbs,
+            Self::U512(limbs) => limbs,
         }
     }
 
@@ -58,41 +67,7 @@ impl WideConstStorage {
     /// by the strider-py wrapper to surface the raw bytes to Python.
     #[must_use]
     pub fn to_le_bytes(&self) -> Vec<u8> {
-        match self {
-            Self::U256(limbs) => limbs.iter().flat_map(|l| l.to_le_bytes()).collect(),
-            Self::U512(limbs) => limbs.iter().flat_map(|l| l.to_le_bytes()).collect(),
-        }
-    }
-
-    /// Constructs a `U256` from a 32-byte little-endian slice.  Panics
-    /// internally only if the slice's length is wrong; the public
-    /// surface returns `None` for any wrong-length input so the
-    /// boundary remains panic-free.
-    #[must_use]
-    pub fn from_le_bytes_u256(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 32 {
-            return None;
-        }
-        let mut limbs = [0u64; 4];
-        for (i, limb) in limbs.iter_mut().enumerate() {
-            let chunk: [u8; 8] = bytes[i * 8..(i + 1) * 8].try_into().ok()?;
-            *limb = u64::from_le_bytes(chunk);
-        }
-        Some(Self::U256(limbs))
-    }
-
-    /// Constructs a `U512` from a 64-byte little-endian slice.
-    #[must_use]
-    pub fn from_le_bytes_u512(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 64 {
-            return None;
-        }
-        let mut limbs = [0u64; 8];
-        for (i, limb) in limbs.iter_mut().enumerate() {
-            let chunk: [u8; 8] = bytes[i * 8..(i + 1) * 8].try_into().ok()?;
-            *limb = u64::from_le_bytes(chunk);
-        }
-        Some(Self::U512(limbs))
+        self.limbs().iter().flat_map(|l| l.to_le_bytes()).collect()
     }
 }
 
@@ -178,26 +153,4 @@ mod tests {
         assert_eq!(bytes.len(), 64);
     }
 
-    #[test]
-    fn from_le_bytes_u256_round_trips() {
-        let original = WideConstStorage::U256([0xdead_beef, 0xcafe, 0x42, 0x99]);
-        let bytes = original.to_le_bytes();
-        let reconstructed = WideConstStorage::from_le_bytes_u256(&bytes).unwrap();
-        assert_eq!(original, reconstructed);
-    }
-
-    #[test]
-    fn from_le_bytes_u512_round_trips() {
-        let original = WideConstStorage::U512([1, 2, 3, 4, 5, 6, 7, 8]);
-        let bytes = original.to_le_bytes();
-        let reconstructed = WideConstStorage::from_le_bytes_u512(&bytes).unwrap();
-        assert_eq!(original, reconstructed);
-    }
-
-    #[test]
-    fn from_le_bytes_u256_rejects_wrong_length() {
-        assert!(WideConstStorage::from_le_bytes_u256(&[0u8; 31]).is_none());
-        assert!(WideConstStorage::from_le_bytes_u256(&[0u8; 33]).is_none());
-        assert!(WideConstStorage::from_le_bytes_u512(&[0u8; 32]).is_none());
-    }
 }
