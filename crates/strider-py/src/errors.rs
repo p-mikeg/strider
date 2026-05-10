@@ -27,8 +27,19 @@ create_exception!(strider.errors, UnknownCallOtherError, StriderError);
 /// is included as well. Python's `__cause__` chain is left empty —
 /// PyO3-anyhow does not synthesize a separate exception per Rust
 /// error link.
+///
+/// **Pending-PyErr passthrough.**  If a Python callback (e.g. a
+/// subclassed `MemReader.read`) raised `KeyboardInterrupt` or
+/// `SystemExit` and `restore`d the `PyErr` before propagating its
+/// failure as an `anyhow::Error`, that `PyErr` is still pending on
+/// the Python interpreter.  Take it here so the original control-flow
+/// exception wins over the synthesized `StriderError` — Ctrl-C
+/// interrupts a long lift instead of being absorbed.
 #[allow(dead_code)]
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
+    if let Some(pending) = Python::with_gil(PyErr::take) {
+        return pending;
+    }
     if e.downcast_ref::<strider::UnresolvedIndirectBranch>().is_some() {
         return UnresolvedIndirectBranchError::new_err(format!("{e:?}"));
     }
@@ -40,6 +51,9 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
 
 #[allow(dead_code)]
 pub fn into_lift_err(e: anyhow::Error) -> PyErr {
+    if let Some(pending) = Python::with_gil(PyErr::take) {
+        return pending;
+    }
     if e.downcast_ref::<ir::error::UnknownCallOtherError>().is_some() {
         return UnknownCallOtherError::new_err(format!("{e:?}"));
     }

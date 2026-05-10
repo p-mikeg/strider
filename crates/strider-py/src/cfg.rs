@@ -29,6 +29,7 @@ pub fn build_cfg(
     function_max_size: Option<u64>,
 ) -> PyResult<PyCfg> {
     let mut sleigh_borrow = sleigh.borrow_mut(py);
+    let arch = sleigh_borrow.arch;
     let inner_sleigh = sleigh_borrow
         .take_inner()
         .ok_or_else(|| into_lift_err(anyhow::anyhow!("Sleigh already in use")))?;
@@ -43,14 +44,11 @@ pub fn build_cfg(
     }
     let opts = opts_builder.build();
 
-    // The Python `build_cfg` is arch-agnostic by design — callers pass a
-    // pre-built Sleigh.  `Builder::new` is `#[deprecated]` workspace-
-    // wide because it defaults to LE+X86_64; that's exactly what we
-    // need here (every other Python entry point that cares about the
-    // arch goes through `strider.run` which uses `Builder::for_arch`).
-    // Suppress the warning at this site only.
-    #[allow(deprecated)]
-    let built = cfg::Builder::new(inner_sleigh, entry, opts)
+    // Use `for_arch` so the CallOther classifier sees the actual arch
+    // preset; the deprecated `Builder::new` would default to `X86_64`
+    // and silently mis-classify arch-specific user-ops on non-x86
+    // targets (`brk` on AArch64, `swi` on ARM, etc.).
+    let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .build()
         .map_err(into_lift_err)?;
 

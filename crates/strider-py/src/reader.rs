@@ -494,10 +494,26 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            let result = self
+            // Re-raise control-flow exceptions (`KeyboardInterrupt`,
+            // `SystemExit`) so Ctrl-C / sys.exit during a long lift
+            // can interrupt rather than being silently absorbed into
+            // a `ReaderError`.  Mirrors the same guard in
+            // `PyReadOnlyMemoryAdapter::read`.
+            let result = match self
                 .py_obj
                 .call_method1(py, "read", (addr.off, out_buf.len()))
-                .map_err(|e| anyhow::anyhow!("PyMemReader.read raised: {e}"))?;
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
+                        || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
+                    {
+                        e.restore(py);
+                        anyhow::bail!("MemReader.read interrupted by Python control-flow exception");
+                    }
+                    anyhow::bail!("PyMemReader.read raised: {e}");
+                }
+            };
             // None → not mapped (return Err so the matcher falls through).
             if result.is_none(py) {
                 anyhow::bail!("address {:#x} is not mapped (Python read returned None)", addr.off);
