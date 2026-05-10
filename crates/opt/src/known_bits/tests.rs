@@ -466,7 +466,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     Ok(())
 }
 
-// ── T-25 (round 11): Kb constructor invariant ────────────────────────────────
+// ── Kb constructor invariant ────────────────────────────────────────────────
 
 #[test]
 fn kb_try_new_rejects_overlapping_ones_zeros() {

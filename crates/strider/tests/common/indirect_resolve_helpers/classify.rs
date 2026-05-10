@@ -825,7 +825,7 @@ pub fn build_bx_lr_scenario() -> (BuiltFunctionGraph, ir::Value, rsleigh::Vn) {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create aarch64 sleigh");
 
     let regs = arch.probe_regs().expect("probe regs");

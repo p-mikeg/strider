@@ -139,7 +139,7 @@ fn ir_level_classification_robust_to_destructive_subset() {
     );
 }
 
-// ── T-17 (round 11): default pipeline composition ────────────────────────────
+// ── default pipeline composition ────────────────────────────────────────────
 
 fn pass_names_t17(p: &opt::OptimizerPipeline) -> Vec<String> {
     p.optimizer_names().iter().map(|s| (*s).to_string()).collect()

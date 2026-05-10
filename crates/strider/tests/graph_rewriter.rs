@@ -63,7 +63,7 @@ fn analyze_with_known_targets(
 ) -> (BuiltFunctionGraph, Strider) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86_64 sleigh");
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known_targets.insert(

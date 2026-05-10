@@ -25,7 +25,7 @@ fn build_unresolved_jmp_rax_cfg() -> cfg::Cfg<BufMemReader<Vec<u8>>> {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let reader = BufMemReader::new(bytes, base);
     let arch = target::SleighArch::x86_64();
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = OptionsBuilder::new().build();
     Builder::for_arch(&arch, sleigh, base, opts)
         .build()
@@ -62,7 +62,7 @@ fn with_known_targets_link_register_overrides_to_return() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let reader = BufMemReader::new(bytes, base);
     let arch = target::SleighArch::x86_64();
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = OptionsBuilder::new().build();
 
     let mut known: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
@@ -98,7 +98,7 @@ fn with_known_targets_empty_map_falls_through_to_cfg_time() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let reader = BufMemReader::new(bytes, base);
     let arch = target::SleighArch::x86_64();
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = OptionsBuilder::new().build();
 
     let cfg = Builder::for_arch(&arch, sleigh, base, opts)
@@ -131,7 +131,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let reader = BufMemReader::new(bytes, base);
     let arch = target::SleighArch::x86_64();
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     // Cap the function range so 0x9000 lies outside.
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
 
@@ -139,7 +139,7 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     // overrides.
     let cfg_v1 = {
         let reader2 = BufMemReader::new(vec![0xff, 0xe0u8], base);
-        let sleigh2 = Sleigh::new(arch.sla_spec, arch.pspec, reader2).expect("sleigh");
+        let sleigh2 = Sleigh::new(arch.sla_spec(), arch.pspec(), reader2).expect("sleigh");
         Builder::for_arch(&arch, sleigh2, base, OptionsBuilder::new().build())
             .build()
             .expect("v1 build")
@@ -186,7 +186,7 @@ fn known_multiple_in_range_targets_produces_switch() {
     bytes.push(0xc3); // ret at the end so each target decodes
     let reader = BufMemReader::new(bytes, base);
     let arch = target::SleighArch::x86_64();
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
 
     let cfg_v1 = build_unresolved_jmp_rax_cfg();

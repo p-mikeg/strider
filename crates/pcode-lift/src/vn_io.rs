@@ -214,7 +214,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         if container_reg == *reg {
             return Ok(curr_reg_val);
         }
-        // Phase 1: sub-register reads within a wide (>16-byte) container
+        // Sub-register reads within a wide (>16-byte) container
         // would need a wide mask + shift, which the current u128-mask
         // path cannot represent.  Bail with a clear error rather than
         // silently producing the wrong value.  Direct full-container
@@ -308,7 +308,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
             return self.builder.write_variable(reg, coerced);
         }
-        // Phase 1 wide-container guard — same shape as `read_reg_vn`.
+        // Wide-container guard — same shape as `read_reg_vn`.
         if container_reg.size > 16 {
             return Err(anyhow!(
                 "sub-register aliasing within a wide ({}-byte) container is not supported \

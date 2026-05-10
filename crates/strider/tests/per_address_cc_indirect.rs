@@ -34,7 +34,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving());

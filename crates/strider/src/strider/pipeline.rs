@@ -615,7 +615,7 @@ mod tests {
         )
         .expect("strider");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
         let cfg = cfg::Builder::new(sleigh, 0x1000, cfg::OptionsBuilder::new().build())
             .build()

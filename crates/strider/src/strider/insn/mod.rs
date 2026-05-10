@@ -129,7 +129,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
 
-        let class = target::call_other_abi::classify(self.strider.arch.preset, name)
+        let class = target::call_other_abi::classify(self.strider.arch.preset(), name)
             .ok_or_else(|| ir::error::UnknownCallOtherError {
                 name: name.to_string(),
             })?;

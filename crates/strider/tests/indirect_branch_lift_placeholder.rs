@@ -37,7 +37,7 @@ fn make_unresolved_indirect_branch_cfg(
     let bytes: Vec<u8> = vec![0xff, 0xe0];
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("create x86-64 sleigh");
     // No link-register on x86-64 (the cdecl-family conventions push the
     // return address onto the stack), so cfg-time resolver's LinkRegister arm

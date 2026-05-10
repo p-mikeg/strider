@@ -63,13 +63,13 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
         _ => panic!("unsupported arch {}", c.arch_name),
     };
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
         .expect("probe sleigh")
         .regs()
         .expect("probe regs");
     let ana = strider::Strider::new(sleigh_arch, regs, cc).expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     let raw_addr = obj
         .symbol_by_name(c.fn_name)
@@ -88,8 +88,7 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
     let cfg_opts = cfg_opts_b.build();
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically; `with_endianness` would default the preset to `X86_64`,
-    // breaking arch-specific CallOther dispatch.  See
-    // round8-correctness-cross-arch §1.
+    // breaking arch-specific CallOther dispatch.
     let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");
@@ -159,7 +158,7 @@ mod synthetic {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let sp_val = b.read_variable(&sp).unwrap();
-        // Phase 1: N stores at distinct SP offsets.
+        // Step 1: N stores at distinct SP offsets.
         let mut load_addrs: Vec<ir::Value> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
@@ -171,7 +170,7 @@ mod synthetic {
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             load_addrs.push(addr);
         }
-        // Phase 2: N loads at the same offsets.  Combine via a left-
+        // Step 2: N loads at the same offsets.  Combine via a left-
         // folding chain of Adds so every loaded value reaches the
         // return.
         let mut acc = b.build_int_const(0u64, NodeOutputType::U64).unwrap();

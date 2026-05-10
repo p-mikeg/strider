@@ -174,14 +174,14 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
     let ana = strider::Strider::new(sleigh_arch, regs, arch.cc())
         .expect("Strider::new");
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
         .symbol_by_name(fn_name)
@@ -195,7 +195,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    // Phase 5: thread the calling-convention link-register varnode and an
+    // Thread the calling-convention link-register varnode and an
     // `Arc<dyn ReadOnlyMemory>` view of the ELF into the cfg builder so
     // the indirect-branch resolver can classify `bx lr` as Return and
     // fold rodata-stored jump targets.  The optimiser's `LoadReadOnly`
@@ -216,7 +216,6 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> ir::BuiltFunctionGraph 
     // from `sleigh_arch` atomically — `Builder::with_endianness` would
     // silently default the preset to `X86_64`, breaking the arch-specific
     // CallOther dispatch path on AArch64/ARM/MIPS/PPC test fixtures.
-    // See round8-correctness-cross-arch §1.
     let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));

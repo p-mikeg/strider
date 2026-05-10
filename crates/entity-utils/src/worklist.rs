@@ -214,7 +214,7 @@ mod tests {
         let _ = format!("{wl:?}");
     }
 
-    /// T-23 (round 11): `enqueue` deduplicates at 10k-item scale.  Pins the
+    /// `enqueue` deduplicates at 10k-item scale.  Pins the
     /// single-pass `if workset.insert(e) { push }` shape introduced in W9
     /// (S4.1) — re-enqueueing the same id never duplicates the queue.
     #[test]

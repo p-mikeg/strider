@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(inputs[3], r1);
     }
 
-    /// Regression for round8-2C H4: `apply_tail_call` must propagate an
+    /// Regression: `apply_tail_call` must propagate an
     /// `Err` (not silently default to `U64`) when the placeholder's
     /// `target_value` has a non-integer output type.  We construct a
     /// malformed IndirectBranch directly via `Graph::create_node` so the

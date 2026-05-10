@@ -187,8 +187,7 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // constants propagate.  Skip the second pipeline run when the
     // load-folding step didn't actually fold anything — there's
     // nothing new for ConstantFold + KnownBits + RedundantPhis to
-    // chew on, so the second sweep would converge in zero rewrites
-    // (Task 15).
+    // chew on, so the second sweep would converge in zero rewrites.
     // Iterate to fixed point: each `resolve_const_loads` sweep folds
     // every Load whose address is currently constant.  ConstantFold +
     // KnownBits then propagate the new `IntConst` outputs through any

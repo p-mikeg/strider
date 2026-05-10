@@ -90,7 +90,7 @@ fn apply_elf_relocations_patches_dispatch_table_x86_64() {
 // test for the malformed-target bucket invariant remains deferred —
 // constructing an ET_DYN with a bad-symbol-index Rela through
 // `object::write::elf::Writer` requires writing a full dynamic table
-// + dynsym + dynstr + rela.dyn + program headers.  The wave-1 M3 fix
+// + dynsym + dynstr + rela.dyn + program headers.  The fix
 // is verified by:
 // (1) code inspection — elf.rs:538 (GOT-PLT path), elf.rs:572 (bad
 //     symbol index in generic path), elf.rs:584 (bad section index in

@@ -9,9 +9,8 @@
 //! runtime weight (thin wrappers around `Strider::new`) so always-public
 //! is the simplest sound choice.
 //!
-//! Promoted from the per-test-file inline pattern flagged by
-//! `reviews/round8-repetition-sweep.md` (#5) — 18 sites duplicated the
-//! same 3-line setup.
+//! Promoted from a per-test-file inline pattern — 18 sites duplicated
+//! the same 3-line setup.
 
 // Test-fixture helpers: an `.expect()` here is the right failure mode
 // (a missing `.sla` file or unresolved CC register name is a setup

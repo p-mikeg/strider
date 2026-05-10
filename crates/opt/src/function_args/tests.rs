@@ -16,7 +16,7 @@ fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) ->
         .count()
 }
 
-/// Slice 1: x86_64-like convention passes arg 0 in a register.  A function
+/// x86_64-like convention passes arg 0 in a register.  A function
 /// that reads that register once should, after `FunctionArgDetect` runs,
 /// contain exactly one `FunctionArg { Register(rdi), 0 }` node, and the
 /// original `InitialVar(rdi)` use should have been rewired to it.
@@ -73,7 +73,7 @@ fn sp32_vn() -> rsleigh::Vn {
     }
 }
 
-/// Slice 2: x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
+/// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
 /// register args in the convention, the `Load[sp+4]` should be rewritten
 /// to a single `FunctionArg { Stack{offset:4}, 0 }` node and all consumers
 /// of the load rewired to it.
@@ -138,7 +138,7 @@ fn build_sp_load(
     Ok(loaded)
 }
 
-/// Slice 3: loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
+/// Loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
 /// prefix (sp+4 → arg 0) is labelled.  The sp+12 load remains unchanged
 /// (i.e. it does **not** get FunctionArg index 2), and no gap-index node
 /// is emitted.
@@ -204,7 +204,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     Ok(())
 }
 
-/// Slice 4: a prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
+/// A prior `StackStore{+4}` shadows the `Load[sp+4]` — the load
 /// reads the stored value, not the caller's arg.  No FunctionArg emitted.
 #[test]
 fn prior_stackstore_shadows() -> Result<()> {
@@ -238,7 +238,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     Ok(())
 }
 
-/// Slice 4 (audit B2 blocker): if-branch where the true side does
+/// If-branch where the true side does
 /// `StackStore{+4}`, false side does nothing — their join is a `MemPhi`,
 /// and a later `Load[sp+4]` from the phi must be disqualified.  The DFS
 /// treats `MemPhi` as a fork where **every** predecessor must be clean.
@@ -318,7 +318,7 @@ fn sp64_vn() -> rsleigh::Vn {
     }
 }
 
-/// Slice 5 (audit I2): if the same stack-arg slot is read at multiple
+/// If the same stack-arg slot is read at multiple
 /// widths — e.g. aarch64 reading both `x0` (8 bytes) and `w0` (4 bytes)
 /// from `sp+0` — emit **one** `FunctionArg` at the widest observed width
 /// and route narrower reads through `Truncate(FunctionArg)`.
@@ -391,7 +391,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     Ok(())
 }
 
-/// Audit I4: an `InitialVar(arg_reg)` with no live uses must not produce a
+/// An `InitialVar(arg_reg)` with no live uses must not produce a
 /// `FunctionArg` node.  The pass is not pinning unreferenced registers.
 /// `FunctionArgDetect` runs after the fixed-point loop, so the setup here
 /// includes `RedundantPhis` to strip phantom phi consumers the builder
@@ -661,7 +661,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     Ok(())
 }
 
-/// Slice 3: an isolated high-offset load (sp+12) with no sp+4 or sp+8
+/// An isolated high-offset load (sp+12) with no sp+4 or sp+8
 /// produces no FunctionArg at all — nothing starts the contiguous prefix.
 #[test]
 fn isolated_high_offset_load_dropped() -> Result<()> {

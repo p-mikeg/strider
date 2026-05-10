@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(ty, NodeOutputType::U80);
     }
 
-    /// T-14 (round 11): `bit_mask_u128` for `U256` and `U512` must return
+    /// `bit_mask_u128` for `U256` and `U512` must return
     /// `u128::MAX` — the conservative `u128`-width approximation, since
     /// these widths exceed the carrier.  Pins the `bits >= 128` guard.
     #[test]
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(NodeOutputType::U512.bit_mask_u128(), u128::MAX);
     }
 
-    /// T-14 (round 11): `get_unsigned_int` for `U256`/`U512` passes through
+    /// `get_unsigned_int` for `U256`/`U512` passes through
     /// values within the `u128` carrier (no false rejection).
     #[test]
     fn get_unsigned_int_for_u256_passes_through_small_values() {

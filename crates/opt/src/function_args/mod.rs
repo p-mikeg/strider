@@ -217,8 +217,7 @@ fn detect_register_args(
 /// gap-free prefix.  For each surviving `K`, emit one `FunctionArg` and rewire
 /// every qualifying load's uses to it.
 ///
-/// Slice 4 extends this with memory-shadow disqualification; slice 5 extends
-/// it with width merging.
+/// Memory-shadow disqualification and width merging extend this further.
 fn detect_stack_args(
     ctx: &mut pattern::RewriteCtx<'_>,
     sp_vn: rsleigh::Vn,

@@ -22,7 +22,7 @@ fn x86_64_ud2_terminates_cleanly() {
     let bytes = vec![0x0fu8, 0x0b]; // ud2
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");
@@ -50,7 +50,7 @@ fn aarch64_brk_terminates_cleanly() {
     let bytes = vec![0x00u8, 0x00, 0x21, 0xd4];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let cfg = Builder::for_arch(&arch, sleigh, entry, OptionsBuilder::new().build())
         .build()
         .expect("cfg");

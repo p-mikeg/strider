@@ -38,7 +38,7 @@ pub use elf::{ElfFileMemReader, load_elf};
 /// bound (introduced in rsleigh 4.0.0) is satisfied while preserving the
 /// `anyhow!` / `?` ergonomics callers already rely on.
 #[derive(Debug)]
-pub struct MemReadError(pub anyhow::Error);
+pub struct MemReadError(pub(crate) anyhow::Error);
 
 impl std::fmt::Display for MemReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

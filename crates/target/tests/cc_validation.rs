@@ -1,9 +1,8 @@
 //! `BuiltCallingConvention::try_from_parts` validates the
 //! cross-list disjointness invariants documented on the function.
 //!
-//! T-16 from round10-test-plan.md: pin that listing the SP varnode
-//! in `arg_passing_regs` produces a clear validation `Err` rather
-//! than a downstream miscompile.
+//! Pin that listing the SP varnode in `arg_passing_regs` produces
+//! a clear validation `Err` rather than a downstream miscompile.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

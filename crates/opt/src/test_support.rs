@@ -5,9 +5,8 @@
 //!
 //! Also hosts `count` / `count_reachable` / `return_value` / `return_kind`
 //! — the bookkeeping helpers that white-box (`src/<pass>/tests.rs`) and
-//! black-box (`tests/<file>.rs`) suites both use.  Promoted from the
-//! per-test-file inline implementation flagged by
-//! `reviews/round8-repetition-sweep.md` (#1) — the same logic was
+//! black-box (`tests/<file>.rs`) suites both use.  Promoted from a
+//! per-test-file inline implementation — the same logic was
 //! duplicated 14× across opt's white-box test modules.
 
 #![allow(dead_code)] // Helpers reused across files; not every caller uses every one.

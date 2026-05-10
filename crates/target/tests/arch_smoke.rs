@@ -13,7 +13,7 @@ use target::SleighArch;
 
 fn assert_preset_resolves(label: &str, arch: SleighArch) {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap_or_else(|e| panic!("{label}: Sleigh::new failed: {e:?}"));
     sleigh
         .regs()
@@ -118,9 +118,9 @@ fn presets_endianness_matches_arch() {
     ];
     for (label, arch, expected) in cases {
         assert_eq!(
-            arch.endianness, *expected,
+            arch.endianness(), *expected,
             "{label}: expected {expected:?}, got {:?}",
-            arch.endianness,
+            arch.endianness(),
         );
     }
 }
@@ -133,7 +133,7 @@ fn arm_be_preset_resolves() {
 #[test]
 fn arm_be_endianness_is_big() {
     use target::Endianness;
-    assert_eq!(SleighArch::arm_be().endianness, Endianness::Big);
+    assert_eq!(SleighArch::arm_be().endianness(), Endianness::Big);
 }
 
 #[test]

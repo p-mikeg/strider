@@ -53,11 +53,11 @@ def test_match_get_uint_on_const(x86_memory_elf):
         assert v is None or isinstance(v, int)
 
 
-# ── Round 8 regression tests ───────────────────────────────────────────────
+# ── regression tests ──────────────────────────────────────────────────────
 
 
 def test_match_getitem_returns_unsigned_python_int(x86_memory_elf):
-    """Regression for round8-1F MED: PyMatch.__getitem__ must convert
+    """Regression: PyMatch.__getitem__ must convert
     `u128` constants directly without sign-truncation.  Previously a
     `as i128` cast would surface any U128 value with bit 127 set as a
     *negative* Python int (e.g. `u128::MAX` → `-1`).  Confirm both
@@ -83,7 +83,7 @@ def test_match_getitem_returns_unsigned_python_int(x86_memory_elf):
 
 
 def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
-    """Regression for round8-correctness-borrowing HIGH: a `.when()`
+    """Regression: a `.when()`
     predicate that calls a mutating method on the same graph must
     surface a typed error rather than deadlocking.  The fix uses
     `try_write_inner()` which returns Err on contention so the
@@ -115,11 +115,11 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
         )
 
 
-# ── Round 9 H-8 regression: KeyboardInterrupt / SystemExit propagation ───
+# ── Regression: KeyboardInterrupt / SystemExit propagation ────────────────
 
 
 def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
-    """Round 9 H-8: a `.when()` predicate that raises `KeyboardInterrupt`
+    """A `.when()` predicate that raises `KeyboardInterrupt`
     must propagate the exception out of `find_all` rather than being
     silently swallowed.  Without the fix, Ctrl-C in an interactive
     Python session is unable to interrupt a slow `find_all` walk
@@ -145,7 +145,7 @@ def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
 
 
 def test_when_predicate_system_exit_propagates(x86_memory_elf):
-    """Round 9 H-8: a `.when()` predicate that raises `SystemExit` must
+    """A `.when()` predicate that raises `SystemExit` must
     propagate (not be swallowed and treated as no-match).
     """
     import pytest
@@ -164,7 +164,7 @@ def test_when_predicate_system_exit_propagates(x86_memory_elf):
 
 
 def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
-    """Round 9 H-8 companion: ordinary predicate exceptions
+    """Companion: ordinary predicate exceptions
     (`ValueError`, etc.) should still be swallowed and treated as
     no-match — a buggy predicate must not abort the entire `find_all`
     walk.  Only control-flow exceptions (`KeyboardInterrupt` /

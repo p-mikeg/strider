@@ -583,7 +583,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     Ok(())
 }
 
-// ── Comprehensive tests added in Task 5 ──────────────────────────────────────
+// ── Comprehensive tests ──────────────────────────────────────────────────────
 
 /// SP arithmetic mixing Add and Sub of constants in both directions:
 /// `((sp + 16) - 4) - 4 = sp + 8`. Must reduce via decompose_sp's recursive

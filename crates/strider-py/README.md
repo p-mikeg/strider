@@ -200,8 +200,10 @@ The `_` and `any_` strings are reserved wildcards (they convert to
   `bool_bin_any`, `bool_un_any`, `float_bin_any`, `float_un_any`,
   `float_cmp_any` — bind the matched op variant to a Capture.
 
-`float_is_nan` is registered but raises `PatternError` until the IR
-gains a `FloatIsNan` node kind.
+`float_is_nan(x)` desugars to `BoolNeg(FloatEqual(x, x))` — the same
+shape the pcode lifter emits for Sleigh's `FLOAT_NAN` op, so it matches
+both that lifted shape and any explicit `x != x` written in the source.
+No dedicated `FloatIsNan` IR node is needed.
 
 ## Match accessors
 
@@ -307,7 +309,6 @@ PatternError | RewriteError`) is in `strider.errors`.
 
 ## What's NOT in v1
 
-- `float_is_nan` constructor (no `FloatIsNan` IR node yet).
 - Pattern constructors for `Piece`, `Extract`, `Insert`, `SegmentOp`,
   `CPoolRef`, `New` — they aren't exposed by the `pattern` Rust crate
   either; once those land in Rust we'll expose them in Python.

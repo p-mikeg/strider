@@ -28,7 +28,7 @@ fn run_with(compact: bool) -> ir::BuiltFunctionGraph {
     let (bytes, entry) = x86_64_call_then_ret_bytes();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let config = RunConfig {
         strider: &strider,
         start_addr: entry,

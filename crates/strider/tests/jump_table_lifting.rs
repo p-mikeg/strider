@@ -66,7 +66,7 @@ fn analyze_with_known_targets(
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh =
-        Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("create x86_64 sleigh");
+        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
     // Seed `known_targets` so the cfg builder produces
     // `RegionTerminator::Switch` (not `UnresolvedIndirectBranch`)
     // for the BranchIndirect at `branch_indirect_addr`.
@@ -205,7 +205,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let sleigh =
-        Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("create x86_64 sleigh");
+        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known_targets.insert(
         PcodeInsnAddr::new(MachineInsnAddr::new(branch_indirect_addr), 0),

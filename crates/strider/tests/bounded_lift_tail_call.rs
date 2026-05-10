@@ -50,7 +50,7 @@ fn synthetic_bytes() -> Vec<u8> {
 fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(synthetic_bytes(), BASE);
-    Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("Sleigh::new")
+    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new")
 }
 
 #[test]
@@ -154,7 +154,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("Sleigh::new");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {
@@ -208,7 +208,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("Sleigh::new");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {
@@ -251,7 +251,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("Sleigh::new");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {

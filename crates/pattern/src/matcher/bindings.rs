@@ -15,14 +15,32 @@ use crate::var::Capture;
 /// `CallOther`) bind only the `NodeId` and leave `output = None`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
-    pub node: NodeId,
-    pub output: Option<NodeOutputId>,
+    pub(crate) node: NodeId,
+    pub(crate) output: Option<NodeOutputId>,
 }
 
 impl Binding {
+    /// Constructs a `Binding` from a `(node, output)` pair.  The only
+    /// public construction path — round-12 R12-T-N tightened the fields
+    /// to `pub(crate)` so external callers cannot bypass the
+    /// cross-field invariant ("when `output` is `Some(o)`,
+    /// `graph.output_definition(o).0 == node`").
     #[must_use]
     pub fn new(node: NodeId, output: Option<NodeOutputId>) -> Self {
         Self { node, output }
+    }
+
+    /// Read-only access to the bound `NodeId`.
+    #[must_use]
+    pub fn node(&self) -> NodeId {
+        self.node
+    }
+
+    /// Read-only access to the optional value-output binding.  `None`
+    /// for control-flow captures (`If`, `Call`, `Return`, `CallOther`).
+    #[must_use]
+    pub fn output(&self) -> Option<NodeOutputId> {
+        self.output
     }
 }
 

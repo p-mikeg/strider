@@ -280,7 +280,7 @@ fn opaque_target_returns_none() {
     );
 }
 
-/// Round 10 T-3 regression: calling `classify_anchor` twice on the
+/// Regression: calling `classify_anchor` twice on the
 /// same graph (without optimization between calls) must produce the
 /// same verdict.  Pins the invariant that no per-call state leaks
 /// between invocations — every call recomputes `analyze_known_bits`

@@ -143,7 +143,7 @@ fn run_via_orchestrator(
 
     // Build the second Sleigh handle (orchestrator-owned, fresh
     // reader).  This is consumed by RunConfig.
-    let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec, arch.inner.pspec, reader_for_orch)
+    let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
     let rom_arc = rom.map(|r| r.into_arc());

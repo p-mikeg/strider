@@ -39,12 +39,12 @@ reports a change. Three pre-built pipelines cover the common cases.
     analyses (in `stack_store/` and `stack_load_forward/`).
   - `FunctionArgDetect` — canonicalises arg-position reads at the function
     boundary into `FunctionArg` nodes.
-  - `IndirectBranchResolve` (`indirect_branch_resolve/`) — producer-shape
-    classifier for `BranchIndirect` placeholders. Exposes `classify_anchor`,
-    `classify_anchor_with_rom`, `classify_anchor_with_rom_and_sp`,
-    `apply_link_register`, `apply_tail_call`, plus the result types
-    `AnchorAddr`, `AnchorCallingContext`, `ResolvedTargets`,
-    `find_placeholder_return_for_anchor`.
+  - `indirect_branch_resolve/` — producer-shape classifier for
+    `BranchIndirect` placeholders, exposed as free functions (no pass
+    struct). Exposes `classify_anchor`, `classify_anchor_with_rom`,
+    `classify_anchor_with_rom_and_sp`, `apply_link_register`,
+    `apply_tail_call`, plus the result types `AnchorCallingContext`,
+    `ResolvedTargets`, `find_placeholder_return_for_anchor`.
 - `KnownBits`-flavour utilities: `Kb`, `analyze_known_bits`.
 - Re-exports: `reader::ReadOnlyMemory` (so callers don't need a direct
   `reader` dep).
@@ -63,7 +63,7 @@ a shared fixed-point loop, then runs every `add_post_pass(_)` pass exactly
 once after convergence. The whole sequence ends with `ir::validate::validate`,
 so a malformed graph is reported as `opt::Error::IrError(ValidationFailed(_))`.
 
-The strider tier-2 fixed-point splits passes into **stable** vs **destructive**
+The strider indirect-branch fixed-point splits passes into **stable** vs **destructive**
 subsets. `stable_default_pipeline()` contains `ConstantFold`, `KnownBits`,
 `FlagCmpCanonicalize`, `IfCondInversion` — all rewrite-only. The strider
 orchestrator runs this pipeline mid-iteration while the IR is still growing.

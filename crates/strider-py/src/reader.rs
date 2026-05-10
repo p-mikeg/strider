@@ -660,7 +660,7 @@ impl rsleigh::MemReader for PyMemoryMapReader {
         self.table
             .read(addr.off, out_buf)
             .ok_or_else(|| {
-                reader::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
+                reader::MemReadError::from(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
             })
     }
 }

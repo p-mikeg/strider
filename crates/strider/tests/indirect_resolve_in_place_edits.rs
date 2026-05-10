@@ -182,7 +182,7 @@ fn apply_tail_call_patches_cache_exit_handle_via_orchestrator() {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch_ref = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes.clone(), 0x1000);
-    let sleigh = Sleigh::new(arch_ref.sla_spec, arch_ref.pspec, reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch_ref.sla_spec(), arch_ref.pspec(), reader).expect("sleigh");
     let config = RunConfig {
         strider: &strider,
         start_addr: 0x1000,
@@ -224,7 +224,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     }
 }
 
-// ── H0: ABI threading for in-place tail-call resolution ─────────────────
+// ── ABI threading for in-place tail-call resolution ─────────────────────────
 
 /// Drive a real strider lift to produce a placeholder Return, run
 /// `apply_tail_call` with non-empty `arg_passing_outputs` /
@@ -233,15 +233,14 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 /// `pattern::call().arg(0, …)` query to confirm the Call exposes a
 /// real arg slot 0.
 ///
-/// **Pre-H0:** `apply_tail_call`'s 4-arg signature ignored the
+/// **Without ABI threading:** `apply_tail_call`'s 4-arg signature ignored the
 /// calling convention.  `pattern::call().arg(0, predicate(|_| true))`
 /// returned zero matches because the resulting Call had only
 /// `[ctrl, mem, target]` inputs — no arg slots.
 ///
-/// **Post-H0:** with the convention threaded, the Call has arg slot 0
-/// and the pattern query matches.  This is the load-bearing claim of
-/// H0: pattern queries against resolved indirect Calls now
-/// work.
+/// **With ABI threading:** with the convention threaded, the Call has arg slot 0
+/// and the pattern query matches.  This is the load-bearing claim:
+/// pattern queries against resolved indirect Calls now work.
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use ir::node::{NodeKind, NodeOutputKind, NodeOutputType};

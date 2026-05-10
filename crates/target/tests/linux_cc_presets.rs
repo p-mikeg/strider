@@ -24,7 +24,7 @@ use target::{CallingConvention, SleighArch};
 /// is fixed by the `.sla` spec.
 fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .expect("Sleigh::new");
     sleigh.regs().expect("Sleigh::regs")
 }

@@ -93,26 +93,21 @@ pub enum ResolvedTargets {
 }
 
 impl ResolvedTargets {
-    /// Validating constructor for [`Self::Multiple`].  Rejects empty
-    /// `targets` so a future arm cannot
-    /// silently produce an unreachable dispatch site.  The classifier
-    /// arms (jump-table, stack-array, ValuePhi) already check
+    /// Validating constructor for [`Self::Multiple`].  Returns `None`
+    /// for an empty `targets` slice so a future arm cannot silently
+    /// produce an unreachable dispatch site.  The classifier arms
+    /// (jump-table, stack-array, ValuePhi) already check
     /// `targets.is_empty()` and return `None` instead of constructing
-    /// an empty `Multiple`; this constructor codifies the contract
-    /// for any future arm.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if `targets` is empty.
-    pub fn multiple(targets: Vec<u64>) -> std::result::Result<Self, anyhow::Error> {
+    /// an empty `Multiple`; this constructor codifies the contract for
+    /// any future arm.  Emptiness is a programmer invariant violation,
+    /// not a recoverable runtime condition, so `Option` is the
+    /// idiomatic carrier (round-12 TY-2; previously `Result<_, anyhow::Error>`).
+    #[must_use]
+    pub fn multiple(targets: Vec<u64>) -> Option<Self> {
         if targets.is_empty() {
-            return Err(anyhow::anyhow!(
-                "ResolvedTargets::multiple: targets must be non-empty \
-                 (an empty Multiple advertises zero runtime targets, \
-                 making the dispatch site appear unreachable)"
-            ));
+            return None;
         }
-        Ok(Self::Multiple(targets))
+        Some(Self::Multiple(targets))
     }
 }
 

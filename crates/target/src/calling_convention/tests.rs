@@ -2,7 +2,7 @@ use super::*;
 
 fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap()
         .regs()
         .unwrap()
@@ -499,7 +499,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
 fn dump_mips_register_names() {
     let arch = crate::arch::SleighArch::mipsle32();
     let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
         .unwrap().regs().unwrap();
     let candidates = ["a0", "a1", "a2", "a3", "v0", "v1", "sp", "ra",
                       "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
@@ -739,7 +739,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
 fn probe_float_regs() {
 fn try_resolve(arch: crate::arch::SleighArch, names: &[&str]) {
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    let regs = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, probe).unwrap().regs().unwrap();
+    let regs = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe).unwrap().regs().unwrap();
     for n in names {
         let v = regs.name_to_vn(n);
         println!("  {n:?} -> {v:?}");

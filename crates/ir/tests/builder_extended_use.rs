@@ -34,21 +34,21 @@ fn in_place_mutations_without_build_preserve_graph_validity() {
     // Capture the entry once - it must remain stable across iterations.
     let entry = b.entry();
 
-    // Round 1: synthesize a new IntConst via graph_mut().
+    // Step 1: synthesize a new IntConst via graph_mut().
     let r1 = b.graph_mut().create_node(
         NodeKind::IntConst(1u128),
         std::iter::empty(),
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    assert_eq!(b.entry(), entry, "entry() must be stable after round 1");
+    assert_eq!(b.entry(), entry, "entry() must be stable after step 1");
 
-    // Round 2: another mutation - round 1's node must persist.
+    // Step 2: another mutation - step 1's node must persist.
     let r2 = b.graph_mut().create_node(
         NodeKind::IntConst(2u128),
         std::iter::empty(),
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
-    assert_eq!(b.entry(), entry, "entry() must be stable after round 2");
+    assert_eq!(b.entry(), entry, "entry() must be stable after step 2");
     assert_ne!(r1, r2, "consecutive create_node calls must produce distinct ids");
 
     // Both synthesized nodes are live in the arena.

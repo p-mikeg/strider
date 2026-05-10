@@ -962,7 +962,7 @@ mod tests {
         }
     }
 
-    /// Regression for round8-17 D-1: x86/x86_64 memory fences (mfence,
+    /// Regression: x86/x86_64 memory fences (mfence,
     /// sfence, lfence) MUST classify as PURE_WITH_MEM_EDGE so any binary
     /// using SSE memory fences lifts cleanly.  Without this entry, the
     /// CallOther emitted by Sleigh would raise UnknownCallOtherError at

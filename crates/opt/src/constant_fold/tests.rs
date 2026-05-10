@@ -1425,7 +1425,7 @@ fn cast_to_float_cross_precision_lowers_to_float_to_float() -> Result<()> {
     Ok(())
 }
 
-// ── Comprehensive tests added in Task 2.E ─────────────────────────────────────
+// ── Comprehensive tests ──────────────────────────────────────────────────────
 
 /// Shift constant evaluation: `1 << 4` for U32 → 0x10.
 #[test]

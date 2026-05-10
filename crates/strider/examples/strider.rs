@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rom = reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = strider::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, mem_reader)?;
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     let strider = strider::Strider::new(
         arch,
         sleigh.regs()?,

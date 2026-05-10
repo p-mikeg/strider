@@ -24,14 +24,14 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
     let obj = reader::load_elf(&path).expect("load_elf");
     let sleigh_arch = arch.sleigh();
     let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, probe)
+    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
         .expect("probe sleigh new")
         .regs()
         .expect("probe sleigh regs");
     let s = strider::Strider::new(sleigh_arch, regs, arch.cc()).expect("Strider::new");
 
     let mem = reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec, sleigh_arch.pspec, mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh new");
     let raw_addr = obj
         .symbol_by_name(fn_name)

@@ -810,8 +810,9 @@ fn build_anchor_calling_context(
         Box::new(graph.call_clobbered_regs().iter())
     };
     for vn in clobber_iter {
-        // surface unsupported clobber-reg sizes as Err
-        // (same reasoning as H-4 above).
+        // surface unsupported clobber-reg sizes as Err rather than
+        // silently defaulting — a size we don't know how to lower
+        // would otherwise produce a malformed Call output kind.
         let ty = vn_size_to_node_output_type(vn)?;
         ctx.clobbered_kinds
             .push(ir::node::NodeOutputKind::OutputType(ty));
@@ -1063,9 +1064,9 @@ mod tests {
         }
     }
 
-    // ── apply_stall_guard tests (/ I-7) ───────────────────
+    // ── apply_stall_guard tests ──────────────────────────────────
     //
-    // These tests pin the wave-2 fix (`>=` → `>`) by exercising the
+    // These tests pin the fix (`>=` → `>`) by exercising the
     // stall-guard behavior directly via the extracted helper.  Each
     // case names the relevant scenario from the orchestrator's
     // fixed-point loop.

@@ -31,7 +31,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
@@ -75,7 +75,7 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();

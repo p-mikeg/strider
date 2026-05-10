@@ -18,7 +18,7 @@ use strider::{run, RunConfig, SleighArch, Strider};
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("sleigh")
+    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh")
 }
 
 fn make_config<'a>(

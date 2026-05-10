@@ -256,7 +256,7 @@ def test_int_binary_invalid_op_raises():
 
 
 def test_when_predicate_exception_surfaces_on_stderr(capfd):
-    """G9 (Round-7 follow-up): a predicate that raises an exception
+    """A predicate that raises an exception
     must NOT silently filter out matches.  The exception is treated as
     'no match' (so find_all keeps walking) but the exception text is
     surfaced to stderr (via wrap_when's e.print(py)).
@@ -270,7 +270,7 @@ def test_when_predicate_exception_surfaces_on_stderr(capfd):
     from strider.pattern import any_, var, Capture
 
     def raising_predicate(_match):
-        raise ValueError("intentional G9 test exception")
+        raise ValueError("intentional test exception")
 
     c = Capture()
     pat = var(c).when(raising_predicate)

@@ -50,7 +50,7 @@ impl PySleigh {
     /// helpers in `run.rs` build a PySleigh without going through
     /// PyO3's argument-conversion path.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
-        let inner = rsleigh::Sleigh::new(arch.inner.sla_spec, arch.inner.pspec, reader)
+        let inner = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
             .map_err(|e| into_lift_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
         let regs = inner
             .regs()

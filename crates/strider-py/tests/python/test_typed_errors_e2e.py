@@ -161,7 +161,7 @@ def test_lift_error_subclass_when_explicit_lift_fails():
 
 
 def test_rewrite_error_via_multi_output_lhs_root():
-    """Round 9 wave 25 (I-10): trigger `RewriteError` by attempting
+    """Trigger `RewriteError` by attempting
     a rewrite whose LHS root is a `Call` node — `Call` has 11 value
     outputs (Control, Memory, ret_val regs, clobber regs).  The
     rewrite-rule engine's `node_outputs_exact::<1>` (which it uses
@@ -193,7 +193,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
 
 
 def test_unknown_call_other_error_via_x86_clflush_instruction():
-    """Round 9 wave 25 (I-10): trigger `UnknownCallOtherError` by
+    """Trigger `UnknownCallOtherError` by
     lifting x86 `clflush [eax]` (opcode `0F AE 38`) — Sleigh emits a
     CallOther named `"clflush"` which is **not** classified in
     `target::call_other_abi::classify`.  The strict-on-emission
@@ -228,7 +228,7 @@ def test_unknown_call_other_error_via_x86_clflush_instruction():
 
 
 def test_unresolved_indirect_branch_error_via_jmp_rax():
-    """Round 9 wave 25 (I-10): trigger `UnresolvedIndirectBranchError`
+    """Trigger `UnresolvedIndirectBranchError`
     via a bare `jmp rax` where RAX is the function-entry value of
     rax (`InitialVar(rax)`).  None of the classifier arms match:
     - `IntConst(_)` requires a folded constant — RAX is not constant.

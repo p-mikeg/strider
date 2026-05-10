@@ -24,8 +24,7 @@ fn sp64_vn() -> rsleigh::Vn {
 }
 
 fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
-    // Delegate to the shared helper promoted in `test_support` —
-    // see `reviews/round8-repetition-sweep.md` (#1).
+    // Delegate to the shared helper promoted in `test_support`.
     crate::test_support::count_reachable(ctx, pred)
 }
 

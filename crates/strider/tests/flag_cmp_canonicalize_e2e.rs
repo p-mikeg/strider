@@ -25,7 +25,7 @@ use strider::{CallingConvention, SleighArch, Strider};
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> BuiltFunctionGraph {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = Sleigh::new(arch.sla_spec, arch.pspec, reader).expect("create sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::for_arch(&arch, sleigh, base, opts)
         .build()

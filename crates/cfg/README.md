@@ -42,7 +42,7 @@ call, or return, then deciding whether the current region should terminate.
 
 `src/cfg/builder/indirect_resolve.rs` is the bridge to the indirect-branch
 resolver in `opt`: when the builder sees a `BranchIndirect`, it leaves a
-placeholder anchor that the strider orchestrator's tier-2 fixed-point loop
+placeholder anchor that the strider orchestrator's indirect-branch fixed-point loop
 rewrites once the IR has been built and optimised. Resolved targets feed back
 in via `ResolvedTargets`, splicing new regions into the CFG without rebuilding.
 
@@ -79,7 +79,7 @@ cargo test --package cfg <test_name>
 
 ## Gotchas
 
-- `Cfg::sleigh` is reused across the strider tier-2 fixed-point loop. Reusing
+- `Cfg::sleigh` is reused across the strider indirect-branch fixed-point loop. Reusing
   one `Sleigh` for many `lift_one` calls is sound because Sleigh has no per-CFG
   state (only per-call decode buffers). See `tests/sleigh_reuse.rs`.
 - Indirect branches are NOT resolved by `cfg` itself. `Builder::build` returns a

@@ -117,38 +117,32 @@ pub enum ArchPreset {
 /// same arch can in principle declare different SP registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SleighArch {
-    /// The `.sla` specification for the architecture's instruction set.
-    pub sla_spec: rsleigh::sla_spec::SlaSpec,
-    /// The `.pspec` processor specification (register and space definitions).
-    pub pspec: rsleigh::pspec::PSpec,
-    /// The byte order of this architecture.
-    pub endianness: Endianness,
-    /// Architecture-preset discriminator — used by
-    /// [`crate::call_other_abi::classify`] to dispatch arch-specific
-    /// user-op ABIs.  Set by each preset constructor; not user-overridable.
-    pub preset: ArchPreset,
+    pub(crate) sla_spec: rsleigh::sla_spec::SlaSpec,
+    pub(crate) pspec: rsleigh::pspec::PSpec,
+    pub(crate) endianness: Endianness,
+    pub(crate) preset: ArchPreset,
 }
 
 impl SleighArch {
-    /// Read the `.sla` spec.  canonical
-    /// accessor for the migration path that will eventually tighten
-    /// the field to `pub(crate)`.
+    /// Read the `.sla` specification for the architecture's instruction set.
     #[must_use]
     pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
         self.sla_spec
     }
-    /// Read the `.pspec`.  canonical accessor.
+    /// Read the `.pspec` processor specification (register and space definitions).
     #[must_use]
     pub fn pspec(&self) -> rsleigh::pspec::PSpec {
         self.pspec
     }
-    /// Read the byte-order.
+    /// Read the byte order of this architecture.
     #[must_use]
     pub fn endianness(&self) -> Endianness {
         self.endianness
     }
 
-    /// Read the arch preset discriminator.
+    /// Read the arch-preset discriminator — used by
+    /// [`crate::call_other_abi::classify`] to dispatch arch-specific user-op
+    /// ABIs.  Set by each preset constructor; not user-overridable.
     #[must_use]
     pub fn preset(&self) -> ArchPreset {
         self.preset

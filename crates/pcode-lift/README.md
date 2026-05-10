@@ -46,13 +46,18 @@ opcode family — `arithmetic`, `bool_ops`, `cmp`, `casts`, `float`, `load`,
 
 `src/vn_io.rs` is the register-aliasing layer. Sleigh emits operations on
 sub-registers (e.g. write to `al`) but the IR tracks one `VarId` per
-*containing* register (`rax`). `read_vn` and `write_vn` insert
-`Truncate` / `Extend` / `Insert { lsb, len }` / `Extract { lsb, len }`
-nodes so the IR sees consistent register-sized values regardless of which
-sub-slot the source operation named. Width support: 1, 2, 4, 8, 10
-(x87 80-bit extended), 16 (XMM/q-register), 32 (YMM), 64 (ZMM) bytes.
-Widths 32 and 64 use a degraded `u128::MAX` mask; sub-register aliasing
-within > 16-byte containers raises an error.
+*containing* register (`rax`). `read_vn` and `write_vn` synthesise the
+correct partial-read / partial-write using IR primitives the graph
+already supports: a sub-register *read* becomes `Truncate(ShiftRight(container,
+shift))` (the shift is omitted when the sub-register sits at offset 0),
+and a sub-register *write* becomes `Or(And(container, ~positioned_mask),
+And(ShiftLeft(Extend(val), shift), positioned_mask))` — the new value is
+zero-extended to container width, shifted into position, masked, and
+OR'd with the surrounding bits of the container (masked by the
+complement). Width support: 1, 2, 4, 8, 10 (x87 80-bit extended), 16
+(XMM/q-register), 32 (YMM), 64 (ZMM) bytes. Widths 32 and 64 use a
+degraded `u128::MAX` mask; sub-register aliasing within > 16-byte
+containers raises an error.
 
 The lifter is split out from `strider` so two callers can reuse it:
 [`strider`](../strider)'s per-region IR translator (the main consumer), and
@@ -67,9 +72,10 @@ single-block mini-IR to classify a `BranchIndirect` producer shape).
   `Store` itself based on the `Ok(false)` return value.
 - **Largest-containing-register rule**: every `Vn` read/write goes through
   `find_largest_fitting_register`. A 1-byte write to `al` becomes an
-  `Insert { lsb: 0, len: 8 }` into the current `rax` value; a 4-byte read
-  of `eax` becomes a `Truncate(rax, U32)` (or, on big-endian, an `Extract`
-  at the appropriate offset).
+  `Or(And(rax, ~0xFF), And(Extend(val), 0xFF))` merge into the current
+  `rax` value (and a shift if the sub-register sits above offset 0); a
+  4-byte read of `eax` becomes `Truncate(rax, U32)` (or, on big-endian,
+  `Truncate(ShiftRight(rax, 32), U32)` for the high half).
 - **Endianness drives bit-shift formulas**: little-endian places `al` at
   `lsb = 0`, `ah` at `lsb = 8`; big-endian places them at the high end of
   the container. The endianness comes from `target::Endianness`.

@@ -164,7 +164,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     Ok(())
 }
 
-/// Regression for round8-correctness-invariants H-2: when the `If`'s
+/// Regression: when the `If`'s
 /// `BoolNeg(cond)` becomes dead after the rewrite (no other consumers
 /// of the `BoolNeg` exist), its asm-fingerprint must be absorbed into
 /// the surviving inner-cond node so the contributing-asm history is

@@ -1,7 +1,7 @@
 //! `IfPat` direct-layout-only tests, plus integration with the
 //! [`opt::IfCondInversion`] canonicalisation pass.
 //!
-//! Before Phase 6, `IfPat` itself tried two layouts (direct + inverted).
+//! Historically, `IfPat` itself tried two layouts (direct + inverted).
 //! That responsibility moved to `opt::IfCondInversion`, which eagerly
 //! rewrites `If(BoolNeg(C)){A}{B}` into the canonical `If(C){B}{A}` so
 //! `IfPat` only ever sees one layout.  This file verifies:
@@ -69,7 +69,7 @@ fn cond_mismatch_no_match_in_direct() {
 fn no_cond_only_true_branch_matches_either_fixture() {
     // With no cond constraint, the matcher just looks for an `If` with a
     // consumer on its true output — both fixtures qualify.  The matcher's
-    // semantics here are unchanged by Phase 6.
+    // semantics here are unchanged by the canonicalisation split-out.
     let g_direct = shapes::if_cmp_then_return(4);
     let g_inverted = shapes::if_cmp_then_return_inverted(4);
     let pat: Pat = if_node().true_branch(any()).into();

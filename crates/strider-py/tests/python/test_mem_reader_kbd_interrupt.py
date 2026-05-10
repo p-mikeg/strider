@@ -1,4 +1,4 @@
-"""Regression for H-2: a Python `MemReader.read` that raises
+"""Regression: a Python `MemReader.read` that raises
 `KeyboardInterrupt` or `SystemExit` must propagate out of the Rust
 adapter rather than being swallowed and surfaced as a generic
 `ReaderError`.

@@ -148,7 +148,7 @@ pub struct BuiltCallingConventionParts {
 }
 
 impl BuiltCallingConvention {
-    /// Validating constructor .  Builds a
+    /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit parts and checks the
     /// canonical ABI invariants:
     ///

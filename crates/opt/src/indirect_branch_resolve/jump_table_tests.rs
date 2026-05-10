@@ -932,7 +932,7 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
 
 #[test]
 fn bound_from_if_condition_idx_equal_n_true_returns_none() {
-    // CORRECTNESS — H2: `idx == N` taken-true constrains idx to
+    // CORRECTNESS: `idx == N` taken-true constrains idx to
     // the single value `{N}`, not `[0, N]`.  The `0..bound`
     // enumeration shape this fn feeds into would mis-resolve, so
     // the helper *must* return None for `IntCmpOp::Equal` even on

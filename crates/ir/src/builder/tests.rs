@@ -1526,7 +1526,7 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
 
 #[test]
 fn lift_at_scopes_lift_addr_and_restores_on_exit() -> Result<()> {
-    // FB-3 type-design: pin lift_at's restore-on-exit contract.  After
+    // Pin lift_at's restore-on-exit contract.  After
     // the closure returns, the lift_addr must be back to whatever it
     // was before — even if the closure left it set on the way in.
     let mut b = builder_with_region()?;
@@ -1609,7 +1609,7 @@ fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     Ok(())
 }
 
-/// Regression for round8-1A HIGH: `build_int_const` and `make_int_const`
+/// Regression: `build_int_const` and `make_int_const`
 /// must reject `U512` (and `U256`) because both store the value in `u128`.
 /// Without the guard, the resulting `IntConst` would claim a width its
 /// storage cannot represent — silent type confusion.

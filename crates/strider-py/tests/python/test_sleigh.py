@@ -42,11 +42,11 @@ def test_vn_repr_for_const_drops_space_prefix():
     assert repr(vn) == "0x42:4"
 
 
-# ── Hash/eq contract regression tests (round8-1F HIGH / MED) ──────────────
+# ── Hash/eq contract regression tests ─────────────────────────────────────
 
 
 def test_vn_space_hash_consistent_with_eq():
-    """Regression for round8-1F HIGH: PyVnSpace.__hash__ must be a function
+    """Regression: PyVnSpace.__hash__ must be a function
     of the inner identity, not the field's stack address.  Two separately
     constructed VnSpace.ram() objects must hash equally so they work as
     dict keys / set members.
@@ -77,7 +77,7 @@ def test_vn_space_distinct_spaces_compare_unequal():
 
 
 def test_vn_hash_includes_addr_space():
-    """Regression for round8-1F MED: Vn.__hash__ must mix in addr_space so
+    """Regression: Vn.__hash__ must mix in addr_space so
     same-offset/same-size varnodes in different spaces don't share a
     bucket.  Without this, `RAM[0x10]:8` and `REGISTER[0x10]:8` would
     collide and hash-table chains would degrade to O(n).

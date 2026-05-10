@@ -862,7 +862,7 @@ mod tests {
         Ok(())
     }
 
-    /// Regression for round8-correctness-edge-cases H1: `decompose_sp`
+    /// Regression: `decompose_sp`
     /// must not blow the thread stack on a deep `sp + K1 + K2 + ... + KN`
     /// chain.  The recursive form overflowed at ~4-8k nodes; the
     /// iterative form must walk a 5000-node chain without panic AND
@@ -893,7 +893,7 @@ mod tests {
         Ok(())
     }
 
-    /// Regression for round8-correctness-edge-cases H2: a `StackStorePhi`
+    /// Regression: a `StackStorePhi`
     /// node with empty `stack_phi_offsets` MUST yield `MayAlias` from
     /// `step_through_stack_store_phi` — the conservative answer for
     /// "offsets unknown".  Previously it returned `PassThrough`, which

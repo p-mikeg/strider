@@ -10,7 +10,7 @@ def test_empty_pipeline():
 
 
 def test_python_default_pipeline_matches_rust_pinned_count():
-    """G7 (Round-7 follow-up): pin Python's manually-listed default
+    """Pin Python's manually-listed default
     pipeline pass count against the Rust-side factory function.  The
     Rust counterpart asserts the same numbers in
     crates/opt/tests/pipeline_subsets.rs::*_pass_count_pinned.

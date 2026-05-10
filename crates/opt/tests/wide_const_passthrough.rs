@@ -1,6 +1,6 @@
-//! Wide-const Phase-1 passthrough: ConstantFold + KnownBits + the full
+//! Wide-const passthrough: ConstantFold + KnownBits + the full
 //! default pipeline must leave `IntConstWide` nodes untouched.  Wide
-//! arithmetic folding is deferred to Phase 2 (would require bnum or a
+//! arithmetic folding is deferred (would require bnum or a
 //! hand-rolled wide-arith library).
 //!
 //! These tests pin the contract: a graph containing `IntConstWide`

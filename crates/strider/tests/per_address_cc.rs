@@ -34,7 +34,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: HashMap<u64, TargetCC> = HashMap::new();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving());
@@ -59,7 +59,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let outs = bfg.graph.node_outputs(call_id);
     // Override applied: per-Call clobber-list override is recorded
     // (Some); the Call's clobber output count matches the override
-    // list length exactly.  Pre-Task-9 (no per-address CC), this Call
+    // list length exactly.  Before per-address CC was added, this Call
     // emits a SystemV clobber set with ~16+ slots; with the override,
     // the only tracked variables that survive the all-preserving
     // filter are the Sleigh-generated temporaries (UNIQUE / RAM
@@ -92,7 +92,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     let strider = make_strider();
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let config = RunConfig {
         strider: &strider,
