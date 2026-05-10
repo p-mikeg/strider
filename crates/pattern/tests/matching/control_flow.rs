@@ -198,6 +198,26 @@ fn ret_captures_node() {
     assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Return));
 }
 
+/// T-20: a control-flow `Capture` (bound to a Return node, which has
+/// no value output) must yield `None` from value-typed accessors.
+/// `node(c)` must succeed, but `output(c)` is `None`, so
+/// `get_uint(c, &g)`, `get_int(c, &g)`, and `get_bool(c, &g)` all
+/// return `None` — never panic, never read garbage.
+#[test]
+fn match_value_accessors_on_control_flow_capture_return_none() {
+    let g = shapes::add_consts(5, 3);
+    let c = Capture::new();
+    let m = a::unique(&g, ret().capture(c));
+    // node binding is present (the matched Return).
+    assert!(m.node(c).is_some(), "Return capture must bind node");
+    // No value output — Return is a control-flow sink.
+    assert!(m.output(c).is_none(), "Return has no value output");
+    // Value extractors must surface this as None, not panic.
+    assert_eq!(m.get_uint(c, &g.graph), None);
+    assert_eq!(m.get_int(c, &g.graph), None);
+    assert_eq!(m.get_bool(c, &g.graph), None);
+}
+
 // ── If ────────────────────────────────────────────────────────────────────────
 
 #[test]

@@ -58,18 +58,21 @@ impl<E: EntityRef> DenseEntitySet<E> {
     /// `std::collections::HashSet::insert`'s contract so callers can
     /// switch implementations without changing the call shape.
     ///
-    /// **Implementation note:** `cranelift_bitset::CompoundBitSet::insert`
-    /// returns `()`, so we read with `contains` first to know whether
-    /// the entry was already present.  That's two index operations
-    /// per `insert` — a future cranelift-bitset that exposes a
-    /// `test_and_set -> bool` would let us collapse to one.  Hot
-    /// graph-traversal paths that don't need the novel-insertion
-    /// signal can skip this overhead by calling `bitset.insert(...)`
-    /// directly through the public field accessor (none today).
+    /// Single-pass: delegates directly to
+    /// `cranelift_bitset::CompoundBitSet::insert`, which itself
+    /// returns `bool` with the same "was newly inserted" semantics.
+    /// Hot graph-traversal paths get one bitset access per insert.
     pub fn insert(&mut self, entity: E) -> bool {
-        let already = self.bitset.contains(entity.index());
-        self.bitset.insert(entity.index());
-        !already
+        self.bitset.insert(entity.index())
+    }
+
+    /// Test-and-set primitive: returns `true` when `entity` was
+    /// **already present** before this call (so the caller can skip
+    /// re-processing).  Equivalent to `!self.insert(entity)` and
+    /// provided as a clearer surface for visited-set walks where
+    /// "skip if already-seen" is the dominant idiom.
+    pub fn test_and_set(&mut self, entity: E) -> bool {
+        !self.bitset.insert(entity.index())
     }
 
     /// Removes `entity` from the set.
@@ -267,5 +270,26 @@ mod tests {
         let s: DenseEntitySet<Id> = core::iter::once(Id(1)).collect();
         let it = s.iter();
         assert_fused(&it);
+    }
+
+    #[test]
+    fn insert_returns_true_on_first_insert_false_on_repeat() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        assert!(s.insert(Id(42)), "first insert must report 'newly inserted'");
+        assert!(!s.insert(Id(42)), "repeat insert must report 'already present'");
+        assert!(s.insert(Id(43)), "different entity is newly inserted");
+    }
+
+    #[test]
+    fn test_and_set_returns_already_present_inverse_of_insert() {
+        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
+        // First touch: not present → false.
+        assert!(!s.test_and_set(Id(7)));
+        // Now present.
+        assert!(s.contains(Id(7)));
+        // Second touch: already present → true.
+        assert!(s.test_and_set(Id(7)));
+        // A different id is independent.
+        assert!(!s.test_and_set(Id(8)));
     }
 }
