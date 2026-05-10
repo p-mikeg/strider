@@ -38,7 +38,7 @@ Round 8 (`round8-correctness-cross-arch.md` §2) flagged the PPC CR canonicalisa
    - ARM Thumb: `IntEqual(CastToInt(flag), 0)` for `BNE` / `BCC` / `BPL` / `BVC`.
    - PPC: `BoolAnd` over individual CR bits — currently no rule covers this.
 
-2. **Read the existing 9 rules in `build_rules` (around `mod.rs:314`)** to understand the rule numbering and shape vocabulary. Rules 1-7 are AArch64-style (carry bit / sign / overflow trees); rules 8-9 are Thumb cast-to-int unaries.
+2. **Read the existing 9 rules in `build_rules` (around `mod.rs:317`)** to understand the rule numbering and shape vocabulary. Rules 1-7 are AArch64-style (carry bit / sign / overflow trees); rules 8-9 are Thumb cast-to-int unaries.
 
 3. **Decide binary or unary.** Two helpers exist:
 
@@ -84,7 +84,7 @@ Round 8 (`round8-correctness-cross-arch.md` §2) flagged the PPC CR canonicalisa
 
    For multi-node RHS shapes, every intermediate node must absorb. The validator's Layer-C `check_asm_fingerprints` requires every reachable non-exempt node to carry a non-empty fingerprint — see `strider-fingerprint-audit`. `pattern::rewrite_rule` only absorbs into the outermost node, which is why this pass uses manual construction.
 
-7. **Register the rule in `build_rules`.** Append to the `vec!` returned by `build_rules` (`mod.rs:314`). Maintain numerical comments so downstream readers can cross-reference rule N to its semantics.
+7. **Register the rule in `build_rules`.** Append to the `vec!` returned by `build_rules` (`mod.rs:317`). Maintain numerical comments so downstream readers can cross-reference rule N to its semantics.
 
 8. **Arch filtering.** Today the rule table is global — every rule fires on every arch. If a new rule would false-positive on an unrelated arch (e.g. a PPC CR rule that happens to alias an x86 shape), add an `arch_filter: ArchPreset` set to the `Rule` struct and gate `try_apply_rule` on it. This is a forward-extending change — flag it explicitly to the user before doing it.
 

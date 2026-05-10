@@ -277,9 +277,12 @@ result = strider.run(
 
 ```python
 class MyROM(strider.ReadOnlyMemory):
-    def read(self, space_id: int, addr: int, size: int) -> Optional[int]:
-        # space_id: 0 = RAM, 1 = REGISTER, 2 = CONST, 3 = UNIQUE
-        if space_id != 0 or addr < ROM_BASE or addr >= ROM_BASE + len(ROM):
+    def read(self, addr: int, size: int) -> Optional[int]:
+        # The Rust adapter only forwards RAM-space reads to Python — every
+        # other address space is folded by varnode aliasing or constant
+        # propagation before reaching `LoadReadOnly`, so the override sees
+        # only the calls it can answer.
+        if addr < ROM_BASE or addr >= ROM_BASE + len(ROM):
             return None
         chunk = ROM[addr - ROM_BASE : addr - ROM_BASE + size]
         return int.from_bytes(chunk, "little")

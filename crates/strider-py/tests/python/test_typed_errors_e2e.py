@@ -131,9 +131,9 @@ def test_lift_error_on_unmapped_entry_address():
 def test_lift_error_subclass_when_explicit_lift_fails():
     """The explicit-error pathway: when an empty-MemoryMap lift hits
     the lift-error converter, the resulting exception MUST be a
-    `LiftError` (or its UnknownCallOther refinement, which is also
-    a StriderError subclass).  Pin both so we know which converter
-    fired."""
+    `LiftError`.  The orchestrator's converter (`into_strider_err`)
+    runs a string-match heuristic on the anyhow chain to recognise
+    lift failures until `pcode-lift` exposes a typed `LiftError`."""
     mem = strider.MemoryMap()
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
@@ -149,14 +149,11 @@ def test_lift_error_subclass_when_explicit_lift_fails():
     except errors.StriderError as e:
         raised = e
     assert raised is not None, "expected an exception from empty-MemoryMap lift"
-    # Strengthened: must be the typed `LiftError`
-    # subclass (or its `UnknownCallOtherError` refinement, also a
-    # LiftError descendant for our purposes).  The previous assertion
-    # against the base `StriderError` would silently pass even if the
-    # wrong converter fired.
-    assert isinstance(raised, (errors.LiftError, errors.UnknownCallOtherError)), (
-        f"expected LiftError (or UnknownCallOtherError), got "
-        f"{type(raised).__name__}: {raised!r}"
+    # Strengthened: must be the typed `LiftError` subclass.  The previous
+    # assertion accepted `UnknownCallOtherError` as an alternative, which
+    # let the wrong converter silently win.  Pin `LiftError` only.
+    assert isinstance(raised, errors.LiftError), (
+        f"expected LiftError, got {type(raised).__name__}: {raised!r}"
     )
 
 

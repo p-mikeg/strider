@@ -667,6 +667,18 @@ pub fn apply_elf_relocations(
 ///
 /// Returns any error the extender produces, plus the same set of
 /// errors as the underlying [`apply_elf_relocations`] patch loop.
+///
+/// # Rollback semantics on `Err`
+///
+/// **Partial rollback only.**  If the patch loop fails partway through,
+/// the staged region extensions are truncated off the tail of `regions`
+/// (restoring the pre-call *length*), but byte mutations the patch loop
+/// already performed on pre-existing regions before the failure are NOT
+/// reverted.  Snapshotting every mutated byte range would double the
+/// memory cost of relocation application for a corner case that only
+/// matters when an extender materialises a region we then fail to
+/// patch.  Callers needing strict atomicity should re-load the binary
+/// from disk on `Err`.
 pub fn apply_elf_relocations_with_extender<F>(
     regions: &mut Vec<MemRegion>,
     obj: &object::File<'_>,
@@ -699,10 +711,15 @@ where
     let base_len = regions.len();
     regions.extend(staged);
 
-    // Pass 2 — the patch loop.  Roll back the staged extension on Err so
-    // callers see `regions` in its pre-call shape (matches the documented
-    // "extender error mid-pass leaves it untouched" intent for the full
-    // function, not just pass 1).  audit.
+    // Pass 2 — the patch loop.  On `Err` we truncate the staged
+    // extension off the tail of `regions`, restoring the pre-call
+    // *length*.  This is a **partial rollback only**: any byte
+    // mutations the patch loop performed on pre-existing regions
+    // before the error fired are *not* reverted (snapshotting every
+    // mutated byte range would double the memory cost of relocation
+    // application for a corner case that only matters when an extender
+    // produces a region we then fail to patch).  Callers that need
+    // strict atomicity should re-load the binary from disk on `Err`.
     match apply_elf_relocations(regions, obj) {
         Ok(stats) => Ok(stats),
         Err(e) => {

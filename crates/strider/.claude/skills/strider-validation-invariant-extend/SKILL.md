@@ -55,7 +55,7 @@ User wants to add a new structural invariant to the IR validator. Triggers inclu
 
    Why: optimization passes (notably `RedundantPhis::detach_unreachable_nodes`) leave **zombie nodes** in the arena. They have no inputs, no live use-list entries, and are unreachable from `entry`, but they still occupy `NodeId`s in `graph.nodes.keys()`. Without scoping, a Layer-C check would false-positive on a perfectly-valid post-`RedundantPhis` graph because (e.g.) two `FunctionArg` nodes with the same index exist — one zombie + one live.
 
-   The exception is `check_layer_c_uniqueness` (Entry/InitialMemory uniqueness), which deliberately scans the entire arena to catch a duplicate created and orphaned by a buggy pass. Anything else (`check_layer_c_function_arg_uniqueness` was changed in round 8 to be reachability-scoped, see `crates/ir/src/validate/layer_c.rs:234-258` and the comment at lines 224-232) should pass `reachable: &NodeIdSet` and gate on it.
+   The exception is `check_layer_c_uniqueness` (Entry/InitialMemory uniqueness), which deliberately scans the entire arena to catch a duplicate created and orphaned by a buggy pass. Anything else (`check_layer_c_function_arg_uniqueness` was changed in round 8 to be reachability-scoped, see `crates/ir/src/validate/layer_c.rs:234-260` and the comment at lines 224-232) should pass `reachable: &NodeIdSet` and gate on it.
 
    Layer A is already reachability-scoped at the entry (`mod.rs:90`). Layer B uses `reachable` to filter what it walks.
 
@@ -117,7 +117,7 @@ User wants to add a new structural invariant to the IR validator. Triggers inclu
 
 ## Pitfalls
 
-- **Skipping reachability scoping.** Round 8 caught this on `check_layer_c_function_arg_uniqueness`: pre-fix, the check scanned the entire arena and false-positived on graphs where `RedundantPhis` had detached an old `FunctionArg` zombie. Post-fix it gates on `reachable` (see `crates/ir/src/validate/layer_c.rs:228`). For any new per-node invariant, ask: "does an optimization pass detach but not delete this kind of node?" If yes, scope on `reachable`.
+- **Skipping reachability scoping.** Round 8 caught this on `check_layer_c_function_arg_uniqueness`: pre-fix, the check scanned the entire arena and false-positived on graphs where `RedundantPhis` had detached an old `FunctionArg` zombie. Post-fix it gates on `reachable` (see `crates/ir/src/validate/layer_c.rs:234`). For any new per-node invariant, ask: "does an optimization pass detach but not delete this kind of node?" If yes, scope on `reachable`.
 - **Making a check non-opt-in.** It will trip existing graphmock tests that didn't set up the invariant. Default to opt-in via `ValidateOptions`. Promote to always-on only after auditing every workspace test.
 - **Failing fast.** Do not `return Err(...)` from a check. The `ValidationErrors` bundle aggregates every violation so the caller sees the full picture in one invocation. Returning early hides downstream problems.
 - **Walking the graph twice.** The driver already builds `reachable: NodeIdSet` and passes it to every Layer-B and Layer-C check. Re-walking from each check wastes time and risks divergence (e.g. one walk skipping a kind the other includes).

@@ -28,10 +28,14 @@ machinery.
 - `vn_sort_key(vn)` — stable sort key for `rsleigh::Vn` so two lifters
   (e.g. cfg's mini-IR and strider's per-region IR) produce the same
   `VarId` numbering.
-- `first_input_or_err(insn)` / `decode_space_id(insn)` /
-  `require_output_vn(insn)` — small shared helpers used by the per-opcode
-  handlers.
+- `first_input_or_err(insn)` / `decode_space_id(insn)` — small shared
+  helpers used by the per-opcode handlers.
 - `Result<T>` alias (`anyhow::Result<T>`).
+
+### Crate-private helpers
+
+- `require_output_vn(insn) -> Result<&rsleigh::Vn>` (`pub(crate)`) —
+  used by the per-opcode handlers; not exported.
 
 ## Architecture
 

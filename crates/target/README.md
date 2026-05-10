@@ -7,8 +7,8 @@ same types. No IR, no rsleigh state machine — just descriptors and the
 
 ## Public surface
 
-- `ArchPreset` — `X8664`, `X86`, `Aarch64`, `Aarch64Be`, `Arm`, `ArmBe`,
-  `ArmThumb`, `Mipsbe32`, `Mipsle32`, `Mipsbe64`, `Mipsle64`,
+- `ArchPreset` — `X86_64`, `X86`, `Aarch64`, `Aarch64Be`, `Arm`, `ArmBe`,
+  `ArmThumb`, `MipsBe32`, `MipsLe32`, `MipsBe64`, `MipsLe64`,
   `Ppc32Be`, `Ppc32Le`, `Ppc64Be`, `Ppc64Le`.
 - `Endianness` — `Little` | `Big`.
 - `SleighArch` — pairs an SLA spec path + PSPEC + `Endianness`. 15 presets
