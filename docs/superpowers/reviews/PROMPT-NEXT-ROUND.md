@@ -1,6 +1,6 @@
 # Strider — Next-Round Code Review Prompt
 
-> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes prior rounds 7–10 have already landed — see `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, and `reviews/round10-*.md` — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
+> **Purpose.** This file is a self-contained prompt the user can paste back into Claude later to drive a fresh, independent code review of the strider workspace.  It assumes prior rounds 7–11 have already landed — see `reviews/round7-*.md` through `reviews/round11-*.md` — and that the codebase has continued to evolve since.  This round must rederive its findings from the *current* code, not from prior reviews.
 
 ---
 
@@ -12,11 +12,11 @@ Paste everything between the `=== BEGIN PROMPT ===` and `=== END PROMPT ===` mar
 
 === BEGIN PROMPT ===
 
-I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **11**.
+I want you to do another round of deep code review on the strider workspace at `/mnt/c/Users/mikeg/Documents/strider`.  This is round **12**.
 
 ## Trust model — strict
 
-- **Do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, `reviews/round10-*.md`, or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written, sometimes substantially.  Each finding in your final summary must be derived independently from the current source.
+- **Do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, `reviews/round10-*.md`, `reviews/round11-*.md`, or any earlier-round audit as authoritative input.**  You may at most note that an item was flagged before and re-derive the finding from scratch.  The previous reviews are stale relative to the current branch state — the code has evolved since they were written, sometimes substantially.  Each finding in your final summary must be derived independently from the current source.
 - **Do NOT trust comments, docstrings, CLAUDE.md, or per-crate READMEs as evidence.**  They are inputs to be *verified* against code.  Documentation drift is one of the things this review is hunting for.
 - **Do NOT trust the previous reviews' conclusions.**  Each finding in your final summary must cite a code location (`file:line`) and explain its reasoning from code shape alone.
 - Verify all rsleigh-touching claims by reading `../rsleigh/sleigh/src/**` directly — that crate is the upstream authority for pcode opcode behaviour, varnode semantics, and the per-arch SLA / PSPEC files.
@@ -107,7 +107,7 @@ Per-finding criteria (every proposal must answer all of these):
 - **Visibility tightening as a side-effect.**  When a helper is extracted, the original implementation may have been over-public — propose the minimum visibility for the new helper.
 - **Skip when the indirection cost exceeds the duplication cost.**  If a proposed helper is < 3 LOC AND the call sites are < 5, document the decision and skip.
 
-The simplifications report should land at `reviews/round11-simplifications.md` with sections matching the toolkit above:
+The simplifications report should land at `reviews/round12-simplifications.md` with sections matching the toolkit above:
 
 1. Code to delete (largest expected LOC win).
 2. Code to merge (helper extractions + structural merges).
@@ -121,11 +121,11 @@ Aim for 50–80 concrete entries with a per-category total LOC delta at the top.
 
 ## Coverage requirement — every line of source must be inspected
 
-This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/src/`, every `.rs` file under `crates/*/tests/` and `crates/*/benches/`, every `.py` file under `crates/strider-py/tests/python/`, every `Cargo.toml`, every `*.md` file under `crates/*/README.md` + the root README + CLAUDE.md + `crates/strider/.claude/skills/*/SKILL.md`, must be **read in full** by at least one subagent during the rounds below.
+This review is **exhaustive**, not sampled.  Every `.rs` file under `crates/*/src/`, every `.rs` file under `crates/*/tests/` and `crates/*/benches/`, every `.py` file under `crates/strider-py/tests/python/`, every `Cargo.toml`, every `*.md` file under `crates/*/README.md` + the root README + CLAUDE.md, must be **read in full** by at least one subagent during the rounds below.  (Skills under `crates/strider/.claude/skills/*/SKILL.md` are explicitly out of scope this round — round 12 audited them; the next pass to revisit them is whichever future round wants to.)
 
 Concretely:
 
-- **Inventory first.**  The Round 0 orientation step must produce `reviews/round11-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
+- **Inventory first.**  The Round 0 orientation step must produce `reviews/round12-coverage-manifest.md` listing every file in scope (use `find crates -name '*.rs' -o -name '*.toml'` + `find crates/strider-py/tests -name '*.py'` + the doc set).  Every file in that manifest must be ticked off as "inspected by subagent X" by the time Round 7 (final consolidation) runs.
 - **No globbing skips.**  If a file is short, glance through it and tick it.  If a file is long, read it in 200-line chunks until the whole file is covered.  When a subagent reports its findings it should also report which files it covered fully, partially, or not at all; partial / not-at-all entries become Round 1.5 follow-up tasks for a fresh subagent.
 - **Tests count.**  Test files surface missing-coverage and stale-fixture issues that source-only review misses — read every `tests/` and `benches/` file too, including the strider-py `tests/python/`.
 - **Generated / auto-formatted code is in scope** if it lives under `crates/*/src/`.  Skip only `target/`, `.git/`, `node_modules/`, `__pycache__/`, build artefacts.
@@ -156,7 +156,7 @@ Spawn fresh subagents in **parallel** for independent rounds.  Each agent must:
 1. Receive a self-contained prompt — assume the agent has zero context for this conversation.
 2. Read code directly via `Read`/`Grep`/`Glob` — not via inherited memory.
 3. Be told explicitly: do NOT read `reviews/round7-*.md`, `reviews/round8-*.md`, `reviews/round9-*.md`, `reviews/round10-*.md`, or any earlier-round output.
-4. Produce a single Markdown report at `reviews/round11-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
+4. Produce a single Markdown report at `reviews/round12-<topic>.md` with HIGH/MED/LOW findings, each with `file:line` and a concrete fix.
 5. Output format per finding:
    ```
    ### <Finding title>
@@ -199,7 +199,7 @@ When you launch multiple subagents for independent work, send them in a **single
 
 4. **Simplicity — exhaustive simplification sweep** *(emphasis B)*.  Apply the seven-category toolkit (delete dead code, merge similar code, inline single-callsite helpers, replace bespoke patterns with stdlib idioms, tighten visibility, drop redundant wrappers, collapse partial-state types).  For every entry, answer the per-finding criteria (net LOC delta, net cognitive delta, three-occurrence threshold for extraction, load-bearing distinction, indirection-cost veto).
 
-5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere.  Verify that the meaning of every term in CLAUDE.md / per-crate README / SKILL.md matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role, "round-N" / "wave-N" / "tier-N" / migration-narrative breadcrumbs in source comments or test names.  Propose a concrete rename mapping for every flagged identifier.
+5. **Naming.**  Look for unclear / misleading / half-renamed identifiers anywhere.  Verify that the meaning of every term in CLAUDE.md and per-crate README matches the actual code.  Look for: leftover one-letter or short test names that only made sense in their original context, abbreviations whose expansion would be clearer, type names that don't capture the type's actual role, "round-N" / "wave-N" / "tier-N" / migration-narrative breadcrumbs in source comments or test names.  Propose a concrete rename mapping for every flagged identifier.
 
 6. **Unused features.**  Confirm by code inspection that every `pub` item has at least one external consumer (within the workspace OR via Python bindings).  Items unreachable from any consumer are candidates for deletion.  Check both ways: walk down from `lib.rs`'s `pub use` re-exports to find every public surface, then walk back up from each surface to find at least one external call site.
 
@@ -212,7 +212,7 @@ When you launch multiple subagents for independent work, send them in a **single
    - **Round-4 pass (re-audit, focused on edge cases)**: boundary errors — empty / single / max-arity inputs, NaN / inf / signed-zero floats, INT_MIN sign-extension, address `u64::MAX`, instruction at `addr = start_addr` boundary, the very last node id in the arena, the lifetime-zero-overlap case for `StackStorePhi`.
    - **Round-5 pass (cross-arch consistency)**: pick one finding per round and verify it across every arch.
 
-   Each pass produces its own subagent report (`reviews/round11-correctness-types.md`, `round11-correctness-invariants.md`, `round11-correctness-borrowing.md`, `round11-correctness-edge-cases.md`, `round11-correctness-cross-arch.md`).
+   Each pass produces its own subagent report (`reviews/round12-correctness-types.md`, `round12-correctness-invariants.md`, `round12-correctness-borrowing.md`, `round12-correctness-edge-cases.md`, `round12-correctness-cross-arch.md`).
 
 9. **Test plan.**  Where coverage is sparse, propose specific tests with file path, scope (unit / integration / property / scale), exact harness/fixture, expected assertions.  Use TDD discipline — failing test FIRST, then fix.
 
@@ -222,7 +222,7 @@ When you launch multiple subagents for independent work, send them in a **single
 
 12. **CLAUDE.md / READMEs / doc consistency.**  Verify the root README's claims, every per-crate README's public-surface enumeration, every `pub fn` doc.  Documentation that names deleted symbols, references stale APIs, or describes behaviour the code doesn't implement is a HIGH finding.
 
-13. **Skills.**  Skim `crates/strider/.claude/skills/*/SKILL.md`.  Verify each cited file path, function name, and line number against the current code.  Identify any new skill that would help future contributors (or any existing skill that has decayed against the current code).
+13. *(Reserved — skill audits are out of scope this round; round 12 covered them.)*
 
 14. **Scale + Performance at thousands-of-nodes scale.**  Verify the codebase is *optimised* for ~10k–100k IR nodes, not merely correct.  Per hot path, derive the asymptotic complexity from the code (don't trust comments), then check:
     - **Recursion-induced stack-overflow risk** in any function that walks a memory or control chain without an explicit depth bound and without an iterative form.
@@ -252,7 +252,7 @@ When you launch multiple subagents for independent work, send them in a **single
 ## Recommended round structure
 
 ### Round 0 — orient
-Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README, every existing `crates/strider/.claude/skills/*/SKILL.md`.  Build a mental model of what's in each crate.  Run the four baseline checks above.  Produce `reviews/round11-coverage-manifest.md` listing every file in scope.
+Read CLAUDE.md, the workspace `Cargo.toml`, the per-crate `Cargo.toml` files, every per-crate README.  Build a mental model of what's in each crate.  Run the four baseline checks above.  Produce `reviews/round12-coverage-manifest.md` listing every file in scope.
 
 ### Round 1 — deep per-crate audit (parallel; 6 subagents)
 Six `feature-dev:code-reviewer` agents, one per crate group:
@@ -273,11 +273,11 @@ Six `feature-dev:code-reviewer` agents, one per crate group:
 - **2D — type-design analyser.**  `pr-review-toolkit:type-design-analyzer`.  Audit every `pub` struct / enum / trait for: leaky encapsulation, primitive obsession, partial-state types.
 
 ### Round 3 — verification + comments (parallel; 2 subagents)
-- **3A — trust-only-the-code verification.**  Sample ≥ 25 specific claims from CLAUDE.md, per-crate READMEs, and every existing `SKILL.md`.  For each, find the code and confirm or refute purely from code shape.
+- **3A — trust-only-the-code verification.**  Sample ≥ 25 specific claims from CLAUDE.md and per-crate READMEs.  For each, find the code and confirm or refute purely from code shape.
 - **3B — stale comment sweep.**  `pr-review-toolkit:comment-analyzer`.  Flag every comment block that names a deleted symbol, has a `TODO(TaskNN)` whose task is closed, describes behaviour that doesn't match the surrounding code, or carries a "round-N" / migration-narrative breadcrumb that has outlived its context.
 
 ### Round 4 — test-gap analysis
-`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round11-test-plan.md` listing each missing test with: scope, file path, harness/fixture, expected assertions, estimated effort.  Use TDD discipline — failing test FIRST.
+`feature-dev:code-architect`.  Consume Round 1 outputs.  Emit `reviews/round12-test-plan.md` listing each missing test with: scope, file path, harness/fixture, expected assertions, estimated effort.  Use TDD discipline — failing test FIRST.
 
 Required gaps to investigate (not exhaustive):
 
@@ -300,7 +300,7 @@ Required gaps to investigate (not exhaustive):
 - **Asm-fingerprint contract end-to-end**: lift a real binary, walk every reachable non-exempt node, assert each has at least one fingerprint entry tracing to a real machine address.
 
 ### Round 5 — consolidation + simplification
-`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round11-simplifications.md` per emphasis B's seven-category toolkit:
+`pr-review-toolkit:code-simplifier`.  Consume Rounds 1–3.  Emit `reviews/round12-simplifications.md` per emphasis B's seven-category toolkit:
 
 1. Code to delete.
 2. Code to merge.
@@ -312,25 +312,22 @@ Required gaps to investigate (not exhaustive):
 
 50–80 entries with per-category LOC delta + projected post-implementation workspace LOC reduction at the top.
 
-### Round 6 — skill audit
-Skim every existing skill against the current code.  Propose new skills or revisions.  Verify every cited file path, function name, and line number.
-
 ### Round 7 — final consolidation
 A single synthesis that integrates every prior-round output into:
 
-1. `reviews/round11-summary.md` — executive summary with prioritised fix backlog.
-2. `reviews/round11-claudemd-diff.md` — concrete CLAUDE.md edits.
-3. `reviews/round11-readme-diffs.md` — concrete per-crate README edits.
+1. `reviews/round12-summary.md` — executive summary with prioritised fix backlog.
+2. `reviews/round12-claudemd-diff.md` — concrete CLAUDE.md edits.
+3. `reviews/round12-readme-diffs.md` — concrete per-crate README edits.
 
 ## Acceptance criteria
 
-- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round11-summary.md` with concrete actions.
-- [ ] Emphasis A produces three reports: `reviews/round11-correctness-self-vs-self.md`, `reviews/round11-correctness-ir-vs-pcode.md`, `reviews/round11-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
-- [ ] Emphasis B produces `reviews/round11-simplifications.md` with 50–80 entries grouped into the seven-category toolkit.  Header includes the per-category total LOC delta and the projected post-implementation workspace LOC reduction.
-- [ ] Ask 8 produces five separate reports — `round11-correctness-types.md`, `round11-correctness-invariants.md`, `round11-correctness-borrowing.md`, `round11-correctness-edge-cases.md`, `round11-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
-- [ ] Round 11 summary lists every HIGH-severity finding with `file:line` + a proposed fix + (for emphasis A findings) the regression test scaffolding.
+- [ ] Every numbered ask (1–18) has a corresponding section in `reviews/round12-summary.md` with concrete actions.
+- [ ] Emphasis A produces three reports: `reviews/round12-correctness-self-vs-self.md`, `reviews/round12-correctness-ir-vs-pcode.md`, `reviews/round12-correctness-ir-vs-assembly.md`.  Each finding cites code locations + ABI / opcode references + (for axis 3) the real binary's `objdump` trace.
+- [ ] Emphasis B produces `reviews/round12-simplifications.md` with 50–80 entries grouped into the seven-category toolkit.  Header includes the per-category total LOC delta and the projected post-implementation workspace LOC reduction.
+- [ ] Ask 8 produces five separate reports — `round12-correctness-types.md`, `round12-correctness-invariants.md`, `round12-correctness-borrowing.md`, `round12-correctness-edge-cases.md`, `round12-correctness-cross-arch.md` — each from a fresh subagent that did not read the others.
+- [ ] Round 12 summary lists every HIGH-severity finding with `file:line` + a proposed fix + (for emphasis A findings) the regression test scaffolding.
 - [ ] Ask 14 produces a measured P50 / P95 table per pass over a synthetic 10k-node fixture; flagged hot-spots (> 100 ms) listed with proposed fixes.
-- [ ] Ask 3 produces `reviews/round11-correctness-ir-vs-assembly.md` documenting per-arch ABI verification against real binaries.  Every finding includes the lifted-from-real-code regression test that pins it.
+- [ ] Ask 3 produces `reviews/round12-correctness-ir-vs-assembly.md` documenting per-arch ABI verification against real binaries.  Every finding includes the lifted-from-real-code regression test that pins it.
 - [ ] CLAUDE.md correctness diff lists every drift from the current code.
 - [ ] Per-crate README diff lists drift in every crate that has one.
 - [ ] Test plan lists ≥ 15 missing tests with exact `file:line` scaffolding.
@@ -340,12 +337,12 @@ A single synthesis that integrates every prior-round output into:
 - [ ] Silent-failure audit produces a list of `.ok()?` / `unwrap_or` sites with a propose-or-document decision per site.
 - [ ] Skill audit produces a list of revisions or new-skill proposals.
 - [ ] `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and `pytest tests/python/` all green at the start AND end of the review.
-- [ ] No source code is edited during the review.  The output is the set of `reviews/round11-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
-- [ ] `reviews/round11-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent.
+- [ ] No source code is edited during the review.  The output is the set of `reviews/round12-*.md` reports.  Implementation is a follow-up task that the user will explicitly approve.
+- [ ] `reviews/round12-coverage-manifest.md` exists and shows every `.rs` / `.py` / `Cargo.toml` file under `crates/` ticked off as "inspected fully" by at least one subagent.
 
 ## Out of scope
 
-- **Editing source code.**  Only documentation under `reviews/round11-*.md` is allowed.
+- **Editing source code.**  Only documentation under `reviews/round12-*.md` is allowed.
 - **Authoring new tests.**  Only the test plan is in scope; writing the actual tests is follow-up.
 - **Authoring new skills.**  Only the skill design is in scope.
 - **Per-crate README rewrites.**  Only the diff is in scope.
@@ -370,7 +367,7 @@ After working through the anchor list, every subagent must continue through the 
 
 ## Verification
 
-The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round11-summary.md` describing:
+The review is itself a research effort — the "verification" is the quality of the final summary, not a build.  The acceptance criteria above are the bar.  At the end, leave a short note in `reviews/round12-summary.md` describing:
 
 - Total HIGH / MED / LOW finding counts.
 - For emphasis A: the count of findings per axis (code-vs-code, IR-vs-pcode, IR-vs-assembly).
@@ -386,4 +383,4 @@ The review is itself a research effort — the "verification" is the quality of 
 - The prompt explicitly forbids reading `reviews/round7-*.md` through `reviews/round10-*.md` so the next round derives findings independently.  The previous rounds' outputs stay on disk as historical context.
 - The two emphases (A: triangulated correctness, B: exhaustive simplification) override conflicting per-ask priorities.  The subagent prompts inherit that ordering.
 - The prompt is sized to drive ~4–5 hours of subagent work plus ~1–2 hours of consolidation.  Approve tool prompts as they appear.
-- After the review lands, you'll have the `reviews/round11-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 11" runs the same play we ran for rounds 7–10.
+- After the review lands, you'll have the `reviews/round12-*.md` set — at that point a follow-up prompt of the form "land everything not refuted from round 12" runs the same play we ran for rounds 7–10.
