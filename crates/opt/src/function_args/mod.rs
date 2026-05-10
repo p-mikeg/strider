@@ -499,22 +499,34 @@ fn mem_chain_is_dirty(
                         let preds: Vec<NodeOutputId> = inputs.into_iter().skip(1).collect();
                         let pred_count = preds.len();
                         if pred_count == 0 {
-                            // Empty phi (malformed) — clean.
-                            results.push(false);
-                        } else {
-                            work.push(Frame::JoinPhi { pred_count });
-                            for pred in preds {
-                                work.push(Frame::Visit(pred));
-                            }
+                            // Empty phi violates the MemPhi signature
+                            // contract (variadic mem-tail must be ≥ 1).
+                            // Surface as Err rather than returning the
+                            // unsafe "clean" direction.
+                            return Err(anyhow::anyhow!(
+                                "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
+                            ));
+                        }
+                        work.push(Frame::JoinPhi { pred_count });
+                        for pred in preds {
+                            work.push(Frame::Visit(pred));
                         }
                     }
                     NodeKind::Call | NodeKind::CallOther { .. } => {
                         let inputs = fg.node_inputs(node);
                         if inputs.len() < 2 {
-                            results.push(false);
-                        } else {
-                            work.push(Frame::Visit(inputs[1]));
+                            // A `Call` / `CallOther` with fewer than 2
+                            // inputs (control + memory) violates the
+                            // signature contract.  Surface as Err
+                            // rather than returning the unsafe "clean"
+                            // direction (which would silently forward
+                            // a stale value across the malformed call).
+                            return Err(anyhow::anyhow!(
+                                "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
+                                fg.node_kind(node),
+                            ));
                         }
+                        work.push(Frame::Visit(inputs[1]));
                     }
                     _ => {
                         // Unknown memory-producing node: be conservative.

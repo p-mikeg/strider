@@ -168,11 +168,17 @@ impl NodeOutputType {
 
     /// Returns the all-ones bit mask for this integer type, as `u128`.
     /// `Bool` returns `1`; integer widths up to 128 bits return their
-    /// natural bit widths.  `U256` returns `u128::MAX` because the mask
-    /// can't represent 256 bits in a `u128`; callers that need to mask a
-    /// 256-bit value must use [`Self::get_unsigned_int`], which rejects
-    /// `U256` outright.  Float types return `0` (defensive - no caller
-    /// should ask).
+    /// natural bit widths (e.g. `U64` returns `0xFFFF_FFFF_FFFF_FFFF`).
+    /// `U128` returns `u128::MAX`.  `U256` and `U512` also return
+    /// `u128::MAX` because the mask cannot represent 256+ bits in a
+    /// `u128` carrier — callers that need to mask a 256-bit value must
+    /// route through `IntConstWide` / `Graph::wide_consts`.  Wide-type
+    /// rejection happens at the `IntConst` build site
+    /// ([`crate::FunctionBuilder::build_int_const`] returns `Err`
+    /// for `U256` / `U512`); `bit_mask_u128` and
+    /// [`Self::get_unsigned_int`] do not reject `U256` themselves —
+    /// they return the conservative `u128`-width approximation.
+    /// Float types return `0` (defensive — no caller should ask).
     #[must_use]
     pub fn bit_mask_u128(self) -> u128 {
         if self.is_bool() {

@@ -900,19 +900,21 @@ fn image_relative_reloc(
         {
             4
         }
-        // MIPS32 REL32 — closest analogue to RELATIVE on MIPS.
+        // MIPS REL32 — closest analogue to RELATIVE on MIPS.
         // `R_MIPS_REL32` (type 3) writes `S + A` (symbol value plus
         // addend); for an undefined symbol with index 0 it reduces to
         // image-relative.  MIPS does not define a separate IRELATIVE.
-        A::Mips
+        //
+        // **Field width is 4 bytes on both MIPS32 and MIPS64.**  The
+        // "REL32" suffix is the relocation field size, not the address
+        // width — the MIPS64 ELF supplement defines REL32 as a 32-bit
+        // relocation field that writes the low 32 bits of (S + A).
+        // Writing 8 bytes here on MIPS64 corrupts the four bytes
+        // immediately following the relocation site.
+        A::Mips | A::Mips64
             if r_type == object::elf::R_MIPS_REL32 =>
         {
             4
-        }
-        A::Mips64
-            if r_type == object::elf::R_MIPS_REL32 =>
-        {
-            8
         }
         _ => return None,
     };

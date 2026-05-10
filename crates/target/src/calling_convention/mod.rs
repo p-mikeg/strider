@@ -774,7 +774,15 @@ impl CallingConvention {
             Some(name) => Some(vn_for_name(sleigh_regs, name)?),
             None => None,
         };
-        Ok(BuiltCallingConvention {
+        // Route through `try_from_parts` so the disjointness invariants
+        // (SP not in any reg list, arg/callee-saved disjoint, no
+        // duplicates within a list, link-reg in callee-saved when set,
+        // non-negative ret_stack_pop) are enforced at build time.  The
+        // documented presets all satisfy them; routing here means a
+        // future preset with a typo (SP in arg_passing_regs, missing
+        // link-reg, etc.) fails at construction rather than producing
+        // a downstream miscompile.
+        BuiltCallingConvention::try_from_parts(BuiltCallingConventionParts {
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,

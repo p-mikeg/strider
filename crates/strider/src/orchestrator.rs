@@ -580,9 +580,18 @@ where
         // argument-register reads flow through `FunctionArg` nodes.
         let mut initial_var_index: HashMap<rsleigh::Vn, NodeOutputId> = HashMap::new();
         for nid in graph.graph.preorder(graph.entry) {
-            if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid)
-                && let Ok([out]) = graph.graph.node_outputs_exact::<1>(nid)
-            {
+            if let ir::node::NodeKind::InitialVar(existing) = graph.graph.node_kind(nid) {
+                // InitialVar's signature is `[]; outputs: [Value]` —
+                // exactly one output.  A non-1 count is a graph-shape
+                // bug (zombie or malformed); surfacing it as Err
+                // prevents `read_or_init_var` from later resurrecting
+                // the malformed node and silently producing wrong IR.
+                let [out] = graph.graph.node_outputs_exact::<1>(nid).map_err(|e| {
+                    anyhow!(
+                        "apply_in_place_edits: InitialVar({existing:?}) has wrong output \
+                         arity (expected 1): {e}"
+                    )
+                })?;
                 initial_var_index.insert(*existing, out);
             }
         }
