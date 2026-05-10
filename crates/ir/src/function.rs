@@ -206,22 +206,15 @@ impl BuiltFunctionGraph {
     ///
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
     ///
-    /// Partial-state ctor.  Migration to `pattern::RewriteCtx { graph:
-    /// &mut Graph, entry: NodeId }` is the long-term direction; the
-    /// `opt::with_rewrite_ctx` adapter already uses it.  The remaining
-    /// callers are `compact`'s test fixture and a handful of pattern
-    /// test scaffolds that intentionally bypass the build path.  The
-    /// `#[doc(hidden)]` attribute discourages external adoption.
+    /// Test-only partial-state ctor.  Production rewrite paths use
+    /// `pattern::RewriteCtx::new(&mut graph, entry)` (the `opt::with_rewrite_ctx`
+    /// adapter is the primary consumer).  Remaining callers are `compact`'s
+    /// test fixture and a few pattern test scaffolds that need
+    /// `BuiltFunctionGraph` (e.g. to set call-other clobber lists via
+    /// `set_call_other_clobbered_for_test`) without going through the build
+    /// path.  Hidden from docs to discourage external adoption.
     #[doc(hidden)]
     #[must_use]
-    #[deprecated(
-        since = "0.1.0",
-        note = "Partial-state ctor — every CC field is empty.  Use \
-                `pattern::RewriteCtx::new(&mut graph, entry)` for the \
-                rewrite-only path; `FunctionBuilder::build` for fully-formed \
-                BFGs.  Retained `#[doc(hidden)]` only because a small set of \
-                pattern-test scaffolds intentionally bypass the build path."
-    )]
     pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
         Self {
             graph,
@@ -304,8 +297,6 @@ impl BuiltFunctionGraph {
 #[cfg(test)]
 mod compact_tests {
     #![allow(clippy::unwrap_used)]
-    // Test scaffolds intentionally use the partial-state ctor.
-    #![allow(deprecated)]
 
     use super::*;
     use crate::node::{NodeKind, NodeOutputKind};

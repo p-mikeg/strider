@@ -59,8 +59,8 @@ fn try_lower_cast_to_float(
 pub struct ConstantFold;
 
 impl Optimizer for ConstantFold {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
-        let mut work = WorkSet::seeded(function.preorder());
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+        let mut work = WorkSet::seeded(ctx.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running
         // rules. After a rule rewrites the node, `output_uses(old_out)` is
@@ -73,16 +73,16 @@ impl Optimizer for ConstantFold {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             consumers.clear();
-            for out in function.graph.node_outputs(node_id) {
-                for (consumer, _) in function.graph.output_uses(out) {
+            for out in ctx.graph.node_outputs(node_id) {
+                for (consumer, _) in ctx.graph.output_uses(out) {
                     consumers.push(consumer);
                 }
             }
-            let r = apply_identity_rules(function, node_id)?
-                | apply_const_eval_rules(function, node_id)?
-                | apply_bool_float_rules(function, node_id)?
-                | apply_reassoc_and_mask_rules(function, node_id)?
-                | apply_bitcast_extend_rules(function, node_id)?;
+            let r = apply_identity_rules(ctx, node_id)?
+                | apply_const_eval_rules(ctx, node_id)?
+                | apply_bool_float_rules(ctx, node_id)?
+                | apply_reassoc_and_mask_rules(ctx, node_id)?
+                | apply_bitcast_extend_rules(ctx, node_id)?;
             if r.changed() {
                 result |= r;
                 for &consumer in &consumers {

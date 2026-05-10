@@ -66,7 +66,7 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 pub struct FlagCmpCanonicalize;
 
 impl Optimizer for FlagCmpCanonicalize {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Pre-collect candidate roots: rules mutate the graph (rewire
         // uses), so we can't walk the live iterator.  Forward preorder
         // visits parents before children — for the larger flag-tree
@@ -74,11 +74,11 @@ impl Optimizer for FlagCmpCanonicalize {
         // rule fire before rule 1 (the ZR identity) shrinks the inner
         // `Equal(diff, 0)` and breaks the outer match.  Same pattern as
         // `strider::GraphRewriter::apply_rule`.
-        let candidates: Vec<NodeId> = function.graph.preorder(function.entry).collect();
+        let candidates: Vec<NodeId> = ctx.graph.preorder(ctx.entry).collect();
         let mut any = false;
         for node in candidates {
             for rule in RULES.iter() {
-                if try_apply_rule(function, node, rule)? {
+                if try_apply_rule(ctx, node, rule)? {
                     any = true;
                     break; // node was rewritten; stop trying rules at this root
                 }
@@ -112,14 +112,14 @@ struct Rule {
     rhs_capture: Option<Capture>,
 }
 
-fn try_apply_rule(function: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) -> Result<bool> {
+fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) -> Result<bool> {
     // Snapshot the matched bindings inside a tight scope so the borrow
     // ends before we mutate the graph.  Some rules (Thumb's "test bool
     // against 0") use only `lhs_capture`; `rhs_capture` defaults to the
     // same output in that case so the RHS builder, which ignores it,
     // still gets a valid argument.
     let (a_out, b_out) = {
-        let matcher = Matcher::for_graph(function.graph, function.entry);
+        let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
         let m = match matcher.match_at(node, &rule.lhs) {
             Some(m) => m,
             None => return Ok(false),
@@ -147,16 +147,16 @@ fn try_apply_rule(function: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &R
         (a, b)
     };
 
-    let [root_out] = function.graph.node_outputs_exact::<1>(node)?;
+    let [root_out] = ctx.graph.node_outputs_exact::<1>(node)?;
     // Bail before constructing fresh RHS nodes when the root has no
     // live consumers — building first and discovering zero uses
     // afterwards would leak orphan IntCmp / BoolNeg / IntAdd zombies
     // into the arena until the next `retain_reachable`.
-    if function.graph.output_uses(root_out).next().is_none() {
+    if ctx.graph.output_uses(root_out).next().is_none() {
         return Ok(false);
     }
-    let new_out = (rule.build_rhs)(function.graph, a_out, b_out, node);
-    let changed = function.graph.replace_all_uses(root_out, new_out)?;
+    let new_out = (rule.build_rhs)(ctx.graph, a_out, b_out, node);
+    let changed = ctx.graph.replace_all_uses(root_out, new_out)?;
     Ok(changed)
 }
 

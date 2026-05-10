@@ -1,5 +1,3 @@
-#![allow(deprecated)] // partial-state ctor used intentionally for matcher-only test scaffolding
-
 //! `Call`, `CallOther`, `Return`, and `If` node patterns.
 //!
 //! Covers: call targets (literal + pattern), call args (single/multi/index),

@@ -38,19 +38,19 @@ impl WorkSet {
     }
 
     /// Seeds the worklist with every node reachable from
-    /// `function.entry()` whose [`NodeKind`] satisfies `pred`.
+    /// `ctx.entry()` whose [`NodeKind`] satisfies `pred`.
     ///
-    /// Replaces the recurring `function.preorder_kind(...).collect::<Vec<_>>()`
+    /// Replaces the recurring `ctx.preorder_kind(...).collect::<Vec<_>>()`
     /// followed by a `for node in collected { ... }` loop: the seeded
     /// `WorkSet` gives the same one-shot iteration semantics (kind-filtered,
     /// no re-enqueue unless a rule explicitly pushes consumers) without
     /// allocating an intermediate `Vec`, and lets passes upgrade in place to
     /// cascading rewrites by calling [`WorkSet::push`] on consumers.
-    pub(crate) fn seeded_kind<P>(function: &pattern::RewriteCtx<'_>, mut pred: P) -> Self
+    pub(crate) fn seeded_kind<P>(ctx: &pattern::RewriteCtx<'_>, mut pred: P) -> Self
     where
         P: FnMut(&NodeKind) -> bool,
     {
-        Self::seeded(function.preorder_kind(|k| pred(k)))
+        Self::seeded(ctx.preorder_kind(|k| pred(k)))
     }
 
     /// Adds `n` to the queue if it isn't already pending.

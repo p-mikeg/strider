@@ -952,7 +952,7 @@ where
     // preset to `X86_64`, which causes arch-specific CallOther dispatch
     // (ARM `swi`, AArch64 `CallHyperVisor`/`CallSecureMonitor`) to be looked
     // up under the wrong preset and silently misclassified or rejected.
-    let cfg: Cfg<R> = Builder::for_arch(opts.strider.arch(), sleigh, opts.start_addr, cfg_opts)
+    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
         .build()?;

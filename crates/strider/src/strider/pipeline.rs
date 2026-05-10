@@ -130,7 +130,7 @@ impl Default for AnalyzeOptions<'_> {
 #[derive(Clone)]
 pub struct Strider {
     pub(super) calling_convention: crate::BuiltCallingConvention,
-    pub(super) arch: crate::SleighArch,
+    pub(crate) arch: crate::SleighArch,
     /// Cached `SleighRegs` table from Strider construction.  Used by the
     /// CallOther per-op-ABI dispatch in `IrStrider::handle_call_other`
     /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
@@ -168,12 +168,6 @@ impl Strider {
     #[must_use]
     pub fn calling_convention(&self) -> &crate::BuiltCallingConvention {
         &self.calling_convention
-    }
-
-    /// Returns the [`crate::SleighArch`] this Strider was built with.
-    #[must_use]
-    pub(crate) fn arch(&self) -> &crate::SleighArch {
-        &self.arch
     }
 
     /// Builds an optimizer pipeline containing the default passes plus the

@@ -107,16 +107,16 @@ impl StackStoreDetect {
 }
 
 impl Optimizer for StackStoreDetect {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Only Store nodes can be promoted to StackStore — kind-filter at
         // the iterator level so we don't allocate a Vec sized to all
         // reachable nodes.  Mirrors the established pattern in
         // `StackLoadForward` and `CallStackArgCollect`.
-        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Store(_)));
+        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Store(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(node_id) = work.pop() {
-            result |= try_detect_stack_store(function, node_id, self.stack_ptr_vn, &mut memo)?;
+            result |= try_detect_stack_store(ctx, node_id, self.stack_ptr_vn, &mut memo)?;
         }
         Ok(result)
     }

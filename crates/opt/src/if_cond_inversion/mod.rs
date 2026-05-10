@@ -55,19 +55,19 @@ use crate::pipeline::{OptimizationResult, Optimizer};
 pub struct IfCondInversion;
 
 impl Optimizer for IfCondInversion {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.
-        let graph = &function.graph;
-        let candidates: Vec<NodeId> = function
+        let graph = &ctx.graph;
+        let candidates: Vec<NodeId> = ctx
             .preorder_kind(|k| matches!(k, NodeKind::If))
             .filter(|&node| is_inverted_cond(graph, node))
             .collect();
 
         let mut result = OptimizationResult::NoChange;
         for if_node in candidates {
-            invert(function.graph, if_node)?;
+            invert(ctx.graph, if_node)?;
             result = OptimizationResult::Changed;
         }
         Ok(result)

@@ -424,7 +424,7 @@ pub fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(function: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
+pub fn analyze(ctx: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `output_uses`.  `WorkSet` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -437,16 +437,16 @@ pub fn analyze(function: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // the validator's existing scope-of-correctness boundary
     // (Layer A in `ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work = WorkSet::seeded(ir::walk::walk_graph(function.graph, function.entry));
+    let mut work = WorkSet::seeded(ir::walk::walk_graph(ctx.graph, ctx.entry));
     while let Some(node_id) = work.pop() {
-        let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
+        let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
         };
         let merged = known[out].merge(kb)?;
         if !merged {
             continue;
         }
-        for (consumer, _idx) in function.graph.output_uses(out) {
+        for (consumer, _idx) in ctx.graph.output_uses(out) {
             work.push(consumer);
         }
     }
@@ -464,17 +464,17 @@ pub fn analyze(function: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
 pub struct KnownBits;
 
 impl Optimizer for KnownBits {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(function.as_view())?;
+        let known = analyze(ctx.as_view())?;
 
         // Phase 2 — replace fully-determined outputs with constants.  Drive
         // via WorkSet so a rewritten node's consumers are re-checked in the
         // same call: a freshly-introduced IntConst can let a sibling whose
         // *other* operand was previously unknown become fully-determined.
-        let mut work = WorkSet::seeded(function.preorder());
+        let mut work = WorkSet::seeded(ctx.preorder());
         let mut result = OptimizationResult::NoChange;
         // Inline up to 4 outputs / 8 consumers per iteration — these
         // bounds cover the vast majority of IR nodes (most ops have
@@ -485,13 +485,13 @@ impl Optimizer for KnownBits {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             // Already-constant nodes have nothing to rewrite.
-            if matches!(*function.graph.node_kind(node_id), NodeKind::IntConst(_)) {
+            if matches!(*ctx.graph.node_kind(node_id), NodeKind::IntConst(_)) {
                 continue;
             }
             outputs.clear();
-            outputs.extend(function.graph.node_outputs(node_id));
+            outputs.extend(ctx.graph.node_outputs(node_id));
             for &out in &outputs {
-                let Some(ty) = function.graph.output_kind(out).as_value() else {
+                let Some(ty) = ctx.graph.output_kind(out).as_value() else {
                     continue;
                 };
                 if !ty.is_integer() {
@@ -510,16 +510,15 @@ impl Optimizer for KnownBits {
                     continue;
                 }
                 consumers.clear();
-                for (consumer, _) in function.graph.output_uses(out) {
+                for (consumer, _) in ctx.graph.output_uses(out) {
                     consumers.push(consumer);
                 }
-                let new_out = function.graph.make_int_const(kb.ones, ty)?;
+                let new_out = ctx.graph.make_int_const(kb.ones, ty)?;
                 // Absorb the rewritten node's fingerprint into the new const.
-                let new_node = function.graph.get_node_from_output(new_out);
-                function
-                    .graph
+                let new_node = ctx.graph.get_node_from_output(new_out);
+                ctx.graph
                     .extend_asm_fingerprint_from(new_node, node_id);
-                if function.graph.replace_all_uses(out, new_out)? {
+                if ctx.graph.replace_all_uses(out, new_out)? {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
                         work.push(consumer);

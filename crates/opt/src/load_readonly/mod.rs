@@ -47,32 +47,32 @@ use crate::worklist::WorkSet;
 pub struct LoadReadOnly<M>(pub M);
 
 impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
-    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.
-        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Load(_)));
+        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut result = OptimizationResult::NoChange;
 
         while let Some(node_id) = work.pop() {
-            let kind = *function.graph.node_kind(node_id);
+            let kind = *ctx.graph.node_kind(node_id);
             let NodeKind::Load(space) = kind else {
                 continue;
             };
 
             // Load inputs: [memory_token, addr].
-            let inputs = function.graph.node_inputs(node_id);
+            let inputs = ctx.graph.node_inputs(node_id);
             if inputs.len() < 2 {
                 continue;
             }
             let addr_input = inputs[1];
-            let Some(addr) = function.graph.int_const_val(addr_input) else {
+            let Some(addr) = ctx.graph.int_const_val(addr_input) else {
                 continue;
             };
 
             // Load output: the single value output carries the loaded data type.
-            let [data_out] = function.graph.node_outputs_exact::<1>(node_id)?;
-            let Some(ty) = function.graph.output_kind(data_out).as_value() else {
+            let [data_out] = ctx.graph.node_outputs_exact::<1>(node_id)?;
+            let Some(ty) = ctx.graph.output_kind(data_out).as_value() else {
                 continue;
             };
             let size = ty.byte_size();
@@ -89,8 +89,8 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
             let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
                 continue;
             };
-            let new_out = function.graph.make_int_const(masked, ty)?;
-            result = result.after_replace(function, data_out, new_out);
+            let new_out = ctx.graph.make_int_const(masked, ty)?;
+            result = result.after_replace(ctx, data_out, new_out);
         }
         Ok(result)
     }
