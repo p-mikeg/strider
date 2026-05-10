@@ -79,7 +79,7 @@ pub use indirect_branch_resolve::{
 pub use known_bits::{KnownBits, KnownBitsMap, Kb, analyze as analyze_known_bits};
 pub use load_readonly::LoadReadOnly;
 pub use reader::ReadOnlyMemory;
-pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline};
+pub use pipeline::{OptimizationResult, Optimizer, OptimizerPipeline, OptimizerRaw};
 pub use redundant_phis::RedundantPhis;
 pub use stack_load_forward::StackLoadForward;
 pub use stack_store::{CallStackArgCollect, StackStoreDetect};

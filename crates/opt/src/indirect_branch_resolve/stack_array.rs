@@ -75,12 +75,12 @@ use pattern::{Capture, Matcher, and as and_pat, any_int_const, or as or_pat, var
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &fg.graph;
+    let graph = &ctx.graph;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -89,11 +89,11 @@ pub fn classify_stack_array(
     // through the wrapper, run the rest of the classification on the
     // underlying Load, and `& mask` each enumerated target before
     // returning.  Non-And anchors take the path with `mask = !0`.
-    let (load_anchor, target_mask) = strip_target_mask(fg, anchor_output);
+    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_output);
 
-    let shape = match_stack_array_shape(fg, load_anchor, stack_ptr_vn)?;
-    let bound = bound_via_known_bits(fg, shape.idx_output, known)
-        .or_else(|| bound_via_predecessor_if(fg, anchor_output, shape.idx_output))?;
+    let shape = match_stack_array_shape(ctx, load_anchor, stack_ptr_vn)?;
+    let bound = bound_via_known_bits(ctx, shape.idx_output, known)
+        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
@@ -245,11 +245,11 @@ const MAX_STRIP_LAYERS: usize = 4;
 // `int_const_val` returned `u64`, and `get_uint` returns `u128`.
 // Real dispatch masks fit in `u64` on every supported arch.
 fn strip_target_mask(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
-    let graph = &fg.graph;
-    let matcher = Matcher::for_graph(fg.graph, fg.entry);
+    let graph = &ctx.graph;
+    let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -260,7 +260,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &and_p.into())
-            && let (Some(c128), Some(other)) = (m.get_uint(c_var, fg.graph), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -281,7 +281,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &or_p.into())
-            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, fg.graph), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -306,11 +306,11 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let graph = &fg.graph;
+    let graph = &ctx.graph;
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(_) = *graph.node_kind(load_node) else {
         return None;
@@ -334,7 +334,7 @@ fn match_stack_array_shape(
     // `decompose_sp`) to `Terminal { offset: K }`.
     let mut idx_stride: Option<(NodeOutputId, u64, usize)> = None;
     for (i, t) in terms.iter().enumerate() {
-        if let Some((idx, stride)) = extract_idx_and_stride(fg, *t) {
+        if let Some((idx, stride)) = extract_idx_and_stride(ctx, *t) {
             // First match wins; if there are multiple idx*stride
             // sub-expressions in the address (unlikely in practice
             // but defensible), the others would force the
@@ -470,7 +470,7 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
@@ -482,15 +482,15 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
-    let candidate_node = fg.get_node_from_output(candidate);
-    let matcher = Matcher::for_graph(fg.graph, fg.entry);
+    let candidate_node = ctx.get_node_from_output(candidate);
+    let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const(stride_var));
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
-        let stride_u128 = m.get_uint(stride_var, fg.graph)?;
+        let stride_u128 = m.get_uint(stride_var, ctx.graph)?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -505,7 +505,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const(s_var));
     let m = matcher.match_at(candidate_node, &shl_pat.into())?;
-    let s_u128 = m.get_uint(s_var, fg.graph)?;
+    let s_u128 = m.get_uint(s_var, ctx.graph)?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject

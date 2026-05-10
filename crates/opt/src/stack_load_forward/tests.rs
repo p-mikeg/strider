@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::Result;
+use crate::pipeline::OptimizerRaw;
 use ir::node::{NodeKind, NodeOutputType};
 use ir::{FunctionBuilder, IntBinaryOp};
 use target::Endianness;
@@ -22,10 +23,10 @@ fn sp64_vn() -> rsleigh::Vn {
     }
 }
 
-fn reachable_count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+fn reachable_count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
     // Delegate to the shared helper promoted in `test_support` —
     // see `reviews/round8-repetition-sweep.md` (#1).
-    crate::test_support::count_reachable(fg, pred)
+    crate::test_support::count_reachable(ctx, pred)
 }
 
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
@@ -790,7 +791,6 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 #[test]
 fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
-    use crate::Optimizer;
 
     let sp = sp64_vn();
     let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
@@ -845,7 +845,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // Run StackLoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    StackLoadForward::new(sp, Endianness::Little).optimize(&mut fg.graph, fg.entry)?;
+    StackLoadForward::new(sp, Endianness::Little).optimize_raw(&mut fg.graph, fg.entry)?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.

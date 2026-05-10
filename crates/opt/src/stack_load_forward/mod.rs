@@ -12,7 +12,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use target::Endianness;
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_stack_store_phi,
     step_through_store,
@@ -57,13 +57,13 @@ impl StackLoadForward {
     }
 }
 
-impl OptimizerOnBuilt for StackLoadForward {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
-        let mut work = WorkSet::seeded_kind(function, |k| matches!(k, NodeKind::Load(_)));
+impl Optimizer for StackLoadForward {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+        let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.pop() {
-            result |= try_forward_load(function, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
+            result |= try_forward_load(ctx, load, self.stack_ptr_vn, self.endianness, &mut memo)?;
         }
         Ok(result)
     }
@@ -73,22 +73,22 @@ impl OptimizerOnBuilt for StackLoadForward {
 /// upstream `StackStore{offset: K}`.  Returns `Changed` iff the load's uses
 /// were rewired.
 fn try_forward_load(
-    fg: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut pattern::RewriteCtx<'_>,
     load: NodeId,
     sp_vn: rsleigh::Vn,
     endianness: Endianness,
     memo: &mut SpExprMemo,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
-    let [mem, addr] = fg.node_inputs_exact::<2>(load)?;
-    let [load_out] = fg.node_outputs_exact::<1>(load)?;
-    let Some(load_ty) = fg.output_kind(load_out).as_value() else {
+    let [mem, addr] = ctx.node_inputs_exact::<2>(load)?;
+    let [load_out] = ctx.node_outputs_exact::<1>(load)?;
+    let Some(load_ty) = ctx.output_kind(load_out).as_value() else {
         return Ok(OptimizationResult::NoChange);
     };
 
     let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(fg.graph, addr, sp_vn, memo, &mut visiting)
+        decompose_sp(ctx.graph, addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -101,7 +101,7 @@ fn try_forward_load(
     // the arena.
     let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
     let Some(shape) = probe(
-        fg,
+        ctx,
         mem,
         offset,
         load_size,
@@ -112,7 +112,7 @@ fn try_forward_load(
     ) else {
         return Ok(OptimizationResult::NoChange);
     };
-    let forwarded = realize(fg, shape, load_ty, endianness, load)?;
+    let forwarded = realize(ctx, shape, load_ty, endianness, load)?;
 
     // Absorb the rewritten Load's asm-fingerprint into the forwarded
     // producer.  `realize` may have returned an existing-attributed node
@@ -123,11 +123,11 @@ fn try_forward_load(
     // attribution via `create_node_attributed(..., &[load])` inside
     // `realize`; the call below covers the outermost-only LE narrow
     // and Existing cases.
-    let forwarded_node = fg.get_node_from_output(forwarded);
-    fg.extend_asm_fingerprint_from(forwarded_node, load);
-    let changed = fg.replace_all_uses(load_out, forwarded)?;
+    let forwarded_node = ctx.get_node_from_output(forwarded);
+    ctx.extend_asm_fingerprint_from(forwarded_node, load);
+    let changed = ctx.replace_all_uses(load_out, forwarded)?;
     if changed {
-        fg.detach_node_inputs(load);
+        ctx.detach_node_inputs(load);
     }
     Ok(OptimizationResult::from_changed(changed))
 }
@@ -182,7 +182,7 @@ enum ResolveShape {
 // clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
-    fg: &pattern::RewriteCtx<'_>,
+    ctx: &pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
     offset: i64,
     load_size: i64,
@@ -211,18 +211,18 @@ fn probe(
         // Linear walk inside one path — no heap allocation on any
         // chain of disjoint StackStores or non-aliasing Stores.
         let inner_result: Option<ResolveShape> = loop {
-            let node = fg.get_node_from_output(mem);
-            match *fg.node_kind(node) {
+            let node = ctx.get_node_from_output(mem);
+            match *ctx.node_kind(node) {
                 NodeKind::StackStore {
                     offset: k,
                     space: _,
                 } => {
-                    let inputs = fg.node_inputs(node);
+                    let inputs = ctx.node_inputs(node);
                     if inputs.len() < 3 {
                         break None;
                     }
                     let data = inputs[2];
-                    let Some(data_ty) = fg.output_kind(data).as_value() else {
+                    let Some(data_ty) = ctx.output_kind(data).as_value() else {
                         break None;
                     };
                     let store_size = data_ty.byte_size() as i64;
@@ -245,7 +245,7 @@ fn probe(
                     }
                 }
                 NodeKind::Store(_) => {
-                    match step_through_store(fg.graph, node, sp_vn, memo, offset, load_size) {
+                    match step_through_store(ctx.graph, node, sp_vn, memo, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -262,7 +262,7 @@ fn probe(
                     // this, `Load[sp+K]` whose memory chain passes through
                     // a stack-store phi could never be forwarded — round
                     // fix.
-                    match step_through_stack_store_phi(fg.graph, node, offset, load_size) {
+                    match step_through_stack_store_phi(ctx.graph, node, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -280,7 +280,7 @@ fn probe(
                         break None;
                     }
                     // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                    let inputs = fg.node_inputs(node);
+                    let inputs = ctx.node_inputs(node);
                     if inputs.len() < 2 {
                         break None;
                     }
@@ -338,7 +338,7 @@ fn probe(
             // pred list on the frame — saves a Vec allocation per
             // MemPhi.
             let next_slot = top.done_count + 1;
-            let phi_inputs = fg.node_inputs(top.phi_node);
+            let phi_inputs = ctx.node_inputs(top.phi_node);
             let next_mem = phi_inputs[next_slot];
             mem = next_mem;
             continue 'outer;
@@ -356,7 +356,7 @@ fn probe(
 /// the IR rejects the requested constant; structurally the realization
 /// is a deterministic walk over the shape tree.
 fn realize(
-    fg: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: ir::node::NodeOutputType,
     endianness: Endianness,
@@ -385,30 +385,30 @@ fn realize(
                 Endianness::Big => {
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    let shift_const = fg.make_int_const(shift_bits, data_ty)?;
-                    let shr = fg.graph.create_node_attributed(
+                    let shift_const = ctx.make_int_const(shift_bits, data_ty)?;
+                    let shr = ctx.graph.create_node_attributed(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],
                         [NodeOutputKind::OutputType(data_ty)],
                         &[load],
                     );
-                    let [out] = fg.node_outputs_exact::<1>(shr)?;
+                    let [out] = ctx.node_outputs_exact::<1>(shr)?;
                     out
                 }
             };
-            let trunc = fg.graph.create_node_attributed(
+            let trunc = ctx.graph.create_node_attributed(
                 NodeKind::Truncate,
                 [shifted],
                 [NodeOutputKind::OutputType(load_ty)],
                 &[load],
             );
-            let [out] = fg.node_outputs_exact::<1>(trunc)?;
+            let [out] = ctx.node_outputs_exact::<1>(trunc)?;
             Ok(out)
         }
         ResolveShape::Phi { phi_token, preds } => {
             let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
             for p in preds {
-                resolved.push(realize(fg, p, load_ty, endianness, load)?);
+                resolved.push(realize(ctx, p, load_ty, endianness, load)?);
             }
             // Dedup: if all per-predecessor results coincide, skip the
             // ValuePhi — returning the common value keeps the graph
@@ -421,13 +421,13 @@ fn realize(
             {
                 return Ok(first);
             }
-            let value_phi = fg.graph.create_node_attributed(
+            let value_phi = ctx.graph.create_node_attributed(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],
                 &[load],
             );
-            let [out] = fg.node_outputs_exact::<1>(value_phi)?;
+            let [out] = ctx.node_outputs_exact::<1>(value_phi)?;
             Ok(out)
         }
     }

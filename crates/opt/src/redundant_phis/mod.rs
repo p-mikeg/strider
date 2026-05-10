@@ -169,17 +169,7 @@ fn remove_phis(
 pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
-    fn optimize(
-        &self,
-        graph: &mut ir::Graph,
-        entry: ir::node::NodeId,
-    ) -> crate::Result<OptimizationResult> {
-        crate::pipeline::with_rewrite_ctx(graph, entry, |function| self.optimize_built(function))
-    }
-}
-
-impl RedundantPhis {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         let reachable = ir::walk::cfg_reachable(function.graph, function.entry);
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't

@@ -46,7 +46,7 @@
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 /// Pass that rewrites `If(BoolNeg(C))` into `If(C)` with branches swapped.
 ///
@@ -54,8 +54,8 @@ use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
 /// `BoolNeg(BoolNeg) → x` rule simplifies double-negations first.
 pub struct IfCondInversion;
 
-impl OptimizerOnBuilt for IfCondInversion {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+impl Optimizer for IfCondInversion {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.

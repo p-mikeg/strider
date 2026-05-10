@@ -174,8 +174,8 @@ pub(super) fn resolve_indirect_target<R: rsleigh::MemReader>(
     // of small allocs) is dominated by the actual fold work.
     //
     // `LoadReadOnly` is NOT added to the pipeline: its
-    // `OptimizerOnBuilt` impl requires `M: 'static` (the pipeline
-    // stores passes as `Box<dyn Optimizer + 'static>`), and `rom`
+    // `Optimizer` impl requires `M: 'static` (the pipeline
+    // stores passes as `Box<dyn OptimizerRaw + 'static>`), and `rom`
     // here is borrowed for an arbitrary lifetime.  The with-rom
     // branch below drives an inlined load-folder by hand — see
     // `resolve_const_loads`.
@@ -265,7 +265,7 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
     pipeline
 }
 
-/// Inlined equivalent of [`opt::LoadReadOnly::optimize_built`] that
+/// Inlined equivalent of [`opt::LoadReadOnly::optimize`] that
 /// takes a borrowed `&dyn ReadOnlyMemory` instead of an owned
 /// `M: 'static`.
 ///
@@ -274,7 +274,7 @@ fn make_resolver_pipeline() -> opt::OptimizerPipeline {
 /// rewrites the load's value output to the resulting `IntConst`.
 ///
 /// Why a copy: `OptimizerPipeline::add` requires `O: 'static` because
-/// the pipeline stores passes as `Box<dyn Optimizer + 'static>`.  The
+/// the pipeline stores passes as `Box<dyn OptimizerRaw + 'static>`.  The
 /// resolver's `rom` is borrowed for an arbitrary (non-'static)
 /// lifetime so it can't be wrapped in `LoadReadOnly` and registered
 /// directly.  Must stay in lockstep with `opt::LoadReadOnly`'s impl

@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline};
 use ir::node::{NodeKind, NodeOutputType};
 use ir::test_utils::sp_vn_x86 as sp_vn;
@@ -89,7 +89,7 @@ fn mem_phi_single_pred_eliminated() -> crate::Result<()> {
     b.build_return(None, &[])?;
 
     let mut fg = b.build()?;
-    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
 
     // Surviving (reachable) MemPhis with at most 1+1 inputs (token + 1 value)
     // must be 0.  `count_reachable` only filters by `NodeKind`, so the
@@ -120,7 +120,7 @@ fn control_state_single_pred_collapses() -> crate::Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
     assert!(
-        RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed(),
+        RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed(),
         "single-pred CS must be simplified"
     );
     Ok(())
@@ -184,8 +184,8 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
     // Settle the graph by running RedundantPhis to fixed point first.  After
     // this, any further RedundantPhis invocation on the unmodified graph
     // returns NoChange; that's our baseline.
-    while RedundantPhis.optimize(&mut fg.graph, fg.entry)?.changed() {}
-    let baseline = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    while RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?.changed() {}
+    let baseline = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
     assert_eq!(
         baseline,
         OptimizationResult::NoChange,
@@ -204,7 +204,7 @@ fn redundant_phis_no_changed_for_orphan_only_cleanup() -> crate::Result<()> {
         [NodeOutputKind::OutputType(NodeOutputType::U64)],
     );
 
-    let res = RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    let res = RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
     assert_eq!(
         res,
         OptimizationResult::NoChange,
@@ -286,7 +286,7 @@ fn phi_with_self_referential_back_edge_collapses() -> crate::Result<()> {
     );
 
     // Run the pass under test.
-    RedundantPhis.optimize(&mut fg.graph, fg.entry)?;
+    RedundantPhis.optimize_raw(&mut fg.graph, fg.entry)?;
 
     // After collapse, the Return's value input must reference the
     // initial entry value, *not* the phi's output.  `replace_all_uses`

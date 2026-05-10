@@ -184,10 +184,9 @@ impl<'g> RewriteCtx<'g> {
 
     /// pre-order graph walk
     /// starting at [`Self::entry`].  Mirrors
-    /// `BuiltFunctionGraph::preorder` so a future migration of
-    /// `OptimizerOnBuilt::optimize_built` from `&mut BuiltFunctionGraph`
-    /// to `&mut RewriteCtx` can switch the parameter type without
-    /// rewriting every pass body that calls `function.preorder()`.
+    /// `BuiltFunctionGraph::preorder` so optimizer pass bodies that
+    /// call `ctx.preorder()` look the same as if they held a
+    /// `BuiltFunctionGraph` directly.
     #[must_use] 
     pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
         ir::walk::walk_graph(self.graph, self.entry)
@@ -306,10 +305,9 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
 
 // allow Graph methods to be
 // called on `RewriteCtx` directly via Deref.  Mirrors
-// `BuiltFunctionGraph::Deref<Target=Graph>` so a future migration
-// of `OptimizerOnBuilt::optimize_built` to `&mut RewriteCtx` keeps
-// `function.node_kind(_)` / `function.create_node(_)` ergonomics
-// without body changes.
+// `BuiltFunctionGraph::Deref<Target=Graph>` so optimizer pass bodies
+// using `ctx.node_kind(_)` / `ctx.create_node(_)` look the same as
+// if they held a `BuiltFunctionGraph` directly.
 impl<'g> std::ops::Deref for RewriteCtx<'g> {
     type Target = Graph;
     fn deref(&self) -> &Graph {

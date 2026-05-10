@@ -64,13 +64,13 @@ use crate::ReadOnlyMemory;
 ///
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 pub fn classify_anchor(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    let known = crate::analyze_known_bits(fg)?;
+    let known = crate::analyze_known_bits(ctx)?;
     Ok(classify_anchor_with_rom_and_sp(
-        fg,
+        ctx,
         anchor_output,
         link_register_vn,
         None,
@@ -98,14 +98,14 @@ pub fn classify_anchor(
 /// Returns `Err` when `analyze_known_bits` fails (KB-merge contradiction).
 /// See [`classify_anchor`] for full Result-shape semantics.
 pub fn classify_anchor_with_rom(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
-    let known = crate::analyze_known_bits(fg)?;
+    let known = crate::analyze_known_bits(ctx)?;
     Ok(classify_anchor_with_rom_and_sp(
-        fg,
+        ctx,
         anchor_output,
         link_register_vn,
         rom,
@@ -137,14 +137,14 @@ pub fn classify_anchor_with_rom(
 /// approximating.
 #[must_use]
 pub fn classify_anchor_with_rom_and_sp(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     stack_ptr_vn: Option<rsleigh::Vn>,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &fg.graph;
+    let graph = &ctx.graph;
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -208,12 +208,12 @@ pub fn classify_anchor_with_rom_and_sp(
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
             if let Some(r) =
-                classify_jump_table(fg, anchor_output, rom, link_register_vn, known)
+                classify_jump_table(ctx, anchor_output, rom, link_register_vn, known)
             {
                 return Some(r);
             }
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None
         }
@@ -225,7 +225,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_ptr_vn {
-                return super::stack_array::classify_stack_array(fg, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
             }
             None
         }

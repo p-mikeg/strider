@@ -7,7 +7,7 @@
 
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 
 use ir::{BuiltFunctionGraph, FunctionBuilder};
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
@@ -82,45 +82,45 @@ where
     Ok((fg, if_node, a, b))
 }
 
-fn find_unique_if(fg: pattern::RewriteCtxView<'_>) -> NodeId {
-    let ifs: Vec<NodeId> = fg
+fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
+    let ifs: Vec<NodeId> = ctx
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .filter(|&n| matches!(ctx.node_kind(n), NodeKind::If))
         .collect();
     assert_eq!(ifs.len(), 1, "fixture must have exactly one If node");
     ifs[0]
 }
 
-fn if_cond_output(fg: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
-    let [_ctrl, cond_out] = fg
+fn if_cond_output(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
+    let [_ctrl, cond_out] = ctx
         .graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
     cond_out
 }
 
-fn if_cond_node_kind(fg: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeKind {
-    let cond_out = if_cond_output(fg, if_node);
-    *fg.node_kind(fg.get_node_from_output(cond_out))
+fn if_cond_node_kind(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeKind {
+    let cond_out = if_cond_output(ctx, if_node);
+    *ctx.node_kind(ctx.get_node_from_output(cond_out))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
 /// `(expect_lhs, expect_rhs)` in that exact order.
 fn assert_if_cond_is_intcmp(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
     expect_rhs: NodeOutputId,
 ) {
-    let cond_out = if_cond_output(fg, if_node);
-    let cond_node = fg.get_node_from_output(cond_out);
+    let cond_out = if_cond_output(ctx, if_node);
+    let cond_node = ctx.get_node_from_output(cond_out);
     assert_eq!(
-        *fg.node_kind(cond_node),
+        *ctx.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
         "If cond should be IntCmpOp({op:?})",
     );
-    let [lhs, rhs] = fg
+    let [lhs, rhs] = ctx
         .graph
         .node_inputs_exact::<2>(cond_node)
         .expect("IntCmpOp has 2 inputs");
@@ -135,30 +135,30 @@ fn assert_if_cond_is_intcmp(
 /// `IfCondInversion` (in the full pipeline, not in this test) is the
 /// pass that finally swaps the If's branches and strips the BoolNeg.
 fn assert_if_cond_is_neg_intcmp(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     if_node: NodeId,
     op: IntCmpOp,
     expect_lhs: NodeOutputId,
     expect_rhs: NodeOutputId,
 ) {
-    let cond_out = if_cond_output(fg, if_node);
-    let neg_node = fg.get_node_from_output(cond_out);
+    let cond_out = if_cond_output(ctx, if_node);
+    let neg_node = ctx.get_node_from_output(cond_out);
     assert_eq!(
-        *fg.node_kind(neg_node),
+        *ctx.node_kind(neg_node),
         NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg),
         "If cond should be BoolNeg(...)",
     );
-    let [inner] = fg
+    let [inner] = ctx
         .graph
         .node_inputs_exact::<1>(neg_node)
         .expect("BoolNeg has 1 input");
-    let inner_node = fg.get_node_from_output(inner);
+    let inner_node = ctx.get_node_from_output(inner);
     assert_eq!(
-        *fg.node_kind(inner_node),
+        *ctx.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
         "Inner cond should be IntCmpOp({op:?})",
     );
-    let [lhs, rhs] = fg
+    let [lhs, rhs] = ctx
         .graph
         .node_inputs_exact::<2>(inner_node)
         .expect("IntCmpOp has 2 inputs");
@@ -172,7 +172,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
     let (mut fg, if_node, a, b) =
         build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the EQ flag tree");
 
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Equal, a, b);
@@ -186,7 +186,7 @@ fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
         fb.build_boolean_unary_operation(zr, ir::BoolUnaryOp::Neg)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the NE flag tree");
 
     assert_if_cond_is_neg_intcmp((&fg).into(), if_node, IntCmpOp::Equal, a, b);
@@ -203,7 +203,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
         fb.build_boolean_operation(cy, neg_zr, ir::BoolBinaryOp::And)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the HI flag tree");
 
     // Note swapped operands: `a > b` becomes `IntLess(b, a)`.
@@ -228,8 +228,8 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
         fb.build_boolean_operation(cy, neg_zr, ir::BoolBinaryOp::And)
     })?;
 
-    crate::ConstantFold.optimize(&mut fg.graph, fg.entry)?;
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    crate::ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "HI rewrite must survive a prior ConstantFold pass");
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Less, b, a);
     Ok(())
@@ -248,8 +248,8 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     })?;
 
     // Run ConstantFold first to collapse `BoolNeg(BoolNeg(IntLess(a, b))) → IntLess(a, b)`.
-    crate::ConstantFold.optimize(&mut fg.graph, fg.entry)?;
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    crate::ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the LS flag tree");
 
     assert_if_cond_is_neg_intcmp((&fg).into(), if_node, IntCmpOp::Less, b, a);
@@ -267,7 +267,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
         fb.build_boolean_unary_operation(eq, ir::BoolUnaryOp::Neg)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the LT flag tree");
 
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Sless, a, b);
@@ -281,7 +281,7 @@ fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
         fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::U8)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the GE flag tree");
 
     assert_if_cond_is_neg_intcmp((&fg).into(), if_node, IntCmpOp::Sless, a, b);
@@ -297,7 +297,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
         fb.build_boolean_operation(neg_zr, eq, ir::BoolBinaryOp::And)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the GT flag tree");
 
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Sless, b, a);
@@ -313,7 +313,7 @@ fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
         fb.build_boolean_operation(zr, neg_eq, ir::BoolBinaryOp::Or)
     })?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed(), "pass should rewrite the LE flag tree");
 
     assert_if_cond_is_neg_intcmp((&fg).into(), if_node, IntCmpOp::Sless, b, a);
@@ -329,7 +329,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(!r.changed(), "CS already canonical; pass must not fire");
 
     assert_eq!(
@@ -347,7 +347,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, ng, _cy, _ov| Ok(ng))?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(!r.changed(), "MI is not algebraically reducible; pass must not fire");
 
     assert_eq!(
@@ -376,8 +376,8 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     // Run my pass twice (or run it once via the pipeline's fixed-point loop).
     // Two iterations let rule 9 fire on the outer BoolNeg(IntEqual(CastToInt(ZR), 0))
     // first, then rule 1 simplify the inner Equal(diff, 0).
-    let _ = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
-    let _ = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let _ = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
+    let _ = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
 
     assert_if_cond_is_intcmp((&fg).into(), if_node, IntCmpOp::Equal, a, b);
     Ok(())
@@ -390,7 +390,7 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     let (mut fg, if_node, _a, _b) =
         build_if_with_flag_cond(|_fb, _zr, _ng, _cy, ov| Ok(ov))?;
 
-    let r = FlagCmpCanonicalize.optimize(&mut fg.graph, fg.entry)?;
+    let r = FlagCmpCanonicalize.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(!r.changed(), "VS already canonical; pass must not fire");
 
     assert_eq!(

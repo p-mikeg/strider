@@ -60,13 +60,13 @@ use pattern::{
 };
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 pub struct FlagCmpCanonicalize;
 
-impl OptimizerOnBuilt for FlagCmpCanonicalize {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+impl Optimizer for FlagCmpCanonicalize {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         // Pre-collect candidate roots: rules mutate the graph (rewire
         // uses), so we can't walk the live iterator.  Forward preorder
         // visits parents before children — for the larger flag-tree

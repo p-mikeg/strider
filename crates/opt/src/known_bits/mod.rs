@@ -4,7 +4,7 @@ use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::{ExtendOp, IntBinaryOp, IntUnaryOp};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
 
 #[cfg(test)]
@@ -153,22 +153,22 @@ impl Kb {
 /// value output.  Returns `(output_id, Kb)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub fn node_known_bits(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(NodeOutputId, Kb)>> {
-    let kind = *fg.node_kind(node_id);
+    let kind = *ctx.node_kind(node_id);
 
     // Find the first integer value output.
-    let Some(out) = fg
+    let Some(out) = ctx
         .graph
         .node_outputs(node_id)
         .into_iter()
-        .find(|&o| fg.output_kind(o).is_integer())
+        .find(|&o| ctx.output_kind(o).is_integer())
     else {
         return Ok(None);
     };
-    let out_kind = fg.output_kind(out);
+    let out_kind = ctx.output_kind(out);
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than U64 (U128/U256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
@@ -185,7 +185,7 @@ pub fn node_known_bits(
         },
 
         NodeKind::IntBinaryOp(op) => {
-            let [lhs, rhs] = fg.node_inputs_exact::<2>(node_id)?;
+            let [lhs, rhs] = ctx.node_inputs_exact::<2>(node_id)?;
             let l = known[lhs];
             let r = known[rhs];
             match op {
@@ -215,7 +215,7 @@ pub fn node_known_bits(
                     // wrapped large literal shifts back into range,
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
-                    let rhs_mask = fg
+                    let rhs_mask = ctx
                         .graph
                         .output_kind(rhs)
                         .as_value()
@@ -256,7 +256,7 @@ pub fn node_known_bits(
                     // `>= bit_width` returns 0 (sleigh/src/opbehavior.cc:432).
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
-                    let rhs_mask = fg
+                    let rhs_mask = ctx
                         .graph
                         .output_kind(rhs)
                         .as_value()
@@ -297,7 +297,7 @@ pub fn node_known_bits(
             // negate — `IntUnaryOp::Neg` — has no closed-form known-bits
             // propagation: it depends on the borrow chain across the
             // input's bits, so it falls through to the unknown case.)
-            let [input] = fg.node_inputs_exact::<1>(node_id)?;
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
             let kb = known[input];
             Kb {
                 ones: kb.zeros & type_mask,
@@ -307,7 +307,7 @@ pub fn node_known_bits(
 
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
-            let [input] = fg.node_inputs_exact::<1>(node_id)?;
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
             let kb = known[input];
             Kb {
                 ones: kb.ones & type_mask,
@@ -317,8 +317,8 @@ pub fn node_known_bits(
 
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
-            let [input] = fg.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.output_kind(input);
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             // Bail when the input width is unsupported (U80/U128/U256) —
             // mirrors the SignExtend arm below.  Returning `Ok(None)`
@@ -340,8 +340,8 @@ pub fn node_known_bits(
             // Upper bits replicate the input's sign bit.  When the sign bit
             // is statically known, the entire upper region is determined;
             // otherwise we still pass the lower bits through.
-            let [input] = fg.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.output_kind(input);
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
@@ -373,8 +373,8 @@ pub fn node_known_bits(
 
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
-            let [input] = fg.node_inputs_exact::<1>(node_id)?;
-            let input_kind = fg.output_kind(input);
+            let [input] = ctx.node_inputs_exact::<1>(node_id)?;
+            let input_kind = ctx.output_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {
@@ -463,8 +463,8 @@ pub fn analyze(function: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
 /// information along data-dependency chains before deciding replacements.
 pub struct KnownBits;
 
-impl OptimizerOnBuilt for KnownBits {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+impl Optimizer for KnownBits {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Phase 1 — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).

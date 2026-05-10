@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use ir::node::{NodeId, NodeKind, NodeOutputType};
 use ir::test_utils::make_empty_fn;
 use ir::IntBinaryOp;
-use opt::{ConstantFold, KnownBits, Optimizer};
+use opt::{ConstantFold, KnownBits, OptimizerRaw};
 
 /// Walks the graph for the first node whose kind matches `pred`.
 fn find<F: Fn(&NodeKind) -> bool>(
@@ -41,7 +41,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
         Ok(add)
     })
     .unwrap();
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap().changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry).unwrap().changed());
     // The surviving node feeds the Return; find it.
     let const7 = find(&fg, |k| matches!(k, NodeKind::IntConst(7))).expect("IntConst(7)");
     let fp = fg.graph.asm_fingerprint(const7);
@@ -69,7 +69,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
         Ok(xor)
     })
     .unwrap();
-    assert!(ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap().changed());
+    assert!(ConstantFold.optimize_raw(&mut fg.graph, fg.entry).unwrap().changed());
     // Result is IntConst(0); its fingerprint must include 0x204 (the Xor's
     // address — via after_replace).
     let const0 = find(&fg, |k| matches!(k, NodeKind::IntConst(0))).expect("IntConst(0)");
@@ -103,8 +103,8 @@ fn known_bits_fold_preserves_fingerprints() {
     // Run ConstantFold first to collapse the AND to a const, then KnownBits
     // would observe it.  In practice the layered pipeline does this; here
     // we run both in sequence.
-    let _ = ConstantFold.optimize(&mut fg.graph, fg.entry);
-    let _ = KnownBits.optimize(&mut fg.graph, fg.entry);
+    let _ = ConstantFold.optimize_raw(&mut fg.graph, fg.entry);
+    let _ = KnownBits.optimize_raw(&mut fg.graph, fg.entry);
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
@@ -144,7 +144,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap();
+    let _ = ConstantFold.optimize_raw(&mut fg.graph, fg.entry).unwrap();
     // Whatever value reaches the Return must carry every contributor address
     // from the chain we built (or at least from the outer-And which is the
     // canonical "rewrite root").
@@ -231,7 +231,7 @@ fn constant_fold_rule_and_dist_attributes_inner_nodes() {
     .expect("input graph: every non-exempt node has a fingerprint");
 
     // Run ConstantFold — fires `rule_and_dist`.
-    let _ = ConstantFold.optimize(&mut fg.graph, fg.entry).unwrap();
+    let _ = ConstantFold.optimize_raw(&mut fg.graph, fg.entry).unwrap();
 
     // After the rewrite, every reachable non-exempt node must still carry a
     // non-empty fingerprint (the no-shrink-fingerprint contract).

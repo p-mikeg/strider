@@ -62,8 +62,7 @@ fn fixed_point_limit_exceeded() -> opt::Result<()> {
     impl Optimizer for AlwaysChanged {
         fn optimize(
             &self,
-            _graph: &mut ir::Graph,
-            _entry: ir::node::NodeId,
+            _ctx: &mut pattern::RewriteCtx<'_>,
         ) -> opt::Result<OptimizationResult> {
             Ok(OptimizationResult::Changed)
         }

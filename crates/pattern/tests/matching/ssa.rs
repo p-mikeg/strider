@@ -128,7 +128,7 @@ fn phi_input_addresses_predecessor_slot_not_phi_token() {
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
 fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
-    use opt::{FunctionArgDetect, Optimizer};
+    use opt::{FunctionArgDetect, OptimizerRaw};
     let sp = sp_vn();
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);
 
@@ -140,7 +140,7 @@ fn graph_fn_arg_stack() -> ir::BuiltFunctionGraph {
     let mut g = t.ret_val(v);
 
     FunctionArgDetect::new(vec![], sp, vec![4])
-        .optimize(&mut g.graph, g.entry)
+        .optimize_raw(&mut g.graph, g.entry)
         .expect("FunctionArgDetect");
     g
 }

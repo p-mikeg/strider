@@ -10,7 +10,7 @@
 //!   - after `IfCondInversion` runs, the inverted layout becomes
 //!     direct and `IfPat` matches it.
 
-use opt::{IfCondInversion, Optimizer};
+use opt::{IfCondInversion, OptimizerRaw};
 use pattern::*;
 
 use super::support::{assertions as a, shapes};
@@ -43,7 +43,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     // then verify the same direct-layout pattern matches.  This pins the
     // contract that motivated moving the symmetry into a pass.
     let mut g = shapes::if_cmp_then_return_inverted(4);
-    let r = IfCondInversion.optimize(&mut g.graph, g.entry).expect("opt");
+    let r = IfCondInversion.optimize_raw(&mut g.graph, g.entry).expect("opt");
     assert!(r.changed(), "IfCondInversion must rewrite the inverted-cond If");
 
     let pat = if_node()
@@ -97,7 +97,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     // Inverted fixture: same pattern matches AFTER the canonicalisation
     // pass runs — verifying the capture also survives the in-place rewrite.
     let mut g_inverted = shapes::if_cmp_then_return_inverted(4);
-    IfCondInversion.optimize(&mut g_inverted.graph, g_inverted.entry).expect("opt");
+    IfCondInversion.optimize_raw(&mut g_inverted.graph, g_inverted.entry).expect("opt");
     let m_i = a::unique(&g_inverted, pat);
     assert!(matches!(
         g_inverted.graph.node_kind(m_i.node(n).unwrap()),
@@ -117,7 +117,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
 fn shared_capture_across_cond_and_branch_must_agree() {
     let g_direct = shapes::if_cmp_then_return(4);
     let mut g_inverted = shapes::if_cmp_then_return_inverted(4);
-    IfCondInversion.optimize(&mut g_inverted.graph, g_inverted.entry).expect("opt");
+    IfCondInversion.optimize_raw(&mut g_inverted.graph, g_inverted.entry).expect("opt");
     let c = Capture::new();
     let pat: Pat = if_node().cond(var(c)).true_branch(var(c)).into();
     a::none(&g_direct, pat.clone());

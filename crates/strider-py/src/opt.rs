@@ -2,11 +2,11 @@
 //!
 //! The Rust `opt::OptimizerPipeline::add` is generic over the concrete
 //! pass type (`O: Optimizer + 'static`) and stores it as
-//! `Box<dyn Optimizer>` internally.  We can't directly stuff a
-//! type-erased `Box<dyn Optimizer>` back into `add`, so the Python
+//! `Box<dyn OptimizerRaw>` internally.  We can't directly stuff a
+//! type-erased `Box<dyn OptimizerRaw>` back into `add`, so the Python
 //! wrapper accumulates erased boxes and, at run time, transfers them
 //! into a fresh real pipeline via a small adapter that re-implements
-//! `Optimizer` as a forwarder.
+//! `OptimizerRaw` as a forwarder.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -14,25 +14,31 @@ use std::sync::Mutex;
 
 use crate::errors::into_strider_err;
 
-/// Trait-object holder owning a heap-allocated `opt::Optimizer`.
+/// Trait-object holder owning a heap-allocated `opt::OptimizerRaw`.
 /// The wrapper itself is `Send + Sync` so it can move across the
 /// PyO3 boundary safely (Python objects are reachable from any
 /// thread that holds the GIL).
-pub(crate) type ErasedPass = Box<dyn opt::Optimizer + Send + Sync>;
+///
+/// We use the low-level [`opt::OptimizerRaw`] trait (which takes
+/// `(&mut Graph, NodeId)`) rather than [`opt::Optimizer`] (which
+/// takes `&mut RewriteCtx`) because every passes' concrete type is
+/// already erased here — no per-call `RewriteCtx` construction is
+/// needed and the Rust signature stays purely in `Graph` terms.
+pub(crate) type ErasedPass = Box<dyn opt::OptimizerRaw + Send + Sync>;
 
 /// Adapter that turns an owned `ErasedPass` into something
 /// `opt::OptimizerPipeline::add` can accept.  `add` requires
-/// `O: Optimizer + 'static`; this newtype satisfies both bounds and
-/// forwards `optimize` straight through.
+/// `O: OptimizerRaw + 'static`; this newtype satisfies both bounds and
+/// forwards `optimize_raw` straight through.
 struct ForwardPass(ErasedPass);
 
-impl opt::Optimizer for ForwardPass {
-    fn optimize(
+impl opt::OptimizerRaw for ForwardPass {
+    fn optimize_raw(
         &self,
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> opt::Result<opt::OptimizationResult> {
-        self.0.optimize(graph, entry)
+        self.0.optimize_raw(graph, entry)
     }
 }
 
@@ -55,7 +61,7 @@ impl PipelineState {
     fn from_default() -> Self {
         // Re-create the default pipeline by reconstructing each pass
         // individually rather than calling opt::default_pipeline()
-        // (which returns an OptimizerPipeline whose Box<dyn Optimizer>
+        // (which returns an OptimizerPipeline whose Box<dyn OptimizerRaw>
         // entries are not externally re-extractable).  Pass list and
         // order MUST mirror `opt::default_pipeline()` — drift here
         // silently produces graphs that look different from the

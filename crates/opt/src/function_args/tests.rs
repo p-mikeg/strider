@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use ir::node::{FunctionArgSource, NodeKind, NodeOutputType};
 use ir::test_utils::{reg_vn, sp_vn_x86_64 as sp_vn};
 use ir::{FunctionBuilder, IntBinaryOp};
@@ -10,9 +10,9 @@ fn rdi_like_vn() -> rsleigh::Vn {
     reg_vn(0x38, 8)
 }
 
-fn count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
-    fg.all_node_ids()
-        .filter(|&n| pred(fg.node_kind(n)))
+fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+    ctx.all_node_ids()
+        .filter(|&n| pred(ctx.node_kind(n)))
         .count()
 }
 
@@ -36,7 +36,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
-    pass.optimize(&mut fg.graph, fg.entry)?;
+    pass.optimize_raw(&mut fg.graph, fg.entry)?;
 
     let n_fa = count((&fg).into(), |k| {
         matches!(

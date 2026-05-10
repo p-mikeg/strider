@@ -19,7 +19,7 @@ use object::{Object, ObjectSymbol};
 use ir::node::{NodeOutputType, NodeOutputKind};
 use ir::{BuiltFunctionGraph, FunctionBuilder, IntBinaryOp};
 use opt::{
-    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, StackLoadForward, StackStoreDetect,
+    ConstantFold, OptimizerPipeline, OptimizerRaw, RedundantPhis, StackLoadForward, StackStoreDetect,
 };
 
 #[derive(Clone, Copy)]
@@ -363,7 +363,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = StackLoadForward::new(sp, target::Endianness::Little);
-                    let _ = pass.optimize(&mut fg.graph, fg.entry);
+                    let _ = pass.optimize_raw(&mut fg.graph, fg.entry);
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

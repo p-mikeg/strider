@@ -1,7 +1,7 @@
 use ir::node::NodeKind;
 use reader::ReadOnlyMemory;
 
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
 
 // ── LoadReadOnly optimizer ────────────────────────────────────────────────────
@@ -46,8 +46,8 @@ use crate::worklist::WorkSet;
 /// ```
 pub struct LoadReadOnly<M>(pub M);
 
-impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         // Only Load nodes are candidates — kind-filter at the iterator
         // level rather than collecting all N reachable nodes and
         // skipping non-Loads in the body.

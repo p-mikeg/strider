@@ -6,13 +6,17 @@ reports a change. Three pre-built pipelines cover the common cases.
 
 ## Public surface
 
-- `Optimizer` — `optimize(&self, graph: &mut Graph, entry: NodeId) ->
-  Result<OptimizationResult>` returns whether the graph changed. Some passes
-  implement this directly (e.g. `IndirectBranchResolve`).
-- `OptimizerOnBuilt` — companion trait whose `optimize_built(&self,
-  function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult>` is
-  wrapped via a blanket impl so both kinds of pass slot into the same
-  pipeline. Most passes implement this rather than `Optimizer` directly.
+- `Optimizer` — `optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) ->
+  Result<OptimizationResult>` returns whether the graph changed.  `RewriteCtx`
+  exposes `Deref<Target = Graph>` + `preorder()` / `preorder_kind()` so pass
+  bodies look the same as if they held a `BuiltFunctionGraph`.  Most passes
+  implement this.
+- `OptimizerRaw` — low-level companion trait taking `(&mut Graph, NodeId)`
+  directly.  Used as the pipeline's dispatch trait; the blanket
+  `impl<T: Optimizer> OptimizerRaw for T` adapts every `Optimizer` impl via
+  `with_rewrite_ctx`.  Implement this directly only when you need raw
+  `&mut Graph` access without the wrapper (e.g. external bindings that hold
+  type-erased `Box<dyn OptimizerRaw>` adapters).
 - `OptimizationResult` — `Changed | NoChange` (both unit variants).
 - `OptimizerPipeline` — `add(pass)`, `add_post_pass(pass)`, `run(&mut Graph,
   NodeId)`. Calls `ir::validate::validate` at the end.

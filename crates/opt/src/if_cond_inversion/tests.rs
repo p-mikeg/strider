@@ -3,7 +3,7 @@
 use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use crate::test_support::find_unique_if;
 
 use ir::FunctionBuilder;
@@ -57,7 +57,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
         NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg)
     ));
 
-    let r = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed());
 
     // After: cond is the inner CastToBool (the BoolNeg's input was the
@@ -73,9 +73,9 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 #[test]
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let first = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    let first = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(first.changed());
-    let second = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    let second = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
 }
@@ -110,11 +110,11 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     // ConstantFold first: collapses `!!x → x`.
     let mut changed = true;
     while changed {
-        changed = ConstantFold.optimize(&mut fg.graph, fg.entry)?.changed();
+        changed = ConstantFold.optimize_raw(&mut fg.graph, fg.entry)?.changed();
     }
     // After ConstantFold the cond is no longer `BoolNeg`, so
     // IfCondInversion must NOT fire.  Even-parity → no branch swap.
-    let r = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(
         !r.changed(),
         "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
@@ -145,7 +145,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct ControlState nodes"
     );
 
-    IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(&fg, out0_post);
@@ -206,7 +206,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg)))
         .expect("BoolUnaryOp::Neg present pre-pass");
 
-    let r = IfCondInversion.optimize(&mut fg.graph, fg.entry)?;
+    let r = IfCondInversion.optimize_raw(&mut fg.graph, fg.entry)?;
     assert!(r.changed());
 
     // The BoolNeg's fingerprint MUST have been absorbed into the

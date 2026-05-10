@@ -87,8 +87,8 @@ fn stack_store_detect_and_load_forward_converge_in_two_iters() -> opt::Result<()
     let max_iters = 2u32;
     loop {
         iter += 1;
-        let r1 = detect.optimize(&mut fg.graph, fg.entry)?;
-        let r2 = forward.optimize(&mut fg.graph, fg.entry)?;
+        let r1 = detect.optimize_raw(&mut fg.graph, fg.entry)?;
+        let r2 = forward.optimize_raw(&mut fg.graph, fg.entry)?;
         if !r1.changed() && !r2.changed() {
             break;
         }

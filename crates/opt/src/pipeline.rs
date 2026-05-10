@@ -69,9 +69,9 @@ impl std::ops::BitOrAssign for OptimizationResult {
 
 /// Bridge `(&mut Graph, NodeId)` callers to a `&mut RewriteCtx`-typed
 /// closure.  No partial-state `BuiltFunctionGraph` construction is
-/// needed: every `OptimizerOnBuilt` impl in this crate reads only
-/// `graph` and `entry`, both of which `RewriteCtx` exposes natively
-/// (with `Deref<Target=Graph>` + `preorder()` mirroring BFG's API for
+/// needed: every `Optimizer` impl in this crate reads only `graph` and
+/// `entry`, both of which `RewriteCtx` exposes natively (with
+/// `Deref<Target=Graph>` + `preorder()` mirroring BFG's API for
 /// ergonomic call-site compatibility).
 pub(crate) fn with_rewrite_ctx<R>(
     graph: &mut ir::Graph,
@@ -82,15 +82,17 @@ pub(crate) fn with_rewrite_ctx<R>(
     f(&mut ctx)
 }
 
-/// A single IR optimization pass.
+/// Low-level optimizer interface that takes `(&mut Graph, NodeId)`
+/// directly.  Used as the pipeline's dispatch trait: passes that want
+/// raw graph + entry access (e.g. external Python bindings that hold
+/// type-erased `Box<dyn OptimizerRaw>` adapters) implement this
+/// directly, and the higher-level [`Optimizer`] trait blanket-impls
+/// this via [`with_rewrite_ctx`].
 ///
-/// Implement this trait to add a new pass.  The pass receives a mutable
-/// reference to the function graph, applies whatever transformations it can in
-/// one sweep, and returns [`OptimizationResult::Changed`] if anything was
-/// modified (causing the pipeline to run another iteration) or
-/// [`OptimizationResult::NoChange`] if the graph is already in normal form for
-/// this pass.
-pub trait Optimizer: Send + Sync {
+/// **Most passes should implement [`Optimizer`] instead** — it operates
+/// on a [`pattern::RewriteCtx`] and gets the ergonomic `Deref<Target =
+/// Graph>` + `preorder()` accessors for free.
+pub trait OptimizerRaw: Send + Sync {
     /// Run one sweep of this pass over the IR `graph`, anchored at `entry`.
     ///
     /// # Why `(&mut Graph, NodeId)` and not `&mut pattern::RewriteCtx<'_>`
@@ -111,46 +113,51 @@ pub trait Optimizer: Send + Sync {
     /// Returns the first error encountered by the pass — typically an IR
     /// validation failure or a pattern-rewrite error propagated up through
     /// `anyhow::Error`.
-    fn optimize(
+    fn optimize_raw(
         &self,
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult>;
 }
 
-/// Optimizer pass that operates on a [`pattern::RewriteCtx`] (a
-/// `&mut Graph + entry` pair) rather than the lower-level
-/// `(&mut Graph, NodeId)` pair.  Most passes implement this instead of
-/// [`Optimizer`] directly: the blanket impl below wires the
-/// [`with_rewrite_ctx`] adapter so the pass slots into the pipeline.
+/// A single IR optimization pass.
 ///
-/// `RewriteCtx` provides `Deref<Target=Graph>` + `preorder()` /
-/// `preorder_kind()` mirroring BFG's API, so pass bodies can use
-/// `function.node_kind(_)` / `function.preorder()` /
-/// `function.create_node(_)` directly.
+/// Implement this trait to add a new pass.  The pass receives a
+/// [`pattern::RewriteCtx`] (a `&mut Graph + entry` pair with
+/// ergonomic `Deref<Target = Graph>` + `preorder()` accessors),
+/// applies whatever transformations it can in one sweep, and returns
+/// [`OptimizationResult::Changed`] if anything was modified (causing
+/// the pipeline to run another iteration) or
+/// [`OptimizationResult::NoChange`] if the graph is already in normal
+/// form for this pass.
+///
+/// `RewriteCtx` mirrors BFG's API, so pass bodies can use
+/// `ctx.node_kind(_)` / `ctx.preorder()` / `ctx.create_node(_)`
+/// directly.
 ///
 /// Passes that need direct `&mut Graph` access without the wrapper
-/// implement [`Optimizer`] directly instead.
-pub trait OptimizerOnBuilt: Send + Sync {
+/// (rare — typically external bindings holding type-erased boxes) can
+/// implement [`OptimizerRaw`] instead.
+pub trait Optimizer: Send + Sync {
     /// Run one sweep of this pass over the function graph.  See
-    /// [`Optimizer::optimize`] for the `Changed`/`NoChange` contract.
+    /// [`OptimizationResult`] for the `Changed`/`NoChange` contract.
     ///
     /// # Errors
     ///
     /// Returns the first error encountered by the pass.
-    fn optimize_built(
+    fn optimize(
         &self,
-        function: &mut pattern::RewriteCtx<'_>,
+        ctx: &mut pattern::RewriteCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 }
 
-impl<T: OptimizerOnBuilt> Optimizer for T {
-    fn optimize(
+impl<T: Optimizer> OptimizerRaw for T {
+    fn optimize_raw(
         &self,
         graph: &mut ir::Graph,
         entry: ir::node::NodeId,
     ) -> crate::Result<OptimizationResult> {
-        with_rewrite_ctx(graph, entry, |function| self.optimize_built(function))
+        with_rewrite_ctx(graph, entry, |ctx| self.optimize(ctx))
     }
 }
 
@@ -160,8 +167,13 @@ impl<T: OptimizerOnBuilt> Optimizer for T {
 /// On each iteration every pass is called once in registration order.  The loop
 /// repeats until no pass reports a change.  Use [`OptimizerPipeline::add`] to
 /// register passes and [`OptimizerPipeline::run`] to execute them.
+///
+/// Internally the pipeline stores passes as `Box<dyn OptimizerRaw>` so
+/// it can dispatch on `(&mut Graph, NodeId)` directly.  The blanket
+/// `impl<T: Optimizer> OptimizerRaw for T` lets users register any
+/// [`Optimizer`] pass without explicit conversion.
 pub struct OptimizerPipeline {
-    optimizers: Vec<Box<dyn Optimizer>>,
+    optimizers: Vec<Box<dyn OptimizerRaw>>,
     /// Type names of each registered optimizer, captured at
     /// registration time via `std::any::type_name::<O>()`.  Indexed in
     /// lock-step with `optimizers`.  Exposed via
@@ -170,7 +182,7 @@ pub struct OptimizerPipeline {
     /// stable-vs-destructive subset partition without inspecting trait
     /// objects.
     optimizer_names: Vec<&'static str>,
-    post_passes: Vec<Box<dyn Optimizer>>,
+    post_passes: Vec<Box<dyn OptimizerRaw>>,
 }
 
 impl Default for OptimizerPipeline {
@@ -191,7 +203,7 @@ impl OptimizerPipeline {
     }
 
     /// Appends `opt` to the end of the pass list.
-    pub fn add<O: Optimizer + 'static>(&mut self, opt: O) {
+    pub fn add<O: OptimizerRaw + 'static>(&mut self, opt: O) {
         // Capture the concrete type name BEFORE boxing the value so we
         // can introspect the pipeline shape (see `optimizer_names`).
         // `std::any::type_name` returns the fully-qualified type path,
@@ -228,7 +240,7 @@ impl OptimizerPipeline {
     /// Appends `opt` to the post-pass list.  Post-passes run once, in
     /// registration order, after the fixed-point loop converges.  Their return
     /// value is ignored (no re-entry into the fixed-point loop).
-    pub fn add_post_pass<O: Optimizer + 'static>(&mut self, opt: O) {
+    pub fn add_post_pass<O: OptimizerRaw + 'static>(&mut self, opt: O) {
         self.post_passes.push(Box::new(opt));
     }
 
@@ -255,7 +267,7 @@ impl OptimizerPipeline {
         loop {
             let mut changed = false;
             for opt in &self.optimizers {
-                if opt.optimize(graph, entry)?.changed() {
+                if opt.optimize_raw(graph, entry)?.changed() {
                     changed = true;
                 }
             }
@@ -268,7 +280,7 @@ impl OptimizerPipeline {
             }
         }
         for opt in &self.post_passes {
-            opt.optimize(graph, entry)?;
+            opt.optimize_raw(graph, entry)?;
         }
         ir::validate::validate(graph, entry)?;
         Ok(())
@@ -279,7 +291,7 @@ impl OptimizerPipeline {
     /// Delegates to [`Self::run`] by extracting `(&mut graph.graph,
     /// graph.entry)`.  Tests and downstream code that already hold a
     /// `BuiltFunctionGraph` keep working unchanged through the
-    /// `Optimizer` / `OptimizerOnBuilt` split; new code is encouraged
+    /// `Optimizer` / `OptimizerRaw` split; new code is encouraged
     /// to call [`Self::run`] directly with a `(graph, entry)` pair
     /// (e.g. from [`ir::FunctionBuilder::graph_mut`] +
     /// [`ir::FunctionBuilder::entry`]).
@@ -319,7 +331,7 @@ mod tests {
 
     /// `run(graph, entry)` and `run_on_built(built)` produce the same
     /// resulting graph state.  Pins the "new entry point is a drop-in
-    /// replacement" contract for the Optimizer / OptimizerOnBuilt split.
+    /// replacement" contract for the Optimizer / OptimizerRaw split.
     #[test]
     fn pipeline_run_with_graph_and_entry_replicates_old_built_behavior() -> crate::Result<()> {
         let mut a = one_const_fn(7);

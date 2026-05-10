@@ -1,7 +1,7 @@
 use ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::worklist::WorkSet;
 
 mod eval_float;
@@ -20,32 +20,32 @@ use rules::*;
 /// - Input is an integer `IntConst(v)` → immediately constant-folded to `FloatConst(v)`.
 /// - Input is any other integer type → lowered to `IntBitsToFloat`.
 fn try_lower_cast_to_float(
-    fg: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
-    if !matches!(*fg.node_kind(node_id), NodeKind::CastToFloat) {
+    if !matches!(*ctx.node_kind(node_id), NodeKind::CastToFloat) {
         return Ok(OptimizationResult::NoChange);
     }
 
-    let [out] = fg.node_outputs_exact::<1>(node_id)?;
-    let [input] = fg.node_inputs_exact::<1>(node_id)?;
+    let [out] = ctx.node_outputs_exact::<1>(node_id)?;
+    let [input] = ctx.node_inputs_exact::<1>(node_id)?;
 
-    let out_ty = fg.output_kind(out).as_value_or_err()?;
-    let in_ty = fg.output_kind(input).as_value_or_err()?;
+    let out_ty = ctx.output_kind(out).as_value_or_err()?;
+    let in_ty = ctx.output_kind(input).as_value_or_err()?;
 
     let new_out = if in_ty == out_ty {
         input
     } else if in_ty.is_float() {
-        fg.make_float_to_float_node(input, out_ty)?
-    } else if let Some(bits) = fg.int_const_val(input) {
-        fg.make_float_const(bits, out_ty)?
+        ctx.make_float_to_float_node(input, out_ty)?
+    } else if let Some(bits) = ctx.int_const_val(input) {
+        ctx.make_float_const(bits, out_ty)?
     } else {
-        fg.make_int_bits_to_float_node(input, out_ty)?
+        ctx.make_int_bits_to_float_node(input, out_ty)?
     };
     // Absorb the rewritten cast node's asm-fingerprint into the new producer.
-    let new_node = fg.get_node_from_output(new_out);
-    fg.extend_asm_fingerprint_from(new_node, node_id);
-    Ok(OptimizationResult::from_changed(fg.replace_all_uses(out, new_out)?))
+    let new_node = ctx.get_node_from_output(new_out);
+    ctx.extend_asm_fingerprint_from(new_node, node_id);
+    Ok(OptimizationResult::from_changed(ctx.replace_all_uses(out, new_out)?))
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
@@ -58,8 +58,8 @@ fn try_lower_cast_to_float(
 /// a & (C1 & C2)`.
 pub struct ConstantFold;
 
-impl OptimizerOnBuilt for ConstantFold {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
+impl Optimizer for ConstantFold {
+    fn optimize(&self, function: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
         let mut work = WorkSet::seeded(function.preorder());
         let mut result = OptimizationResult::NoChange;
         // Reused per iteration to snapshot consumer NodeIds BEFORE running

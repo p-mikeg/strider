@@ -34,7 +34,7 @@
 use ir::node::{FunctionArgSource, NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, OptimizerOnBuilt};
+use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, step_through_stack_store,
     step_through_stack_store_phi, step_through_store,
@@ -88,12 +88,12 @@ impl FunctionArgDetect {
     }
 }
 
-impl OptimizerOnBuilt for FunctionArgDetect {
-    fn optimize_built(&self, function: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
+impl Optimizer for FunctionArgDetect {
+    fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let mut changed = OptimizationResult::NoChange;
-        changed |= detect_register_args(function, &self.arg_passing_regs)?;
+        changed |= detect_register_args(ctx, &self.arg_passing_regs)?;
         changed |= detect_stack_args(
-            function,
+            ctx,
             self.stack_ptr_vn,
             &self.stack_arg_offsets,
             self.arg_passing_regs.len(),
@@ -105,7 +105,7 @@ impl OptimizerOnBuilt for FunctionArgDetect {
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
         // The detach result is hygiene-only (post-pass return values are
         // ignored by the pipeline); don't escalate it into `Changed`.
-        let _ = crate::worklist::detach_unreachable_nodes(function.graph, function.entry);
+        let _ = crate::worklist::detach_unreachable_nodes(ctx.graph, ctx.entry);
         Ok(changed)
     }
 }
@@ -131,7 +131,7 @@ impl OptimizerOnBuilt for FunctionArgDetect {
 /// records the actual sub-register Vn, so downstream consumers see the
 /// width the function actually reads.
 fn detect_register_args(
-    fg: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<OptimizationResult> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -142,8 +142,8 @@ fn detect_register_args(
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    for n in fg.preorder() {
-        if let NodeKind::InitialVar(vn) = *fg.node_kind(n) {
+    for n in ctx.preorder() {
+        if let NodeKind::InitialVar(vn) = *ctx.node_kind(n) {
             initial_vars.insert(vn, n);
         }
     }
@@ -179,14 +179,14 @@ fn detect_register_args(
             continue;
         };
 
-        let [old_out] = fg.node_outputs_exact::<1>(initial_var)?;
+        let [old_out] = ctx.node_outputs_exact::<1>(initial_var)?;
         // Skip if the InitialVar has no consumers.
-        if fg.output_use_cursor(old_out).current().is_none() {
+        if ctx.output_use_cursor(old_out).current().is_none() {
             continue;
         }
 
         let out_type = NodeOutputType::try_from(effective_vn.size)?;
-        let new_node = fg.create_node(
+        let new_node = ctx.create_node(
             NodeKind::FunctionArg {
                 source: FunctionArgSource::Register(effective_vn),
                 index: i as u32,
@@ -194,7 +194,7 @@ fn detect_register_args(
             [],
             [NodeOutputKind::OutputType(out_type)],
         );
-        let [new_out] = fg.node_outputs_exact::<1>(new_node)?;
+        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
         // Inherit the InitialVar's asm-fingerprint so downstream pattern
         // queries (`m.asm_fingerprint(c, &graph)` on a captured FunctionArg)
         // can still trace back to the contributing machine instruction.
@@ -204,8 +204,8 @@ fn detect_register_args(
         // The single-source register-args path (one InitialVar in, one
         // FunctionArg out) carries no coupling concern; the stack-args path
         // unifies multiple Loads and intentionally skips the absorption.
-        fg.extend_asm_fingerprint_from(new_node, initial_var);
-        result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, new_out)?);
+        ctx.extend_asm_fingerprint_from(new_node, initial_var);
+        result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
     }
     Ok(result)
 }
@@ -220,7 +220,7 @@ fn detect_register_args(
 /// Slice 4 extends this with memory-shadow disqualification; slice 5 extends
 /// it with width merging.
 fn detect_stack_args(
-    fg: &mut pattern::RewriteCtx<'_>,
+    ctx: &mut pattern::RewriteCtx<'_>,
     sp_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -239,17 +239,17 @@ fn detect_stack_args(
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> =
         rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let mut work = WorkSet::seeded_kind(fg, |k| matches!(k, NodeKind::Load(_)));
+    let mut work = WorkSet::seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
     while let Some(node_id) = work.pop() {
-        let [memory, addr] = fg.node_inputs_exact::<2>(node_id)?;
-        let [load_out] = fg.node_outputs_exact::<1>(node_id)?;
-        let Some(load_ty) = fg.output_kind(load_out).as_value() else {
+        let [memory, addr] = ctx.node_inputs_exact::<2>(node_id)?;
+        let [load_out] = ctx.node_outputs_exact::<1>(node_id)?;
+        let Some(load_ty) = ctx.output_kind(load_out).as_value() else {
             continue;
         };
         let load_size = load_ty.byte_size() as i64;
         let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(fg.graph, addr, sp_vn, &mut memo, &mut visiting)
+            decompose_sp(ctx.graph, addr, sp_vn, &mut memo, &mut visiting)
         else {
             continue;
         };
@@ -262,7 +262,7 @@ fn detect_stack_args(
         let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
             entity_utils::DenseEntitySet::new();
         if mem_chain_is_dirty(
-            fg.as_view(),
+            ctx.as_view(),
             memory,
             offset,
             load_size,
@@ -297,7 +297,7 @@ fn detect_stack_args(
         // Space from first load (all loads in a K-group share the same memory
         // space).  Per-load output types may differ — pick the widest.
         let first = loads[0];
-        let NodeKind::Load(space) = *fg.node_kind(first) else {
+        let NodeKind::Load(space) = *ctx.node_kind(first) else {
             continue;
         };
         // Guard: every load in this K-group must share `space`. The grouping
@@ -306,15 +306,15 @@ fn detect_stack_args(
         // offset in different spaces. Skip the whole group on mismatch rather
         // than silently merging.
         if loads.iter().any(|&l| {
-            !matches!(*fg.node_kind(l), NodeKind::Load(s) if s == space)
+            !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space)
         }) {
             continue;
         }
         // Collect (load, out_type) pairs and find the max byte size.
         let mut load_types: Vec<(NodeId, NodeOutputType)> = Vec::with_capacity(loads.len());
         for load in &loads {
-            let [out] = fg.node_outputs_exact::<1>(*load)?;
-            let Some(ty) = fg.output_kind(out).as_value() else {
+            let [out] = ctx.node_outputs_exact::<1>(*load)?;
+            let Some(ty) = ctx.output_kind(out).as_value() else {
                 continue;
             };
             load_types.push((*load, ty));
@@ -324,7 +324,7 @@ fn detect_stack_args(
             continue;
         };
 
-        let new_node = fg.create_node(
+        let new_node = ctx.create_node(
             NodeKind::FunctionArg {
                 source: FunctionArgSource::Stack { space, offset },
                 index,
@@ -332,31 +332,31 @@ fn detect_stack_args(
             [],
             [NodeOutputKind::OutputType(max_type)],
         );
-        let [new_out] = fg.node_outputs_exact::<1>(new_node)?;
+        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
 
         for (load, load_ty) in load_types {
-            let [old_out] = fg.node_outputs_exact::<1>(load)?;
+            let [old_out] = ctx.node_outputs_exact::<1>(load)?;
             if load_ty == max_type {
                 // FunctionArg is exempt from the fingerprint check; no need
                 // to absorb the load's fingerprint into it (and doing so
                 // would couple FunctionArg's identity to the loads it
                 // happens to subsume).
-                result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, new_out)?);
+                result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
-                let trunc = fg.create_node(
+                let trunc = ctx.create_node(
                     NodeKind::Truncate,
                     [new_out],
                     [NodeOutputKind::OutputType(load_ty)],
                 );
-                let [trunc_out] = fg.node_outputs_exact::<1>(trunc)?;
+                let [trunc_out] = ctx.node_outputs_exact::<1>(trunc)?;
                 // The Truncate is non-exempt and freshly created; inherit
                 // the rewritten Load's fingerprint so the contributing
                 // machine instruction's address survives the rewrite.
-                fg.extend_asm_fingerprint_from(trunc, load);
-                result |= OptimizationResult::from_changed(fg.replace_all_uses(old_out, trunc_out)?);
+                ctx.extend_asm_fingerprint_from(trunc, load);
+                result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, trunc_out)?);
             }
-            fg.detach_node_inputs(load);
+            ctx.detach_node_inputs(load);
         }
     }
     Ok(result)
@@ -415,7 +415,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 // add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    fg: pattern::RewriteCtxView<'_>,
+    ctx: pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,
@@ -458,13 +458,13 @@ fn mem_chain_is_dirty(
                     results.push(false);
                     continue;
                 }
-                let node = fg.get_node_from_output(cur_mem);
-                match *fg.node_kind(node) {
+                let node = ctx.get_node_from_output(cur_mem);
+                match *ctx.node_kind(node) {
                     NodeKind::InitialMemory => {
                         results.push(false);
                     }
                     NodeKind::StackStore { offset: k, .. } => {
-                        match step_through_stack_store(fg.graph, node, k, offset, load_size) {
+                        match step_through_stack_store(ctx.graph, node, k, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -472,7 +472,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::StackStorePhi { .. } => {
-                        match step_through_stack_store_phi(fg.graph, node, offset, load_size) {
+                        match step_through_stack_store_phi(ctx.graph, node, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -480,7 +480,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::Store(_) => {
-                        match step_through_store(fg.graph, node, sp_vn, sp_memo, offset, load_size)
+                        match step_through_store(ctx.graph, node, sp_vn, sp_memo, offset, load_size)
                         {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
@@ -495,7 +495,7 @@ fn mem_chain_is_dirty(
                         // each pred runs to completion (pushing one
                         // result), and the JoinPhi at the bottom OR-combines.
                         let inputs: Vec<NodeOutputId> =
-                            fg.node_inputs(node).into_iter().collect();
+                            ctx.node_inputs(node).into_iter().collect();
                         let preds: Vec<NodeOutputId> = inputs.into_iter().skip(1).collect();
                         let pred_count = preds.len();
                         if pred_count == 0 {
@@ -513,7 +513,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::Call | NodeKind::CallOther { .. } => {
-                        let inputs = fg.node_inputs(node);
+                        let inputs = ctx.node_inputs(node);
                         if inputs.len() < 2 {
                             // A `Call` / `CallOther` with fewer than 2
                             // inputs (control + memory) violates the
@@ -523,7 +523,7 @@ fn mem_chain_is_dirty(
                             // a stale value across the malformed call).
                             return Err(anyhow::anyhow!(
                                 "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
-                                fg.node_kind(node),
+                                ctx.node_kind(node),
                             ));
                         }
                         work.push(Frame::Visit(inputs[1]));

@@ -1,16 +1,16 @@
 use super::*;
 use anyhow::anyhow;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerRaw;
 use crate::{ConstantFold, OptimizerPipeline, RedundantPhis};
 use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use ir::test_utils::sp_vn_x86 as sp_vn;
 use ir::{FunctionBuilder, IntBinaryOp};
 
-/// Counts how many nodes in `fg` match the predicate.
-fn count<F: Fn(&NodeKind) -> bool>(fg: pattern::RewriteCtxView<'_>, pred: F) -> usize {
-    fg.all_node_ids()
-        .filter(|&n| pred(fg.node_kind(n)))
+/// Counts how many nodes in `ctx` match the predicate.
+fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
+    ctx.all_node_ids()
+        .filter(|&n| pred(ctx.node_kind(n)))
         .count()
 }
 
@@ -378,7 +378,7 @@ fn non_stack_store_is_untouched() -> Result<()> {
         Ok(())
     })?;
 
-    StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry)?;
+    StackStoreDetect::new(sp).optimize_raw(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
         count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),
@@ -395,10 +395,10 @@ fn non_stack_store_is_untouched() -> Result<()> {
 
 // ── CallStackArgCollect tests ────────────────────────────────────────────
 
-/// Finds the unique Call node in `fg`.
-fn find_call(fg: pattern::RewriteCtxView<'_>) -> Result<NodeId> {
-    fg.all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+/// Finds the unique Call node in `ctx`.
+fn find_call(ctx: pattern::RewriteCtxView<'_>) -> Result<NodeId> {
+    ctx.all_node_ids()
+        .find(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
         .ok_or_else(|| anyhow!("expected Call node, got {:?}", NodeKind::Call))
 }
 
@@ -644,7 +644,7 @@ fn detect_non_sp_base_skipped() -> Result<()> {
     b.build_return(None, &[])?;
     let mut fg = b.build()?;
 
-    StackStoreDetect::new(sp).optimize(&mut fg.graph, fg.entry)?;
+    StackStoreDetect::new(sp).optimize_raw(&mut fg.graph, fg.entry)?;
 
     assert_eq!(
         count((&fg).into(), |k| matches!(k, NodeKind::StackStore { .. })),
