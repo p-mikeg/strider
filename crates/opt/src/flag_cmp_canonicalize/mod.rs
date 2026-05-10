@@ -148,11 +148,14 @@ fn try_apply_rule(function: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &R
     };
 
     let [root_out] = function.graph.node_outputs_exact::<1>(node)?;
+    // Bail before constructing fresh RHS nodes when the root has no
+    // live consumers — building first and discovering zero uses
+    // afterwards would leak orphan IntCmp / BoolNeg / IntAdd zombies
+    // into the arena until the next `retain_reachable`.
+    if function.graph.output_uses(root_out).next().is_none() {
+        return Ok(false);
+    }
     let new_out = (rule.build_rhs)(function.graph, a_out, b_out, node);
-    // only report `Changed` when
-    // `replace_all_uses` actually rewired at least one consumer.
-    // Matching a dead/orphaned node and "replacing" with no live uses
-    // would otherwise force a spurious extra fixed-point iteration.
     let changed = function.graph.replace_all_uses(root_out, new_out)?;
     Ok(changed)
 }

@@ -107,6 +107,16 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// Propagates the rule closure's first non-skip error via `anyhow`.
     ///
+    /// # Rule-closure context
+    ///
+    /// The closure receives `&mut pattern::RewriteCtx`, NOT the wrapped
+    /// `BuiltFunctionGraph`.  `RewriteCtx` exposes only `graph` and
+    /// `entry`; the calling convention's `variables`, `call_clobbered`,
+    /// `ret_val_regs`, `call_other_clobbered` fields on the BFG are
+    /// **not** visible from inside the closure.  Rules that need CC
+    /// information must close over it from the surrounding scope at
+    /// call site.
+    ///
     /// # Validation
     ///
     /// `apply_rule` does **NOT** call [`ir::validate::validate`] after
@@ -169,6 +179,17 @@ impl<'a> GraphRewriter<'a> {
     /// row produces the same final graph because [`opt::OptimizerPipeline::run`]
     /// itself runs to a fixed point internally.  Pinned by the
     /// `re_optimize_is_idempotent` test below.
+    ///
+    /// # Destructive passes
+    ///
+    /// `re_optimize` runs whatever pipeline the caller passes — it does
+    /// not gate on stable-vs-destructive.  Destructive passes
+    /// (`RedundantPhis`, `DeadBranchElimination`) detach nodes and may
+    /// invalidate `NodeId`s the caller is still holding outside the
+    /// `GraphRewriter`.  Use `opt::stable_default_pipeline()` (or
+    /// `Strider::build_stable_optimizer_pipeline()`) when you need to
+    /// preserve external `NodeId` references; pass the destructive
+    /// pipeline explicitly when you want the cleanup.
     ///
     /// # Errors
     ///

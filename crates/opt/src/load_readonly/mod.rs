@@ -76,7 +76,12 @@ impl<M: ReadOnlyMemory + 'static> OptimizerOnBuilt for LoadReadOnly<M> {
                 continue;
             };
             let size = ty.byte_size();
-
+            // `ReadOnlyMemory::read` returns `Option<u64>` — bail on
+            // wider loads (U80 / U128 / U256 / U512) rather than asking
+            // the impl to truncate silently into a u64.
+            if size > 8 {
+                continue;
+            }
             let Some(loaded) = self.0.read(space, addr, size) else {
                 continue;
             };

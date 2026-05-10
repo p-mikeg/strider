@@ -153,15 +153,26 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let rhs = self.read_vn(&insn.inputs[1])?;
         let out_vn = crate::require_output_vn(insn)?;
         let out_ty = out_vn.size.try_into()?;
-        //  `Neg`'s width must match `rhs`'s read width,
-        // not `out_ty`.  In practice Sleigh always emits `IntSub` with
-        // input_size == output_size, but using `inputs[1].size`
-        // explicitly makes the lift robust if a future Sleigh spec ever
-        // emits a width-mismatched `IntSub`.
-        let neg_ty = insn.inputs[1].size.try_into()?;
+        // Sleigh's `IntSub` requires `inputs[0].size == inputs[1].size ==
+        // output.size`.  Surface a mismatch as a lift-time error rather
+        // than silently coercing in `build_int_binary_operation`'s width
+        // adaptation — a Sleigh spec emitting widths in disagreement is
+        // a real bug we want to see, not paper over.
+        if insn.inputs[0].size != insn.inputs[1].size
+            || insn.inputs[0].size != out_vn.size
+        {
+            return Err(anyhow::anyhow!(
+                "IntSub width mismatch: lhs={} rhs={} out={} (Sleigh requires equal widths)",
+                insn.inputs[0].size,
+                insn.inputs[1].size,
+                out_vn.size,
+            ));
+        }
+        // `Neg`'s width matches the operand's read width (`out_ty`,
+        // since all three sizes agree).
         let neg_rhs = self
             .builder
-            .build_int_unary_operation(rhs, IntUnaryOp::Neg, neg_ty)?;
+            .build_int_unary_operation(rhs, IntUnaryOp::Neg, out_ty)?;
         let sum =
             self.builder
                 .build_int_binary_operation(lhs, neg_rhs, IntBinaryOp::Add, out_ty)?;
