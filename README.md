@@ -296,4 +296,4 @@ uv run pytest tests/python/
 
 ## Project status
 
-The 13-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work; `review/ai` carries an active pre-deployment cleanup pass with detailed audit findings under `reviews/round7-*.md`.  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+The 12-crate workspace is internally consistent; `cargo test --workspace` and `cargo clippy --workspace -- -D warnings` are part of CI.  The `feature/ai` branch carries day-to-day work; `review/ai*` branches carry pre-deployment cleanup passes with detailed audit findings under `reviews/round10-*.md` (latest).  Per-crate READMEs in each `crates/<name>/README.md` document the per-crate surface; the design specs that drove major refactors live under `docs/superpowers/specs/` and `docs/superpowers/plans/`.
