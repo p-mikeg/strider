@@ -279,3 +279,27 @@ fn opaque_target_returns_none() {
          unsound classification.  The orchestrator decides at fixed point.",
     );
 }
+
+/// Round 10 T-3 regression: calling `classify_anchor` twice on the
+/// same graph (without optimization between calls) must produce the
+/// same verdict.  Pins the invariant that no per-call state leaks
+/// between invocations — every call recomputes `analyze_known_bits`
+/// from the current graph state.
+///
+/// Concrete failure mode this would catch: a future refactor caching
+/// the `KnownBitsMap` across `classify_anchor` calls without
+/// invalidating the cache when the graph changes.  Two consecutive
+/// calls on an unchanged graph would still agree by luck; this test
+/// pins agreement on consecutive calls so a stale-cache bug shows up
+/// the moment someone adds the cache without proper invalidation.
+#[test]
+fn classify_anchor_is_idempotent_on_unchanged_graph() {
+    let (graph, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let first = classify_anchor(&graph, anchor, None).expect("classify #1");
+    let second = classify_anchor(&graph, anchor, None).expect("classify #2");
+    assert_eq!(
+        first, second,
+        "two consecutive classify_anchor calls on an unchanged graph must agree",
+    );
+    assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123)));
+}

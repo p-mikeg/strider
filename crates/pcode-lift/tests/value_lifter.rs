@@ -865,3 +865,28 @@ fn handle_int_sub_rejects_width_mismatch() {
         "error message should name the invariant; got {msg}"
     );
 }
+
+#[test]
+fn int_sub_lowers_to_add_with_inner_neg() {
+    let sleigh = make_sleigh();
+    let mut builder = make_builder();
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let insn = Insn {
+        opcode: Opcode::IntSub,
+        output: Some(reg(0)),
+        inputs: vec![reg(4), reg(8)].into(),
+    };
+    assert!(lifter.lift(&insn).unwrap());
+    // Lift-time canonicalisation contract: no `IntBinaryOp::Sub` survives;
+    // every Sub is rewritten as Add(_, Neg(_)).
+    use ir::node::NodeKind;
+    let saw_neg = graph_has_kind(&builder, NodeKind::IntUnaryOp(ir::IntUnaryOp::Neg));
+    let saw_add = graph_has_kind(&builder, NodeKind::IntBinaryOp(ir::IntBinaryOp::Add));
+    assert!(
+        saw_neg && saw_add,
+        "IntSub lift must produce both an inner Neg and an outer Add"
+    );
+}
+
+// Note: T-30 (IntLessEqual lowering shape) is covered by the existing
+// `lift_int_less_equal_lowers_to_boolneg_less` test earlier in this file.
