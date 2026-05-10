@@ -3,9 +3,9 @@
 //! The implementation is split into three submodules along the contracts
 //! that the validator's three layers each protect:
 //!
-//! - [`store`] — node arena, dedup cache, side-tables. Layer A's input.
-//! - [`uses`]  — bidirectional use-list bookkeeping. Layer B's contract.
-//! - [`access`] — read-only typed accessors. Layer A's lookup surface.
+//! - `store` — node arena, dedup cache, side-tables. Layer A's input.
+//! - `uses`  — bidirectional use-list bookkeeping. Layer B's contract.
+//! - `access` — read-only typed accessors. Layer A's lookup surface.
 //!
 //! All public API names live in this module via the original paths:
 //! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of

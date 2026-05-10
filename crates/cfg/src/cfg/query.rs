@@ -10,7 +10,7 @@ use crate::Result;
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// half-open function range `[start_addr, start_addr + fn_max_size)`.
 ///
-/// Shared by [`crate::Builder::is_branch_tail_call_nocheck`] (cfg-time
+/// Shared by `crate::Builder::is_branch_tail_call_nocheck` (cfg-time
 /// classification) and `strider`'s orchestrator (post-cfg `Single(K)`
 /// resolution).  Both layers must agree on the predicate.
 ///

@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -25,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         memory_reader,
     )?;
     let cfg_options = OptionsBuilder::new().allow_code_before_start_addr().build();
-    let cfg = Builder::new(sleigh, 0x0, cfg_options).build()?;
+    let cfg = Builder::for_arch(&target::SleighArch::x86_64(), sleigh, 0x0, cfg_options).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
 

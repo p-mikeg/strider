@@ -72,6 +72,10 @@ impl Graph {
     /// Creates (or retrieves from the dedup cache) an `IntConst(val)` node of
     /// type `ty` and returns its single output.
     ///
+    /// Single source of truth for constructing primitive integer constants:
+    /// [`crate::FunctionBuilder::build_int_const`] delegates here and adds
+    /// asm-fingerprint plumbing on top.
+    ///
     /// # Errors
     ///
     /// Returns an error when `ty` is not an integer type, or is `U256` /
@@ -79,7 +83,11 @@ impl Graph {
     /// `IntConst` uses — wide constants must go through
     /// [`crate::FunctionBuilder::build_int_const_wide`]), or when the
     /// freshly-created node does not have exactly one output.
-    pub fn make_int_const(&mut self, val: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+    pub fn make_int_const(
+        &mut self,
+        val: impl Into<u128>,
+        ty: NodeOutputType,
+    ) -> Result<NodeOutputId> {
         if !ty.is_integer() {
             return Err(anyhow!(
                 "make_int_const called with non-integer type {ty:?}"
@@ -95,9 +103,7 @@ impl Graph {
         // dedup-cache key sees the same `IntConst(u128)` payload for
         // semantically-equal constants — `make_int_const(0x1FF, U8)`
         // and `make_int_const(0xFF, U8)` must dedup to the same node.
-        // `FunctionBuilder::build_int_const` already masks; mirror it
-        // here so `Graph::make_int_const` agrees.
-        let masked = u128::from(val) & ty.bit_mask_u128();
+        let masked = val.into() & ty.bit_mask_u128();
         let node = self.create_node(
             NodeKind::IntConst(masked),
             [],

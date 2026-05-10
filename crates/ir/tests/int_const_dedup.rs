@@ -18,8 +18,8 @@ fn make_int_const_masks_value_before_dedup_u8() {
     let mut b = FunctionBuilder::empty().unwrap();
     let g = b.graph_mut();
 
-    let a = g.make_int_const(0xFF, NodeOutputType::U8).unwrap();
-    let b_out = g.make_int_const(0x1FF, NodeOutputType::U8).unwrap();
+    let a = g.make_int_const(0xFFu64, NodeOutputType::U8).unwrap();
+    let b_out = g.make_int_const(0x1FFu64, NodeOutputType::U8).unwrap();
     assert_eq!(
         a, b_out,
         "0xFF and 0x1FF must dedup as U8 (both represent the byte 0xFF)"
@@ -38,9 +38,9 @@ fn make_int_const_masks_value_before_dedup_u32() {
     let mut b = FunctionBuilder::empty().unwrap();
     let g = b.graph_mut();
 
-    let a = g.make_int_const(0xFFFF_FFFF, NodeOutputType::U32).unwrap();
+    let a = g.make_int_const(0xFFFF_FFFFu64, NodeOutputType::U32).unwrap();
     let b_out = g
-        .make_int_const(0x1_FFFF_FFFF, NodeOutputType::U32)
+        .make_int_const(0x1_FFFF_FFFFu64, NodeOutputType::U32)
         .unwrap();
     assert_eq!(
         a, b_out,
@@ -53,8 +53,8 @@ fn make_int_const_distinct_values_distinct_nodes() {
     let mut b = FunctionBuilder::empty().unwrap();
     let g = b.graph_mut();
 
-    let a = g.make_int_const(0xFF, NodeOutputType::U8).unwrap();
-    let b_out = g.make_int_const(0xFE, NodeOutputType::U8).unwrap();
+    let a = g.make_int_const(0xFFu64, NodeOutputType::U8).unwrap();
+    let b_out = g.make_int_const(0xFEu64, NodeOutputType::U8).unwrap();
     assert_ne!(
         a, b_out,
         "distinct masked values must produce distinct IntConst nodes"

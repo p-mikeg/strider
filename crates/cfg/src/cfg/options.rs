@@ -53,7 +53,7 @@ pub enum FunctionBoundary {
 /// Construct via [`OptionsBuilder`].
 ///
 /// `Options` is intentionally **not** `Copy` / `Eq` / `Hash` because
-/// [`Self::read_only_memory`] holds an `Arc<dyn ReadOnlyMemory>` whose
+/// `Self::read_only_memory` holds an `Arc<dyn ReadOnlyMemory>` whose
 /// trait object cannot meaningfully be compared by value.  Pre-existing
 /// scalar knobs (`fn_max_size`, `allow_code_before_start_addr`,
 /// `link_register_vn`) keep their cheap-clone semantics.

@@ -53,8 +53,7 @@ impl<E: EntityRef> Worklist<E> {
     ///
     /// Has no effect if `entity` is already queued.
     pub fn enqueue(&mut self, entity: E) {
-        if !self.workset.contains(entity) {
-            self.workset.insert(entity);
+        if self.workset.insert(entity) {
             self.worklist.push_back(entity);
         }
     }
@@ -207,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_format_smoke() {
+    fn debug_format_pins_derive() {
         // `Worklist` derives Debug; this is a regression pin so the derive
         // can't be silently removed.  We don't assert a specific format string.
         let mut wl: Worklist<Id> = Worklist::new();

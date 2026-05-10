@@ -59,7 +59,7 @@ pub struct Cfg<R: rsleigh::MemReader> {
     pub entry: NodeIndex,
     /// Index from a region's start address to its [`NodeIndex`], for
     /// O(log R) `region_id_at_start` lookups instead of an O(R) graph
-    /// scan.  Promoted from [`super::builder::Builder`]'s field of the
+    /// scan.  Promoted from `super::builder::Builder`'s field of the
     /// same name at construction.  Maintained by the indirect-branch
     /// resolver when it splices new regions in via `add_region`.
     ///

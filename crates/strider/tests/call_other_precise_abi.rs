@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 //! Integration tests for v2's precise per-op ABI lifting.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -28,7 +26,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .expect("sleigh");
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");
@@ -102,7 +100,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader)
         .expect("sleigh");
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .expect("cfg");
     let outcome = strider_h.analyze_cfg(&cfg).expect("analyze_cfg");

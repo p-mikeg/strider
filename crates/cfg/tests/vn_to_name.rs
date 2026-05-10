@@ -20,6 +20,7 @@ use rsleigh::{Vn, VnSpace};
 fn real_cfg() -> cfg::Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", "add");
     build_cfg(
+        &target::SleighArch::x86_64(),
         p.to_str().unwrap(),
         "add",
         rsleigh::sla_spec::SLA_SPEC_X86_64,

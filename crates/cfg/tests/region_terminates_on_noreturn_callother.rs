@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 //! cfg::region_builder terminates a region as RegionTerminator::NoReturn
 //! when it sees a CallOther whose target::call_other_abi::classify is NoReturn.
 
@@ -17,7 +15,8 @@ fn ud2_region_finishes_as_noreturn() {
     //   pcode[1]: BranchIndirect
     let bytes = vec![0x0fu8, 0x0b];
     let entry = 0x1000u64;
-    let cfg = Builder::new(
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, entry),
         entry,
         OptionsBuilder::new().build(),

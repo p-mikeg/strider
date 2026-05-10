@@ -19,7 +19,7 @@ pub fn any() -> Pat {
 ///
 /// If `c` is already bound the output must equal the stored binding.
 /// Equivalent in behavior to `any().capture(c)`, but constructs a dedicated
-/// [`VarPat`] rather than wrapping [`AnyPat`] in a [`CapturePat`] — one
+/// `VarPat` rather than wrapping `AnyPat` in a `CapturePat` — one
 /// fewer vtable hop and no backtracking snapshot per match.
 #[must_use]
 pub fn var(c: Capture) -> Pat {
@@ -141,7 +141,7 @@ where
 /// `mov eax, 0xffffffce; ret` — the high 32 bits of `RAX` are zero
 /// (zero-extended from a 32-bit move), so the IR carries
 /// `IntConst(0x00000000FFFFFFCE)` at U64.  The conventional
-/// [`int_const(-50)`] does an exact-bit-pattern match at the output
+/// `int_const(-50)` does an exact-bit-pattern match at the output
 /// width and reads that value as `+4294967246`; `signed_int_const(-50)`
 /// recognises the U32-narrow signed form and matches.  Symmetrically
 /// it also matches the U32-only IntConst and the U64

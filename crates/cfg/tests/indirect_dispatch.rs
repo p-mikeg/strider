@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Dispatch tests for the `BranchIndirect` resolver.
@@ -82,7 +80,12 @@ fn branch_indirect_to_in_range_const_produces_branch_terminator() {
     // Function is 0x40 bytes, mov+jmp at offsets 0..12, target lands at 0x20.
     let (bytes, target) = mov_rax_jmp_rax_with_landing(base, 0x20, 0x40);
     let opts = OptionsBuilder::new().set_function_max_size(0x40).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
 
@@ -116,7 +119,12 @@ fn branch_indirect_to_out_of_range_const_produces_tail_call_terminator() {
     let target = 0x9000u64;
     let bytes = mov_rax_jmp_rax_bytes(target);
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
 
@@ -192,7 +200,12 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     let base = 0x1000u64;
     let bytes = jmp_rax_bytes();
     let opts = OptionsBuilder::new().build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("cfg build defers unresolved branches instead of erroring");
 
@@ -325,7 +338,12 @@ fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
     let target = 0x9000u64;
     let bytes = mov_rax_jmp_rax_bytes(target);
     let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build");
     let entry = &cfg.graph[cfg.entry];
@@ -359,7 +377,12 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     let mut bytes = mov_rax_imm64(base);
     bytes.extend_from_slice(&jmp_rax_bytes());
     let opts = OptionsBuilder::new().set_function_max_size(0x40).build();
-    let cfg = Builder::new(make_sleigh_with_bytes(bytes, base), base, opts)
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, base),
+        base,
+        opts,
+    )
         .build()
         .expect("Builder::build for split");
 

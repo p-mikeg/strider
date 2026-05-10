@@ -14,7 +14,7 @@
 //! Two independent gates must hold for the classifier to commit to
 //! `Multiple`:
 //!
-//! 1. **Bounded index.**  Either [`KnownBits`] proves `idx`'s upper
+//! 1. **Bounded index.**  Either [`crate::KnownBits`] proves `idx`'s upper
 //!    bits are zero (so `idx <= mask` and the bound is `mask + 1`),
 //!    or the control-flow path that reaches this branch must traverse
 //!    an `If(IntCmpOp::{Less|LessEqual|Sless|SlessEqual}(idx, IntConst(N)))`

@@ -35,8 +35,8 @@ impl Binding {
 /// match fail.
 ///
 /// Backtracking uses a journal-based scheme: every match site that
-/// wants to speculatively attempt sub-matches calls [`Self::mark`]
-/// before the attempt and [`Self::restore`] on failure — the marker is
+/// wants to speculatively attempt sub-matches calls `Self::mark`
+/// before the attempt and `Self::restore` on failure — the marker is
 /// a `usize` cursor into the append-only entry `Vec`, and restoring is
 /// an O(1) `Vec::truncate`.  No allocations, no per-kind HashMap
 /// clones, no deep copy of the full state.

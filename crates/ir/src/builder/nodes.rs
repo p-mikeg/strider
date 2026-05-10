@@ -78,6 +78,10 @@ impl FunctionBuilder {
     /// `val` is masked to `output_type`'s bit width before storage.  Accepts
     /// any value convertible to `u128` — most callers pass a `u64` literal.
     ///
+    /// Delegates to [`crate::Graph::make_int_const`] (the single source of
+    /// truth for primitive integer-constant construction) and unions any
+    /// active `lift_addr` into the returned node's asm-fingerprint.
+    ///
     /// # Errors
     ///
     /// Returns an error when `output_type` is not an integer type, or
@@ -88,19 +92,13 @@ impl FunctionBuilder {
         val: impl Into<u128>,
         output_type: NodeOutputType,
     ) -> Result<NodeOutputId> {
-        if !output_type.is_integer() {
-            return Err(anyhow!(
-                "build_int_const called with non-integer type {output_type:?}"
-            ));
+        let addr = self.lift_addr;
+        let out = self.graph_mut().make_int_const(val, output_type)?;
+        if let Some(addr) = addr {
+            let node = self.graph().get_node_from_output(out);
+            self.graph_mut().extend_asm_fingerprint(node, &[addr]);
         }
-        if matches!(output_type, NodeOutputType::U256 | NodeOutputType::U512) {
-            return Err(anyhow!(
-                "build_int_const({output_type:?}) not supported - IntConst storage is u128; \
-                 use build_int_const_wide for U256/U512"
-            ));
-        }
-        let val = val.into() & output_type.bit_mask_u128();
-        Ok(self.build_single_output_pure(NodeKind::IntConst(val), [], output_type))
+        Ok(out)
     }
 
     /// Builds an integer constant whose value exceeds `u128` — `U256`

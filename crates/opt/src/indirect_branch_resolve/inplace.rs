@@ -38,8 +38,8 @@ use crate::error::Result;
 ///
 /// Returns an error when `placeholder` is not a
 /// [`NodeKind::IndirectBranch`], or when the IR mutation calls
-/// ([`Graph::add_node_input`] / [`Graph::remove_node_input`] /
-/// [`Graph::set_node_kind`]) fail.
+/// (`Graph::add_node_input` / `Graph::remove_node_input` /
+/// `Graph::set_node_kind`) fail.
 pub fn apply_link_register(
     fg: &mut pattern::RewriteCtx<'_>,
     placeholder: NodeId,

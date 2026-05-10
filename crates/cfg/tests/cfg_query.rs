@@ -12,6 +12,7 @@ use petgraph::stable_graph::StableDiGraph;
 fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
     let p = binary("x64", fn_name);
     build_cfg(
+        &target::SleighArch::x86_64(),
         p.to_str().unwrap(),
         fn_name,
         rsleigh::sla_spec::SLA_SPEC_X86_64,

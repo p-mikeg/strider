@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 //! Pinning tests for re-using one [`rsleigh::Sleigh`] handle across
@@ -8,7 +6,7 @@
 //! These tests guard the contract relied on by
 //! [`strider::indirect_resolve::orchestrator`] which threads the
 //! Sleigh from one iteration's [`Cfg::sleigh`] into the next iteration's
-//! [`Builder::with_endianness`].  Re-using the Sleigh across builds is
+//! [`Builder::for_arch`].  Re-using the Sleigh across builds is
 //! the entire point — re-constructing it would re-load the SLA spec.
 
 mod common;
@@ -17,9 +15,14 @@ use common::{make_sleigh_with_bytes, TestReader};
 use cfg::{Builder, Cfg, OptionsBuilder};
 
 fn build_one(sleigh: rsleigh::Sleigh<TestReader>, start: u64) -> Cfg<TestReader> {
-    Builder::new(sleigh, start, OptionsBuilder::new().build())
-        .build()
-        .expect("Builder::build")
+    Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        sleigh,
+        start,
+        OptionsBuilder::new().build(),
+    )
+    .build()
+    .expect("Builder::build")
 }
 
 #[test]

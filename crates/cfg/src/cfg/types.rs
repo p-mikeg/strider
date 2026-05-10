@@ -2,7 +2,7 @@ use petgraph::stable_graph::StableDiGraph;
 
 /// Classifies the control-flow relationship between two CFG regions.
 ///
-/// Every edge in the [`RegionGraph`] carries one of these four labels.
+/// Every edge in the `RegionGraph` carries one of these four labels.
 /// The label determines which outgoing path is taken when execution leaves the
 /// source region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,7 +112,7 @@ pub struct RegionInstruction {
 ///
 /// One terminator per region; the value is set when the region is
 /// finalised by [`crate::Builder`].  The variants line up with the
-/// outgoing edges in the [`RegionGraph`] but also record cases that have
+/// outgoing edges in the `RegionGraph` but also record cases that have
 /// no outgoing edge (e.g. `Return`, `TailCall`).
 ///
 /// `Switch` is constructed by `cfg::builder::region_builder` when the
@@ -210,7 +210,7 @@ pub enum RegionTerminator {
 /// A basic block: a maximal straight-line sequence of pcode instructions
 /// with a single entry point and (at most) one exit point.
 ///
-/// Regions are the nodes of the [`RegionGraph`].  A region ends when the
+/// Regions are the nodes of the `RegionGraph`.  A region ends when the
 /// builder encounters a `Branch`, `CondBranch`, or `Return` pcode opcode, or
 /// when sequential execution reaches the start of an already-discovered region.
 #[derive(Debug, Clone, PartialEq, Eq)]

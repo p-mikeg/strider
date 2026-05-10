@@ -86,7 +86,7 @@ impl<'a> GraphRewriter<'a> {
     /// The closure shape matches what [`pattern::rewrite_rule`] hands
     /// back — `Fn(&mut BuiltFunctionGraph, NodeId) -> pattern::Result<bool>`.
     /// Wraps the wrapped graph into a short-lived `BuiltFunctionGraph`
-    /// per call (via [`mem::take`]) so the closure has the input shape
+    /// per call (via [`std::mem::take`]) so the closure has the input shape
     /// the `pattern` crate's rewrite engine was designed for.  The
     /// dummy `BuiltFunctionGraph` carries empty `variables` /
     /// `call_clobbered` / `ret_val_regs` — `pattern::rewrite_rule`

@@ -548,7 +548,7 @@ impl FunctionBuilder {
         &self.ret_val_vars
     }
 
-    /// Finalises and returns the completed [`BuiltFunctionGraph`], after running
+    /// Finalises and returns the completed [`crate::BuiltFunctionGraph`], after running
     /// structural validation on the built graph.
     ///
     /// # Errors

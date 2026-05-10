@@ -83,12 +83,12 @@ impl std::fmt::Display for AnalyzeOutcome {
 }
 
 /// Per-call lift options for [`Strider::analyze_cfg_with`].  Empty
-/// defaults match the [`Strider::analyze_cfg(cfg)`] convenience
+/// defaults match [`Strider::analyze_cfg`]'s convenience
 /// behaviour: the orchestrator uses this with both fields set;
 /// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
 pub struct AnalyzeOptions<'a> {
     /// Pre-computed varnode set.  When `None`, `Strider` calls
-    /// [`Strider::find_all_unique_vns`] itself.  When `Some`, must be
+    /// `Strider::find_all_unique_vns` itself.  When `Some`, must be
     /// sorted by `pcode_lift::vn_sort_key` and must include every
     /// varnode any instruction in `cfg` references.  Under-tracking
     /// drops pcode reads; over-tracking is safe but allocates one

@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 //! End-to-end tests for `Builder::build` driven by small hand-crafted
@@ -15,7 +13,8 @@ use cfg::test_api::Options;
 use petgraph::visit::IntoEdgeReferences;
 
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> cfg::Cfg<TestReader> {
-    Builder::new(
+    Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, start),
         start,
         OptionsBuilder::new().build(),
@@ -29,9 +28,14 @@ fn build_from_bytes_opts(
     start: u64,
     opts: Options,
 ) -> cfg::Cfg<TestReader> {
-    Builder::new(make_sleigh_with_bytes(bytes, start), start, opts)
-        .build()
-        .expect("Builder::build on synthetic bytes")
+    Builder::for_arch(
+        &target::SleighArch::x86_64(),
+        make_sleigh_with_bytes(bytes, start),
+        start,
+        opts,
+    )
+    .build()
+    .expect("Builder::build on synthetic bytes")
 }
 
 #[test]
@@ -110,7 +114,9 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     ).unwrap();
 
     let opts = OptionsBuilder::new().allow_code_before_start_addr().build();
-    let cfg = Builder::new(sleigh, 0x1000, opts).build().unwrap();
+    let cfg = Builder::for_arch(&target::SleighArch::x86_64(), sleigh, 0x1000, opts)
+        .build()
+        .unwrap();
 
     // Entry region must NOT be flagged as ending in a tail call.
     assert_ne!(

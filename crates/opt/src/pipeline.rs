@@ -33,11 +33,6 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// parameter type changed from
-    /// `&mut ir::BuiltFunctionGraph` to `&mut pattern::RewriteCtx<'_>`.
-    /// `RewriteCtx::Deref<Target=Graph>` makes the body identical to
-    /// the old form — only the callers' trait-impl boundary changes.
-    ///
     /// # Errors
     ///
     /// Propagates errors from [`ir::Graph::replace_all_uses`].

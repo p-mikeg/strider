@@ -203,7 +203,7 @@ impl NodeOutputType {
     ///
     /// **Bool exception.**  `Bool` is excluded even though
     /// [`Self::bit_mask_u128`] returns `1` for it: `Bool` is its own
-    /// category in [`NodeKind`], so callers reading a `Bool` constant
+    /// category in [`crate::node::NodeKind`], so callers reading a `Bool` constant
     /// should match the `BoolConst` arm directly rather than going
     /// through this helper.
     #[must_use]

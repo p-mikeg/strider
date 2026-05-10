@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(dead_code, clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 //! Shared test-fixture helpers (synthetic `Builder`s, regions, addresses,
@@ -49,17 +47,28 @@ pub fn make_sleigh_with_bytes(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<Test
 
 #[must_use]
 pub fn make_builder(start_addr: u64) -> Builder<TestReader> {
-    Builder::new(make_sleigh(), start_addr, OptionsBuilder::new().build())
+    Builder::for_arch(
+        &target::SleighArch::x86(),
+        make_sleigh(),
+        start_addr,
+        OptionsBuilder::new().build(),
+    )
 }
 
 #[must_use]
 pub fn make_builder_opts(start_addr: u64, options: Options) -> Builder<TestReader> {
-    Builder::new(make_sleigh(), start_addr, options)
+    Builder::for_arch(
+        &target::SleighArch::x86(),
+        make_sleigh(),
+        start_addr,
+        options,
+    )
 }
 
 #[must_use]
 pub fn make_builder_with_bytes(bytes: Vec<u8>, start_addr: u64) -> Builder<TestReader> {
-    Builder::new(
+    Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, start_addr),
         start_addr,
         OptionsBuilder::new().build(),

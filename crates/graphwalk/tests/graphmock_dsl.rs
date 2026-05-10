@@ -10,7 +10,7 @@ use graphwalk::{GraphRef, PredGraphRef};
 use std::ops::ControlFlow;
 
 #[test]
-fn simple_graph() {
+fn parses_linear_chain() {
     let _ = graph(
         "
         a -> b
@@ -21,7 +21,7 @@ fn simple_graph() {
 }
 
 #[test]
-fn diamond() {
+fn parses_diamond_topology() {
     let _ = graph(
         "
         a -> b, c
@@ -31,7 +31,7 @@ fn diamond() {
 }
 
 #[test]
-fn loop_graph() {
+fn parses_self_referential_cycle() {
     let _ = graph(
         "
         a -> b

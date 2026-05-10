@@ -110,7 +110,7 @@ pub enum BuildOutcome {
     Skip,
 }
 
-/// Mutable context threaded through [`Pattern::try_build`].  Carries the
+/// Mutable context threaded through `Pattern::try_build`.  Carries the
 /// graph being mutated, the match bindings, and the matched root (used
 /// by the `int_const_with!` / `bool_const_with!` / `float_const_with!`
 /// macros to expose `ty` — the root output type — and `in_ty` — the

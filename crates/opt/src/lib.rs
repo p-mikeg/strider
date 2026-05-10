@@ -178,9 +178,10 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// passes in the same iteration and will be propagated further in subsequent
 /// iterations without any extra configuration.
 ///
-/// Equivalent to running [`stable_default_pipeline`] followed by
-/// [`destructive_default_pipeline`] in order — the two halves' passes
-/// are concatenated, preserving the previous default's pass ordering.
+/// Constructed as [`stable_default_pipeline`] followed by the
+/// destructive passes from [`destructive_default_pipeline`] — single
+/// source of truth so a future addition to either half lands in
+/// `default_pipeline` automatically.
 ///
 /// Passes included (in order):
 /// 1. [`ConstantFold`] — constant evaluation and algebraic identities
@@ -191,11 +192,7 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
-    p.add(KnownBits);
-    p.add(FlagCmpCanonicalize);
-    p.add(IfCondInversion);
+    let mut p = stable_default_pipeline();
     p.add(RedundantPhis);
     p.add(DeadBranchElimination);
     p

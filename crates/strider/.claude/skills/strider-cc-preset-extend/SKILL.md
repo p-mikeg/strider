@@ -52,7 +52,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
    - `arm_aapcs::callee_saved_regs` includes `"lr"`.
    - `powerpc_sysv32::callee_saved_regs`, `powerpc64_elf_v1`, `powerpc64_elf_v2` all include `"lr"`.
 
-   When adding a new preset on these arches, document the deviation in a comment at the preset definition. If your CC genuinely needs LR honestly modelled (e.g. a tail-call-only shim ABI where the caller has already saved LR and indirect-branch return resolution is not needed), you must add a `link_register_preserved_by_convention: bool` field to `CallingConvention` (default `true`), set `false` for the new preset, and thread it through `pcode_lift::ValueLifter::clobbered_outputs` so the lifter clobbers LR at call sites. This is a wider change — flag it explicitly to the user.
+   When adding a new preset on these arches, document the deviation in a comment at the preset definition. If your CC genuinely needs LR honestly modelled (e.g. a tail-call-only shim ABI where the caller has already saved LR and indirect-branch return resolution is not needed), you must add a `link_register_preserved_by_convention: bool` field to `CallingConvention` (default `true`), set `false` for the new preset, and thread it through the strider call-clobber projection — `crates/strider/src/orchestrator.rs::build_anchor_calling_context` and `crates/strider/src/strider/insn/control.rs::handle_call` — so the lifter clobbers LR at call sites. This is a wider change — flag it explicitly to the user.
 
 5. **`ret_stack_pop` traps.** This is the number of bytes the callee pops off the stack on return:
    - `8` on x86_64 SysV (callee pops the return address — actually the call instruction implicitly pushes 8, the `ret` pops 8; the value here is the offset adjustment for `CallStackArgCollect`).
@@ -67,7 +67,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 
 8. **Verify register names against rsleigh.** `CallingConvention::build` resolves names against `rsleigh::Sleigh::regs()` at runtime, NOT at compile time. A typo (`"X30"` instead of `"x30"`, `"r14"` on AArch64 where Sleigh expects `"x30"` directly) will fail at first lift. Cross-check by lifting one instruction with the target arch and inspecting the `Vn` table in the `Sleigh` regs map. Sleigh names are case-sensitive and arch-specific.
 
-9. **CallOther implications.** If the new CC implies new memory-fence or barrier semantics (e.g. `mfence`/`sfence`/`lfence` on x86_64, `DataMemoryBarrier` on AArch64), confirm `target::call_other_abi::classify` already covers them. Round-8 finding D-1 (regression at `call_other_abi.rs:822`) verifies x86 `mfence`/`sfence`/`lfence` are classified as `PURE_WITH_MEM_EDGE` — i.e. `Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: true })`. Without `memory_edge: true`, `StackLoadForward` would forward across the fence, breaking the barrier. New ABIs that introduce new barrier opcodes need entries in `classify_arch_specific`.
+9. **CallOther implications.** If the new CC implies new memory-fence or barrier semantics (e.g. `mfence`/`sfence`/`lfence` on x86_64, `DataMemoryBarrier` on AArch64), confirm `target::call_other_abi::classify` already covers them. The `mfence` / `sfence` / `lfence` entries in `crates/target/src/call_other_abi.rs` (consult by symbol — `grep -n "mfence\|sfence\|lfence" crates/target/src/call_other_abi.rs`) classify them as `PURE_WITH_MEM_EDGE` — i.e. `Call(CallOtherAbi { implicit_reads: &[], implicit_writes: &[], memory_edge: true })`. Without `memory_edge: true`, `StackLoadForward` would forward across the fence, breaking the barrier. New ABIs that introduce new barrier opcodes need entries in `classify_arch_specific`.
 
 10. **Python parity.** Add a CC factory in `crates/strider-py/src/cc.rs` mirroring the Rust constructor name and (lack of) parameters exactly. The `MemoryMap` / `Strider` / `strider.run` Python surface routes through `CallingConvention::build`, so missing parity means the new CC is silently absent from Python tests.
 
@@ -90,7 +90,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 
 ## Pitfalls
 
-- **Listing LR as caller-saved (the spec-correct choice) breaks indirect-branch return resolution.** Round 8 confirmed this is a deliberate strider-wide tradeoff on AArch64/ARM/PPC. Do NOT "fix" this without also threading a new `link_register_preserved_by_convention` knob through `pcode_lift::ValueLifter::clobbered_outputs` and updating every test that asserts LR survives a call.
+- **Listing LR as caller-saved (the spec-correct choice) breaks indirect-branch return resolution.** Round 8 confirmed this is a deliberate strider-wide tradeoff on AArch64/ARM/PPC. Do NOT "fix" this without also threading a new `link_register_preserved_by_convention` knob through the strider call-clobber projection (`crates/strider/src/orchestrator.rs::build_anchor_calling_context` and `crates/strider/src/strider/insn/control.rs::handle_call`) and updating every test that asserts LR survives a call.
 - **Wrong `ret_stack_pop` silently corrupts `CallStackArgCollect`.** It's `0` on every link-register arch. Copy from the closest existing preset.
 - **Sleigh register name typos fail at runtime, not compile time.** AArch64 needs `"x30"` (not `"X30"`, not `"lr"`); ARM needs lowercase `"lr"`; MIPS needs `"ra"` (not `"r31"`).
 - **Forgetting `no_memory_clobber: true` on a zero-side-effect hook.** `__fentry__`-style instrumentation breaks `StackLoadForward` on every caller without it.
@@ -101,7 +101,7 @@ User wants to add or audit a CallingConvention preset on an arch that already ha
 
 `mips_n32` is the 32-bit-pointer / 64-bit-register MIPS ABI (uncommon but real). Steps:
 
-1. Locate the closest existing preset: `mips_n64` at `crates/target/src/calling_convention/mod.rs` ~line 460. N32 shares the 8-arg-reg surface (`$4`-`$11`) with N64 but uses 32-bit pointers and 32-bit-aligned stack args.
+1. Locate the closest existing preset: `pub fn mips_n64` in `crates/target/src/calling_convention/mod.rs` (grep by symbol — line numbers shift as new presets land). N32 shares the 8-arg-reg surface (`$4`-`$11`) with N64 but uses 32-bit pointers and 32-bit-aligned stack args.
 2. Copy the block, rename to `mips_n32`. Adjust:
    - `arg_passing_regs`: `&["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]` (or the N32 alias names — check rsleigh's MIPS spec).
    - `stack_arg_offsets`: 4-byte stride for 32-bit args. N64 uses 8-byte stride.
@@ -121,7 +121,7 @@ A `CallingConvention` is the static description; `BuiltCallingConvention` is the
 
 Downstream consumers:
 
-- `pcode_lift::ValueLifter::clobbered_outputs` (in `crates/pcode-lift/src/`) — uses `callee_saved_vns` to decide which registers survive a `Call`. Anything not in the set is invalidated to `InitialVar(...)` post-call. This is where the LR-as-callee-saved tradeoff lives in practice — listing LR here means the lifter won't clobber it post-call.
+- `crates/strider/src/orchestrator.rs::build_anchor_calling_context` (~line 764) and `crates/strider/src/strider/insn/control.rs::handle_call` (~line 228) — use `callee_saved_vns` to decide which registers survive a `Call`. Anything not in the set is invalidated to `InitialVar(...)` post-call. This is where the LR-as-callee-saved tradeoff lives in practice — listing LR in `callee_saved_regs` means the projection won't clobber it post-call. (No equivalent function exists in the `pcode-lift` crate; the call-clobber projection is strider-side, not pcode-lift-side.)
 - `opt::CallStackArgCollect` — uses `stack_arg_offsets` and `ret_stack_pop` to reconstruct positional stack arguments at call sites.
 - `opt::FunctionArgDetect` — uses `arg_passing_vns` (and stack offsets) to canonicalise argument reads at the function boundary into `FunctionArg` nodes.
 - `cfg::Builder::with_link_register` — uses `link_register_vn` to mark `BranchIndirect(InitialVar(LR))` as a `Return` candidate during CFG construction.

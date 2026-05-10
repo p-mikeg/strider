@@ -24,7 +24,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Files this skill operates on
 
-- `crates/strider/src/orchestrator.rs` — the canonical entry (`strider::run`), `LoopState`, `Decision`, `RegionIndex`, the `for_arch` CFG-construction call site (around line 837).
+- `crates/strider/src/orchestrator.rs` — the canonical entry (`strider::run`), `LoopState`, `Decision`, `RegionIndex`, the `for_arch` CFG-construction call site (around line 949).
 - `crates/strider/src/strider/pipeline.rs` — `Strider::build_optimizer_pipeline`, `build_stable_optimizer_pipeline`, `build_destructive_optimizer_pipeline`. Touch only when changing pipeline composition.
 - `crates/strider/tests/common/mod.rs` (around line 220) — duplicate CFG-builder call site already migrated to `Builder::for_arch` post-round-8. Confirm any future builder-API change is mirrored here too.
 - `crates/strider/benches/scaling.rs` (around line 93) — same duplication, also already on `for_arch`. Mirror future API changes here.
@@ -33,7 +33,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Procedure
 
-1. **Identify the CFG construction call site.** The orchestrator constructs CFGs at `crates/strider/src/orchestrator.rs:908`. The canonical post-round-8 form is:
+1. **Identify the CFG construction call site.** The orchestrator constructs CFGs at `crates/strider/src/orchestrator.rs:949`. The canonical post-round-8 form is:
 
    ```rust
    let cfg: Cfg<R> = Builder::for_arch(opts.strider.arch(), sleigh, opts.start_addr, cfg_opts)
@@ -74,7 +74,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Exit criteria
 
-- All three orchestrator-equivalent CFG construction sites (`orchestrator.rs:908`, `tests/common/mod.rs:220`, `benches/scaling.rs:93`) use the same canonical constructor (`Builder::for_arch` post-round-8). Any change here propagates to all three.
+- All three orchestrator-equivalent CFG construction sites (`orchestrator.rs:949`, `tests/common/mod.rs:220`, `benches/scaling.rs:93`) use the same canonical constructor (`Builder::for_arch` post-round-8). Any change here propagates to all three.
 - New `Decision` variants are exhaustively handled in `LoopState::step` and the top-level dispatch.
 - No `if let Decision::...` shortcuts that would silently drop new variants.
 - `RegionIndex` is rebuilt on every `Rebuild` (no stale `NodeId` references).
@@ -84,7 +84,7 @@ User wants to modify the top-level driver in `crates/strider/src/orchestrator.rs
 
 ## Pitfalls
 
-- **`Builder::new` and `Builder::with_endianness` both hardcode `ArchPreset::X86_64`.** This is the round-8 cross-arch finding §1 bug. Any non-x86_64 caller that doesn't chain `.with_preset(arch.preset)` after `with_endianness` will silently misclassify CallOthers. The `for_arch` constructor was added precisely to remove this foot-gun — use it. Concretely, `crates/cfg/src/cfg/builder/mod.rs:113` sets `preset: target::ArchPreset::X86_64` unconditionally in `with_endianness`; only `for_arch` (lines 129-146) reads `arch.preset` and `arch.endianness` together.
+- **`Builder::new` and `Builder::with_endianness` both hardcode `ArchPreset::X86_64`.** This is the round-8 cross-arch finding §1 bug. Any non-x86_64 caller that doesn't chain `.with_preset(arch.preset)` after `with_endianness` will silently misclassify CallOthers. The `for_arch` constructor was added precisely to remove this foot-gun — use it. Concretely, `crates/cfg/src/cfg/builder/mod.rs:133` sets `preset: target::ArchPreset::X86_64` unconditionally in `with_endianness` (defined at line 122); only `for_arch` (lines 149-167) reads `arch.preset` and `arch.endianness` together.
 - **Running destructive passes mid-iteration.** `RedundantPhis` and `DeadBranchElimination` remove `NodeId`s. The per-iteration `RegionIndex` pins those IDs as anchor handles for the indirect-branch resolver. Mid-iteration removal is silent corruption — the resolver later walks dangling `NodeId`s. Hard rule: destructive passes go in `build_destructive_optimizer_pipeline` and run exactly once, at the fixed-point exit.
 - **Forgetting to re-snapshot `RegionIndex` after `Rebuild`.** A `Rebuild` mints a fresh CFG, fresh region handles, and fresh phi node IDs. The previous `RegionIndex` is stale.
 - **Skipping the `tests/common` and `benches/scaling` mirror.** Round-8 already migrated these to `for_arch`, but any future builder-API change must propagate to all three sites or tests will silently diverge from production.

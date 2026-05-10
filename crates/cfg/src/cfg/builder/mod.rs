@@ -26,7 +26,7 @@ use crate::Result;
 ///
 /// The builder uses a work-queue that is seeded with the entry address.
 /// Items are popped one at a time; each item triggers decoding of a new
-/// region (via [`RegionBuilder`]) or routing of an edge to an existing
+/// region (via `RegionBuilder`) or routing of an edge to an existing
 /// region.  When a branch target lands in the middle of an already-decoded
 /// region, that region is split in two.
 ///
@@ -166,7 +166,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     }
 
     /// Sets the [`target::ArchPreset`] used by the `Opcode::CallOther`
-    /// arm in [`super::region_builder`] when consulting
+    /// arm in `super::region_builder` when consulting
     /// [`target::call_other_abi::classify`].  Defaults to
     /// [`target::ArchPreset::X86_64`]; override for non-x86_64 targets.
     /// Prefer [`Self::for_arch`] when an arch object is in scope —
@@ -303,7 +303,7 @@ impl<R: rsleigh::MemReader> Builder<R> {
     /// queue is empty, then locates the entry region.
     ///
     /// # Errors
-    /// Returns a [`crate::Error`] if disassembly fails, if the start region
+    /// Returns an `anyhow::Error` if disassembly fails, if the start region
     /// cannot be located after processing, or if any region split or edge
     /// routing fails.
     pub fn build(mut self) -> Result<Cfg<R>> {

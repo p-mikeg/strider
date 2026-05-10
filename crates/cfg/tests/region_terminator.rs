@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only test fixtures: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Tests for `RegionTerminator` — the per-region terminator enum that
@@ -170,7 +168,8 @@ fn split_first_half_becomes_fallthrough() {
     //                                  target is 0x1002 which is NOT the
     //                                  natural fallthrough 0x1006).
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let cfg = Builder::new(
+    let cfg = Builder::for_arch(
+        &target::SleighArch::x86_64(),
         make_sleigh_with_bytes(bytes, 0x1000),
         0x1000,
         OptionsBuilder::new().build(),

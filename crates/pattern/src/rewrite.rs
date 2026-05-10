@@ -14,7 +14,7 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 ///
 /// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
 /// [`NodeId`], attempts the match, and on success materializes the RHS
-/// template via [`crate::pat::traits::Pattern::try_build`] and redirects
+/// template via `crate::pat::traits::Pattern::try_build` and redirects
 /// the root's value output to the built output via
 /// [`ir::Graph::replace_all_uses`].
 ///
@@ -30,7 +30,7 @@ use crate::pat::traits::{BuildCtx, BuildOutcome};
 /// recover the original.  Use [`crate::error::skip`] inside a closure
 /// to opt out of the rewrite without a hard error; the interpreter
 /// detects the [`crate::error::RewriteSkip`] sentinel via
-/// [`crate::error::is_skip`] and returns `Ok(false)`.
+/// `crate::error::is_skip` and returns `Ok(false)`.
 ///
 /// # Single-value-output constraint
 ///

@@ -39,7 +39,7 @@ impl FunctionGraph {
 
 /// A fully-built, immutable IR function graph ready for analysis.
 ///
-/// Produced by consuming a [`FunctionBuilder`] after all regions have been
+/// Produced by consuming a [`crate::FunctionBuilder`] after all regions have been
 /// wired together.  The graph can be walked, queried, and passed to
 /// optimisation passes and the pattern matcher.
 pub struct BuiltFunctionGraph {

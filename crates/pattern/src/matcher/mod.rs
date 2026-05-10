@@ -63,7 +63,7 @@ pub struct MatcherOptions {
 /// Construction is O(1).  `find_all` / `match_at` do a single preorder
 /// walk of the graph each call and try the pattern against every
 /// candidate node (kind-prefiltered when the pattern's
-/// [`KindSpec`](crate::pat::node_pat::KindSpec) is concrete).  These
+/// `KindSpec` is concrete).  These
 /// paths never touch the `FunctionArg` index.
 ///
 /// The `FunctionArg` query API (`function_arg`, `function_args`,
@@ -223,7 +223,7 @@ impl<'g> Matcher<'g> {
     /// for each.
     ///
     /// Candidate selection is driven by the pattern's
-    /// [`Pattern::kind_spec`](crate::pat::traits::Pattern::kind_spec):
+    /// `Pattern::kind_spec`:
     /// * Concrete root kind (e.g. `add(...)`, `load()`, `call()`) — the
     ///   matcher consults its lazy `kind_index` and iterates only the
     ///   bucket of nodes whose discriminant matches.
@@ -362,7 +362,7 @@ impl<'g> Matcher<'g> {
     }
 
     /// Run several patterns over the graph and return only the joined
-    /// matches where every [`Capture`] appearing in more than one
+    /// matches where every [`crate::Capture`] appearing in more than one
     /// pattern binds to the same node (and value output, when
     /// applicable) across every pattern in which it appears.
     ///
@@ -489,7 +489,7 @@ impl<'g> Matcher<'g> {
     /// successful [`Match`] (with bindings) if the match succeeds, `None`
     /// otherwise.
     ///
-    /// Unlike [`find_all`] which iterates every candidate root, this checks a
+    /// Unlike `find_all` which iterates every candidate root, this checks a
     /// single root.  Used by [`crate::rewrite_rule`] and other callers
     /// that already know the candidate.
     pub fn match_at(&self, node: NodeId, pat: &Pat) -> Option<Match> {
@@ -503,7 +503,7 @@ impl<'g> Matcher<'g> {
 
     // ── FunctionArg query API ─────────────────────────────────────────────────
 
-    /// Returns a [`FunctionArgHandle`] for the `FunctionArg` node at argument
+    /// Returns a `FunctionArgHandle` for the `FunctionArg` node at argument
     /// position `index`, if the `FunctionArgDetect` pass emitted one.
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'g>> {
         let node_id = *self.function_arg_index().0.get(&index)?;

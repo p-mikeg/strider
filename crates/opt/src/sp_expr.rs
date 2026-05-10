@@ -457,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn ranges_disjoint_basic() {
+    fn ranges_disjoint_returns_true_for_non_overlapping() {
         // Adjacent ranges are disjoint (touching is fine).
         assert!(ranges_disjoint(0, 4, 4, 4));
         // Overlapping ranges are not disjoint.

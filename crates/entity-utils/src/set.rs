@@ -66,15 +66,6 @@ impl<E: EntityRef> DenseEntitySet<E> {
         self.bitset.insert(entity.index())
     }
 
-    /// Test-and-set primitive: returns `true` when `entity` was
-    /// **already present** before this call (so the caller can skip
-    /// re-processing).  Equivalent to `!self.insert(entity)` and
-    /// provided as a clearer surface for visited-set walks where
-    /// "skip if already-seen" is the dominant idiom.
-    pub fn test_and_set(&mut self, entity: E) -> bool {
-        !self.bitset.insert(entity.index())
-    }
-
     /// Removes `entity` from the set.
     pub fn remove(&mut self, entity: E) {
         self.bitset.remove(entity.index());
@@ -278,18 +269,5 @@ mod tests {
         assert!(s.insert(Id(42)), "first insert must report 'newly inserted'");
         assert!(!s.insert(Id(42)), "repeat insert must report 'already present'");
         assert!(s.insert(Id(43)), "different entity is newly inserted");
-    }
-
-    #[test]
-    fn test_and_set_returns_already_present_inverse_of_insert() {
-        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
-        // First touch: not present → false.
-        assert!(!s.test_and_set(Id(7)));
-        // Now present.
-        assert!(s.contains(Id(7)));
-        // Second touch: already present → true.
-        assert!(s.test_and_set(Id(7)));
-        // A different id is independent.
-        assert!(!s.test_and_set(Id(8)));
     }
 }

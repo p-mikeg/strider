@@ -20,7 +20,7 @@
 //!     [`super::jump_table::bound_via_predecessor_if`] machinery.
 //!   * For each `i in 0..N`, look up the stored value at SP-offset
 //!     `K + i*stride` via the new
-//!     [`opt::stack_load_forward::find_stack_stored_value_at_offset`]
+//!     `opt::stack_load_forward::find_stack_stored_value_at_offset`
 //!     helper.
 //!   * Each stored value must be `IntConst`; collect into
 //!     `ResolvedTargets::Multiple([c0, c1, ...])`.

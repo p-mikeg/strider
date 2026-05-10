@@ -14,7 +14,7 @@ impl Outputs<'_> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.0.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
@@ -78,7 +78,7 @@ impl Inputs<'_> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.use_list.is_empty()
     }
 
     pub fn get(&self, index: usize) -> Option<&NodeOutputId> {

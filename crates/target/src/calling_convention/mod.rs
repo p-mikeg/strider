@@ -369,7 +369,7 @@ impl BuiltCallingConvention {
 impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
-    /// memory chain).  See the [`Self::no_memory_clobber`](field) docs.
+    /// memory chain).  See the `Self::no_memory_clobber` field docs.
     #[must_use]
     pub fn no_memory_clobber(&self) -> bool {
         self.no_memory_clobber

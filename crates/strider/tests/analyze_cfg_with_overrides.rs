@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only fixture: Builder::new defaults LE+X86_64 which is correct here.
-
 //! Per-call test: `Strider::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
 //! `strider::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
@@ -34,7 +32,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 
@@ -78,7 +76,7 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec, arch.pspec, reader).unwrap();
-    let cfg = cfg::Builder::new(sleigh, entry, cfg::OptionsBuilder::new().build())
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, entry, cfg::OptionsBuilder::new().build())
         .build()
         .unwrap();
 

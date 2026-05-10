@@ -360,7 +360,7 @@ pub mod test_api {
 
     pub use super::ResolvedTargets;
 
-    /// Test-only forwarder for [`super::resolve_indirect_target`].
+    /// Test-only forwarder for `super::resolve_indirect_target`.
     ///
     /// Returns `Ok(None)` when the resolver cannot classify the
     /// target; genuine builder / opt errors still propagate via the

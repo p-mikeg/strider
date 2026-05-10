@@ -1632,11 +1632,11 @@ fn make_int_const_rejects_u256_and_u512() {
     use crate::graph::Graph;
     let mut g = Graph::new();
     let err256 = g
-        .make_int_const(0, NodeOutputType::U256)
+        .make_int_const(0u64, NodeOutputType::U256)
         .expect_err("U256 rejected");
     assert!(err256.to_string().contains("U256"), "got: {err256}");
     let err512 = g
-        .make_int_const(0, NodeOutputType::U512)
+        .make_int_const(0u64, NodeOutputType::U512)
         .expect_err("U512 rejected");
     assert!(err512.to_string().contains("U512"), "got: {err512}");
 }

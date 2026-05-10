@@ -485,7 +485,7 @@ fn realize(
 // narrow case shows up as a wide-typed IntConst-valued store that the
 // classifier can read directly.
 
-/// Per-call memo for [`find_stack_stored_value_at_offset`], keyed on
+/// Per-call memo for `find_stack_stored_value_at_offset`, keyed on
 /// `(memory_token, offset, value_type)`.  Threaded through the
 /// indirect-branch classifier loops so repeated lookups across
 /// enumerated jump-table indices share their walks.

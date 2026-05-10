@@ -1,5 +1,3 @@
-#![allow(deprecated)] // x86-only fixture: Builder::new defaults LE+X86_64 which is correct here.
-
 #![allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -37,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in binary {binary_path}"))?
         .address();
 
-    let cfg = cfg::Builder::new(sleigh, addr, cfg_options).build()?;
+    let cfg = cfg::Builder::for_arch(&arch, sleigh, addr, cfg_options).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;

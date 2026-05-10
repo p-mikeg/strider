@@ -95,7 +95,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
 }
 
 #[test]
-fn forward_basic() -> Result<()> {
+fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     use crate::{ConstantFold, OptimizerPipeline, RedundantPhis, StackStoreDetect};
 
     let sp = sp32_vn();
