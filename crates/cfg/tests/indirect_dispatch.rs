@@ -106,7 +106,7 @@ fn branch_indirect_to_in_range_const_produces_branch_terminator() {
     let edge = &outgoing[0];
     assert_eq!(*edge.weight(), RegionEdgeKind::Branch);
     let target_region = &cfg.graph[edge.target()];
-    assert_eq!(target_region.start_addr.machine_addr.addr, target);
+    assert_eq!(target_region.start_addr.machine_addr_u64(), target);
 }
 
 /// `mov rax, K; jmp rax` with K outside fn range → resolver returns
@@ -220,7 +220,7 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
             // that the terminator records *some* register-space VN
             // and a pcode address inside the function range.
             assert_eq!(target_vn.addr_space, rsleigh::VnSpace::REGISTER);
-            assert_eq!(addr.machine_addr.addr, base);
+            assert_eq!(addr.machine_addr_u64(), base);
         }
         other => panic!("expected UnresolvedIndirectBranch, got {other:?}"),
     }
@@ -402,7 +402,7 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     // The targeted region's start_addr must be exactly `base`.
     let target_node = branch_edges[0].target();
     assert_eq!(
-        cfg.graph[target_node].start_addr.machine_addr.addr,
+        cfg.graph[target_node].start_addr.machine_addr_u64(),
         base,
         "Branch edge must point at the resolved const target",
     );

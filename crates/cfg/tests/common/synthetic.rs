@@ -14,10 +14,7 @@ pub type TestReader = BufMemReader<Vec<u8>>;
 /// Short constructor for a `PcodeInsnAddr`.
 #[must_use]
 pub fn addr(machine: u64, insn: u64) -> PcodeInsnAddr {
-    PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: machine },
-        insn_index: insn,
-    }
+    PcodeInsnAddr::new(MachineInsnAddr::new(machine), insn)
 }
 
 /// Sleigh backed by an empty buffer — decodes nothing but is enough to

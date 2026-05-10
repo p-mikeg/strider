@@ -46,7 +46,7 @@ fn locate_unresolved_addr(cfg: &cfg::Cfg<BufMemReader<Vec<u8>>>) -> PcodeInsnAdd
 fn with_known_targets_default_is_unresolved() {
     let cfg = build_unresolved_jmp_rax_cfg();
     let addr = locate_unresolved_addr(&cfg);
-    assert!(addr.machine_addr.addr >= 0x1000);
+    assert!(addr.machine_addr_u64() >= 0x1000);
 }
 
 #[test]

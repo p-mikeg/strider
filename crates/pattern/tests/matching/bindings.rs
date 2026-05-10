@@ -35,15 +35,15 @@ fn capture_bind_and_get_with_real_output_ids() {
     assert_eq!(bindings.get(v), None);
     let ba = pattern::Binding::new(na, Some(a));
     let bb = pattern::Binding::new(nb, Some(b));
-    assert!(bindings.bind_capture(v, ba));
+    assert!(bindings.bind_capture_for_test(v, ba));
     assert_eq!(bindings.get(v), Some(a));
 
     // Idempotent with same output.
-    assert!(bindings.bind_capture(v, ba));
+    assert!(bindings.bind_capture_for_test(v, ba));
     assert_eq!(bindings.get(v), Some(a));
 
     // Conflict preserves original.
-    assert!(!bindings.bind_capture(v, bb));
+    assert!(!bindings.bind_capture_for_test(v, bb));
     assert_eq!(bindings.get(v), Some(a));
 }
 
@@ -68,10 +68,10 @@ fn capture_bind_and_get_with_real_node_ids() {
     assert_eq!(bindings.get_node(v), None);
     let b1 = pattern::Binding::new(n1, None);
     let b2 = pattern::Binding::new(n2, None);
-    assert!(bindings.bind_capture(v, b1));
+    assert!(bindings.bind_capture_for_test(v, b1));
     assert_eq!(bindings.get_node(v), Some(n1));
-    assert!(bindings.bind_capture(v, b1));
-    assert!(!bindings.bind_capture(v, b2));
+    assert!(bindings.bind_capture_for_test(v, b1));
+    assert!(!bindings.bind_capture_for_test(v, b2));
     assert_eq!(bindings.get_node(v), Some(n1));
 }
 
@@ -87,7 +87,7 @@ fn get_uint_reads_int_const_through_bound_capture() {
 
     let mut bindings = Bindings::default();
     let v = Capture::new();
-    assert!(bindings.bind_capture(v, Binding::new(n, Some(c))));
+    assert!(bindings.bind_capture_for_test(v, Binding::new(n, Some(c))));
     assert_eq!(bindings.get_uint(v, &g), Some(7));
 }
 
@@ -102,7 +102,7 @@ fn get_uint_returns_none_when_not_an_int_const() {
 
     let mut bindings = Bindings::default();
     let v = Capture::new();
-    assert!(bindings.bind_capture(v, Binding::new(add_node, Some(s))));
+    assert!(bindings.bind_capture_for_test(v, Binding::new(add_node, Some(s))));
     assert_eq!(bindings.get_uint(v, &g), None);
 }
 
@@ -117,7 +117,7 @@ fn get_int_binary_op_reads_op_variant_through_bound_capture() {
 
     let mut bindings = Bindings::default();
     let v = Capture::new();
-    assert!(bindings.bind_capture(v, Binding::new(add_node, None)));
+    assert!(bindings.bind_capture_for_test(v, Binding::new(add_node, None)));
     assert_eq!(bindings.get_int_binary_op(v, &g), Some(IntBinaryOp::Add));
 }
 

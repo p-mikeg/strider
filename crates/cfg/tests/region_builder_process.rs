@@ -106,7 +106,7 @@ fn branch_indirect_ends_region() {
     match &regions[0].terminator {
         cfg::RegionTerminator::UnresolvedIndirectBranch { addr: deferred_addr, .. } => {
             assert_eq!(
-                deferred_addr.machine_addr.addr, base,
+                deferred_addr.machine_addr_u64(), base,
                 "deferred terminator must record the offending pcode address",
             );
         }

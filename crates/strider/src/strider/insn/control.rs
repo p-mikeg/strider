@@ -166,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let mut targets_and_regions: Vec<(u64, ir::RegionId)> =
             Vec::with_capacity(targets.len());
         for &target in targets {
-            let machine_addr = cfg::MachineInsnAddr { addr: target };
+            let machine_addr = cfg::MachineInsnAddr::new(target);
             let cfg_region = self
                 .cfg
                 .region_id_at_start(machine_addr)

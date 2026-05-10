@@ -67,12 +67,7 @@ fn analyze_with_known_targets(
         .expect("create x86_64 sleigh");
     let mut known_targets: HashMap<PcodeInsnAddr, ResolvedTargets> = HashMap::new();
     known_targets.insert(
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr {
-                addr: branch_indirect_addr,
-            },
-            insn_index: 0,
-        },
+        PcodeInsnAddr::new(MachineInsnAddr::new(branch_indirect_addr), 0),
         ResolvedTargets::Multiple(targets),
     );
     let opts = OptionsBuilder::new().build();

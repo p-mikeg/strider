@@ -49,13 +49,12 @@ pub struct BuiltFunctionGraph {
     pub entry: NodeId,
     /// Map from [`VarId`] to the corresponding [`rsleigh::Vn`] varnode.
     ///
-    /// **Caution:** mutating this map post-`build()` desynchronises it
-    /// from the graph's `InitialVar` / phi nodes (which key on `VarId`
-    /// indices) and silently breaks pattern queries that resolve a
-    /// `VarId` via `Match::get_vn`.  Only [`crate::FunctionBuilder::build`]
-    /// and the partial-state ctor [`Self::from_graph_and_entry_for_rewrite`]
-    /// should write this field.
-    pub variables: PrimaryMap<VarId, rsleigh::Vn>,
+    /// Tightened to `pub(crate)` to keep call-sites on the
+    /// [`Self::variables_map`] accessor — mutating this map post-`build()`
+    /// desynchronises it from the graph's `InitialVar` / phi nodes (which
+    /// key on `VarId` indices) and silently breaks pattern queries that
+    /// resolve a `VarId` via `Match::get_vn`.
+    pub(crate) variables: PrimaryMap<VarId, rsleigh::Vn>,
     /// Ordered list of varnodes clobbered by every `Call` node.
     /// The i-th clobbered output of any Call (output index `i + 2`) corresponds
     /// to `call_clobbered[i]`.  The list is the same for all calls.
@@ -64,22 +63,20 @@ pub struct BuiltFunctionGraph {
     /// return registers in ABI order (see [`BuiltFunctionGraph::ret_val_regs`]);
     /// the rest are remaining caller-clobbered registers.
     ///
-    /// **Caution:** mutating this list post-`build()` desynchronises it
-    /// from existing `Call` nodes' clobber output slots and silently
-    /// breaks `Match::get_vn` (which indexes the slot list by varnode
-    /// position).  Only [`crate::FunctionBuilder::build`] and the
-    /// partial-state ctor should write this field; consumers read via
-    /// [`Self::call_clobbered_regs`].
-    pub call_clobbered: Box<[rsleigh::Vn]>,
+    /// Tightened to `pub(crate)` so external readers go through
+    /// [`Self::call_clobbered_regs`]; mutating this list post-`build()`
+    /// desynchronises it from existing `Call` nodes' clobber output slots
+    /// and silently breaks `Match::get_vn` (which indexes the slot list
+    /// by varnode position).
+    pub(crate) call_clobbered: Box<[rsleigh::Vn]>,
     /// The calling convention's return-value registers, in ABI order.
     /// Matches the first `ret_val_regs.len()` entries of
     /// [`BuiltFunctionGraph::call_clobbered`] when those regs are caller-clobbered
     /// (they normally are — callee-saved ret regs are unusual), and matches
     /// `Return` node input slots `2..2+ret_val_regs.len()`.
     ///
-    /// **Caution:** same as [`Self::call_clobbered`] — write only at
-    /// build time; read via [`Self::ret_val_regs_as_slice`].
-    pub ret_val_regs: Box<[rsleigh::Vn]>,
+    /// Tightened to `pub(crate)` — read via [`Self::ret_val_regs_as_slice`].
+    pub(crate) ret_val_regs: Box<[rsleigh::Vn]>,
     /// Function-default clobber list for every `CallOther` node.
     ///
     /// Equals the function's tracked-variable set (`variables.values()`)
@@ -94,9 +91,8 @@ pub struct BuiltFunctionGraph {
     /// per-CallOther override on
     /// `Graph::call_clobbered_overrides` shadows it.
     ///
-    /// **Caution:** same as [`Self::call_clobbered`] — write only at
-    /// build time; read via [`Self::call_other_clobbered_regs`].
-    pub call_other_clobbered: Box<[rsleigh::Vn]>,
+    /// Tightened to `pub(crate)` — read via [`Self::call_other_clobbered_regs`].
+    pub(crate) call_other_clobbered: Box<[rsleigh::Vn]>,
     /// Function-default value of
     /// [`target::CallingConvention::no_memory_clobber`] (carried over
     /// from the building [`crate::FunctionBuilder`]).  When `true`,
@@ -159,6 +155,31 @@ impl BuiltFunctionGraph {
     #[must_use]
     pub fn variables_map(&self) -> &PrimaryMap<VarId, rsleigh::Vn> {
         &self.variables
+    }
+
+    /// Test-only setter: overwrite [`Self::call_clobbered`].
+    ///
+    /// Used by `pattern` tests that construct a synthetic `Call` node
+    /// shape and need a matching function-default clobber list to
+    /// exercise [`crate::pattern_glue::*`] queries.  Production paths
+    /// should set this via [`crate::FunctionBuilder::build`].  The
+    /// `_for_test` suffix is the documented signal that the caller has
+    /// verified the slot/varnode correspondence with the synthetic
+    /// graph's `Call` outputs (see [`Self::call_clobbered`]'s caveat).
+    pub fn set_call_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
+        self.call_clobbered = list;
+    }
+
+    /// Test-only setter: overwrite [`Self::ret_val_regs`].  Same
+    /// contract as [`Self::set_call_clobbered_for_test`].
+    pub fn set_ret_val_regs_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
+        self.ret_val_regs = list;
+    }
+
+    /// Test-only setter: overwrite [`Self::call_other_clobbered`].
+    /// Same contract as [`Self::set_call_clobbered_for_test`].
+    pub fn set_call_other_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
+        self.call_other_clobbered = list;
     }
 }
 

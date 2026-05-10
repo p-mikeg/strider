@@ -76,12 +76,12 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     graph.add_edge(src, dst1, RegionEdgeKind::Branch);
     graph.add_edge(src, dst2, RegionEdgeKind::Branch);
 
-    let cfg = cfg::Cfg {
-        sleigh: make_sleigh(),
+    let cfg = cfg::Cfg::from_parts_for_tests(
+        make_sleigh(),
         graph,
-        entry: src,
-        start_addr_to_region_id: std::collections::BTreeMap::new(),
-    };
+        src,
+        std::collections::BTreeMap::new(),
+    );
 
     let err = cfg.region_branch(src).unwrap_err();
     assert!(
@@ -106,7 +106,7 @@ fn region_id_at_start_returns_some_for_real_function_entry() {
         .graph
         .node_weight(cfg.entry)
         .expect("entry region exists");
-    let entry_addr = entry_region.start_addr.machine_addr;
+    let entry_addr = entry_region.start_addr.machine_addr();
     let rid = cfg.region_id_at_start(entry_addr);
     assert_eq!(
         rid,
@@ -121,7 +121,7 @@ fn region_id_at_start_returns_none_for_unknown_machine_addr() {
     // None; the helper only matches `start_addr.machine_addr`, never
     // mid-region addresses.
     let cfg = real_cfg("add");
-    let rid = cfg.region_id_at_start(cfg::MachineInsnAddr { addr: 0xdead_beef });
+    let rid = cfg.region_id_at_start(cfg::MachineInsnAddr::new(0xdead_beef));
     assert!(rid.is_none(), "unknown addr must return None, got {rid:?}");
 }
 
@@ -136,12 +136,12 @@ fn duplicate_if_case_true_is_detected_by_region_if() {
     graph.add_edge(src, dst1, RegionEdgeKind::IfCaseTrue);
     graph.add_edge(src, dst2, RegionEdgeKind::IfCaseTrue);
 
-    let cfg = cfg::Cfg {
-        sleigh: make_sleigh(),
+    let cfg = cfg::Cfg::from_parts_for_tests(
+        make_sleigh(),
         graph,
-        entry: src,
-        start_addr_to_region_id: std::collections::BTreeMap::new(),
-    };
+        src,
+        std::collections::BTreeMap::new(),
+    );
 
     let err = cfg
         .region_if(src)

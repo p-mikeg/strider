@@ -150,7 +150,7 @@ macro_rules! arch_tests {
                 // so the comparison works for both ARM and ARM Thumb.
                 let expected = symbol_decode_addr(b.to_str().unwrap(), "add");
                 let c = cfg_of("add");
-                assert_eq!(c.graph[c.entry].start_addr.machine_addr.addr, expected);
+                assert_eq!(c.graph[c.entry].start_addr.machine_addr_u64(), expected);
             }
 
             // ── fallthrough edges ─────────────────────────────────────────────

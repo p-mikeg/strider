@@ -66,9 +66,9 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(outs.len(), 2 + override_list.len());
     assert!(
-        override_list.len() < bfg.call_clobbered.len(),
+        override_list.len() < bfg.call_clobbered_regs().len(),
         "override list ({}) must be strictly smaller than function-default ({})",
         override_list.len(),
-        bfg.call_clobbered.len(),
+        bfg.call_clobbered_regs().len(),
     );
 }

@@ -63,14 +63,41 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// same name at construction.  Maintained by the indirect-branch
     /// resolver when it splices new regions in via `add_region`.
     ///
-    /// kept `pub` (was tightened to `pub(crate)`
-    /// then reverted) because `cfg/tests/cfg_query.rs` constructs `Cfg`
-    /// via struct-literal syntax for hand-built petgraph fixtures.
-    /// External readers should still go through
-    /// [`Self::region_id_at_start`] — the field accessor is the
-    /// canonical path; direct mutation desyncs the index from `graph`.
-    pub start_addr_to_region_id:
+    /// Tightened to `pub(crate)`.  External readers go through
+    /// [`Self::region_id_at_start`]; tests that hand-build a `Cfg`
+    /// fixture use [`Self::from_parts_for_tests`] (gated behind
+    /// `#[doc(hidden)]`) to construct one without exposing the field
+    /// to production mutation paths.  Direct mutation desyncs the
+    /// index from `graph`.
+    pub(crate) start_addr_to_region_id:
         std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
+}
+
+impl<R: rsleigh::MemReader> Cfg<R> {
+    /// Test-only constructor: assemble a `Cfg` from raw parts.
+    ///
+    /// The `start_addr_to_region_id` field is normally maintained by
+    /// [`crate::Builder::build`] and stays in sync with `graph`.
+    /// Hand-built fixtures (used by `cfg/tests/cfg_query.rs` to exercise
+    /// `region_branch` / `region_if` on synthetic petgraphs) construct
+    /// a `Cfg` directly; this ctor lets them keep working after the
+    /// field was tightened to `pub(crate)`, without re-opening the
+    /// mutation hazard for production callers.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn from_parts_for_tests(
+        sleigh: rsleigh::Sleigh<R>,
+        graph: RegionGraph,
+        entry: NodeIndex,
+        start_addr_to_region_id: std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
+    ) -> Self {
+        Self {
+            sleigh,
+            graph,
+            entry,
+            start_addr_to_region_id,
+        }
+    }
 }
 
 /// Type alias for the petgraph [`NodeIndex`] used to identify regions.

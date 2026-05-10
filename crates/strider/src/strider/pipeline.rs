@@ -386,7 +386,7 @@ impl Strider {
             let term_addr = region
                 .insns
                 .last()
-                .map(|wrapped| wrapped.addr.machine_addr.addr);
+                .map(|wrapped| wrapped.addr.machine_addr_u64());
             ir_strider.builder.set_lift_addr(term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {

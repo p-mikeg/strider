@@ -95,7 +95,7 @@ fn get_vn_indexes_override_list_for_overridden_call() {
     let c = Capture::new();
     let slot2 = bfg.graph.node_outputs(call).into_iter().nth(2).unwrap();
     let mut bindings = Bindings::default();
-    bindings.bind_capture(c, Binding::new(call, Some(slot2)));
+    bindings.bind_capture_for_test(c, Binding::new(call, Some(slot2)));
     let m = pattern::Match::new_for_test(call, bindings);
     assert_eq!(m.get_vn(c, &bfg), Some(rax));
 }

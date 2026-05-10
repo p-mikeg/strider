@@ -48,10 +48,11 @@ impl Binding {
 /// of the journaled `Vec` without changing the public API.
 ///
 /// External callers see `Bindings` as read-only: construction is via
-/// `Default::default()`, mutation goes through [`Self::bind_capture`],
-/// and the `mark` / `restore` journal API is `pub(crate)` because only
-/// the matcher's commutative-retry / speculative-attempt paths
-/// legitimately need it.
+/// `Default::default()`, the production mutation path
+/// ([`Self::bind_capture`]) is `pub(crate)`, and test scaffolds reach
+/// for [`Self::bind_capture_for_test`].  The `mark` / `restore`
+/// journal API is `pub(crate)` because only the matcher's
+/// commutative-retry / speculative-attempt paths legitimately need it.
 #[derive(Clone, Default)]
 pub struct Bindings {
     entries: Vec<(Capture, Binding)>,
@@ -78,7 +79,13 @@ impl Bindings {
 
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent
     /// (full-binding-equal) bind, `false` on conflict (no mutation).
-    pub fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
+    ///
+    /// Tightened to `pub(crate)`: callers outside `pattern` (test
+    /// scaffolds in particular) construct bindings via
+    /// [`Self::bind_capture_for_test`] which has the same shape but
+    /// a name signal that the caller is bypassing the matcher's
+    /// normal accumulation path.
+    pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
         for (k, existing) in &self.entries {
             if *k == c {
                 return *existing == binding;
@@ -86,6 +93,17 @@ impl Bindings {
         }
         self.entries.push((c, binding));
         true
+    }
+
+    /// Test-only setter: directly install a `(Capture, Binding)`
+    /// pair on this `Bindings` value, bypassing the matcher.  Same
+    /// semantics as [`Self::bind_capture`] (returns `true` on new or
+    /// idempotent bind, `false` on conflict).  The `_for_test` suffix
+    /// signals that the caller is hand-building a `Bindings` for use
+    /// with [`crate::Match::new_for_test`] rather than going through
+    /// [`crate::Matcher::find_all`].
+    pub fn bind_capture_for_test(&mut self, c: Capture, binding: Binding) -> bool {
+        self.bind_capture(c, binding)
     }
 
     /// Returns the [`Binding`] (node + optional value output) bound to

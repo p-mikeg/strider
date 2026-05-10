@@ -40,7 +40,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         // the caller propagates — the only way the post-clear is skipped
         // is a panic, and Sleigh / IR builder errors all surface as typed
         // `Result::Err` from this path.
-        let machine_addr = addr.machine_addr.addr;
+        let machine_addr = addr.machine_addr_u64();
         self.builder.set_lift_addr(Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_lookup);
         self.builder.set_lift_addr(None);

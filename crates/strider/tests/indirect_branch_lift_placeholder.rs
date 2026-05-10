@@ -121,5 +121,5 @@ fn unresolved_branches_table_tracks_each_placeholder() {
     );
     // The tracked address must point at the original BranchIndirect.
     let (addr, _value) = outcome.unresolved_branches[0];
-    assert_eq!(addr.machine_addr.addr, 0x1000);
+    assert_eq!(addr.machine_addr_u64(), 0x1000);
 }

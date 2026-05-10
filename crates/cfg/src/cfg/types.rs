@@ -28,7 +28,11 @@ pub enum RegionEdgeKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MachineInsnAddr {
     /// The raw virtual address of the machine instruction.
-    pub addr: u64,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::as_u64`] for reads and [`Self::new`] / [`From<u64>`]
+    /// for construction.
+    pub(crate) addr: u64,
 }
 
 impl From<u64> for MachineInsnAddr {
@@ -38,6 +42,14 @@ impl From<u64> for MachineInsnAddr {
 }
 
 impl MachineInsnAddr {
+    /// Construct from a raw u64 address.  Equivalent to
+    /// [`From<u64>`]; provided as an inherent ctor for ergonomic
+    /// `MachineInsnAddr::new(addr)` call-sites.
+    #[must_use]
+    pub fn new(addr: u64) -> Self {
+        MachineInsnAddr { addr }
+    }
+
     /// Read the raw u64 address.  canonical
     /// accessor for the migration path that will eventually tighten
     /// the `addr` field to `pub(crate)`.  New code should prefer this
@@ -60,12 +72,29 @@ impl MachineInsnAddr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PcodeInsnAddr {
     /// Virtual address of the enclosing machine instruction.
-    pub machine_addr: MachineInsnAddr,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::machine_addr`] / [`Self::machine_addr_u64`].
+    pub(crate) machine_addr: MachineInsnAddr,
     /// Zero-based index of this pcode instruction within the machine instruction.
-    pub insn_index: u64,
+    ///
+    /// Tightened to `pub(crate)` — external callers go through
+    /// [`Self::insn_index`].
+    pub(crate) insn_index: u64,
 }
 
 impl PcodeInsnAddr {
+    /// Construct from `(machine_addr, insn_index)`.  Field ordering is
+    /// load-bearing for the derived `Ord` (machine first, index second);
+    /// the ctor preserves it.
+    #[must_use]
+    pub fn new(machine_addr: MachineInsnAddr, insn_index: u64) -> Self {
+        PcodeInsnAddr {
+            machine_addr,
+            insn_index,
+        }
+    }
+
     /// Returns the pcode address pointing at the *first* pcode op of
     /// the machine instruction at `addr` (`insn_index == 0`).
     #[must_use]

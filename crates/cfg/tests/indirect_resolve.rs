@@ -78,10 +78,7 @@ fn const_vn(val: u64, size: u32) -> Vn {
 /// pcode address.
 fn ri(machine: u64, insn_index: u64, insn: Insn) -> RegionInstruction {
     RegionInstruction {
-        addr: PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index,
-        },
+        addr: PcodeInsnAddr::new(MachineInsnAddr::new(machine), insn_index),
         insn,
     }
 }
@@ -358,10 +355,7 @@ fn lift_region<R: rsleigh::MemReader>(
         let lift = sleigh.lift_one(cur).expect("lift_one");
         for (i, insn) in lift.insns.iter().enumerate() {
             out.push(RegionInstruction {
-                addr: PcodeInsnAddr {
-                    machine_addr: MachineInsnAddr { addr: cur },
-                    insn_index: i as u64,
-                },
+                addr: PcodeInsnAddr::new(MachineInsnAddr::new(cur), i as u64),
                 insn: insn.clone(),
             });
         }

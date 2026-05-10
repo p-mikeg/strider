@@ -195,7 +195,7 @@ impl Match {
                 if let Some(override_list) = graph.graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_clobbered.get(idx).copied();
+                return graph.call_clobbered_regs().get(idx).copied();
             }
             // CallOther: clobber slots start at index 2 (no value
             // output) or 3 (with value output).  Detect by total
@@ -217,7 +217,7 @@ impl Match {
                 let clobber_len = graph
                     .graph
                     .call_clobbered_override(node)
-                    .map_or(graph.call_other_clobbered.len(), |ov| ov.len());
+                    .map_or(graph.call_other_clobbered_regs().len(), |ov| ov.len());
                 let clobber_start: u32 = if total_outputs == 2 + clobber_len {
                     2
                 } else if total_outputs == 3 + clobber_len {
@@ -236,7 +236,7 @@ impl Match {
                 if let Some(override_list) = graph.graph.call_clobbered_override(node) {
                     return override_list.get(idx).copied();
                 }
-                return graph.call_other_clobbered.get(idx).copied();
+                return graph.call_other_clobbered_regs().get(idx).copied();
             }
         }
         match graph.graph.node_kind(binding.node) {

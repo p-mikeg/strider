@@ -77,10 +77,10 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         "Call's outputs = Control + Memory + override_list.len()"
     );
     assert!(
-        override_list.len() < bfg.call_clobbered.len(),
+        override_list.len() < bfg.call_clobbered_regs().len(),
         "override list ({}) must be strictly smaller than function-default ({})",
         override_list.len(),
-        bfg.call_clobbered.len(),
+        bfg.call_clobbered_regs().len(),
     );
 }
 
@@ -118,7 +118,7 @@ fn call_without_override_uses_function_default_clobber_set() {
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(
         outs.len(),
-        2 + bfg.call_clobbered.len(),
+        2 + bfg.call_clobbered_regs().len(),
         "default Call: Control + Memory + per-CC clobber slots"
     );
 }

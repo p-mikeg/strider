@@ -807,7 +807,7 @@ fn build_anchor_calling_context(
         override_clobbers = override_clobber_vars(graph, cc, strider).collect();
         Box::new(override_clobbers.iter())
     } else {
-        Box::new(graph.call_clobbered.iter())
+        Box::new(graph.call_clobbered_regs().iter())
     };
     for vn in clobber_iter {
         // surface unsupported clobber-reg sizes as Err
@@ -863,7 +863,7 @@ fn override_clobber_vars<'a>(
 ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
     let stack_ptr_vn = strider.calling_convention().stack_ptr_vn();
     graph
-        .variables
+        .variables_map()
         .values()
         .copied()
         .filter(move |v| !cc.callee_saved_regs().contains(v) && *v != stack_ptr_vn)
@@ -1036,10 +1036,7 @@ mod tests {
     use cfg::MachineInsnAddr;
 
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: MachineInsnAddr { addr: machine },
-            insn_index: 0,
-        }
+        PcodeInsnAddr::new(MachineInsnAddr::new(machine), 0)
     }
 
     fn make_strider_x86_64() -> Strider {

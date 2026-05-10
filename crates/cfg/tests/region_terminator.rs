@@ -180,9 +180,9 @@ fn split_first_half_becomes_fallthrough() {
     let mut first_half: Option<&Region> = None;
     let mut second_half: Option<&Region> = None;
     for r in cfg.graph.node_weights() {
-        if r.start_addr.machine_addr.addr == 0x1000 {
+        if r.start_addr.machine_addr_u64() == 0x1000 {
             first_half = Some(r);
-        } else if r.start_addr.machine_addr.addr == 0x1002 {
+        } else if r.start_addr.machine_addr_u64() == 0x1002 {
             second_half = Some(r);
         }
     }
@@ -289,10 +289,7 @@ fn unresolved_indirect_branch_variant_is_constructible() {
         addr_off: 0x100,
         addr_space: rsleigh::VnSpace::REGISTER,
     };
-    let pcode_addr = PcodeInsnAddr {
-        machine_addr: MachineInsnAddr { addr: 0x1000 },
-        insn_index: 3,
-    };
+    let pcode_addr = PcodeInsnAddr::new(MachineInsnAddr::new(0x1000), 3);
     let term = RegionTerminator::UnresolvedIndirectBranch {
         target_vn,
         addr: pcode_addr,
