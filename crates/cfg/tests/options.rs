@@ -27,6 +27,23 @@ fn options_builder_allow_code_before_start_addr_produces_distinct_options() {
     assert_ne!(default, allow);
 }
 
+/// Regression for round-12 EC-1: `set_function_max_size(0)` is silently
+/// treated as the unbounded default.  A zero-byte function bound is
+/// semantically meaningless and would otherwise cause the lifter to
+/// decode past the entry address whenever the first machine instruction
+/// produced zero pcode operations (e.g. AArch64 NOPs).
+///
+/// In release builds (where the `debug_assert!` at the setter is
+/// compiled out) the silent fallback prevents the corruption; in debug
+/// builds the assertion fires before any lifting occurs.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "debug_assert!-checked in debug builds")]
+fn options_builder_set_function_max_size_zero_falls_back_to_unbounded_in_release() {
+    let zero = OptionsBuilder::new().set_function_max_size(0).build();
+    let default = OptionsBuilder::new().build();
+    assert_eq!(zero, default, "zero must be treated as unbounded");
+}
+
 #[test]
 fn options_builder_both_set_produces_distinct_options() {
     let default = OptionsBuilder::new().build();

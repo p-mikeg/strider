@@ -57,15 +57,11 @@ use rsleigh::VnSpace;
 /// `anchor_output` is the placeholder Return's value-input slot.
 /// `rom` is the read-only memory image — almost always the ELF's
 /// `.rodata` + `.text` view for callers that load real binaries.
-/// `link_register_vn` is unused here (jump tables don't dispatch to
-/// the link register), but kept symmetric with the other arms in
-/// case a future refactor needs it.
 #[must_use]
 pub fn classify_jump_table(
     ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
-    _link_register_vn: Option<rsleigh::Vn>,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     // Step 1: structural shape match.  `match_jump_table_shape`

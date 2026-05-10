@@ -207,9 +207,7 @@ pub fn classify_anchor_with_rom_and_sp(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) =
-                classify_jump_table(ctx, anchor_output, rom, link_register_vn, known)
-            {
+            if let Some(r) = classify_jump_table(ctx, anchor_output, rom, known) {
                 return Some(r);
             }
             if let Some(sp) = stack_ptr_vn {

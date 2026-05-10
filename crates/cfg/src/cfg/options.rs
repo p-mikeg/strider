@@ -179,8 +179,26 @@ impl OptionsBuilder {
     ///
     /// Any unconditional branch whose target address is ≥ `start_addr + max_size`
     /// will be treated as a tail call.
+    ///
+    /// **`max_size = 0` is rejected** (silently treated as unbounded).  A
+    /// zero-byte function bound is semantically meaningless and previously
+    /// caused the lifter to decode past the entry address whenever the
+    /// first machine instruction produced zero pcode operations (round-12
+    /// EC-1): `is_addr_tail_call(target, start, Some(0), _)` evaluates
+    /// `target >= start.saturating_add(0)` = `target >= start` as always
+    /// true, but `region_builder`'s empty-`insns` guard at the bound check
+    /// skips the truncation when no pcode-emitting insn has been seen yet,
+    /// so the loop keeps lifting into adjacent memory.
     #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
+        if max_size == 0 {
+            debug_assert!(
+                false,
+                "set_function_max_size(0) is meaningless; use the default unbounded behaviour instead"
+            );
+            self.options.fn_max_size = None;
+            return self;
+        }
         self.options.fn_max_size = Some(max_size);
         self
     }

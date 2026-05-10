@@ -531,7 +531,7 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         size: 4,
     };
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, Some(&rom), None, &known);
+    let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -562,7 +562,7 @@ fn classify_jump_table_no_rom_returns_none() {
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::U32).expect("load")
     });
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, None, None, &known);
+    let result = classify_jump_table((&g).into(), anchor, None, &known);
     assert_eq!(result, None);
 }
 
@@ -593,7 +593,7 @@ fn classify_jump_table_unbounded_idx_returns_none() {
         size: 4,
     };
     let known = analyze_known_bits((&g).into()).expect("kb analyze");
-    let result = classify_jump_table((&g).into(), anchor, Some(&rom), None, &known);
+    let result = classify_jump_table((&g).into(), anchor, Some(&rom), &known);
     assert_eq!(result, None);
 }
 
