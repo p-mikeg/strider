@@ -74,7 +74,7 @@ impl Graph {
     /// mutating the kind).  Previously a `debug_assert!`; promoted to a
     /// runtime error so Python users see a clean typed exception
     /// instead of a release-mode misshape or a debug-mode crash
-    /// (round-13 IR.4).
+    ///.
     pub fn set_node_kind(&mut self, node_id: NodeId, kind: NodeKind) -> crate::Result<()> {
         let old_kind = self.nodes[node_id].kind;
         if old_kind.is_cacheable() || kind.is_cacheable() {

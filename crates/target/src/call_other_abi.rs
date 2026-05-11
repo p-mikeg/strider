@@ -492,11 +492,10 @@ mod tests {
 
     #[test]
     fn sysret_and_swapgs_are_x86_only() {
-        // Regression: round-12 CA-2 — `sysret` and `swapgs` are
-        // x86/x86_64-specific user-ops.  They must not silently match
-        // on non-x86 arches.  Previously they lived in
-        // `classify_arch_independent` and would have been classified
-        // even on ARM/AArch64/MIPS/PowerPC.
+        // Regression: `sysret` and `swapgs` are x86/x86_64-specific
+        // user-ops.  They must not silently match on non-x86 arches.
+        // Previously they lived in `classify_arch_independent` and
+        // would have been classified even on ARM/AArch64/MIPS/PowerPC.
         for arch in [
             crate::ArchPreset::Arm,
             crate::ArchPreset::ArmBe,

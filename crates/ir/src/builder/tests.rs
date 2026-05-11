@@ -753,7 +753,7 @@ fn piece_composition_auto_casts_float_input() -> Result<()> {
     let float_val = b.build_float_const(1.0f32.to_bits() as u64, NodeOutputType::F32);
     let int_lo = b.build_int_const(0u64, NodeOutputType::U32)?;
 
-    // Replicate the analyzer's Piece composition.
+    // Replicate the pcode-lift Piece composition.
     let out_ty = NodeOutputType::U64;
     let hi_ty = b.get_output_type(float_val)?.to_natural_int_type();
     let hi_int = b.convert_to_int_if_needed(float_val, hi_ty)?;
@@ -996,7 +996,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 //
 // The fix in `FunctionBuilder::new_raw` extends the same overlap-filter that
 // REGISTER space uses to UNIQUE space: when both an outer and an inner
-// varnode are touched, the outer wins, and the analyzer's register-aliasing
+// varnode are touched, the outer wins, and the pcode-lift register-aliasing
 // logic rebuilds the inner via shift/truncate when needed.
 
 fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
@@ -1069,7 +1069,7 @@ fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
 //
 // The mitigation that lives at the IR layer is `convert_to_int_if_needed`:
 // when called on a Bool with an integer target type, it must produce a
-// CastToInt-wrapped value of the integer type.  The analyzer's `write_reg_vn`
+// CastToInt-wrapped value of the integer type.  The pcode-lift `write_reg_vn`
 // invokes this helper at every variable write; this test pins the helper's
 // contract so future refactors don't silently regress the bool-into-int cycle.
 
@@ -1216,7 +1216,7 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
 }
 
 /// End-to-end: write a Bool to a 1-byte register variable through the
-/// coerce-then-write sequence the analyzer's `write_reg_vn` uses.  Reading
+/// coerce-then-write sequence pcode-lift's `write_reg_vn` uses.  Reading
 /// the variable back must return an integer-typed output, never the raw
 /// Bool — that was the root state that fed Bool into AnyInt-expecting
 /// phi consumers post-optimization.
@@ -1234,7 +1234,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let rhs = b.build_int_const(2u64, NodeOutputType::U32)?;
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, NodeOutputType::U32)?;
 
-    // Mirror the analyzer's write_reg_vn coercion: convert to reg's
+    // Mirror pcode-lift's write_reg_vn coercion: convert to reg's
     // declared int type (U8 for a 1-byte flag), then write.
     let reg_ty: NodeOutputType = flag.size.try_into()?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;

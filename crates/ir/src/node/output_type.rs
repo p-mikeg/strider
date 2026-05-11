@@ -358,7 +358,7 @@ mod tests {
     // ── F80 / U80 (x87 80-bit FPU) ────────────────────────────────────────
 
     /// `U80` and `F80` widths must be 10 bytes / 80 bits — the x87 ST0
-    /// register width that the analyzer needs in order to handle x86
+    /// register width that the lifter needs in order to handle x86
     /// floats without erroring at `analyze_cfg` setup.
     #[test]
     fn u80_f80_widths() {
@@ -370,7 +370,7 @@ mod tests {
 
     /// `U80` is an integer type; `F80` is a float type.  The category
     /// classifier drives `is_integer` / `is_float`, used by validator
-    /// signature checks (Layer A) and by the analyzer's coerce helpers.
+    /// signature checks (Layer A) and by the lifter's coerce helpers.
     #[test]
     fn u80_is_integer_and_f80_is_float() {
         assert!(NodeOutputType::U80.is_integer());
@@ -380,7 +380,7 @@ mod tests {
     }
 
     /// `to_natural_int_type` must map `F80 → U80` (mirrors `F64 → U64`)
-    /// and `U80 → U80` (identity).  This is the path the analyzer's
+    /// and `U80 → U80` (identity).  This is the path the lifter's
     /// `read_reg_vn` / `write_reg_vn` use when bridging between float
     /// and integer views of the same SSA variable.
     #[test]
@@ -433,7 +433,7 @@ mod tests {
     }
 
     /// `TryFrom<u32> for NodeOutputType` must accept 10 → U80 so the
-    /// analyzer's varnode→type conversion succeeds for x87 80-bit regs.
+    /// lifter's varnode→type conversion succeeds for x87 80-bit regs.
     #[test]
     fn try_from_u32_10_is_u80() {
         let ty: NodeOutputType = 10u32.try_into().expect("10 must convert to U80");

@@ -65,9 +65,9 @@ pub struct Graph {
     /// shape for cacheable kinds doesn't apply here — the choice is purely to
     /// keep the kind enum small and `Copy`.
     ///
-    /// Populated at IR construction time by the analyzer.  Not all `CallOther`
+    /// Populated at IR construction time by the strider lifter.  Not all `CallOther`
     /// nodes are guaranteed to have an entry — e.g. nodes synthesised by tests
-    /// that don't go through the analyzer.  Use [`Graph::call_other_name`].
+    /// that don't go through the strider lifter.  Use [`Graph::call_other_name`].
     ///
     /// Stored as a `SecondaryMap<NodeId, Option<String>>`: O(1) array index
     /// without hashing.  The `Option` distinguishes "name not set" from

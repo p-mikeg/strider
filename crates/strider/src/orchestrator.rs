@@ -64,9 +64,8 @@ where
     /// The strider — stable across iterations.
     pub strider: &'a Strider,
     /// Function entry address.  Newtype prevents accidental swap with
-    /// `fn_max_size` at struct-literal construction sites (round-12
-    /// R12-T-H).  Construct via `cfg::MachineInsnAddr::new(addr)` or
-    /// `addr.into()`.
+    /// `fn_max_size` at struct-literal construction sites.  Construct
+    /// via `cfg::MachineInsnAddr::new(addr)` or `addr.into()`.
     pub start_addr: cfg::MachineInsnAddr,
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations

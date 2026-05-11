@@ -196,7 +196,7 @@ fn ret_captures_node() {
     assert!(matches!(g.graph.node_kind(node), ir::node::NodeKind::Return));
 }
 
-/// T-20: a control-flow `Capture` (bound to a Return node, which has
+/// A control-flow `Capture` (bound to a Return node, which has
 /// no value output) must yield `None` from value-typed accessors.
 /// `node(c)` must succeed, but `output(c)` is `None`, so
 /// `get_uint(c, &g)`, `get_int(c, &g)`, and `get_bool(c, &g)` all

@@ -190,8 +190,8 @@ impl BuiltFunctionGraph {
     /// **Construct a rewrite-only `BuiltFunctionGraph` with empty CC
     /// fields.**  Used by `compact`'s test fixture and a few pattern test
     /// scaffolds that intentionally bypass the build path.  Production
-    /// opt-side rewrite paths use `pattern::RewriteCtx` (constructed via
-    /// `opt::with_rewrite_ctx`) instead — that path doesn't need a BFG
+    /// opt-side rewrite paths use `pattern::RewriteCtx::new(&mut graph,
+    /// entry)` instead — that path doesn't need a `BuiltFunctionGraph`
     /// at all.
     ///
     /// # Contract — caller responsibility
@@ -207,12 +207,12 @@ impl BuiltFunctionGraph {
     /// For real CC metadata use [`crate::FunctionBuilder::build`].
     ///
     /// Test-only partial-state ctor.  Production rewrite paths use
-    /// `pattern::RewriteCtx::new(&mut graph, entry)` (the `opt::with_rewrite_ctx`
-    /// adapter is the primary consumer).  Remaining callers are `compact`'s
-    /// test fixture and a few pattern test scaffolds that need
-    /// `BuiltFunctionGraph` (e.g. to set call-other clobber lists via
-    /// `set_call_other_clobbered_for_test`) without going through the build
-    /// path.  Hidden from docs to discourage external adoption.
+    /// `pattern::RewriteCtx::new(&mut graph, entry)`.  Remaining callers
+    /// are `compact`'s test fixture and a few pattern test scaffolds
+    /// that need `BuiltFunctionGraph` (e.g. to set call-other clobber
+    /// lists via `set_call_other_clobbered_for_test`) without going
+    /// through the build path.  Hidden from docs to discourage
+    /// external adoption.
     #[doc(hidden)]
     #[must_use]
     pub fn from_graph_and_entry_for_rewrite(graph: crate::graph::Graph, entry: NodeId) -> Self {
@@ -271,7 +271,7 @@ impl BuiltFunctionGraph {
     /// `retain_reachable` walks forward from `entry`, so the entry is
     /// always reachable from itself — but propagating as `Err` rather
     /// than panicking keeps every error path typed so Python users see
-    /// a clean exception (round-13: replaces `expect`).
+    /// a clean exception.
     pub fn compact(&mut self) -> crate::Result<crate::graph::NodeIdRemap> {
         let remap = self.graph.retain_reachable(self.entry)?;
         let new_entry = remap.node_old_to_new(self.entry).ok_or_else(|| {

@@ -36,7 +36,7 @@ impl OptimizationResult {
     /// # Errors
     ///
     /// Propagates [`ir::Graph::replace_all_uses`]'s `Err` arm as a
-    /// typed error rather than panicking (round-13 OPT.1).  The
+    /// typed error rather than panicking.  The
     /// underlying error only fires on a null cursor in
     /// `replace_current_with`, but `replace_all_uses` checks
     /// `cursor.current().is_some()` before every call — so this is a

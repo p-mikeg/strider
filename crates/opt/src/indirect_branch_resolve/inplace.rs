@@ -60,7 +60,7 @@ pub fn apply_link_register(
     // 3-input IndirectBranch [control, memory, target_value], and the loop
     // only appends, so slot 2 should always be present.  Surface a
     // violation as a typed error rather than a debug-mode panic so Python
-    // users see a clean exception (round-13 OPT.6).
+    // users see a clean exception.
     let arity = graph.node_inputs(placeholder).len();
     if arity < 3 {
         return Err(anyhow!(
@@ -308,7 +308,7 @@ mod tests {
             .expect("IntConst has one output")[0]
     }
 
-    // H0 — calling-convention threading tests for the in-place editors.
+    // Calling-convention threading regression tests for the in-place editors.
     //
     // Pre-fix: `apply_link_register` and `apply_tail_call` produced a
     // Return / Call with no ABI ret-val / arg-passing / clobbered slots,

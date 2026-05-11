@@ -64,8 +64,10 @@ pub struct Cfg<R: rsleigh::MemReader> {
     /// **Read-only by convention.**  Direct mutation
     /// (`cfg.graph.remove_node(...)`) would desync
     /// `start_addr_to_region_id` from the petgraph and silently
-    /// corrupt subsequent `region_id_at_start` lookups — the same
-    /// hazard W14 fixed for the map.  New code should read via
+    /// corrupt subsequent `region_id_at_start` lookups — a prior bug
+    /// where direct map mutation produced exactly this divergence
+    /// motivated the `pub(crate)` tightening on the index.  New code
+    /// should read via
     /// [`Self::graph`].  Field kept `pub` because the
     /// orchestrator's `sleigh_reuse.rs` test pattern partial-moves
     /// `sleigh` out and continues to read `graph` afterward; a
@@ -139,7 +141,7 @@ impl<R: rsleigh::MemReader> Cfg<R> {
     /// Consume the `Cfg` and return the inner Sleigh handle so a
     /// subsequent CFG rebuild can reuse it without re-loading the SLA
     /// spec.  Used by the strider orchestrator between iterations of
-    /// the indirect-branch fixed-point loop (round-12 S2.4).
+    /// the indirect-branch fixed-point loop.
     #[must_use]
     pub fn into_sleigh(self) -> rsleigh::Sleigh<R> {
         self.sleigh

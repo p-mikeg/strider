@@ -72,7 +72,7 @@ impl Graph {
     /// reachable node into `remap.nodes`, and pass 2 iterates the
     /// same `reachable` set — but propagating as `Err` rather than
     /// panicking keeps every error path typed so Python users see a
-    /// clean exception (round-13).
+    /// clean exception.
     pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
         // 1. Compute reachable set.
         let reachable: Vec<NodeId> = walk_graph(self, entry).collect();

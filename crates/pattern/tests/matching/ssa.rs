@@ -94,7 +94,7 @@ fn phi_for_wrong_vn_rejects() {
     a::none(&g, phi_for(other));
 }
 
-/// T-1 (M-1): `phi_for(vn).input(idx, p)` must address predecessor
+/// `phi_for(vn).input(idx, p)` must address predecessor
 /// slot `idx`, not the raw input index.  Per `node_signature`, the
 /// `VarPhi` input layout is `[phi_token, ...per-predecessor values]`,
 /// so predecessor 0's value lives at raw input index 1.  Pre-fix the

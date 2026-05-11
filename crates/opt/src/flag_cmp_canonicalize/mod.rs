@@ -102,7 +102,7 @@ struct Rule {
     /// returns the new value-output to redirect the root's uses to.
     /// `Err` propagates an unexpected IR invariant break (e.g. a
     /// freshly-constructed binop somehow lacking its single output) as
-    /// a typed error rather than a panic (round-13 OPT.4/OPT.5).
+    /// a typed error rather than a panic.
     build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>,
     /// Capture used by `lhs` for `a`.
     lhs_capture: Capture,
@@ -132,7 +132,7 @@ fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) 
         // `rhs_capture` is `Some(_)`, the matcher contract guarantees
         // `output(_)` returns `Some` for it as well; an empty binding
         // would be a structurally wrong rewrite — surface it as a
-        // typed error rather than a panic (round-13 OPT.2/OPT.3).
+        // typed error rather than a panic.
         // When `rhs_capture` is `None`, the rule is unary (Thumb
         // "test bool against 0") — the build_rhs ignores `_b`, so we
         // pass `a`.
@@ -187,7 +187,7 @@ fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOu
     // `IntCmpOp` is constructed above with exactly one
     // `NodeOutputKind::OutputType(Bool)`; if `node_outputs_exact::<1>`
     // disagrees, it's an internal `create_node` invariant violation —
-    // propagate it as a typed error (round-13 OPT.4).
+    // propagate it as a typed error.
     let [out] = graph.node_outputs_exact::<1>(n)?;
     Ok(out)
 }
@@ -201,7 +201,7 @@ fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> Resul
     graph.extend_asm_fingerprint_from(n, root);
     // Same invariant as `build_int_cmp` — single Bool output by
     // construction; surface any disagreement as a typed error
-    // (round-13 OPT.5).
+    //.
     let [out] = graph.node_outputs_exact::<1>(n)?;
     Ok(out)
 }

@@ -21,10 +21,10 @@ pub struct Binding {
 
 impl Binding {
     /// Constructs a `Binding` from a `(node, output)` pair.  The only
-    /// public construction path — round-12 R12-T-N tightened the fields
-    /// to `pub(crate)` so external callers cannot bypass the
-    /// cross-field invariant ("when `output` is `Some(o)`,
-    /// `graph.output_definition(o).0 == node`").
+    /// public construction path — the fields are `pub(crate)` so
+    /// external callers cannot bypass the cross-field invariant
+    /// ("when `output` is `Some(o)`, `graph.output_definition(o).0 ==
+    /// node`").
     #[must_use]
     pub fn new(node: NodeId, output: Option<NodeOutputId>) -> Self {
         Self { node, output }

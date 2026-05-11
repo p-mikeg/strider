@@ -293,8 +293,8 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     ir::validate::validate(&graph.graph, graph.entry).expect("validate");
 
     // The headline assertion: a `pattern::call().arg(0, …)` query
-    // matches at least once.  Pre-H0 this would have returned zero
-    // matches because the Call had no arg slot 0.
+    // matches at least once.  Before the ABI-threading fix this would
+    // have returned zero matches because the Call had no arg slot 0.
     let v0 = Capture::new();
     let pat: pattern::Pat = call().arg(0, any().capture(v0)).into();
     let matcher = Matcher::new(&graph);

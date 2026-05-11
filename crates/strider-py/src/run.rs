@@ -72,7 +72,7 @@ pub fn run(
     // it would be silently coerced to unbounded (a Python user expects
     // an exception, not silent behavioural change).  A zero-byte
     // function bound is meaningless and historically caused the
-    // lifter to decode past `entry` (round-12 EC-1).
+    // lifter to decode past `entry`.
     if matches!(function_max_size, Some(0)) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "function_max_size must be > 0 (zero is meaningless — omit the argument for unbounded)",

@@ -134,7 +134,7 @@ pub struct FunctionBuilder {
     /// Populated on first call to [`Self::largest_container_for`];
     /// the variable set is fixed at construction so caching is safe.
     /// Lookup turns the per-call O(V) linear scan in
-    /// `pcode_lift::find_largest_fitting_register` into O(1).
+    /// `pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
     pub(crate) largest_container: std::cell::OnceCell<HashMap<rsleigh::Vn, rsleigh::Vn>>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
@@ -221,7 +221,7 @@ impl FunctionBuilder {
         // This keeps the data-flow chain from a float operation's output
         // (e.g. an aarch64 FloatAdd writes to s0, the 4-byte sub-register of q0)
         // connected to the Return node — without this step `q0` would not be
-        // in the variable set, and the analyzer's register-aliasing logic
+        // in the variable set, and the pcode-lift register-aliasing logic
         // would never widen the s0 write into a q0 store visible to Return.
         for v in cc.ret_val_regs().iter().chain(cc.ret_val_regs_float().iter()) {
             if !all_used_variables.contains(v) {

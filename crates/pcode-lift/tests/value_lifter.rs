@@ -888,5 +888,5 @@ fn int_sub_lowers_to_add_with_inner_neg() {
     );
 }
 
-// Note: T-30 (IntLessEqual lowering shape) is covered by the existing
+// Note: IntLessEqual lowering shape is covered by the existing
 // `lift_int_less_equal_lowers_to_boolneg_less` test earlier in this file.

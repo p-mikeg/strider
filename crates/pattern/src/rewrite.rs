@@ -152,8 +152,8 @@ pub fn rewrite_rule(
 /// `RewriteCtx::for_built(&mut bfg)`.  The matcher inside `rewrite_rule`
 /// reads `ctx.graph` + `ctx.entry`; the build path mutates `ctx.graph`.
 ///
-/// **Field visibility note.**  Both fields are `pub(crate)` (round-12
-/// R12-T-A); external opt-pass code reaches `Graph` via the
+/// **Field visibility note.**  Both fields are `pub(crate)`; external
+/// opt-pass code reaches `Graph` via the
 /// [`Deref<Target=Graph>`] / [`DerefMut<Target=Graph>`] impls for
 /// method calls, and uses [`Self::graph_ref`] / [`Self::graph_mut`]
 /// when an explicit `&Graph` / `&mut Graph` is needed for a free

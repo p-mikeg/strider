@@ -215,8 +215,8 @@ mod tests {
     }
 
     /// `enqueue` deduplicates at 10k-item scale.  Pins the
-    /// single-pass `if workset.insert(e) { push }` shape introduced in W9
-    /// (S4.1) — re-enqueueing the same id never duplicates the queue.
+    /// single-pass `if workset.insert(e) { push }` shape —
+    /// re-enqueueing the same id never duplicates the queue.
     #[test]
     fn enqueue_dedup_at_ten_thousand_scale() {
         let n: u32 = 10_000;

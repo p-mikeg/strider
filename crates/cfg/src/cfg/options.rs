@@ -185,10 +185,7 @@ impl OptionsBuilder {
     /// callers should reject zero at their own API boundary (e.g.
     /// `strider.run(function_max_size=0)` raises a typed Python
     /// `ValueError`), but a zero reaching this far is a defensive
-    /// no-op so the lifter doesn't decode past `start_addr`.  The
-    /// previous behaviour (a `debug_assert!` then silent fallback)
-    /// gave Python users a SIGABRT in debug builds; this form
-    /// returns clean state instead.
+    /// no-op so the lifter doesn't decode past `start_addr`.
     #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
         if max_size == 0 {
@@ -206,7 +203,7 @@ impl OptionsBuilder {
     /// pair because the enum makes the two states mutually exclusive
     /// at the type level — `Bounded` and `Unbounded` cannot both be
     /// set, which removes the silent-precedence rule that
-    /// "`fn_max_size.is_some()` always wins" (round-12 R12-T-G).
+    /// "`fn_max_size.is_some()` always wins".
     ///
     /// `FunctionBoundary::Bounded { max_size: 0 }` is **silently
     /// coerced to `Unbounded { allow_code_before_start: false }`** —

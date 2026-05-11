@@ -90,7 +90,7 @@ fn duplicate_edge_kind_is_detected_by_region_branch() {
     );
 }
 
-// ── W3: region_id_at_start public-API contract ────────────────────────────
+// ── region_id_at_start public-API contract ────────────────────────────────
 
 #[test]
 fn region_id_at_start_returns_some_for_real_function_entry() {

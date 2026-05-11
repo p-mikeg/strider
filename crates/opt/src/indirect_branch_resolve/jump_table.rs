@@ -275,7 +275,7 @@ fn match_jump_table_shape(
 /// caller's predecessor-If fallback gets a chance.
 ///
 /// Replaces a previous local recurrence that re-implemented a stripped-down
-/// version of the analyzer's `IntConst` / `And` / `Truncate` /
+/// version of the lifter's `IntConst` / `And` / `Truncate` /
 /// `ZeroExtend` / `ShiftRight` rules.  The fixed-point analyzer covers
 /// every node kind those rules covered — and several more (`Or`, `Xor`,
 /// `Not`, `Popcount`, `Lzcount`, `ShiftLeft`) — so any bound this function

@@ -88,5 +88,5 @@ fn build_routes_through_validator_no_false_positives() {
         .expect("probe regs");
     CallingConvention::x86_64_systemv()
         .build(&regs)
-        .expect("x86_64_systemv must build cleanly (T-2: build routes through try_from_parts)");
+        .expect("x86_64_systemv must build cleanly (build routes through try_from_parts)");
 }

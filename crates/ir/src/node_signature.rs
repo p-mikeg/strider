@@ -333,7 +333,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         // Return: [control, memory, ...return values]. Return values are the
-        // calling convention's ret_val_regs when built by the analyzer; synthetic
+        // calling convention's ret_val_regs when built by the strider lifter; synthetic
         // test builds may supply a single explicit value via `build_return`.
         NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
         // IndirectBranch: [control, memory, target_value].  Placeholder for

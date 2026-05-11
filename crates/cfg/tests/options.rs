@@ -33,9 +33,7 @@ fn options_builder_allow_code_before_start_addr_produces_distinct_options() {
 /// users via strider-py) should reject zero at their own API
 /// boundary so users see a typed `ValueError`; a zero reaching this
 /// far is a defensive no-op so the lifter doesn't decode past
-/// `start_addr`.  Previously this site used `debug_assert!(false,
-/// ...)` which crashed Python in debug builds — a SIGABRT instead
-/// of a clean exception.  Reverted to silent fallback.
+/// `start_addr`.
 #[test]
 fn options_builder_set_function_max_size_zero_falls_back_to_unbounded() {
     let zero = OptionsBuilder::new().set_function_max_size(0).build();

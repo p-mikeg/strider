@@ -101,7 +101,7 @@ impl ResolvedTargets {
     /// an empty `Multiple`; this constructor codifies the contract for
     /// any future arm.  Emptiness is a programmer invariant violation,
     /// not a recoverable runtime condition, so `Option` is the
-    /// idiomatic carrier (round-12 TY-2; previously `Result<_, anyhow::Error>`).
+    /// idiomatic carrier.
     #[must_use]
     pub fn multiple(targets: Vec<u64>) -> Option<Self> {
         if targets.is_empty() {
