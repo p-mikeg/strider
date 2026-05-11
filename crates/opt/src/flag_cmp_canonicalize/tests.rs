@@ -93,7 +93,6 @@ fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
 
 fn if_cond_output(ctx: pattern::RewriteCtxView<'_>, if_node: NodeId) -> NodeOutputId {
     let [_ctrl, cond_out] = ctx
-        .graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
     cond_out
@@ -121,7 +120,6 @@ fn assert_if_cond_is_intcmp(
         "If cond should be IntCmpOp({op:?})",
     );
     let [lhs, rhs] = ctx
-        .graph
         .node_inputs_exact::<2>(cond_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");
@@ -149,7 +147,6 @@ fn assert_if_cond_is_neg_intcmp(
         "If cond should be BoolNeg(...)",
     );
     let [inner] = ctx
-        .graph
         .node_inputs_exact::<1>(neg_node)
         .expect("BoolNeg has 1 input");
     let inner_node = ctx.get_node_from_output(inner);
@@ -159,7 +156,6 @@ fn assert_if_cond_is_neg_intcmp(
         "Inner cond should be IntCmpOp({op:?})",
     );
     let [lhs, rhs] = ctx
-        .graph
         .node_inputs_exact::<2>(inner_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");

@@ -55,24 +55,24 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
         let mut result = OptimizationResult::NoChange;
 
         while let Some(node_id) = work.pop() {
-            let kind = *ctx.graph.node_kind(node_id);
+            let kind = *ctx.node_kind(node_id);
             let NodeKind::Load(space) = kind else {
                 continue;
             };
 
             // Load inputs: [memory_token, addr].
-            let inputs = ctx.graph.node_inputs(node_id);
+            let inputs = ctx.node_inputs(node_id);
             if inputs.len() < 2 {
                 continue;
             }
             let addr_input = inputs[1];
-            let Some(addr) = ctx.graph.int_const_val(addr_input) else {
+            let Some(addr) = ctx.int_const_val(addr_input) else {
                 continue;
             };
 
             // Load output: the single value output carries the loaded data type.
-            let [data_out] = ctx.graph.node_outputs_exact::<1>(node_id)?;
-            let Some(ty) = ctx.graph.output_kind(data_out).as_value() else {
+            let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
+            let Some(ty) = ctx.output_kind(data_out).as_value() else {
                 continue;
             };
             let size = ty.byte_size();
@@ -89,7 +89,7 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
             let Some(masked) = ty.get_unsigned_int(u128::from(loaded)).and_then(|v| u64::try_from(v).ok()) else {
                 continue;
             };
-            let new_out = ctx.graph.make_int_const(masked, ty)?;
+            let new_out = ctx.make_int_const(masked, ty)?;
             result = result.after_replace(ctx, data_out, new_out);
         }
         Ok(result)

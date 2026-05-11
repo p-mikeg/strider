@@ -88,7 +88,7 @@ fn try_forward_load(
 
     let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
     let Some(SpExpr::Terminal { base: _, offset }) =
-        decompose_sp(ctx.graph, addr, sp_vn, memo, &mut visiting)
+        decompose_sp(ctx.graph_ref(), addr, sp_vn, memo, &mut visiting)
     else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -245,7 +245,7 @@ fn probe(
                     }
                 }
                 NodeKind::Store(_) => {
-                    match step_through_store(ctx.graph, node, sp_vn, memo, offset, load_size) {
+                    match step_through_store(ctx.graph_ref(), node, sp_vn, memo, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -262,7 +262,7 @@ fn probe(
                     // this, `Load[sp+K]` whose memory chain passes through
                     // a stack-store phi could never be forwarded — round
                     // fix.
-                    match step_through_stack_store_phi(ctx.graph, node, offset, load_size) {
+                    match step_through_stack_store_phi(ctx.graph_ref(), node, offset, load_size) {
                         AliasStep::MayAlias => break None,
                         AliasStep::PassThrough { prev_mem } => {
                             mem = prev_mem;
@@ -386,7 +386,7 @@ fn realize(
                     let shift_bits =
                         ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
                     let shift_const = ctx.make_int_const(shift_bits, data_ty)?;
-                    let shr = ctx.graph.create_node_attributed(
+                    let shr = ctx.create_node_attributed(
                         NodeKind::IntBinaryOp(ir::IntBinaryOp::ShiftRight),
                         [data, shift_const],
                         [NodeOutputKind::OutputType(data_ty)],
@@ -396,7 +396,7 @@ fn realize(
                     out
                 }
             };
-            let trunc = ctx.graph.create_node_attributed(
+            let trunc = ctx.create_node_attributed(
                 NodeKind::Truncate,
                 [shifted],
                 [NodeOutputKind::OutputType(load_ty)],
@@ -421,7 +421,7 @@ fn realize(
             {
                 return Ok(first);
             }
-            let value_phi = ctx.graph.create_node_attributed(
+            let value_phi = ctx.create_node_attributed(
                 NodeKind::ValuePhi,
                 std::iter::once(phi_token).chain(resolved),
                 [NodeOutputKind::OutputType(load_ty)],

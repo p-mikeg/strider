@@ -144,7 +144,6 @@ fn try_eliminate_dead_branch(
 
             // Collect VarPhi nodes that consume the phi token before we mutate.
             let phi_nodes: Vec<NodeId> = ctx
-                .graph
                 .output_uses(cs_phi_out)
                 .map(|(phi, _)| phi)
                 .collect();
@@ -236,8 +235,7 @@ fn dead_subgraph_has_live_data_consumer(
             if ctx.output_kind(out).is_control() {
                 return false;
             }
-            ctx.graph
-                .output_uses(out)
+            ctx.output_uses(out)
                 .any(|(consumer, _)| !subgraph.contains(consumer))
         })
     })

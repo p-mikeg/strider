@@ -134,7 +134,7 @@ fn collect_stack_args_in_chain_order(
                 let addr = inputs[1];
                 let prev = inputs[0];
                 let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-                match decompose_sp(ctx.graph, addr, stack_ptr_vn, sp_memo, &mut visiting) {
+                match decompose_sp(ctx.graph_ref(), addr, stack_ptr_vn, sp_memo, &mut visiting) {
                     None => {
                         // Non-aliasing — pass through.
                         cur = prev;
@@ -301,7 +301,7 @@ impl Optimizer for CallStackArgCollect {
     fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> Result<OptimizationResult> {
         let calls: Vec<NodeId> = ctx
             .preorder()
-            .filter(|&n| matches!(ctx.graph.node_kind(n), NodeKind::Call))
+            .filter(|&n| matches!(ctx.node_kind(n), NodeKind::Call))
             .collect();
         // Share the SP-decomposition memo across all Call sites in the
         // function — many stack pushes near each other share the same

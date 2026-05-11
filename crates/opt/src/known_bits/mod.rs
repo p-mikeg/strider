@@ -161,7 +161,6 @@ pub fn node_known_bits(
 
     // Find the first integer value output.
     let Some(out) = ctx
-        .graph
         .node_outputs(node_id)
         .into_iter()
         .find(|&o| ctx.output_kind(o).is_integer())
@@ -216,7 +215,6 @@ pub fn node_known_bits(
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
                     let rhs_mask = ctx
-                        .graph
                         .output_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
@@ -257,7 +255,6 @@ pub fn node_known_bits(
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
                     let rhs_mask = ctx
-                        .graph
                         .output_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
@@ -437,7 +434,7 @@ pub fn analyze(ctx: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // the validator's existing scope-of-correctness boundary
     // (Layer A in `ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work = WorkSet::seeded(ir::walk::walk_graph(ctx.graph, ctx.entry));
+    let mut work = WorkSet::seeded(ir::walk::walk_graph(ctx.graph_ref(), ctx.entry()));
     while let Some(node_id) = work.pop() {
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
@@ -446,7 +443,7 @@ pub fn analyze(ctx: pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
         if !merged {
             continue;
         }
-        for (consumer, _idx) in ctx.graph.output_uses(out) {
+        for (consumer, _idx) in ctx.output_uses(out) {
             work.push(consumer);
         }
     }
@@ -485,13 +482,13 @@ impl Optimizer for KnownBits {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             // Already-constant nodes have nothing to rewrite.
-            if matches!(*ctx.graph.node_kind(node_id), NodeKind::IntConst(_)) {
+            if matches!(*ctx.node_kind(node_id), NodeKind::IntConst(_)) {
                 continue;
             }
             outputs.clear();
-            outputs.extend(ctx.graph.node_outputs(node_id));
+            outputs.extend(ctx.node_outputs(node_id));
             for &out in &outputs {
-                let Some(ty) = ctx.graph.output_kind(out).as_value() else {
+                let Some(ty) = ctx.output_kind(out).as_value() else {
                     continue;
                 };
                 if !ty.is_integer() {
@@ -510,15 +507,14 @@ impl Optimizer for KnownBits {
                     continue;
                 }
                 consumers.clear();
-                for (consumer, _) in ctx.graph.output_uses(out) {
+                for (consumer, _) in ctx.output_uses(out) {
                     consumers.push(consumer);
                 }
-                let new_out = ctx.graph.make_int_const(kb.ones, ty)?;
+                let new_out = ctx.make_int_const(kb.ones, ty)?;
                 // Absorb the rewritten node's fingerprint into the new const.
-                let new_node = ctx.graph.get_node_from_output(new_out);
-                ctx.graph
-                    .extend_asm_fingerprint_from(new_node, node_id);
-                if ctx.graph.replace_all_uses(out, new_out)? {
+                let new_node = ctx.get_node_from_output(new_out);
+                ctx.extend_asm_fingerprint_from(new_node, node_id);
+                if ctx.replace_all_uses(out, new_out)? {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
                         work.push(consumer);

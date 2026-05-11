@@ -45,7 +45,7 @@ pub fn apply_link_register(
     placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<()> {
-    let graph = &mut ctx.graph;
+    let graph = ctx.graph_mut();
     let kind = *graph.node_kind(placeholder);
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
@@ -108,7 +108,7 @@ pub fn apply_tail_call(
     clobbered_kinds: &[NodeOutputKind],
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
-    let graph = &mut ctx.graph;
+    let graph = ctx.graph_mut();
     let kind = *graph.node_kind(placeholder);
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
@@ -422,22 +422,22 @@ mod tests {
         let (mut ctx, placeholder) = build_placeholder_graph();
         // Build a Bool-typed value that we'll splice into the placeholder's
         // target_value slot.  `BoolConst` produces a single Bool output.
-        let bool_const = ctx.graph.create_node(
+        let bool_const = ctx.create_node(
             NodeKind::BoolConst(true),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::Bool)],
         );
-        let bool_out = ctx.graph.node_outputs(bool_const).into_iter().next().unwrap();
+        let bool_out = ctx.node_outputs(bool_const).into_iter().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the Bool output.
         let target_input_id = ctx
             .graph
             .node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
-        ctx.graph.update_input(target_input_id, bool_out);
+        ctx.update_input(target_input_id, bool_out);
         // Sanity: the placeholder now has a Bool target_value.
         let target_value_kind = ctx
             .graph
-            .output_kind(ctx.graph.node_inputs(placeholder)[2]);
+            .output_kind(ctx.node_inputs(placeholder)[2]);
         assert!(
             matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::Bool)),
             "fixture must have Bool target_value, got {target_value_kind:?}"

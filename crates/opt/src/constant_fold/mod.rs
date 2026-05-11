@@ -73,8 +73,8 @@ impl Optimizer for ConstantFold {
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(node_id) = work.pop() {
             consumers.clear();
-            for out in ctx.graph.node_outputs(node_id) {
-                for (consumer, _) in ctx.graph.output_uses(out) {
+            for out in ctx.node_outputs(node_id) {
+                for (consumer, _) in ctx.output_uses(out) {
                     consumers.push(consumer);
                 }
             }

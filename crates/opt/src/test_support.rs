@@ -23,21 +23,21 @@ pub(crate) use ir::test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 pub(crate) fn return_value(ctx: pattern::RewriteCtxView<'_>) -> crate::Result<Value> {
     let ret = ctx
         .all_node_ids()
-        .find(|&n| matches!(ctx.graph.node_kind(n), NodeKind::Return))
+        .find(|&n| matches!(ctx.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(ctx.graph.node_inputs(ret)[2])
+    Ok(ctx.node_inputs(ret)[2])
 }
 
 /// `NodeKind` of the return-value producer.
 pub(crate) fn return_kind(ctx: pattern::RewriteCtxView<'_>) -> crate::Result<NodeKind> {
     let val = return_value(ctx)?;
-    Ok(*ctx.graph.kind_of_output(val))
+    Ok(*ctx.kind_of_output(val))
 }
 
 /// Counts nodes matching `pred` (full arena, including detached zombies).
 pub(crate) fn count<F: Fn(&NodeKind) -> bool>(ctx: pattern::RewriteCtxView<'_>, pred: F) -> usize {
     ctx.all_node_ids()
-        .filter(|&n| pred(ctx.graph.node_kind(n)))
+        .filter(|&n| pred(ctx.node_kind(n)))
         .count()
 }
 
@@ -50,7 +50,7 @@ pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
     let reachable: entity_utils::DenseEntitySet<NodeId> = ctx.preorder().collect();
     ctx.all_node_ids()
         .filter(|n| reachable.contains(*n))
-        .filter(|&n| pred(ctx.graph.node_kind(n)))
+        .filter(|&n| pred(ctx.node_kind(n)))
         .count()
 }
 
@@ -59,7 +59,7 @@ pub(crate) fn count_reachable<F: Fn(&NodeKind) -> bool>(
 pub(crate) fn find_unique_if(ctx: pattern::RewriteCtxView<'_>) -> NodeId {
     let mut iter = ctx
         .all_node_ids()
-        .filter(|&n| matches!(ctx.graph.node_kind(n), NodeKind::If));
+        .filter(|&n| matches!(ctx.node_kind(n), NodeKind::If));
     let first = iter.next().expect("test fixture must contain an If node");
     assert!(
         iter.next().is_none(),

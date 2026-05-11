@@ -59,7 +59,7 @@ impl Optimizer for IfCondInversion {
         // Collect candidate `If` nodes whose cond input is BoolUnaryOp::Neg.
         // We filter here (not in `preorder_kind`) because we need to read
         // the input chain too.
-        let graph = &ctx.graph;
+        let graph = ctx.graph_ref();
         let candidates: Vec<NodeId> = ctx
             .preorder_kind(|k| matches!(k, NodeKind::If))
             .filter(|&node| is_inverted_cond(graph, node))
@@ -67,7 +67,7 @@ impl Optimizer for IfCondInversion {
 
         let mut result = OptimizationResult::NoChange;
         for if_node in candidates {
-            invert(ctx.graph, if_node)?;
+            invert(ctx.graph_mut(), if_node)?;
             result = OptimizationResult::Changed;
         }
         Ok(result)

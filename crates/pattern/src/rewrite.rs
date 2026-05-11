@@ -152,15 +152,18 @@ pub fn rewrite_rule(
 /// `RewriteCtx::for_built(&mut bfg)`.  The matcher inside `rewrite_rule`
 /// reads `ctx.graph` + `ctx.entry`; the build path mutates `ctx.graph`.
 ///
-/// **Field visibility note.**  `graph` and `entry` are intentionally
-/// kept `pub` for ergonomics — opt passes in particular access
-/// `function.graph` directly across hundreds of call sites.  The
-/// supported accessors are [`Self::graph_ref`] / [`Self::graph_mut`] /
-/// [`Self::entry`]; struct-literal rebinding (`ctx.graph = &mut other`)
-/// is a logic mistake, not a soundness violation.
+/// **Field visibility note.**  Both fields are `pub(crate)` (round-12
+/// R12-T-A); external opt-pass code reaches `Graph` via the
+/// [`Deref<Target=Graph>`] / [`DerefMut<Target=Graph>`] impls for
+/// method calls, and uses [`Self::graph_ref`] / [`Self::graph_mut`]
+/// when an explicit `&Graph` / `&mut Graph` is needed for a free
+/// function or trait method.  This prevents struct-literal rebinding
+/// (`ctx.graph = &mut other`) at distance — the field could
+/// previously be aimed at a different graph than `entry` belongs to,
+/// silently corrupting subsequent walks.
 pub struct RewriteCtx<'g> {
-    pub graph: &'g mut Graph,
-    pub entry: NodeId,
+    pub(crate) graph: &'g mut Graph,
+    pub(crate) entry: NodeId,
 }
 
 impl<'g> RewriteCtx<'g> {
@@ -237,19 +240,8 @@ impl<'g> RewriteCtx<'g> {
 /// `RewriteCtxView::new`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
-    /// **Caution:** the field is `pub` only for the existing `fg.graph`
-    /// access pattern across opt passes.  Re-binding the field
-    /// (`view.graph = &other_graph`) silently redirects the view at
-    /// distance — only do so if you understand the lifetime
-    /// implications.  Prefer the `Deref<Target = Graph>` impl for
-    /// read access, or the [`Self::graph_ref`] / [`Self::entry`]
-    /// accessors below.
-    pub graph: &'g Graph,
-    /// **Caution:** read-only by convention; mutating from external
-    /// code redirects the view's anchor.  Use [`Self::new`] /
-    /// `From<&BuiltFunctionGraph>` / `From<&RewriteCtx>` for
-    /// construction rather than struct-literal mutation.
-    pub entry: NodeId,
+    pub(crate) graph: &'g Graph,
+    pub(crate) entry: NodeId,
 }
 
 impl<'g> RewriteCtxView<'g> {

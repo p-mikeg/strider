@@ -38,7 +38,7 @@ impl WorkSet {
     }
 
     /// Seeds the worklist with every node reachable from
-    /// `ctx.entry()` whose [`NodeKind`] satisfies `pred`.
+    /// `ctx.entry()()` whose [`NodeKind`] satisfies `pred`.
     ///
     /// Replaces the recurring `ctx.preorder_kind(...).collect::<Vec<_>>()`
     /// followed by a `for node in collected { ... }` loop: the seeded

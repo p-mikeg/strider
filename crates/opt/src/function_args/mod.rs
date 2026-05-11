@@ -105,7 +105,8 @@ impl Optimizer for FunctionArgDetect {
         // renderer draws an edgeless `InitialVar(sp)` island.  Detach them.
         // The detach result is hygiene-only (post-pass return values are
         // ignored by the pipeline); don't escalate it into `Changed`.
-        let _ = crate::worklist::detach_unreachable_nodes(ctx.graph, ctx.entry);
+        let entry = ctx.entry();
+        let _ = crate::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
         Ok(changed)
     }
 }
@@ -248,7 +249,7 @@ fn detect_stack_args(
         let load_size = load_ty.byte_size() as i64;
         let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
         let Some(SpExpr::Terminal { base: _, offset }) =
-            decompose_sp(ctx.graph, addr, sp_vn, &mut memo, &mut visiting)
+            decompose_sp(ctx.graph_ref(), addr, sp_vn, &mut memo, &mut visiting)
         else {
             continue;
         };
@@ -463,7 +464,7 @@ fn mem_chain_is_dirty(
                         results.push(false);
                     }
                     NodeKind::StackStore { offset: k, .. } => {
-                        match step_through_stack_store(ctx.graph, node, k, offset, load_size) {
+                        match step_through_stack_store(ctx.graph_ref(), node, k, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -471,7 +472,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::StackStorePhi { .. } => {
-                        match step_through_stack_store_phi(ctx.graph, node, offset, load_size) {
+                        match step_through_stack_store_phi(ctx.graph_ref(), node, offset, load_size) {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {
                                 work.push(Frame::Visit(prev_mem));
@@ -479,7 +480,7 @@ fn mem_chain_is_dirty(
                         }
                     }
                     NodeKind::Store(_) => {
-                        match step_through_store(ctx.graph, node, sp_vn, sp_memo, offset, load_size)
+                        match step_through_store(ctx.graph_ref(), node, sp_vn, sp_memo, offset, load_size)
                         {
                             AliasStep::MayAlias => results.push(true),
                             AliasStep::PassThrough { prev_mem } => {

@@ -144,7 +144,7 @@ pub fn classify_anchor_with_rom_and_sp(
     stack_ptr_vn: Option<rsleigh::Vn>,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     let producer_id = graph.get_node_from_output(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {

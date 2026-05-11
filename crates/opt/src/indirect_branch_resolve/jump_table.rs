@@ -172,7 +172,7 @@ fn match_jump_table_shape(
     ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> Option<JumpTableShape> {
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     // The producer must be a Load.  classify.rs already routes here
     // only on Load, but we re-check defensively so this function is
     // testable in isolation.  We pull `space` and `entry_size` off the
@@ -211,16 +211,16 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         mul(var(idx_var), any_int_const(stride_var)),
     ));
-    if let Some(m) = Matcher::for_graph(ctx.graph, ctx.entry).match_at(load_node, &mul_pat.into()) {
+    if let Some(m) = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(load_node, &mul_pat.into()) {
         // CORRECTNESS — `get_uint` returns `Option<u128>`; the prior
         // code returned `u64` for both `base` and `stride` via
         // `int_const_val`, which itself truncates to `u64`.  We mirror
         // the truncation here.  Real jump-table bases / strides fit in
         // `u64` on every supported arch.
         #[allow(clippy::cast_possible_truncation)]
-        let base = m.get_uint(base_var, ctx.graph)? as u64;
+        let base = m.get_uint(base_var, ctx.graph_ref())? as u64;
         #[allow(clippy::cast_possible_truncation)]
-        let stride = m.get_uint(stride_var, ctx.graph)? as u64;
+        let stride = m.get_uint(stride_var, ctx.graph_ref())? as u64;
         let idx_output = m.output(idx_var)?;
         return Some(JumpTableShape {
             base,
@@ -240,10 +240,10 @@ fn match_jump_table_shape(
         any_int_const(base_var),
         shl(var(idx_var), any_int_const(stride_var)),
     ));
-    let m = Matcher::for_graph(ctx.graph, ctx.entry).match_at(load_node, &shl_pat.into())?;
+    let m = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(load_node, &shl_pat.into())?;
     #[allow(clippy::cast_possible_truncation)]
-    let base = m.get_uint(base_var, ctx.graph)? as u64;
-    let shift = m.get_uint(stride_var, ctx.graph)?;
+    let base = m.get_uint(base_var, ctx.graph_ref())? as u64;
+    let shift = m.get_uint(stride_var, ctx.graph_ref())?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at
     // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
@@ -355,7 +355,7 @@ pub fn bound_via_predecessor_if(
     // The placeholder's input slot 0 is its Control input; we walk
     // upward through Controls looking for an If whose true branch
     // leads to this placeholder.
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     let placeholder = find_anchor_consumer_placeholder(graph, anchor_output)?;
     // Slot 0 = control; see node_signature::expected_signature for
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]`.
@@ -420,7 +420,7 @@ fn walk_control_for_if_bound_iter(
         combined: u64,
     }
 
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     let mut visited: NodeIdSet = NodeIdSet::new();
     let mut trail: Vec<NodeId> = Vec::new();
     // CS continuations form a stack; preallocate to avoid the first
@@ -615,7 +615,7 @@ fn bound_from_if_condition(
         return None;
     }
     use pattern::{Capture, Matcher, any_int_const, bool_not, int_cmp_any, var};
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     let cmp_node = graph.get_node_from_output(cond_out);
 
     // Shape 1 (lowered <=): BoolNeg(IntLess(IntConst(N), idx))  or its
@@ -629,12 +629,12 @@ fn bound_from_if_condition(
         let n_var = Capture::new();
         let idx_var = Capture::new();
         let pat = bool_not(int_cmp_any(op_var, any_int_const(n_var), var(idx_var)));
-        if let Some(m) = Matcher::for_graph(ctx.graph, ctx.entry).match_at(cmp_node, &pat) {
+        if let Some(m) = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(cmp_node, &pat) {
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
-                let op = m.get_int_cmp_op(op_var, ctx.graph)?;
+                let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
                 if matches!(op, IntCmpOp::Less | IntCmpOp::Sless) {
-                    let n = u64::try_from(m.get_uint(n_var, ctx.graph)?).ok()?;
+                    let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
                     return n.checked_add(1);
                 }
             }
@@ -646,7 +646,7 @@ fn bound_from_if_condition(
     let idx_var = Capture::new();
     let n_var = Capture::new();
     let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
-    let m = Matcher::for_graph(ctx.graph, ctx.entry).match_at(cmp_node, &pat)?;
+    let m = Matcher::for_graph(ctx.graph_ref(), ctx.entry()).match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_output`.  `same_value` walks through trivial
@@ -658,8 +658,8 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_output) {
         return None;
     }
-    let n = u64::try_from(m.get_uint(n_var, ctx.graph)?).ok()?;
-    let op = m.get_int_cmp_op(op_var, ctx.graph)?;
+    let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
+    let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
 
     match op {
         // idx < N (true) → bound = N.

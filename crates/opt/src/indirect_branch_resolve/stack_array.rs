@@ -80,7 +80,7 @@ pub fn classify_stack_array(
     stack_ptr_vn: rsleigh::Vn,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -248,8 +248,8 @@ fn strip_target_mask(
     ctx: pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
-    let graph = &ctx.graph;
-    let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
+    let graph = ctx.graph_ref();
+    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -260,7 +260,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &and_p.into())
-            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -281,7 +281,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const(c_var), var(other_var));
         if let Some(m) = matcher.match_at(producer, &or_p.into())
-            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -310,7 +310,7 @@ fn match_stack_array_shape(
     anchor_output: NodeOutputId,
     stack_ptr_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let graph = &ctx.graph;
+    let graph = ctx.graph_ref();
     let load_node = graph.get_node_from_output(anchor_output);
     let NodeKind::Load(_) = *graph.node_kind(load_node) else {
         return None;
@@ -483,14 +483,14 @@ fn extract_idx_and_stride(
     use pattern::{Capture, Matcher, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.get_node_from_output(candidate);
-    let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
+    let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const(stride_var));
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
-        let stride_u128 = m.get_uint(stride_var, ctx.graph)?;
+        let stride_u128 = m.get_uint(stride_var, ctx.graph_ref())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -505,7 +505,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const(s_var));
     let m = matcher.match_at(candidate_node, &shl_pat.into())?;
-    let s_u128 = m.get_uint(s_var, ctx.graph)?;
+    let s_u128 = m.get_uint(s_var, ctx.graph_ref())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject

@@ -28,7 +28,7 @@ fn try_detect_stack_store(
     let [old_mem_out] = ctx.node_outputs_exact::<1>(node_id)?;
 
     let mut visiting: entity_utils::DenseEntitySet<ir::node::NodeId> = entity_utils::DenseEntitySet::new();
-    let Some(expr) = decompose_sp(ctx.graph, addr, sp_vn, memo, &mut visiting) else {
+    let Some(expr) = decompose_sp(ctx.graph_ref(), addr, sp_vn, memo, &mut visiting) else {
         return Ok(OptimizationResult::NoChange);
     };
 

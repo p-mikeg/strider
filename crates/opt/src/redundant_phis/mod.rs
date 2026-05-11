@@ -13,13 +13,12 @@ fn try_detach_dead_inputs(
     node_id: NodeId,
 ) -> OptimizationResult {
     let all_unused = ctx
-        .graph
         .node_outputs(node_id)
         .into_iter()
-        .all(|out| ctx.graph.output_uses(out).next().is_none());
+        .all(|out| ctx.output_uses(out).next().is_none());
 
-    if all_unused && !ctx.graph.node_inputs(node_id).is_empty() {
-        ctx.graph.detach_node_inputs(node_id);
+    if all_unused && !ctx.node_inputs(node_id).is_empty() {
+        ctx.detach_node_inputs(node_id);
         OptimizationResult::Changed
     } else {
         OptimizationResult::NoChange
@@ -33,7 +32,7 @@ fn remove_phis(
     node_id: NodeId,
     reachable: &ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
-    match ctx.graph.node_kind(node_id) {
+    match ctx.node_kind(node_id) {
         // VarPhi and MemPhi have identical input layouts after the builder
         // links phi_token as inputs[0] for both:
         //
@@ -46,14 +45,14 @@ fn remove_phis(
         // We deduplicate by NodeOutputId so that two edges from the same
         // predecessor (unusual but valid) count as one.
         NodeKind::VarPhi(..) | NodeKind::MemPhi => {
-            let inputs = ctx.graph.node_inputs(node_id);
+            let inputs = ctx.node_inputs(node_id);
             if inputs.is_empty() {
                 return Ok(OptimizationResult::NoChange);
             }
             let phi_token = inputs[0];
-            let control_state_id = ctx.graph.output_definition(phi_token).0;
-            let ctrl_inputs = ctx.graph.node_inputs(control_state_id);
-            let phi_self_output = ctx.graph.node_outputs_exact::<1>(node_id)?[0];
+            let control_state_id = ctx.output_definition(phi_token).0;
+            let ctrl_inputs = ctx.node_inputs(control_state_id);
+            let phi_self_output = ctx.node_outputs_exact::<1>(node_id)?[0];
 
             // Single pass: gather both the deduplicated reachable ctrl edges
             // and their corresponding values (inputs[j + 1]) for live
@@ -70,7 +69,7 @@ fn remove_phis(
             let mut reachable_ctrl: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
             let mut live_values: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
             for (j, ctrl_in) in ctrl_inputs.into_iter().enumerate() {
-                if reachable.contains(ctx.graph.output_definition(ctrl_in).0) {
+                if reachable.contains(ctx.output_definition(ctrl_in).0) {
                     reachable_ctrl.insert(ctrl_in);
                     let value = inputs[j + 1];
                     if value != phi_self_output {
@@ -89,20 +88,20 @@ fn remove_phis(
                 (Some(unique_ctrl), None) => {
                     // Find position j such that ctrl_inputs[j] == unique_ctrl, then
                     // take inputs[j + 1] (skipping the phi_token at inputs[0]).
-                    let ctrl_inputs2 = ctx.graph.node_inputs(control_state_id);
+                    let ctrl_inputs2 = ctx.node_inputs(control_state_id);
                     let Some(j) = ctrl_inputs2.into_iter().position(|c| c == unique_ctrl)
                     else {
                         bail!("unique control edge not found in control-state inputs");
                     };
-                    let value = ctx.graph.node_inputs(node_id)[j + 1];
-                    let [output] = ctx.graph.node_outputs_exact::<1>(node_id)?;
+                    let value = ctx.node_inputs(node_id)[j + 1];
+                    let [output] = ctx.node_outputs_exact::<1>(node_id)?;
                     // Absorb the phi's asm-fingerprint into the surviving
                     // value producer.  Phis are exempt-empty by default, but
                     // an earlier opt pass (e.g. StackStoreDetect) may have
                     // unioned addresses into them; preserve those here.
-                    let value_node = ctx.graph.get_node_from_output(value);
-                    ctx.graph.extend_asm_fingerprint_from(value_node, node_id);
-                    ctx.graph.replace_all_uses(output, value)?
+                    let value_node = ctx.get_node_from_output(value);
+                    ctx.extend_asm_fingerprint_from(value_node, node_id);
+                    ctx.replace_all_uses(output, value)?
                 }
                 _ => match (value_iter.next(), value_iter.next()) {
                     // Distinct live ctrl predecessors all feed the same data
@@ -110,40 +109,40 @@ fn remove_phis(
                     // value.  (The ControlState still has multiple real
                     // predecessors, so we don't touch it here.)
                     (Some(value), None) => {
-                        let [output] = ctx.graph.node_outputs_exact::<1>(node_id)?;
-                        let value_node = ctx.graph.get_node_from_output(value);
-                        ctx.graph.extend_asm_fingerprint_from(value_node, node_id);
-                        ctx.graph.replace_all_uses(output, value)?
+                        let [output] = ctx.node_outputs_exact::<1>(node_id)?;
+                        let value_node = ctx.get_node_from_output(value);
+                        ctx.extend_asm_fingerprint_from(value_node, node_id);
+                        ctx.replace_all_uses(output, value)?
                     }
                     _ => false,
                 },
             };
 
             if simplified {
-                ctx.graph.detach_node_inputs(node_id);
+                ctx.detach_node_inputs(node_id);
                 Ok(OptimizationResult::Changed)
             } else {
                 Ok(try_detach_dead_inputs(ctx, node_id))
             }
         }
         NodeKind::ControlState => {
-            let node_inputs = ctx.graph.node_inputs(node_id);
+            let node_inputs = ctx.node_inputs(node_id);
             let reachable_inputs: DenseEntitySet<NodeOutputId> = node_inputs
                 .into_iter()
-                .filter(|inp| reachable.contains(ctx.graph.output_definition(*inp).0))
+                .filter(|inp| reachable.contains(ctx.output_definition(*inp).0))
                 .collect();
 
             let mut iter = reachable_inputs.iter();
             let simplified = match (iter.next(), iter.next()) {
                 (Some(input), None) => {
                     let [output, _phi_token] =
-                        ctx.graph.node_outputs_exact::<2>(node_id)?;
+                        ctx.node_outputs_exact::<2>(node_id)?;
                     // ControlState is exempt-empty by default; absorb its
                     // fingerprint into the surviving control producer for
                     // the same reason as the phi-collapse path above.
-                    let input_node = ctx.graph.get_node_from_output(input);
-                    ctx.graph.extend_asm_fingerprint_from(input_node, node_id);
-                    ctx.graph.replace_all_uses(output, input)?
+                    let input_node = ctx.get_node_from_output(input);
+                    ctx.extend_asm_fingerprint_from(input_node, node_id);
+                    ctx.replace_all_uses(output, input)?
                 }
                 _ => false,
             };
@@ -170,7 +169,7 @@ pub struct RedundantPhis;
 
 impl Optimizer for RedundantPhis {
     fn optimize(&self, ctx: &mut pattern::RewriteCtx<'_>) -> crate::Result<OptimizationResult> {
-        let reachable = ir::walk::cfg_reachable(ctx.graph, ctx.entry);
+        let reachable = ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `remove_phis`, so don't
         // walk every node — pre-filter on the kinds we care about.
@@ -178,7 +177,7 @@ impl Optimizer for RedundantPhis {
             .preorder()
             .filter(|&n| {
                 matches!(
-                    ctx.graph.node_kind(n),
+                    ctx.node_kind(n),
                     NodeKind::VarPhi(_)
                         | NodeKind::MemPhi
                         | NodeKind::ControlState
@@ -193,7 +192,8 @@ impl Optimizer for RedundantPhis {
         // no other pass can act on the result.  Run it for hygiene but do
         // NOT escalate it into a `Changed` signal — that just costs the
         // pipeline one extra fixed-point iteration with no work to do.
-        let _ = crate::worklist::detach_unreachable_nodes(ctx.graph, ctx.entry);
+        let entry = ctx.entry();
+        let _ = crate::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
         Ok(res)
     }
 }

@@ -74,7 +74,7 @@ impl Optimizer for FlagCmpCanonicalize {
         // rule fire before rule 1 (the ZR identity) shrinks the inner
         // `Equal(diff, 0)` and breaks the outer match.  Same pattern as
         // `strider::GraphRewriter::apply_rule`.
-        let candidates: Vec<NodeId> = ctx.graph.preorder(ctx.entry).collect();
+        let candidates: Vec<NodeId> = ctx.preorder().collect();
         let mut any = false;
         for node in candidates {
             for rule in RULES.iter() {
@@ -119,7 +119,7 @@ fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) 
     // same output in that case so the RHS builder, which ignores it,
     // still gets a valid argument.
     let (a_out, b_out) = {
-        let matcher = Matcher::for_graph(ctx.graph, ctx.entry);
+        let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
         let m = match matcher.match_at(node, &rule.lhs) {
             Some(m) => m,
             None => return Ok(false),
@@ -147,16 +147,16 @@ fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) 
         (a, b)
     };
 
-    let [root_out] = ctx.graph.node_outputs_exact::<1>(node)?;
+    let [root_out] = ctx.node_outputs_exact::<1>(node)?;
     // Bail before constructing fresh RHS nodes when the root has no
     // live consumers — building first and discovering zero uses
     // afterwards would leak orphan IntCmp / BoolNeg / IntAdd zombies
     // into the arena until the next `retain_reachable`.
-    if ctx.graph.output_uses(root_out).next().is_none() {
+    if ctx.output_uses(root_out).next().is_none() {
         return Ok(false);
     }
-    let new_out = (rule.build_rhs)(ctx.graph, a_out, b_out, node);
-    let changed = ctx.graph.replace_all_uses(root_out, new_out)?;
+    let new_out = (rule.build_rhs)(ctx.graph_mut(), a_out, b_out, node);
+    let changed = ctx.replace_all_uses(root_out, new_out)?;
     Ok(changed)
 }
 
