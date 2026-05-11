@@ -180,22 +180,19 @@ impl OptionsBuilder {
     /// Any unconditional branch whose target address is ≥ `start_addr + max_size`
     /// will be treated as a tail call.
     ///
-    /// **`max_size = 0` is rejected** (silently treated as unbounded).  A
-    /// zero-byte function bound is semantically meaningless and previously
-    /// caused the lifter to decode past the entry address whenever the
-    /// first machine instruction produced zero pcode operations (round-12
-    /// EC-1): `is_addr_tail_call(target, start, Some(0), _)` evaluates
-    /// `target >= start.saturating_add(0)` = `target >= start` as always
-    /// true, but `region_builder`'s empty-`insns` guard at the bound check
-    /// skips the truncation when no pcode-emitting insn has been seen yet,
-    /// so the loop keeps lifting into adjacent memory.
+    /// `max_size == 0` is **silently coerced to unbounded** (no
+    /// effect) rather than panicking — Python and other downstream
+    /// callers should reject zero at their own API boundary (e.g.
+    /// `strider.run(function_max_size=0)` raises a typed Python
+    /// `ValueError`), but a zero reaching this far is a defensive
+    /// no-op so the lifter doesn't decode past `start_addr`.  The
+    /// previous behaviour (a `debug_assert!` then silent fallback)
+    /// gave Python users a SIGABRT in debug builds; this form
+    /// returns clean state instead.
     #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
         if max_size == 0 {
-            debug_assert!(
-                false,
-                "set_function_max_size(0) is meaningless; use the default unbounded behaviour instead"
-            );
+            // Silent fallback to unbounded; documented above.
             self.options.fn_max_size = None;
             return self;
         }
@@ -211,17 +208,16 @@ impl OptionsBuilder {
     /// set, which removes the silent-precedence rule that
     /// "`fn_max_size.is_some()` always wins" (round-12 R12-T-G).
     ///
-    /// `FunctionBoundary::Bounded { max_size: 0 }` is rejected the
-    /// same way [`Self::set_function_max_size`] rejects zero (round-12
-    /// EC-1).
+    /// `FunctionBoundary::Bounded { max_size: 0 }` is **silently
+    /// coerced to `Unbounded { allow_code_before_start: false }`** —
+    /// see [`Self::set_function_max_size`] for the rationale (Python
+    /// callers should reject zero at the boundary; a zero reaching
+    /// this far is a defensive no-op).
     #[must_use]
     pub fn set_function_boundary(mut self, boundary: FunctionBoundary) -> Self {
         match boundary {
-            FunctionBoundary::Bounded { max_size: 0 } => {
-                debug_assert!(
-                    false,
-                    "set_function_boundary(Bounded {{ max_size: 0 }}) is meaningless; use Unbounded instead"
-                );
+            FunctionBoundary::Bounded { max_size: 0 }
+            | FunctionBoundary::Unbounded { allow_code_before_start: false } => {
                 self.options.fn_max_size = None;
                 self.options.allow_code_before_start_addr = false;
             }

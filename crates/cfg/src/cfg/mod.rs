@@ -10,7 +10,7 @@ pub use builder::ResolvedTargets;
 pub use decode_cache::DecodeCache;
 #[doc(hidden)]
 pub use builder::test_api;
-pub use options::OptionsBuilder;
+pub use options::{FunctionBoundary, OptionsBuilder};
 
 #[doc(hidden)]
 pub use dot::test_api as dot_test_api;

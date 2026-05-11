@@ -47,9 +47,9 @@ pub fn build_cfg(
     let opts = opts_builder.build();
 
     // Use `for_arch` so the CallOther classifier sees the actual arch
-    // preset; the deprecated `Builder::new` would default to `X86_64`
-    // and silently mis-classify arch-specific user-ops on non-x86
-    // targets (`brk` on AArch64, `swi` on ARM, etc.).
+    // preset.  (`Builder::new` was deleted in round 12 W5c — it used
+    // to default to `X86_64` and silently mis-classified arch-specific
+    // user-ops on non-x86 targets.)
     let built = cfg::Builder::for_arch(&arch, inner_sleigh, entry, opts)
         .build()
         .map_err(into_lift_err)?;

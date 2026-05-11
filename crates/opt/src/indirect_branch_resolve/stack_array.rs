@@ -145,8 +145,12 @@ pub fn classify_stack_array(
 /// `StackStore` → `StackLoadForward` propagation can leave the wrapper
 /// in place when the load's declared output type matches the truncate.
 ///
-/// Mirrors the `Truncate(_)` and `Extend(_)` arms in
-/// `crates/opt/src/indirect_branch_resolve/classify.rs:233-269`.
+/// Implements the `Truncate(IntConst)` / `Extend(IntConst)` peel that
+/// `classify.rs`'s top-level arm explicitly delegates to ConstantFold
+/// (rules 4-6).  This peel handles the stack-array path where the
+/// `StackStore` → `StackLoadForward` propagation can leave the
+/// `Truncate` wrapper in place if the load's declared output type
+/// matches the truncate width.
 ///
 /// SOUND: both wrappers are deterministic functions of the inner
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend

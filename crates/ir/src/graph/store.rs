@@ -67,11 +67,14 @@ impl Graph {
     /// # Errors
     ///
     /// Returns an error when either the old or the new kind is
-    /// cacheable.  When debug assertions are enabled, also asserts
-    /// that the node's current slot shape matches the new kind's
-    /// expected [`crate::node_signature::expected_signature`] — a
-    /// mismatch indicates the caller forgot to reshape the inputs
-    /// before mutating the kind.
+    /// cacheable, or when the node's current slot shape does not match
+    /// the new kind's expected
+    /// [`crate::node_signature::expected_signature`] (a mismatch
+    /// indicates the caller forgot to reshape the inputs before
+    /// mutating the kind).  Previously a `debug_assert!`; promoted to a
+    /// runtime error so Python users see a clean typed exception
+    /// instead of a release-mode misshape or a debug-mode crash
+    /// (round-13 IR.4).
     pub fn set_node_kind(&mut self, node_id: NodeId, kind: NodeKind) -> crate::Result<()> {
         let old_kind = self.nodes[node_id].kind;
         if old_kind.is_cacheable() || kind.is_cacheable() {
@@ -79,18 +82,19 @@ impl Graph {
                 "set_node_kind requires both kinds non-cacheable: old={old_kind:?}, new={kind:?}"
             ));
         }
-        // Debug-only signature check: the node's current slot count
-        // must match the new kind's expected signature so the edges
-        // remain well-typed post-mutation.  Producers (e.g.
-        // `apply_link_register`) reshape inputs via
-        // `add_node_input` / `remove_node_input` before calling here,
-        // so a mismatch is a caller bug.
-        debug_assert!(
-            crate::node_signature::slot_counts_match_kind(self, node_id, &kind),
-            "set_node_kind: node {node_id:?} (old={old_kind:?}) slot shape does \
-             not match new kind {kind:?}'s expected signature — call \
-             add_node_input/remove_node_input first to reshape inputs"
-        );
+        // The node's current slot count must match the new kind's
+        // expected signature so the edges remain well-typed
+        // post-mutation.  Producers (e.g. `apply_link_register`)
+        // reshape inputs via `add_node_input` / `remove_node_input`
+        // before calling here, so a mismatch is a caller bug — surface
+        // it as a typed error.
+        if !crate::node_signature::slot_counts_match_kind(self, node_id, &kind) {
+            return Err(anyhow::anyhow!(
+                "set_node_kind: node {node_id:?} (old={old_kind:?}) slot shape does \
+                 not match new kind {kind:?}'s expected signature — call \
+                 add_node_input/remove_node_input first to reshape inputs"
+            ));
+        }
         self.nodes[node_id].kind = kind;
         Ok(())
     }

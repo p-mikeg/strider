@@ -294,7 +294,7 @@ impl PyGraph {
     /// Pre-compaction node ids become invalid across this call.
     fn compact(&self) -> PyResult<()> {
         let mut graph = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        let _remap = graph.compact();
+        let _remap = graph.compact().map_err(crate::errors::into_strider_err)?;
         Ok(())
     }
 

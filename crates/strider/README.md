@@ -11,7 +11,9 @@ ready for [`pattern`](../pattern) queries.
 - `run(config: RunConfig<'_, R>) -> Result<ir::BuiltFunctionGraph>` —
   the canonical top-level entry. Builds the CFG, lifts to IR, runs
   optimisation pipelines, resolves indirect branches.
-- `RunConfig<'a, R>` — input bundle: `strider: &Strider`, `start_addr: u64`,
+- `RunConfig<'a, R>` — input bundle: `strider: &Strider`,
+  `start_addr: cfg::MachineInsnAddr` (construct via
+  `cfg::MachineInsnAddr::new(addr)` or `addr.into()`),
   owned `sleigh: rsleigh::Sleigh<R>`, optional `rom: Arc<dyn ReadOnlyMemory>`,
   `fn_max_size: Option<u64>`, `allow_code_before_start_addr: bool`,
   `compact: bool`, `per_address_ccs: HashMap<u64, CallingConvention>`.

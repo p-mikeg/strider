@@ -261,8 +261,8 @@ where
     known_targets: HashMap<PcodeInsnAddr, ResolvedTargets>,
     /// The Sleigh handle we thread through every iteration.  Initialised
     /// from `RunConfig::sleigh` at construction; consumed by
-    /// `Builder::with_endianness` per iteration and harvested back from
-    /// the resulting `Cfg::sleigh`.  `None` only momentarily inside
+    /// `Builder::for_arch` per iteration and harvested back from the
+    /// resulting `Cfg::into_sleigh()`.  `None` only momentarily inside
     /// `build_lift_stable`.
     sleigh: Option<rsleigh::Sleigh<R>>,
     /// The current optimised IR graph.
@@ -497,7 +497,7 @@ where
         let graph = self.graph_mut()?;
         pipeline.run_on_built(graph)?;
         if compact {
-            graph.compact();
+            graph.compact()?;
         }
         self.graph
             .take()
@@ -951,10 +951,11 @@ where
     let cfg_opts = opts_builder.build();
 
     // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
-    // arch atomically.  `Builder::with_endianness` would silently default the
-    // preset to `X86_64`, which causes arch-specific CallOther dispatch
-    // (ARM `swi`, AArch64 `CallHyperVisor`/`CallSecureMonitor`) to be looked
-    // up under the wrong preset and silently misclassified or rejected.
+    // arch atomically.  Earlier `Builder::new` / `Builder::with_endianness`
+    // ctors silently defaulted `preset = X86_64`, which caused arch-specific
+    // CallOther dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the
+    // wrong preset and silently misclassified or rejected; those ctors were
+    // deleted in round 12 W5c — `for_arch` is now the only public path.
     let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())

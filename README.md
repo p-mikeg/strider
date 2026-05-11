@@ -218,7 +218,7 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
 | `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary into `FunctionArg`. |
 
-`IndirectBranchResolve` is a producer-shape classifier (link-register-return, tail call, jump table, stack-array dispatch) — it implements the `Optimizer` trait but is instantiated *directly* by the strider orchestrator, not registered in any of the three named pipelines above.
+`opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch, plus the `Truncate(IntConst)` / `Extend(IntConst)` arms) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
 
 ---
 

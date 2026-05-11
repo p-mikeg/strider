@@ -263,18 +263,25 @@ impl BuiltFunctionGraph {
     /// External callers that hold any pre-compaction `NodeId` /
     /// `NodeOutputId` / `NodeInputId` MUST rewrite them through the
     /// returned remap (or drop them).
-    pub fn compact(&mut self) -> crate::graph::NodeIdRemap {
-        let remap = self.graph.retain_reachable(self.entry);
-        // `retain_reachable` walks forward from `entry`; the entry node
-        // is reachable from itself by definition, so it is always in
-        // the remap.  The expect cannot fire short of an internal
-        // invariant violation in `retain_reachable`.
-        #[allow(clippy::expect_used)]
-        let new_entry = remap
-            .node_old_to_new(self.entry)
-            .expect("entry must survive its own compaction");
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `retain_reachable`'s remap doesn't contain
+    /// the entry node.  By construction this can never fire —
+    /// `retain_reachable` walks forward from `entry`, so the entry is
+    /// always reachable from itself — but propagating as `Err` rather
+    /// than panicking keeps every error path typed so Python users see
+    /// a clean exception (round-13: replaces `expect`).
+    pub fn compact(&mut self) -> crate::Result<crate::graph::NodeIdRemap> {
+        let remap = self.graph.retain_reachable(self.entry)?;
+        let new_entry = remap.node_old_to_new(self.entry).ok_or_else(|| {
+            anyhow::anyhow!(
+                "BuiltFunctionGraph::compact: entry {:?} missing from retain_reachable remap (invariant violation)",
+                self.entry
+            )
+        })?;
         self.entry = new_entry;
-        remap
+        Ok(remap)
     }
 
     /// Returns a [`GraphDotDumper`](crate::dot::GraphDotDumper) that can render
@@ -313,7 +320,7 @@ mod compact_tests {
         let mut bfg = BuiltFunctionGraph::from_graph_and_entry_for_rewrite(graph, entry);
         let pre_count = bfg.graph.all_node_ids().count();
 
-        let _remap = bfg.compact();
+        let _remap = bfg.compact().expect("compact succeeds on a valid graph");
 
         let post_count = bfg.graph.all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");

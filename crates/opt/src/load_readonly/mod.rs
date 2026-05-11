@@ -90,7 +90,7 @@ impl<M: ReadOnlyMemory + 'static> Optimizer for LoadReadOnly<M> {
                 continue;
             };
             let new_out = ctx.make_int_const(masked, ty)?;
-            result = result.after_replace(ctx, data_out, new_out);
+            result = result.after_replace(ctx, data_out, new_out)?;
         }
         Ok(result)
     }

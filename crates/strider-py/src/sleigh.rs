@@ -22,8 +22,9 @@ pub struct PySleigh {
     pub(crate) inner: Option<rsleigh::Sleigh<AnyMemReader>>,
     pub(crate) arch_name: &'static str,
     /// Retained so `build_cfg` can route through `cfg::Builder::for_arch`
-    /// (the deprecated `Builder::new` would default `ArchPreset::X86_64`,
-    /// silently mis-classifying CallOther on non-x86 targets).
+    /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
+    /// default `ArchPreset::X86_64` which used to silently mis-classify
+    /// CallOther on non-x86 targets).
     pub(crate) arch: target::SleighArch,
     /// Cached register table.  `Sleigh::regs()` only requires `&self`,
     /// but we eagerly cache it at construction time so callers can read

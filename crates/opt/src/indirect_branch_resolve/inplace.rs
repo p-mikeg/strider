@@ -55,14 +55,20 @@ pub fn apply_link_register(
     }
     // Drop the placeholder `target_value` at slot 2 (after [control, memory]).
     // Done after `add_node_input` above so the appended ret_vals shift down
-    // from slot 3+ to slot 2+ post-removal.  Removal is unconditional: the
-    // matches!-guard above already pinned this as a 3-input IndirectBranch
-    // [control, memory, target_value], and the loop only appends, so slot 2
-    // is always present.
-    debug_assert!(
-        graph.node_inputs(placeholder).len() >= 3,
-        "IndirectBranch must have ≥3 inputs (control, memory, target_value)"
-    );
+    // from slot 3+ to slot 2+ post-removal.  Removal is unconditional under
+    // the contract: the matches!-guard above already pinned this as a
+    // 3-input IndirectBranch [control, memory, target_value], and the loop
+    // only appends, so slot 2 should always be present.  Surface a
+    // violation as a typed error rather than a debug-mode panic so Python
+    // users see a clean exception (round-13 OPT.6).
+    let arity = graph.node_inputs(placeholder).len();
+    if arity < 3 {
+        return Err(anyhow!(
+            "apply_link_register: IndirectBranch placeholder {placeholder:?} has \
+             {arity} inputs, expected ≥3 (control, memory, target_value); invariant \
+             violation"
+        ));
+    }
     graph.remove_node_input(placeholder, 2)?;
     // Mutate the kind: IndirectBranch → Return.  Same input/output
     // signature shape (control + memory + variadic value tail; no

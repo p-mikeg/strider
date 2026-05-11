@@ -1729,7 +1729,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
 
     let mut bfg = b.build()?;
-    bfg.compact();
+    bfg.compact()?;
 
     let post = bfg.graph.wide_consts.len();
     assert_eq!(

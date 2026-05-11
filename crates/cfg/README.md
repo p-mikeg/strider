@@ -11,14 +11,13 @@ The CFG is the input to the [`strider`](../strider) crate's IR translator.
 - `Cfg<R: rsleigh::MemReader>` — finished graph. Holds the `petgraph::StableDiGraph`
   of regions, the entry `RegionId`, and the `rsleigh::Sleigh<R>` lifter context
   (kept across analysis iterations so the SLA spec is loaded once).
-- `Builder<R>` / `OptionsBuilder` — fluent constructors. Three constructors:
-  `Builder::new(sleigh, start_addr, options)` — defaults to LE + x86_64; convenient
-  but unsafe for non-x86_64 / big-endian binaries.
-  `Builder::with_endianness(sleigh, start_addr, options, endianness)` — set
-  endianness only.
-  `Builder::for_arch(arch, sleigh, start_addr, options)` — **preferred**: derives
-  both endianness and `ArchPreset` from a `target::SleighArch` atomically.
-  `Builder::build()` produces a `Cfg`.
+- `Builder<R>` / `OptionsBuilder` — fluent constructors.
+  `Builder::for_arch(arch, sleigh, start_addr, options)` is the only
+  public ctor: it derives both endianness and `ArchPreset` from a
+  `target::SleighArch` atomically.  (Earlier `Builder::new` and
+  `Builder::with_endianness` ctors implicitly defaulted to LE +
+  `ArchPreset::X86_64` and were deleted in round 12 to remove that
+  silent-misclassification footgun.)  `Builder::build()` produces a `Cfg`.
 - `Region`, `RegionInstruction`, `RegionTerminator` — basic block, the lifted
   p-code instructions inside it, and the terminator kind.
 - `RegionEdgeKind` — `Fallthrough` | `Branch` | `IfCaseTrue` | `IfCaseFalse`.

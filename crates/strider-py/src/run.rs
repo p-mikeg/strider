@@ -67,6 +67,17 @@ pub fn run(
     compact: bool,
     per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
 ) -> PyResult<PyRunResult> {
+    // Reject `function_max_size=0` at the Python boundary with a typed
+    // `ValueError` rather than letting it reach the Rust builder where
+    // it would be silently coerced to unbounded (a Python user expects
+    // an exception, not silent behavioural change).  A zero-byte
+    // function bound is meaningless and historically caused the
+    // lifter to decode past `entry` (round-12 EC-1).
+    if matches!(function_max_size, Some(0)) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "function_max_size must be > 0 (zero is meaningless — omit the argument for unbounded)",
+        ));
+    }
     let per_address_ccs = per_address_ccs.unwrap_or_default();
     match pipeline {
         Some(p) => run_with_custom_pipeline(
@@ -279,7 +290,7 @@ fn run_with_custom_pipeline(
             .run_on_built(&mut graph)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
-            graph.compact();
+            graph.compact().map_err(into_strider_err)?;
         }
     }
 

@@ -87,8 +87,8 @@ fn analyze_case(c: Case) -> ir::BuiltFunctionGraph {
     }
     let cfg_opts = cfg_opts_b.build();
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
-    // atomically; `with_endianness` would default the preset to `X86_64`,
-    // breaking arch-specific CallOther dispatch.
+    // atomically.  (The deleted `Builder::with_endianness` ctor would
+    // silently default the preset to `X86_64`.)
     let cfg = cfg::Builder::for_arch(&sleigh_arch, sleigh, addr, cfg_opts)
         .build()
         .expect("Cfg build");

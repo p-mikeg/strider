@@ -64,7 +64,16 @@ impl Graph {
     /// (`stack_phi_offsets`, `call_other_names`, `asm_fingerprints`,
     /// `call_clobbered_overrides`) are remapped through the
     /// translation table; entries for dropped nodes are dropped.
-    pub fn retain_reachable(&mut self, entry: NodeId) -> NodeIdRemap {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the two-pass remap invariant is violated.
+    /// By construction this cannot fire — pass 1 installs every
+    /// reachable node into `remap.nodes`, and pass 2 iterates the
+    /// same `reachable` set — but propagating as `Err` rather than
+    /// panicking keeps every error path typed so Python users see a
+    /// clean exception (round-13).
+    pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
         // 1. Compute reachable set.
         let reachable: Vec<NodeId> = walk_graph(self, entry).collect();
 
@@ -112,10 +121,14 @@ impl Graph {
             // so the lookup cannot return None.  Same logic applies to
             // `remap.outputs[old_input.output_id]` below: every input's
             // output producer is reachable iff the input's owning node
-            // is reachable, which it is here by construction.
-            #[allow(clippy::expect_used)]
-            let new_node_id = remap.nodes[old_node_id]
-                .expect("just installed in pass 1");
+            // is reachable.  Both are propagated as `Err` rather than
+            // `expect` so a hypothetical invariant violation surfaces
+            // as a typed error, not a Python crash.
+            let new_node_id = remap.nodes[old_node_id].ok_or_else(|| {
+                anyhow::anyhow!(
+                    "retain_reachable: reachable node {old_node_id:?} missing from pass-1 remap"
+                )
+            })?;
             let old_input_ids: Vec<NodeInputId> = self.nodes[old_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
@@ -123,10 +136,13 @@ impl Graph {
             let mut new_input_ids: Vec<NodeInputId> = Vec::with_capacity(old_input_ids.len());
             for old_input_id in old_input_ids {
                 let old_input = &self.inputs[old_input_id];
-                #[allow(clippy::expect_used)]
-                let new_output_id = remap.outputs[old_input.output_id].expect(
-                    "input references an output whose producing node was unreachable",
-                );
+                let new_output_id = remap.outputs[old_input.output_id].ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "retain_reachable: input {old_input_id:?} references output {:?} \
+                         whose producing node is unreachable (use-list invariant violation)",
+                        old_input.output_id
+                    )
+                })?;
                 let input_index = old_input.input_index;
                 let new_input = NodeInput::new(new_output_id, new_node_id, input_index);
                 let new_input_id = new_inputs.push(new_input);
@@ -227,7 +243,7 @@ impl Graph {
         self.asm_fingerprints = new_asm_fingerprints;
         self.call_clobbered_overrides = new_call_clobbered_overrides;
 
-        remap
+        Ok(remap)
     }
 
     /// Rebuilds [`Self::wide_consts`] + [`Self::wide_const_dedup`] over

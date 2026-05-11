@@ -33,31 +33,27 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// Infallible at the call-site level (round-12 TY-3).  The inner
-    /// [`ir::Graph::replace_all_uses`]'s `Err` arm only fires on a null
-    /// cursor in `replace_current_with`, but `replace_all_uses` checks
-    /// `cursor.current().is_some()` before every call — a graph
-    /// construction bug, not a recoverable runtime condition.
-    #[must_use]
+    /// # Errors
+    ///
+    /// Propagates [`ir::Graph::replace_all_uses`]'s `Err` arm as a
+    /// typed error rather than panicking (round-13 OPT.1).  The
+    /// underlying error only fires on a null cursor in
+    /// `replace_current_with`, but `replace_all_uses` checks
+    /// `cursor.current().is_some()` before every call — so this is a
+    /// structural by-construction invariant.  Returning `Result`
+    /// rather than panicking keeps Python users seeing a clean typed
+    /// exception if the invariant is ever violated.
     pub fn after_replace(
         self,
         function: &mut pattern::RewriteCtx<'_>,
         old: ir::node::NodeOutputId,
         new: ir::node::NodeOutputId,
-    ) -> Self {
+    ) -> crate::Result<Self> {
         let old_node = function.get_node_from_output(old);
         let new_node = function.get_node_from_output(new);
         function.extend_asm_fingerprint_from(new_node, old_node);
-        // The inner `Err` arm only fires on a null cursor in
-        // `replace_current_with`, but `Graph::replace_all_uses` checks
-        // `cursor.current().is_some()` before every call.  This is a
-        // structural by-construction invariant, not a recoverable
-        // runtime condition — see the doc-comment above.
-        #[allow(clippy::expect_used)]
-        let changed = function
-            .replace_all_uses(old, new)
-            .expect("replace_all_uses: cursor invariant upheld by while-guard");
-        self | OptimizationResult::from_changed(changed)
+        let changed = function.replace_all_uses(old, new)?;
+        Ok(self | OptimizationResult::from_changed(changed))
     }
 }
 

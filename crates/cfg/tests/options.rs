@@ -27,21 +27,30 @@ fn options_builder_allow_code_before_start_addr_produces_distinct_options() {
     assert_ne!(default, allow);
 }
 
-/// Regression for round-12 EC-1: `set_function_max_size(0)` is silently
-/// treated as the unbounded default.  A zero-byte function bound is
-/// semantically meaningless and would otherwise cause the lifter to
-/// decode past the entry address whenever the first machine instruction
-/// produced zero pcode operations (e.g. AArch64 NOPs).
-///
-/// In release builds (where the `debug_assert!` at the setter is
-/// compiled out) the silent fallback prevents the corruption; in debug
-/// builds the assertion fires before any lifting occurs.
+/// Regression: `set_function_max_size(0)` and
+/// `set_function_boundary(Bounded { max_size: 0 })` BOTH silently
+/// coerce to unbounded.  Production callers (especially Python
+/// users via strider-py) should reject zero at their own API
+/// boundary so users see a typed `ValueError`; a zero reaching this
+/// far is a defensive no-op so the lifter doesn't decode past
+/// `start_addr`.  Previously this site used `debug_assert!(false,
+/// ...)` which crashed Python in debug builds — a SIGABRT instead
+/// of a clean exception.  Reverted to silent fallback.
 #[test]
-#[cfg_attr(debug_assertions, ignore = "debug_assert!-checked in debug builds")]
-fn options_builder_set_function_max_size_zero_falls_back_to_unbounded_in_release() {
+fn options_builder_set_function_max_size_zero_falls_back_to_unbounded() {
     let zero = OptionsBuilder::new().set_function_max_size(0).build();
     let default = OptionsBuilder::new().build();
-    assert_eq!(zero, default, "zero must be treated as unbounded");
+    assert_eq!(zero, default, "zero must coerce to unbounded");
+}
+
+#[test]
+fn options_builder_set_function_boundary_zero_falls_back_to_unbounded() {
+    use cfg::FunctionBoundary;
+    let zero = OptionsBuilder::new()
+        .set_function_boundary(FunctionBoundary::Bounded { max_size: 0 })
+        .build();
+    let default = OptionsBuilder::new().build();
+    assert_eq!(zero, default, "Bounded{{0}} must coerce to unbounded");
 }
 
 #[test]

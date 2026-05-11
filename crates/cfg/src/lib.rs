@@ -15,9 +15,9 @@
 
 mod cfg;
 pub use cfg::{
-    Builder, Cfg, DecodeCache, IfRegionState, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr,
-    Region, RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator, ResolvedTargets,
-    is_addr_tail_call,
+    Builder, Cfg, DecodeCache, FunctionBoundary, IfRegionState, MachineInsnAddr, OptionsBuilder,
+    PcodeInsnAddr, Region, RegionEdgeKind, RegionId, RegionInstruction, RegionTerminator,
+    ResolvedTargets, is_addr_tail_call,
 };
 
 /// Crate-level `Result` alias.  Every fallible function in `cfg` returns
