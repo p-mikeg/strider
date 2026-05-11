@@ -58,7 +58,7 @@ fn bounded_lift_handles_tail_call_terminator() {
     let strider = common::strider_x86_64();
     let config = RunConfig {
         strider: &strider,
-        start_addr: BASE,
+        start_addr: BASE.into(),
         sleigh: make_sleigh(),
         rom: None,
         fn_max_size: Some(10),
@@ -159,7 +159,7 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {
         strider: &strider,
-        start_addr: FN_START,
+        start_addr: FN_START.into(),
         sleigh,
         rom: None,
         fn_max_size: Some(10),
@@ -213,7 +213,7 @@ fn bounded_lift_truncates_fall_through_past_fn_max_size() {
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {
         strider: &strider,
-        start_addr: BASE,
+        start_addr: BASE.into(),
         sleigh,
         rom: None,
         fn_max_size: Some(2),
@@ -256,7 +256,7 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let strider = common::strider_x86_64();
     let graph = run(RunConfig {
         strider: &strider,
-        start_addr: BASE,
+        start_addr: BASE.into(),
         sleigh,
         rom: None,
         fn_max_size: Some(2),

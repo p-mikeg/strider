@@ -28,7 +28,7 @@ fn make_config<'a>(
 ) -> RunConfig<'a, BufMemReader<Vec<u8>>> {
     RunConfig {
         strider,
-        start_addr: base,
+        start_addr: base.into(),
         sleigh: make_sleigh_value(bytes, base),
         rom: None,
         fn_max_size: None,

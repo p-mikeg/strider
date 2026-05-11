@@ -63,8 +63,11 @@ where
 {
     /// The strider — stable across iterations.
     pub strider: &'a Strider,
-    /// Function entry address.
-    pub start_addr: u64,
+    /// Function entry address.  Newtype prevents accidental swap with
+    /// `fn_max_size` at struct-literal construction sites (round-12
+    /// R12-T-H).  Construct via `cfg::MachineInsnAddr::new(addr)` or
+    /// `addr.into()`.
+    pub start_addr: cfg::MachineInsnAddr,
     /// The Sleigh context, owned and threaded through every iteration
     /// of the fixed-point loop.  Re-using one Sleigh across iterations
     /// avoids re-loading the SLA spec on every CFG rebuild.
@@ -110,7 +113,7 @@ where
 /// separately.
 struct RunOpts<'a> {
     strider: &'a Strider,
-    start_addr: u64,
+    start_addr: cfg::MachineInsnAddr,
     rom: Option<std::sync::Arc<dyn ReadOnlyMemory>>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
@@ -653,7 +656,7 @@ where
 fn is_tail_call(target: u64, opts: &RunOpts<'_>) -> bool {
     cfg::is_addr_tail_call(
         target,
-        opts.start_addr,
+        opts.start_addr.as_u64(),
         opts.fn_max_size,
         opts.allow_code_before_start_addr,
     )
@@ -952,7 +955,7 @@ where
     // preset to `X86_64`, which causes arch-specific CallOther dispatch
     // (ARM `swi`, AArch64 `CallHyperVisor`/`CallSecureMonitor`) to be looked
     // up under the wrong preset and silently misclassified or rejected.
-    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr, cfg_opts)
+    let cfg: Cfg<R> = Builder::for_arch(&opts.strider.arch, sleigh, opts.start_addr.as_u64(), cfg_opts)
         .with_known_targets(known_targets.clone())
         .with_decode_cache(decode_cache.clone())
         .build()?;
@@ -1053,7 +1056,7 @@ mod tests {
     ) -> RunOpts<'a> {
         RunOpts {
             strider,
-            start_addr,
+            start_addr: start_addr.into(),
             rom: None,
             fn_max_size,
             allow_code_before_start_addr,

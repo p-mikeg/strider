@@ -48,7 +48,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
 
     let config = strider::RunConfig {
         strider: &s,
-        start_addr: addr,
+        start_addr: addr.into(),
         sleigh,
         rom: Some(rom),
         fn_max_size: None,

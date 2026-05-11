@@ -43,7 +43,8 @@ use crate::Result;
 ///     reader,
 /// ).expect("create Sleigh");
 /// let opts = OptionsBuilder::new().build();
-/// let cfg = Builder::new(sleigh, fn_addr, opts).build()?;
+/// let arch = target::SleighArch::x86_64();
+/// let cfg = Builder::for_arch(&arch, sleigh, fn_addr, opts).build()?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 ///
@@ -55,19 +56,15 @@ pub struct Builder<R: rsleigh::MemReader> {
     pub(super) options: Options,
     /// Byte order of the target architecture.  Threaded into
     /// [`super::indirect_resolve::resolve_indirect_target`] which
-    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Defaults
-    /// to [`target::Endianness::Little`] when constructed via
-    /// [`Self::new`]; callers that analyse big-endian binaries should
-    /// use [`Self::with_endianness`] instead.
+    /// builds a mini IR via `pcode_lift::ValueLifter::new`.  Set
+    /// atomically with `preset` via [`Self::for_arch`].
     pub(super) endianness: target::Endianness,
     /// Coarse architecture family.  Consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right `arch` to
-    /// [`target::call_other_abi::classify`].  Defaults to
-    /// [`target::ArchPreset::X86_64`] when constructed via [`Self::new`] /
-    /// [`Self::with_endianness`]; callers that analyse non-x86_64
-    /// binaries should use [`Self::for_arch`] (atomic endianness +
-    /// preset) or [`Self::with_preset`] to override.
+    /// [`target::call_other_abi::classify`].  Set atomically with
+    /// `endianness` via [`Self::for_arch`], or override individually
+    /// with [`Self::with_preset`].
     pub(super) preset: target::ArchPreset,
     /// The graph being constructed.
     pub(super) graph: RegionGraph,
@@ -85,66 +82,12 @@ pub struct Builder<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> Builder<R> {
-    /// Creates a new `Builder` that will construct a CFG starting at
-    /// `start_addr` using `sleigh` to disassemble instructions.
-    ///
-    /// The endianness defaults to [`target::Endianness::Little`] and
-    /// the [`target::ArchPreset`] defaults to `X86_64`.  These defaults
-    /// are correct only for x86 / x86_64 binaries — non-x86 callers
-    /// MUST use [`Self::for_arch`] to set both atomically, or arch-
-    /// specific CallOthers (e.g. AArch64 `brk`) will be silently
-    /// misclassified.
-    #[must_use]
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use Builder::for_arch(arch, sleigh, addr, opts) — `new` defaults to LE+X86_64 \
-                and silently misclassifies CallOthers on non-x86 binaries."
-    )]
-    pub fn new(sleigh: rsleigh::Sleigh<R>, start_addr: u64, options: Options) -> Self {
-        #[allow(deprecated)]
-        Self::with_endianness(sleigh, start_addr, options, target::Endianness::Little)
-    }
-
-    /// Creates a new `Builder` with an explicit endianness — required
-    /// for big-endian targets so the indirect-branch resolver's mini IR
-    /// loads/stores see the right byte order.
-    ///
-    /// **Deprecated:** the [`target::ArchPreset`] still defaults to
-    /// `X86_64`, so non-x86 callers must use [`Self::for_arch`] to set
-    /// endianness AND preset atomically.  This ctor remains for
-    /// historical x86-only callers and tests.
-    #[must_use]
-    #[deprecated(
-        since = "0.1.0",
-        note = "Use Builder::for_arch(arch, sleigh, addr, opts) — with_endianness defaults the \
-                ArchPreset to X86_64 and silently misclassifies CallOthers on non-x86 binaries."
-    )]
-    pub fn with_endianness(
-        sleigh: rsleigh::Sleigh<R>,
-        start_addr: u64,
-        options: Options,
-        endianness: target::Endianness,
-    ) -> Self {
-        Self {
-            sleigh,
-            start_addr: start_addr.into(),
-            options,
-            endianness,
-            preset: target::ArchPreset::X86_64,
-            graph: RegionGraph::new(),
-            start_addr_to_region_id: BTreeMap::new(),
-            work_queue: Vec::new(),
-            decode_cache: None,
-        }
-    }
-
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
-    /// derived atomically from `arch`.  The preferred constructor for
-    /// callers outside `strider::run` — [`Self::new`] silently defaults
-    /// to LE + x86_64, so a non-x86_64 / big-endian caller who forgot
-    /// to chain [`Self::with_endianness`] and [`Self::with_preset`]
-    /// would silently misclassify CallOthers and decode bytes with the
-    /// wrong byte order.
+    /// derived atomically from `arch`.  The canonical constructor for
+    /// CFG building — setting both fields from one `SleighArch` source
+    /// prevents the silent misclassification that a split
+    /// endianness/preset ctor would invite (e.g. a big-endian binary
+    /// decoded as LE, or AArch64 `brk` classified as the x86 stub).
     #[must_use]
     pub fn for_arch(
         arch: &target::SleighArch,

@@ -353,15 +353,14 @@ impl<'a, R: rsleigh::MemReader> RegionBuilder<'a, R> {
                         // looking up the missing OOB edge), and emit
                         // `RegionTerminator::Branch` to the in-range
                         // successor.  The conditional is lost, but the
-                        // lift completes.
-                        //
-                        // If popping leaves the region empty (the function
-                        // body is exactly the conditional jump and nothing
-                        // else), fall back to `TailCall` to the in-range
-                        // target so `add_region`'s non-empty invariant
-                        // holds.  This degenerate case loses the in-range
-                        // edge entirely, but it is essentially unobserved
-                        // in real binaries.
+                        // lift completes.  The in-range successor is
+                        // preserved as a regular intra-function branch
+                        // via `add_region`'s relaxed empty-Branch
+                        // invariant (round-12 R-9: the previous comment
+                        // here described a TailCall fallback for the
+                        // degenerate single-instruction case, but that
+                        // path no longer exists — `add_region` now
+                        // accepts empty regions terminated with Branch).
                         let in_range = if true_oob { next_insn_addr } else { target_addr };
                         // Pop the trailing CondBranch from `self.insns`
                         // so the IR's per-region loop does not re-route

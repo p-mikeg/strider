@@ -203,12 +203,52 @@ impl OptionsBuilder {
         self
     }
 
+    /// Sets the function-extent boundary directly via the
+    /// [`FunctionBoundary`] enum.  Preferred over the
+    /// [`Self::set_function_max_size`] + [`Self::allow_code_before_start_addr`]
+    /// pair because the enum makes the two states mutually exclusive
+    /// at the type level — `Bounded` and `Unbounded` cannot both be
+    /// set, which removes the silent-precedence rule that
+    /// "`fn_max_size.is_some()` always wins" (round-12 R12-T-G).
+    ///
+    /// `FunctionBoundary::Bounded { max_size: 0 }` is rejected the
+    /// same way [`Self::set_function_max_size`] rejects zero (round-12
+    /// EC-1).
+    #[must_use]
+    pub fn set_function_boundary(mut self, boundary: FunctionBoundary) -> Self {
+        match boundary {
+            FunctionBoundary::Bounded { max_size: 0 } => {
+                debug_assert!(
+                    false,
+                    "set_function_boundary(Bounded {{ max_size: 0 }}) is meaningless; use Unbounded instead"
+                );
+                self.options.fn_max_size = None;
+                self.options.allow_code_before_start_addr = false;
+            }
+            FunctionBoundary::Bounded { max_size } => {
+                self.options.fn_max_size = Some(max_size);
+                self.options.allow_code_before_start_addr = false;
+            }
+            FunctionBoundary::Unbounded { allow_code_before_start } => {
+                self.options.fn_max_size = None;
+                self.options.allow_code_before_start_addr = allow_code_before_start;
+            }
+        }
+        self
+    }
+
     /// Allows the CFG builder to follow unconditional branches whose target
     /// address is below the function start address.
     ///
     /// By default such branches are classified as tail calls (they are
     /// assumed to leave the current function).  Enable this option when the
     /// binary layout places shared or out-of-order code before the entry point.
+    ///
+    /// **Note:** when paired with [`Self::set_function_max_size`], the
+    /// max-size bound wins — the lower-bound relaxation is silently
+    /// ignored.  Use [`Self::set_function_boundary`] for the
+    /// mutually-exclusive shape that makes this precedence rule
+    /// unrepresentable.
     #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.options.allow_code_before_start_addr = true;

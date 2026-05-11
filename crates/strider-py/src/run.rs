@@ -166,7 +166,7 @@ fn run_via_orchestrator(
     let graph = py.allow_threads(|| {
         let config = strider::RunConfig {
             strider: &strider_owned,
-            start_addr: entry,
+            start_addr: entry.into(),
             sleigh: orch_sleigh,
             rom: rom_arc,
             fn_max_size: function_max_size,

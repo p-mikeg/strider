@@ -592,9 +592,6 @@ impl SpecialTerm {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-    // Test fixture is x86_64-only; the deprecated `cfg::Builder::new`
-    // defaults LE+X86_64 which is exactly what we need here.
-    #![allow(deprecated)]
 
     #[test]
     fn display_summarises_unresolved_branches_and_region_count() {
@@ -611,7 +608,7 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
             .expect("sleigh");
-        let cfg = cfg::Builder::new(sleigh, 0x1000, cfg::OptionsBuilder::new().build())
+        let cfg = cfg::Builder::for_arch(&arch, sleigh, 0x1000, cfg::OptionsBuilder::new().build())
             .build()
             .expect("cfg");
         let outcome = strider.analyze_cfg(&cfg).expect("analyze_cfg");

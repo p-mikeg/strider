@@ -41,7 +41,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
 
     let config = RunConfig {
         strider: &strider,
-        start_addr: entry,
+        start_addr: entry.into(),
         sleigh,
         rom: None,
         fn_max_size: Some(10),

@@ -41,7 +41,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
 
     let config = RunConfig {
         strider: &strider,
-        start_addr: entry,
+        start_addr: entry.into(),
         sleigh,
         rom: None,
         fn_max_size: None,
@@ -94,7 +94,7 @@ fn call_without_override_uses_function_default_clobber_set() {
 
     let config = RunConfig {
         strider: &strider,
-        start_addr: entry,
+        start_addr: entry.into(),
         sleigh,
         rom: None,
         fn_max_size: None,

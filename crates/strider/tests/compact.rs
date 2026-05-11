@@ -31,7 +31,7 @@ fn run_with(compact: bool) -> ir::BuiltFunctionGraph {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
     let config = RunConfig {
         strider: &strider,
-        start_addr: entry,
+        start_addr: entry.into(),
         sleigh,
         rom: None,
         fn_max_size: None,
