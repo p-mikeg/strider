@@ -280,12 +280,6 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
                 outputs: SlotList::fixed(&[$($o),*]),
             }
         };
-        (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
-            Signature {
-                inputs: SlotList::fixed(&[$($i),*]),
-                outputs: SlotList::variadic(&[$($o),*], $ot),
-            }
-        };
         (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
             Signature {
                 inputs: SlotList::variadic(&[$($i),*], $it),

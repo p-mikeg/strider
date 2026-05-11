@@ -35,7 +35,6 @@ create_exception!(strider.errors, UnknownCallOtherError, StriderError);
 /// the Python interpreter.  Take it here so the original control-flow
 /// exception wins over the synthesized `StriderError` — Ctrl-C
 /// interrupts a long lift instead of being absorbed.
-#[allow(dead_code)]
 pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     if let Some(pending) = Python::with_gil(PyErr::take) {
         return pending;
@@ -69,7 +68,6 @@ pub fn into_strider_err(e: anyhow::Error) -> PyErr {
     StriderError::new_err(format!("{e:?}"))
 }
 
-#[allow(dead_code)]
 pub fn into_lift_err(e: anyhow::Error) -> PyErr {
     if let Some(pending) = Python::with_gil(PyErr::take) {
         return pending;

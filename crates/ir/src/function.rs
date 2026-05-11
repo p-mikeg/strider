@@ -130,18 +130,6 @@ impl BuiltFunctionGraph {
     pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
         &self.call_clobbered
     }
-    /// Read the calling convention's return-value varnode list.
-    /// Mirrors the [`Self::ret_val_regs`] field.
-    #[must_use]
-    pub fn ret_val_regs_as_slice(&self) -> &[rsleigh::Vn] {
-        &self.ret_val_regs
-    }
-    /// Read the function-default CallOther clobber list.
-    /// Mirrors the [`Self::call_other_clobbered`] field.
-    #[must_use]
-    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.call_other_clobbered
-    }
     /// Function-default `no_memory_clobber` flag — whether calls under
     /// this convention preserve memory (zero-side-effect hooks like
     /// `__fentry__` / `mcount`).  When `true`, `LoadReadOnly` and
@@ -150,6 +138,12 @@ impl BuiltFunctionGraph {
     pub fn no_memory_clobber(&self) -> bool {
         self.no_memory_clobber
     }
+    /// Read the function-default CallOther clobber list.
+    /// Mirrors the [`Self::call_other_clobbered`] field.
+    #[must_use]
+    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
+        &self.call_other_clobbered
+    }
     /// Read the `VarId → Vn` map for tracked variables.
     /// Mirrors the [`Self::variables`] field.
     #[must_use]
@@ -157,27 +151,15 @@ impl BuiltFunctionGraph {
         &self.variables
     }
 
-    /// Test-only setter: overwrite [`Self::call_clobbered`].
-    ///
-    /// Used by `pattern` tests that construct a synthetic `Call` node
-    /// shape and need a matching function-default clobber list to
-    /// exercise [`crate::pattern_glue::*`] queries.  Production paths
+    /// Test-only setter: overwrite [`Self::call_other_clobbered`] in
+    /// `pattern` tests that construct a synthetic `Call` / `CallOther`
+    /// node shape and need a matching function-default clobber list to
+    /// exercise the call-other clobber queries.  Production paths
     /// should set this via [`crate::FunctionBuilder::build`].  The
     /// `_for_test` suffix is the documented signal that the caller has
     /// verified the slot/varnode correspondence with the synthetic
-    /// graph's `Call` outputs (see [`Self::call_clobbered`]'s caveat).
-    pub fn set_call_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
-        self.call_clobbered = list;
-    }
-
-    /// Test-only setter: overwrite [`Self::ret_val_regs`].  Same
-    /// contract as [`Self::set_call_clobbered_for_test`].
-    pub fn set_ret_val_regs_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
-        self.ret_val_regs = list;
-    }
-
-    /// Test-only setter: overwrite [`Self::call_other_clobbered`].
-    /// Same contract as [`Self::set_call_clobbered_for_test`].
+    /// graph's `CallOther` outputs (see
+    /// [`Self::call_other_clobbered`]'s caveat).
     pub fn set_call_other_clobbered_for_test(&mut self, list: Box<[rsleigh::Vn]>) {
         self.call_other_clobbered = list;
     }

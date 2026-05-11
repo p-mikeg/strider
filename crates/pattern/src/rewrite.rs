@@ -235,9 +235,8 @@ impl<'g> RewriteCtx<'g> {
 
 /// Read-only `(&Graph, NodeId)` view used by opt's read-only public
 /// API.  `Copy` and cheap to pass.  Constructible from `&RewriteCtx`
-/// (via `as_view`), `&BuiltFunctionGraph` (via
-/// `From<&BuiltFunctionGraph>`), or raw `(&Graph, NodeId)` (via
-/// `RewriteCtxView::new`).
+/// (via `as_view`) or `&BuiltFunctionGraph` (via
+/// `From<&BuiltFunctionGraph>`).
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
     pub(crate) graph: &'g Graph,
@@ -245,12 +244,7 @@ pub struct RewriteCtxView<'g> {
 }
 
 impl<'g> RewriteCtxView<'g> {
-    #[must_use] 
-    pub fn new(graph: &'g Graph, entry: NodeId) -> Self {
-        Self { graph, entry }
-    }
-
-    #[must_use] 
+    #[must_use]
     pub fn preorder(&self) -> ir::walk::GraphWalk<'_> {
         ir::walk::walk_graph(self.graph, self.entry)
     }

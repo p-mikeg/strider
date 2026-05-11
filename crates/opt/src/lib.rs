@@ -45,11 +45,9 @@
     )
 )]
 
-extern crate self as opt;
-
 pub mod error;
 mod pipeline;
-pub mod sp_expr;
+pub(crate) mod sp_expr;
 mod worklist;
 pub use error::Result;
 mod constant_fold;

@@ -51,23 +51,6 @@ impl Capture {
         self.0
     }
 
-    /// Round-trips a raw id obtained from [`Self::id`] back into a
-    /// `Capture`.  Used by the PyO3 bindings to revive a `Capture`
-    /// across the FFI boundary (Python interns capture-name strings to
-    /// `u32` ids and stores those, then needs to rebuild a `Capture`
-    /// when consumers like `Match::get_uint(capture, &graph)` are
-    /// called).
-    ///
-    /// **Caller responsibility.**  `id` must come from a prior
-    /// [`Self::id`] call inside the same process — capture ids are
-    /// allocated from a process-wide atomic counter, so a hand-chosen
-    /// id risks colliding with a future allocation.  Reviving an id
-    /// from a different process would point at an unrelated capture
-    /// (the binding would still resolve, but to the wrong slot).
-    #[must_use]
-    pub fn from_id(id: u32) -> Self {
-        Self(id)
-    }
 }
 
 impl Default for Capture {
