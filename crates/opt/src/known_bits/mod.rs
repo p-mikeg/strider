@@ -511,10 +511,11 @@ impl Optimizer for KnownBits {
                     consumers.push(consumer);
                 }
                 let new_out = ctx.make_int_const(kb.ones, ty)?;
-                // Absorb the rewritten node's fingerprint into the new const.
-                let new_node = ctx.get_node_from_output(new_out);
-                ctx.extend_asm_fingerprint_from(new_node, node_id);
-                if ctx.replace_all_uses(out, new_out)? {
+                // Absorb the rewritten node's fingerprint into the new
+                // const via `after_replace` (handles fingerprint union +
+                // replace_all_uses).
+                let after = OptimizationResult::NoChange.after_replace(ctx, out, new_out)?;
+                if after.changed() {
                     result = OptimizationResult::Changed;
                     for &consumer in &consumers {
                         work.push(consumer);

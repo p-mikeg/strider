@@ -187,15 +187,6 @@ fn detect_register_args(
         }
 
         let out_type = NodeOutputType::try_from(effective_vn.size)?;
-        let new_node = ctx.create_node(
-            NodeKind::FunctionArg {
-                source: FunctionArgSource::Register(effective_vn),
-                index: i as u32,
-            },
-            [],
-            [NodeOutputKind::OutputType(out_type)],
-        );
-        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
         // Inherit the InitialVar's asm-fingerprint so downstream pattern
         // queries (`m.asm_fingerprint(c, &graph)` on a captured FunctionArg)
         // can still trace back to the contributing machine instruction.
@@ -205,7 +196,16 @@ fn detect_register_args(
         // The single-source register-args path (one InitialVar in, one
         // FunctionArg out) carries no coupling concern; the stack-args path
         // unifies multiple Loads and intentionally skips the absorption.
-        ctx.extend_asm_fingerprint_from(new_node, initial_var);
+        let new_node = ctx.create_node_attributed(
+            NodeKind::FunctionArg {
+                source: FunctionArgSource::Register(effective_vn),
+                index: i as u32,
+            },
+            [],
+            [NodeOutputKind::OutputType(out_type)],
+            &[initial_var],
+        );
+        let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
         result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
     }
     Ok(result)
@@ -344,16 +344,16 @@ fn detect_stack_args(
                 result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, new_out)?);
             } else {
                 // Narrower read: insert a Truncate from the wider FunctionArg.
-                let trunc = ctx.create_node(
-                    NodeKind::Truncate,
-                    [new_out],
-                    [NodeOutputKind::OutputType(load_ty)],
-                );
-                let [trunc_out] = ctx.node_outputs_exact::<1>(trunc)?;
                 // The Truncate is non-exempt and freshly created; inherit
                 // the rewritten Load's fingerprint so the contributing
                 // machine instruction's address survives the rewrite.
-                ctx.extend_asm_fingerprint_from(trunc, load);
+                let trunc = ctx.create_node_attributed(
+                    NodeKind::Truncate,
+                    [new_out],
+                    [NodeOutputKind::OutputType(load_ty)],
+                    &[load],
+                );
+                let [trunc_out] = ctx.node_outputs_exact::<1>(trunc)?;
                 result |= OptimizationResult::from_changed(ctx.replace_all_uses(old_out, trunc_out)?);
             }
             ctx.detach_node_inputs(load);

@@ -178,12 +178,12 @@ fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) 
 // only absorbs into the outermost.
 
 fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let n = graph.create_node(
+    let n = graph.create_node_attributed(
         NodeKind::IntCmpOp(op),
         [lhs, rhs],
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        &[root],
     );
-    graph.extend_asm_fingerprint_from(n, root);
     // `IntCmpOp` is constructed above with exactly one
     // `NodeOutputKind::OutputType(Bool)`; if `node_outputs_exact::<1>`
     // disagrees, it's an internal `create_node` invariant violation —
@@ -193,15 +193,14 @@ fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOu
 }
 
 fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let n = graph.create_node(
+    let n = graph.create_node_attributed(
         NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg),
         [inner],
         [NodeOutputKind::OutputType(NodeOutputType::Bool)],
+        &[root],
     );
-    graph.extend_asm_fingerprint_from(n, root);
     // Same invariant as `build_int_cmp` — single Bool output by
-    // construction; surface any disagreement as a typed error
-    //.
+    // construction; surface any disagreement as a typed error.
     let [out] = graph.node_outputs_exact::<1>(n)?;
     Ok(out)
 }

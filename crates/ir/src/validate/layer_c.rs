@@ -4,6 +4,22 @@ use crate::walk::NodeIdSet;
 
 use super::ValidationError;
 
+/// Yields `(NodeId, &NodeKind)` for every node in the arena that is
+/// reachable from entry, paired with its kind.  Used by every
+/// per-node Layer-C check that needs reachability scoping; the
+/// uniqueness check intentionally bypasses this helper because it
+/// also wants to flag detached zombies of `Entry`/`InitialMemory`.
+fn reachable_nodes<'a>(
+    graph: &'a Graph,
+    reachable: &'a NodeIdSet,
+) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
+    graph
+        .nodes
+        .keys()
+        .filter(move |&n| reachable.contains(n))
+        .map(move |n| (n, graph.node_kind(n)))
+}
+
 /// Layer C (shape check): enforce that the graph has exactly one
 /// [`NodeKind::Entry`] node and exactly one [`NodeKind::InitialMemory`] node.
 ///
@@ -58,20 +74,11 @@ pub(super) fn check_layer_c_control_state(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for node in graph.nodes.keys() {
-        if !matches!(graph.node_kind(node), NodeKind::ControlState) {
-            continue;
-        }
-        // gate the entire ControlState check on
-        // reachability, not just the empty-input branch.  A non-reachable
-        // ControlState zombie with stale non-Control inputs (left by some
-        // future pass that surgery-edits without scrubbing) would
-        // otherwise produce a false-positive
-        // `ControlStateNonControlPredecessor` error and mask real
-        // problems elsewhere.  The validator's stated tolerance for
-        // detached zombies (see `validate`'s doc) requires this gate to
-        // apply to both branches.
-        if !reachable.contains(node) {
+    // Reachability is gated by `reachable_nodes` (see its doc for why
+    // we skip detached `ControlState` zombies — they may carry stale
+    // non-Control inputs left by an unscrubbed surgical edit).
+    for (node, kind) in reachable_nodes(graph, reachable) {
+        if !matches!(kind, NodeKind::ControlState) {
             continue;
         }
         let inputs = graph.node_inputs(node);
@@ -110,18 +117,13 @@ pub(super) fn check_layer_c_phis(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for node in graph.nodes.keys() {
-        // Optimisation passes (`RedundantPhis`, `DeadBranchElimination`)
-        // detach phi inputs and leave the zero-input zombie node in the
-        // arena rather than physically removing it.  Reaching one here
-        // would falsely trip `PhiTokenNotFromControlState` (input[0] is
-        // gone).  Layer A is already reachability-scoped for the same
-        // reason; mirror that.
-        if !reachable.contains(node) {
-            continue;
-        }
+    // Reachability is gated by `reachable_nodes`. `RedundantPhis` and
+    // `DeadBranchElimination` leave zero-input phi zombies in the
+    // arena; reaching one here would falsely trip
+    // `PhiTokenNotFromControlState` (input[0] is gone).
+    for (node, kind) in reachable_nodes(graph, reachable) {
         let is_phi = matches!(
-            graph.node_kind(node),
+            kind,
             NodeKind::VarPhi(_)
                 | NodeKind::MemPhi
                 | NodeKind::StackStorePhi { .. }
@@ -160,7 +162,7 @@ pub(super) fn check_layer_c_phis(
 
         // StackStorePhi has fixed arity 3 regardless of predecessor count;
         // skip the per-predecessor arity check for it.
-        if matches!(graph.node_kind(node), NodeKind::StackStorePhi { .. }) {
+        if matches!(kind, NodeKind::StackStorePhi { .. }) {
             continue;
         }
 
@@ -204,11 +206,7 @@ pub(super) fn check_layer_c_asm_fingerprints(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for node in graph.nodes.keys() {
-        if !reachable.contains(node) {
-            continue;
-        }
-        let kind = graph.node_kind(node);
+    for (node, kind) in reachable_nodes(graph, reachable) {
         if asm_fingerprint_exempt(kind) {
             continue;
         }
@@ -239,11 +237,8 @@ pub(super) fn check_layer_c_function_arg_uniqueness(
     use std::collections::HashMap;
 
     let mut by_index: HashMap<u32, NodeId> = HashMap::new();
-    for node in graph.nodes.keys() {
-        if !reachable.contains(node) {
-            continue;
-        }
-        let index = match *graph.node_kind(node) {
+    for (node, kind) in reachable_nodes(graph, reachable) {
+        let index = match *kind {
             NodeKind::FunctionArg { index, .. } => index,
             _ => continue,
         };
@@ -274,11 +269,8 @@ pub(super) fn check_layer_c_wide_consts(
     errs: &mut Vec<ValidationError>,
 ) {
     use crate::node::NodeOutputType;
-    for node in graph.nodes.keys() {
-        if !reachable.contains(node) {
-            continue;
-        }
-        let NodeKind::IntConstWide(id) = graph.node_kind(node) else {
+    for (node, kind) in reachable_nodes(graph, reachable) {
+        let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
         if graph.wide_consts.get(*id).is_none() {

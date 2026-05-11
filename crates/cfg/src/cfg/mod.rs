@@ -150,3 +150,25 @@ impl<R: rsleigh::MemReader> Cfg<R> {
 
 /// Type alias for the petgraph [`NodeIndex`] used to identify regions.
 pub type RegionId = NodeIndex;
+
+/// `graphwalk::GraphRef` impl for the region graph.  Lets generic
+/// traversal helpers (preorder/postorder/reachability/dominance)
+/// work on a `Cfg` the same way they work on `ir::Graph`.  Successors
+/// are the petgraph out-neighbors of `node` regardless of edge kind
+/// (Fallthrough / Branch / IfCaseTrue / IfCaseFalse); callers that
+/// need edge-kind filtering should walk `cfg.graph().edges(node)`
+/// directly.
+impl<R: rsleigh::MemReader> graphwalk::GraphRef for Cfg<R> {
+    type NodeId = NodeIndex;
+
+    fn try_successors(
+        &self,
+        node: NodeIndex,
+        mut f: impl FnMut(NodeIndex) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
+        for succ in self.graph.neighbors(node) {
+            f(succ)?;
+        }
+        std::ops::ControlFlow::Continue(())
+    }
+}

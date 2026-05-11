@@ -14,6 +14,22 @@ use crate::walk::walk_graph;
 
 use super::Graph;
 
+/// Moves entries from `src` (keyed by old id) into a fresh map
+/// (keyed by new id), draining `src` of every remapped slot via
+/// `std::mem::take`.  Used by `retain_reachable` to remap the four
+/// per-node side-tables (`stack_phi_offsets`, `call_other_names`,
+/// `asm_fingerprints`, `call_clobbered_overrides`) in one shape.
+fn remap_side_table<T: Default + Clone>(
+    src: &mut SecondaryMap<NodeId, T>,
+    old_to_new: &HashMap<NodeId, NodeId>,
+) -> SecondaryMap<NodeId, T> {
+    let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
+    for (&old_id, &new_id) in old_to_new {
+        dst[new_id] = std::mem::take(&mut src[old_id]);
+    }
+    dst
+}
+
 /// Old→new id translation table produced by
 /// [`Graph::retain_reachable`].  Sparse: only entries for surviving
 /// ids are populated; dropped ids return `None`.
@@ -206,42 +222,23 @@ impl Graph {
 
         // 8. Remap all four side-tables.  For each table, iterate the
         // surviving (old → new) pairs and write the old entry into the
-        // fresh table at the new id.
-        let mut new_stack_phi_offsets: SecondaryMap<NodeId, Vec<i64>> = SecondaryMap::new();
-        let mut new_call_other_names: SecondaryMap<NodeId, Option<String>> = SecondaryMap::new();
-        let mut new_asm_fingerprints: SecondaryMap<NodeId, Vec<u64>> = SecondaryMap::new();
-        let mut new_call_clobbered_overrides: SecondaryMap<NodeId, Option<Vec<rsleigh::Vn>>> =
-            SecondaryMap::new();
-        // Iterate over the *original* reachable set: those are the
-        // only old ids worth remapping.
+        // fresh table at the new id.  `remap_side_table` is generic over
+        // `T: Default`; the take-then-insert flow leaves the source
+        // entry at `Default::default()` and the destination carrying the
+        // moved value.  SecondaryMap stores `Default` cheaply (no
+        // allocation for `Vec`/`Option`), so we skip the prior
+        // `if !is_empty() { ... }` micro-optimization for clarity.
         let mut old_to_new_pairs: HashMap<NodeId, NodeId> = HashMap::new();
         for &old_id in &reachable {
             if let Some(new_id) = remap.nodes[old_id] {
                 old_to_new_pairs.insert(old_id, new_id);
             }
         }
-        for (&old_id, &new_id) in &old_to_new_pairs {
-            let phi = std::mem::take(&mut self.stack_phi_offsets[old_id]);
-            if !phi.is_empty() {
-                new_stack_phi_offsets[new_id] = phi;
-            }
-            let name = self.call_other_names[old_id].take();
-            if let Some(n) = name {
-                new_call_other_names[new_id] = Some(n);
-            }
-            let fp = std::mem::take(&mut self.asm_fingerprints[old_id]);
-            if !fp.is_empty() {
-                new_asm_fingerprints[new_id] = fp;
-            }
-            let ovr = self.call_clobbered_overrides[old_id].take();
-            if let Some(v) = ovr {
-                new_call_clobbered_overrides[new_id] = Some(v);
-            }
-        }
-        self.stack_phi_offsets = new_stack_phi_offsets;
-        self.call_other_names = new_call_other_names;
-        self.asm_fingerprints = new_asm_fingerprints;
-        self.call_clobbered_overrides = new_call_clobbered_overrides;
+        self.stack_phi_offsets = remap_side_table(&mut self.stack_phi_offsets, &old_to_new_pairs);
+        self.call_other_names = remap_side_table(&mut self.call_other_names, &old_to_new_pairs);
+        self.asm_fingerprints = remap_side_table(&mut self.asm_fingerprints, &old_to_new_pairs);
+        self.call_clobbered_overrides =
+            remap_side_table(&mut self.call_clobbered_overrides, &old_to_new_pairs);
 
         Ok(remap)
     }

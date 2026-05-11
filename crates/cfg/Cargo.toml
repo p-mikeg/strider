@@ -8,6 +8,7 @@ anyhow.workspace = true
 petgraph.workspace = true
 rsleigh.workspace = true
 dot.workspace = true
+graphwalk.workspace = true
 ir.workspace = true
 opt.workspace = true
 pcode-lift.workspace = true

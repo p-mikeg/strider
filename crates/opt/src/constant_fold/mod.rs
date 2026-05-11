@@ -42,10 +42,9 @@ fn try_lower_cast_to_float(
     } else {
         ctx.make_int_bits_to_float_node(input, out_ty)?
     };
-    // Absorb the rewritten cast node's asm-fingerprint into the new producer.
-    let new_node = ctx.get_node_from_output(new_out);
-    ctx.extend_asm_fingerprint_from(new_node, node_id);
-    Ok(OptimizationResult::from_changed(ctx.replace_all_uses(out, new_out)?))
+    // Absorb the rewritten cast node's asm-fingerprint into the new producer
+    // via `after_replace` (handles fingerprint union + replace_all_uses).
+    OptimizationResult::NoChange.after_replace(ctx, out, new_out)
 }
 
 // ── Public optimizer ──────────────────────────────────────────────────────────

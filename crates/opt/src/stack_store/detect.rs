@@ -34,15 +34,15 @@ fn try_detect_stack_store(
 
     let new_mem_out = match expr {
         SpExpr::Terminal { base, offset } => {
-            let new_node = ctx.create_node(
-                NodeKind::StackStore { space, offset },
-                [memory, base, data],
-                [NodeOutputKind::Memory],
-            );
             // StackStore is non-exempt; absorb the rewritten Store's
             // fingerprint into it so the contributing machine instruction
             // survives the rewrite.
-            ctx.extend_asm_fingerprint_from(new_node, node_id);
+            let new_node = ctx.create_node_attributed(
+                NodeKind::StackStore { space, offset },
+                [memory, base, data],
+                [NodeOutputKind::Memory],
+                &[node_id],
+            );
             ctx.node_outputs_exact::<1>(new_node)?[0]
         }
         SpExpr::Phi { phi_node, offsets } => {
@@ -55,17 +55,17 @@ fn try_detect_stack_store(
                 return Ok(OptimizationResult::NoChange);
             }
             let phi_token = phi_inputs[0];
-            let new_node = ctx.create_node(
-                NodeKind::StackStorePhi { space },
-                [phi_token, memory, data],
-                [NodeOutputKind::Memory],
-            );
-            ctx.set_stack_phi_offsets(new_node, offsets);
             // StackStorePhi is exempt (it's a phi-shaped synthesised
             // node), but we still absorb the rewritten Store's
             // fingerprint so downstream consumers can recover the
             // contributing machine instruction via the side-table.
-            ctx.extend_asm_fingerprint_from(new_node, node_id);
+            let new_node = ctx.create_node_attributed(
+                NodeKind::StackStorePhi { space },
+                [phi_token, memory, data],
+                [NodeOutputKind::Memory],
+                &[node_id],
+            );
+            ctx.set_stack_phi_offsets(new_node, offsets);
             ctx.node_outputs_exact::<1>(new_node)?[0]
         }
     };
