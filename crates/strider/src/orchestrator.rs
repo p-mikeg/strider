@@ -991,9 +991,7 @@ where
 
     // Harvest the Sleigh handle out of the consumed Cfg so the next
     // iteration can re-use it without re-loading the SLA spec.
-    let Cfg {
-        sleigh: harvested, ..
-    } = cfg;
+    let harvested = cfg.into_sleigh();
     Ok((graph, unresolved, region_index, harvested))
 }
 

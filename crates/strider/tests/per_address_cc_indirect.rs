@@ -51,17 +51,15 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     };
     let bfg = strider::run(config).unwrap();
 
-    let call_id = bfg
-        .graph
-        .all_node_ids()
+    let call_id = bfg.graph
+                .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("in-place tail call splices in a Call node");
     // Per-Call override is recorded; its length matches the Call's
     // clobber output count and is strictly smaller than the function-
     // default clobber set.
-    let override_list = bfg
-        .graph
-        .call_clobbered_override(call_id)
+    let override_list = bfg.graph
+                .call_clobbered_override(call_id)
         .expect("in-place tail-call edit must record per-Call override");
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(outs.len(), 2 + override_list.len());

@@ -42,8 +42,8 @@ fn build_from_bytes_opts(
 fn single_ret_produces_one_region_without_tail_call_flag() {
     // `ret` at 0x1000 — single-region, non-tail-call function.
     let cfg = build_from_bytes(vec![0xc3], 0x1000);
-    assert_eq!(cfg.graph.node_count(), 1);
-    assert_eq!(cfg.graph[cfg.entry].terminator, RegionTerminator::Return);
+    assert_eq!(cfg.graph().node_count(), 1);
+    assert_eq!(cfg.graph()[cfg.entry()].terminator, RegionTerminator::Return);
 }
 
 #[test]
@@ -62,14 +62,13 @@ fn back_jump_splits_region() {
     let cfg = build_from_bytes(bytes, 0x1000);
 
     assert!(
-        cfg.graph.node_count() >= 2,
+        cfg.graph().node_count() >= 2,
         "expected at least 2 regions after back-jump split; got {}",
-        cfg.graph.node_count()
+        cfg.graph().node_count()
     );
 
-    let branch_edges = cfg
-        .graph
-        .edge_references()
+    let branch_edges = cfg.graph()
+                .edge_references()
         .filter(|e| *e.weight() == RegionEdgeKind::Branch)
         .count();
     assert!(
@@ -86,9 +85,9 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     let bytes = vec![0xeb, 0x10];
     let opts = OptionsBuilder::new().set_function_max_size(0x10).build();
     let cfg = build_from_bytes_opts(bytes, 0x1000, opts);
-    assert_eq!(cfg.graph.node_count(), 1);
+    assert_eq!(cfg.graph().node_count(), 1);
     assert_eq!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.graph()[cfg.entry()].terminator,
         RegionTerminator::TailCall { target: 0x1012 },
         "entry region must end as a TailCall to 0x1012"
     );
@@ -120,14 +119,14 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 
     // Entry region must NOT be flagged as ending in a tail call.
     assert_ne!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.graph()[cfg.entry()].terminator,
         RegionTerminator::TailCall { target: 0x0ff2 },
         "entry region must NOT be a TailCall when allow_code_before_start_addr is set"
     );
 
     // At least one Branch edge must exist, since the target is now followed.
     assert!(
-        cfg.graph
+        cfg.graph()
             .edge_references()
             .any(|e| *e.weight() == RegionEdgeKind::Branch),
         "expected at least one Branch edge since the below-start target is followed"
@@ -176,7 +175,7 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     // fall-through would have crashed the IR layer's `handle_cond_branch`,
     // which requires both successors to exist).
     assert!(
-        !matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::CondBranch),
+        !matches!(cfg.graph()[cfg.entry()].terminator, RegionTerminator::CondBranch),
         "entry region must not retain CondBranch when one successor is OOB"
     );
 }
@@ -218,9 +217,9 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     // leaves either way).  The exact target (taken vs fall-through)
     // doesn't carry observable semantics; pin the kind only.
     assert!(
-        matches!(cfg.graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
+        matches!(cfg.graph()[cfg.entry()].terminator, RegionTerminator::TailCall { .. }),
         "entry region must collapse to TailCall when both CondBranch successors are OOB; got {:?}",
-        cfg.graph[cfg.entry].terminator
+        cfg.graph()[cfg.entry()].terminator
     );
 }
 
@@ -240,7 +239,7 @@ fn fall_through_past_fn_max_size_terminates_as_tail_call() {
     // Entry region must terminate as TailCall { target: 0x1002 } — the
     // first OOB byte after the bound.
     assert_eq!(
-        cfg.graph[cfg.entry].terminator,
+        cfg.graph()[cfg.entry()].terminator,
         RegionTerminator::TailCall { target: 0x1002 },
         "fall-through past fn_max_size must terminate as TailCall to the OOB byte"
     );

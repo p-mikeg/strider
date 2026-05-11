@@ -125,7 +125,7 @@ impl<'a, R: rsleigh::MemReader> IrStrider<'a, R> {
         let user_op_id = id_vn.addr_off;
         let user_op_id_u32 = u32::try_from(user_op_id)
             .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
-        let name = self.cfg.sleigh.user_op_name(user_op_id_u32).ok_or_else(|| {
+        let name = self.cfg.sleigh().user_op_name(user_op_id_u32).ok_or_else(|| {
             anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
         })?;
 

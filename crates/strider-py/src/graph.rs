@@ -98,7 +98,7 @@ impl PyGraph {
             .inner
             .read()
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.dump_as_html(Path::new(path))
             .map_err(crate::errors::into_strider_err)
@@ -111,7 +111,7 @@ impl PyGraph {
             .inner
             .read()
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some("dark")));
         d.dump_as_dot(Path::new(path))
             .map_err(crate::errors::into_strider_err)
@@ -125,7 +125,7 @@ impl PyGraph {
             .inner
             .read()
             .map_err(|_| crate::errors::into_strider_err(anyhow::anyhow!("Graph lock poisoned")))?;
-        let dumper = graph.dot_dumper(&cfg_borrow.inner.sleigh);
+        let dumper = graph.dot_dumper(cfg_borrow.inner.sleigh());
         let d = dot::GraphDot::new(dumper, dot_style_for(Some(style)));
         d.as_html_from_dot().map_err(crate::errors::into_strider_err)
     }

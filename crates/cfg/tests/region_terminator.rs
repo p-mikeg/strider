@@ -179,7 +179,7 @@ fn split_first_half_becomes_fallthrough() {
 
     let mut first_half: Option<&Region> = None;
     let mut second_half: Option<&Region> = None;
-    for r in cfg.graph.node_weights() {
+    for r in cfg.graph().node_weights() {
         if r.start_addr.machine_addr_u64() == 0x1000 {
             first_half = Some(r);
         } else if r.start_addr.machine_addr_u64() == 0x1002 {

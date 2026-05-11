@@ -51,9 +51,8 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     };
     let bfg = strider::run(config).unwrap();
 
-    let call_id = bfg
-        .graph
-        .all_node_ids()
+    let call_id = bfg.graph
+                .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     let outs = bfg.graph.node_outputs(call_id);
@@ -67,9 +66,8 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     // The pinned invariant: the override is recorded AND the Call
     // shape matches the override length AND it's strictly less than
     // the function-default's SystemV clobber count.
-    let override_list = bfg
-        .graph
-        .call_clobbered_override(call_id)
+    let override_list = bfg.graph
+                .call_clobbered_override(call_id)
         .expect("override CC must populate the side-table");
     assert_eq!(
         outs.len(),
@@ -106,9 +104,8 @@ fn call_without_override_uses_function_default_clobber_set() {
     };
     let bfg = strider::run(config).unwrap();
 
-    let call_id = bfg
-        .graph
-        .all_node_ids()
+    let call_id = bfg.graph
+                .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     assert!(

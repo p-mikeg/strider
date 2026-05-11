@@ -69,7 +69,7 @@ fn dot_output_mentions_every_region() {
     // occurrences against the region count — they should match.
     let cfg = cfg_for("clamp");
     let s = dot_source(&cfg);
-    let expected = cfg.graph.node_count();
+    let expected = cfg.graph().node_count();
     let actual = s.matches("Instruction(addr=").count();
     assert_eq!(
         actual, expected,

@@ -91,21 +91,20 @@ fn branch_indirect_to_in_range_const_produces_branch_terminator() {
 
     // The entry region must end as `Branch` and have one outgoing
     // `Branch` edge pointing at a region that starts at `target`.
-    let entry_region = &cfg.graph[cfg.entry];
+    let entry_region = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry_region.terminator,
         RegionTerminator::Branch,
         "entry region must end as Branch when resolver returns Single in-range",
     );
 
-    let outgoing: Vec<_> = cfg
-        .graph
-        .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+    let outgoing: Vec<_> = cfg.graph()
+                .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
         .collect();
     assert_eq!(outgoing.len(), 1, "exactly one outgoing edge expected");
     let edge = &outgoing[0];
     assert_eq!(*edge.weight(), RegionEdgeKind::Branch);
-    let target_region = &cfg.graph[edge.target()];
+    let target_region = &cfg.graph()[edge.target()];
     assert_eq!(target_region.start_addr.machine_addr_u64(), target);
 }
 
@@ -129,16 +128,16 @@ fn branch_indirect_to_out_of_range_const_produces_tail_call_terminator() {
         .expect("Builder::build");
 
     // Single region whose terminator is TailCall { target }.
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry.terminator,
         RegionTerminator::TailCall { target },
         "out-of-range Single must lower to TailCall",
     );
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
         "TailCall must have no outgoing edges",
@@ -171,16 +170,16 @@ fn branch_indirect_to_link_register_produces_return_terminator() {
         .build()
         .expect("Builder::build");
 
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     assert_eq!(
         entry.terminator,
         RegionTerminator::Return,
         "bx lr with cc_link_register_vn = Some(lr) must be Return",
     );
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
     );
@@ -211,8 +210,8 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
 
     // Single region; terminator is UnresolvedIndirectBranch with
     // target_vn naming the offending dispatch register.
-    assert_eq!(cfg.graph.node_count(), 1);
-    let entry = &cfg.graph[cfg.entry];
+    assert_eq!(cfg.graph().node_count(), 1);
+    let entry = &cfg.graph()[cfg.entry()];
     match &entry.terminator {
         RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
             // The lifted `jmp rax` names the RAX register as inputs[0].
@@ -226,8 +225,8 @@ fn unresolvable_branch_indirect_produces_unresolved_terminator() {
     }
     // No outgoing edge — the target is unknown until IR-level indirect-branch resolver resolves.
     assert_eq!(
-        cfg.graph
-            .edges_directed(cfg.entry, petgraph::Direction::Outgoing)
+        cfg.graph()
+            .edges_directed(cfg.entry(), petgraph::Direction::Outgoing)
             .count(),
         0,
         "UnresolvedIndirectBranch must have no outgoing edge",
@@ -346,7 +345,7 @@ fn resolvable_branch_indirect_does_not_produce_unresolved_terminator() {
     )
         .build()
         .expect("Builder::build");
-    let entry = &cfg.graph[cfg.entry];
+    let entry = &cfg.graph()[cfg.entry()];
     assert!(
         !matches!(
             entry.terminator,
@@ -390,9 +389,8 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     // start of own region.  Since the target equals the entry
     // address, no split actually happens (target lands at start of
     // existing region) and we get a self-loop `Branch` edge.
-    let branch_edges: Vec<_> = cfg
-        .graph
-        .edge_references()
+    let branch_edges: Vec<_> = cfg.graph()
+                .edge_references()
         .filter(|e| *e.weight() == RegionEdgeKind::Branch)
         .collect();
     assert!(
@@ -402,7 +400,7 @@ fn branch_indirect_inside_split_region_resolves_correctly() {
     // The targeted region's start_addr must be exactly `base`.
     let target_node = branch_edges[0].target();
     assert_eq!(
-        cfg.graph[target_node].start_addr.machine_addr_u64(),
+        cfg.graph()[target_node].start_addr.machine_addr_u64(),
         base,
         "Branch edge must point at the resolved const target",
     );

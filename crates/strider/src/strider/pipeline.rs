@@ -338,14 +338,14 @@ impl Strider {
 
         ir_strider
             .builder
-            .set_entry_region(ir_region_of(cfg.entry)?)?;
+            .set_entry_region(ir_region_of(cfg.entry())?)?;
 
         // Translate instructions for each region.
         for &cfg_rid in &cfg_region_ids {
             let ir_region = ir_region_of(cfg_rid)?;
             ir_strider.builder.set_region(ir_region);
             let region = cfg
-                .graph
+                .graph()
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
             // Regions with non-trivial terminators have their
@@ -419,11 +419,11 @@ impl Strider {
         // fires.  Walk the Branch edges here too and only link when the
         // source region is empty — otherwise we'd double-link the
         // non-empty case and break Layer C predecessor counts.
-        for edge_idx in cfg.graph.edge_indices() {
-            let Some(weight) = cfg.graph.edge_weight(edge_idx) else {
+        for edge_idx in cfg.graph().edge_indices() {
+            let Some(weight) = cfg.graph().edge_weight(edge_idx) else {
                 continue;
             };
-            let Some((src, tgt)) = cfg.graph.edge_endpoints(edge_idx) else {
+            let Some((src, tgt)) = cfg.graph().edge_endpoints(edge_idx) else {
                 continue;
             };
             match weight {
@@ -434,7 +434,7 @@ impl Strider {
                 }
                 cfg::RegionEdgeKind::Branch => {
                     let src_region = cfg
-                        .graph
+                        .graph()
                         .node_weight(src)
                         .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?;
                     if src_region.insns.is_empty() {
@@ -455,7 +455,7 @@ impl Strider {
         for &cfg_rid in &cfg_region_ids {
             let ir_region_id = ir_region_of(cfg_rid)?;
             let region = cfg
-                .graph
+                .graph()
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
 

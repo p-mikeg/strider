@@ -57,9 +57,8 @@ fn analyze_cfg_with_applies_per_address_override() {
         .all_node_ids()
         .find(|n| matches!(bfg.graph.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
-    let override_list = bfg
-        .graph
-        .call_clobbered_override(call_id)
+    let override_list = bfg.graph
+                .call_clobbered_override(call_id)
         .expect("override CC must populate the side-table");
     let outs = bfg.graph.node_outputs(call_id);
     assert_eq!(

@@ -34,7 +34,7 @@ fn build_unresolved_jmp_rax_cfg() -> cfg::Cfg<BufMemReader<Vec<u8>>> {
 
 fn locate_unresolved_addr(cfg: &cfg::Cfg<BufMemReader<Vec<u8>>>) -> PcodeInsnAddr {
     for region_id in cfg.region_ids() {
-        let region = cfg.graph.node_weight(region_id).expect("region");
+        let region = cfg.graph().node_weight(region_id).expect("region");
         if let RegionTerminator::UnresolvedIndirectBranch { addr, .. } = &region.terminator {
             return *addr;
         }

@@ -51,11 +51,30 @@ pub struct Cfg<R: rsleigh::MemReader> {
     ///
     /// The field is also retained so register names can be resolved
     /// for visualisation.
+    /// Kept `pub` so the strider orchestrator can field-move it out of
+    /// the consumed `Cfg` between iterations of the indirect-branch
+    /// fixed-point loop (see `tests/sleigh_reuse.rs` and the
+    /// `into_sleigh()` accessor below).  Mutating it post-build would
+    /// be surprising but is not a documented invariant the way the
+    /// `graph` / `start_addr_to_region_id` consistency is.
     pub sleigh: rsleigh::Sleigh<R>,
     /// The underlying directed graph.  Nodes are regions; edges are labeled
     /// with [`RegionEdgeKind`].
+    ///
+    /// **Read-only by convention.**  Direct mutation
+    /// (`cfg.graph.remove_node(...)`) would desync
+    /// `start_addr_to_region_id` from the petgraph and silently
+    /// corrupt subsequent `region_id_at_start` lookups — the same
+    /// hazard W14 fixed for the map.  New code should read via
+    /// [`Self::graph`].  Field kept `pub` because the
+    /// orchestrator's `sleigh_reuse.rs` test pattern partial-moves
+    /// `sleigh` out and continues to read `graph` afterward; a
+    /// `pub(crate)` tightening with a `graph(&self)` accessor would
+    /// fail to borrow `&self` after the partial move.
     pub graph: RegionGraph,
     /// The [`NodeIndex`] of the function entry-point region.
+    /// Read-only by convention; same partial-move rationale as
+    /// [`Self::graph`].
     pub entry: NodeIndex,
     /// Index from a region's start address to its [`NodeIndex`], for
     /// O(log R) `region_id_at_start` lookups instead of an O(R) graph
@@ -97,6 +116,33 @@ impl<R: rsleigh::MemReader> Cfg<R> {
             entry,
             start_addr_to_region_id,
         }
+    }
+
+    /// Read-only access to the underlying directed graph.
+    #[must_use]
+    pub fn graph(&self) -> &RegionGraph {
+        &self.graph
+    }
+
+    /// [`NodeIndex`] of the function entry-point region.
+    #[must_use]
+    pub fn entry(&self) -> NodeIndex {
+        self.entry
+    }
+
+    /// Read-only access to the Sleigh handle.
+    #[must_use]
+    pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
+        &self.sleigh
+    }
+
+    /// Consume the `Cfg` and return the inner Sleigh handle so a
+    /// subsequent CFG rebuild can reuse it without re-loading the SLA
+    /// spec.  Used by the strider orchestrator between iterations of
+    /// the indirect-branch fixed-point loop (round-12 S2.4).
+    #[must_use]
+    pub fn into_sleigh(self) -> rsleigh::Sleigh<R> {
+        self.sleigh
     }
 }
 

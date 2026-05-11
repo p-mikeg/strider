@@ -25,13 +25,13 @@ fn real_cfg(fn_name: &str) -> Cfg<reader::ElfFileMemReader> {
 #[test]
 fn regions_iterator_count_matches_node_count() {
     let cfg = real_cfg("sum_to_n");
-    assert_eq!(cfg.regions().count(), cfg.graph.node_count());
+    assert_eq!(cfg.regions().count(), cfg.graph().node_count());
 }
 
 #[test]
 fn region_ids_iterator_count_matches_node_count() {
     let cfg = real_cfg("sum_to_n");
-    assert_eq!(cfg.region_ids().count(), cfg.graph.node_count());
+    assert_eq!(cfg.region_ids().count(), cfg.graph().node_count());
 }
 
 // ── region_branch ────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ fn region_ids_iterator_count_matches_node_count() {
 #[test]
 fn region_branch_returns_none_for_linear_entry() {
     let cfg = real_cfg("add");
-    assert!(cfg.region_branch(cfg.entry).unwrap().is_none());
+    assert!(cfg.region_branch(cfg.entry()).unwrap().is_none());
 }
 
 // ── region_if ────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ fn region_if_both_successors_present_on_abs_val() {
 #[test]
 fn region_if_absent_on_linear_entry() {
     let cfg = real_cfg("add");
-    let s = cfg.region_if(cfg.entry).unwrap();
+    let s = cfg.region_if(cfg.entry()).unwrap();
     assert!(s.if_true_region.is_none());
     assert!(s.if_false_region.is_none());
 }
@@ -102,15 +102,14 @@ fn region_id_at_start_returns_some_for_real_function_entry() {
     let cfg = real_cfg("add");
     // The CFG entry's region must start at the function's entry
     // machine address; `region_id_at_start` therefore finds it.
-    let entry_region = cfg
-        .graph
-        .node_weight(cfg.entry)
+    let entry_region = cfg.graph()
+                .node_weight(cfg.entry())
         .expect("entry region exists");
     let entry_addr = entry_region.start_addr.machine_addr();
     let rid = cfg.region_id_at_start(entry_addr);
     assert_eq!(
         rid,
-        Some(cfg.entry),
+        Some(cfg.entry()),
         "region_id_at_start must locate the entry region by its start addr",
     );
 }
