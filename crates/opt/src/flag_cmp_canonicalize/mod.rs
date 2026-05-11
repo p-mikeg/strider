@@ -43,20 +43,20 @@
 //!
 //! ## Asm-fingerprint preservation
 //!
-//! Every newly-created node has its asm-fingerprint extended with the
-//! matched root's fingerprint via [`ir::Graph::extend_asm_fingerprint_from`].
-//! Multi-node RHS rules call the helper on each intermediate node, not
-//! just the outer one, so the validator's
-//! [`ir::validate::ValidateOptions::check_asm_fingerprints`] post-check
-//! stays clean.
+//! Every rule is built via [`pattern::rewrite_rule`], which absorbs the
+//! matched root's fingerprint into **every** freshly-created interior
+//! node of the RHS subtree (not just the outermost root).  This makes
+//! the per-rule fingerprint discipline automatic; previously the pass
+//! carried a bespoke `Rule { build_rhs: fn(...) -> NodeOutputId }`
+//! infrastructure that hand-rolled the per-node fingerprint absorption
+//! — see `pattern::rewrite::rewrite_rule` for the central walk.
 
 use std::sync::LazyLock;
 
-use ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
-use ir::{Graph, IntCmpOp};
+use ir::node::NodeId;
 use pattern::{
-    Capture, Pat, add, bool_and, bool_not, bool_or, cast_to_int, int_const, int_eq, int_lt,
-    int_sborrow, int_slt, neg, var, Matcher,
+    BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
+    cast_to_int, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
 };
 
 use crate::error::Result;
@@ -75,13 +75,11 @@ impl Optimizer for FlagCmpCanonicalize {
         // `Equal(diff, 0)` and breaks the outer match.  Same pattern as
         // `strider::GraphRewriter::apply_rule`.
         let candidates: Vec<NodeId> = ctx.preorder().collect();
+        let apply = apply_rules_in_order(&RULES);
         let mut any = false;
         for node in candidates {
-            for rule in RULES.iter() {
-                if try_apply_rule(ctx, node, rule)? {
-                    any = true;
-                    break; // node was rewritten; stop trying rules at this root
-                }
+            if apply(ctx, node)? {
+                any = true;
             }
         }
         Ok(if any {
@@ -92,315 +90,115 @@ impl Optimizer for FlagCmpCanonicalize {
     }
 }
 
-/// One flag-tree rewrite rule.  Holds the LHS pattern + an RHS builder
-/// that constructs replacement nodes manually so it can extend
-/// asm-fingerprints on every new node.
-struct Rule {
-    lhs: Pat,
-    /// Builds the RHS subtree.  Receives the matched `(a, b)` outputs
-    /// and the original root's `NodeId` (for fingerprint absorption),
-    /// returns the new value-output to redirect the root's uses to.
-    /// `Err` propagates an unexpected IR invariant break (e.g. a
-    /// freshly-constructed binop somehow lacking its single output) as
-    /// a typed error rather than a panic.
-    build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>,
-    /// Capture used by `lhs` for `a`.
-    lhs_capture: Capture,
-    /// Capture used by `lhs` for `b` — `None` for unary rules whose LHS
-    /// uses only `a` (the Thumb "test bool against 0" pattern).  When
-    /// `Some(c)`, the matched binding MUST resolve via `Match::output(c)`;
-    /// a missing binding here is an invariant break, not a fallback.
-    /// `None` means the corresponding `build_rhs` ignores its `_b`
-    /// parameter — the caller passes `a` as a placeholder.
-    rhs_capture: Option<Capture>,
-}
-
-fn try_apply_rule(ctx: &mut pattern::RewriteCtx<'_>, node: NodeId, rule: &Rule) -> Result<bool> {
-    // Snapshot the matched bindings inside a tight scope so the borrow
-    // ends before we mutate the graph.  Some rules (Thumb's "test bool
-    // against 0") use only `lhs_capture`; `rhs_capture` defaults to the
-    // same output in that case so the RHS builder, which ignores it,
-    // still gets a valid argument.
-    let (a_out, b_out) = {
-        let matcher = Matcher::for_graph(ctx.graph_ref(), ctx.entry());
-        let m = match matcher.match_at(node, &rule.lhs) {
-            Some(m) => m,
-            None => return Ok(false),
-        };
-        // `match_at` succeeded above, and the rule's `lhs` always
-        // captures `lhs_capture` at a value-producing position.  When
-        // `rhs_capture` is `Some(_)`, the matcher contract guarantees
-        // `output(_)` returns `Some` for it as well; an empty binding
-        // would be a structurally wrong rewrite — surface it as a
-        // typed error rather than a panic.
-        // When `rhs_capture` is `None`, the rule is unary (Thumb
-        // "test bool against 0") — the build_rhs ignores `_b`, so we
-        // pass `a`.
-        let a = m.output(rule.lhs_capture).ok_or_else(|| {
-            anyhow::anyhow!(
-                "flag_cmp_canonicalize: rule LHS matched but lhs_capture failed to bind a value output \
-                 (invariant violation in pattern crate)"
-            )
-        })?;
-        let b = match rule.rhs_capture {
-            Some(c) => m.output(c).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "flag_cmp_canonicalize: rule LHS matched but rhs_capture failed to bind a value output \
-                     (invariant violation in pattern crate)"
-                )
-            })?,
-            None => a,
-        };
-        (a, b)
-    };
-
-    let [root_out] = ctx.node_outputs_exact::<1>(node)?;
-    // Bail before constructing fresh RHS nodes when the root has no
-    // live consumers — building first and discovering zero uses
-    // afterwards would leak orphan IntCmp / BoolNeg / IntAdd zombies
-    // into the arena until the next `retain_reachable`.
-    if ctx.output_uses(root_out).next().is_none() {
-        return Ok(false);
-    }
-    let new_out = (rule.build_rhs)(ctx.graph_mut(), a_out, b_out, node)?;
-    let changed = ctx.replace_all_uses(root_out, new_out)?;
-    Ok(changed)
-}
-
-// ── RHS builders ──────────────────────────────────────────────────────────
-//
-// Each builder constructs the replacement subtree and extends every new
-// node's asm-fingerprint with the original root's fingerprint via
-// `Graph::extend_asm_fingerprint_from`.  The validator's
-// `check_asm_fingerprints` Layer-C invariant requires every reachable
-// non-exempt node to have a non-empty fingerprint, so multi-node RHS
-// rules must touch every intermediate node — `pattern::rewrite_rule`
-// only absorbs into the outermost.
-
-fn build_int_cmp(graph: &mut Graph, op: IntCmpOp, lhs: NodeOutputId, rhs: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let n = graph.create_node_attributed(
-        NodeKind::IntCmpOp(op),
-        [lhs, rhs],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
-        &[root],
-    );
-    // `IntCmpOp` is constructed above with exactly one
-    // `NodeOutputKind::OutputType(Bool)`; if `node_outputs_exact::<1>`
-    // disagrees, it's an internal `create_node` invariant violation —
-    // propagate it as a typed error.
-    let [out] = graph.node_outputs_exact::<1>(n)?;
-    Ok(out)
-}
-
-fn build_bool_neg(graph: &mut Graph, inner: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let n = graph.create_node_attributed(
-        NodeKind::BoolUnaryOp(ir::BoolUnaryOp::Neg),
-        [inner],
-        [NodeOutputKind::OutputType(NodeOutputType::Bool)],
-        &[root],
-    );
-    // Same invariant as `build_int_cmp` — single Bool output by
-    // construction; surface any disagreement as a typed error.
-    let [out] = graph.node_outputs_exact::<1>(n)?;
-    Ok(out)
-}
-
-// EQ:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
-fn rhs_eq(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    build_int_cmp(graph, IntCmpOp::Equal, a, b, root)
-}
-
-// HI:  → IntLess(b, a)
-fn rhs_hi(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    build_int_cmp(graph, IntCmpOp::Less, b, a, root)
-}
-
-// LS:  → BoolNeg(IntLess(b, a))
-fn rhs_ls(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let inner = build_int_cmp(graph, IntCmpOp::Less, b, a, root)?;
-    build_bool_neg(graph, inner, root)
-}
-
-// LT:  → IntSless(a, b)
-fn rhs_lt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    build_int_cmp(graph, IntCmpOp::Sless, a, b, root)
-}
-
-// GE:  → BoolNeg(IntSless(a, b))
-fn rhs_ge(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let inner = build_int_cmp(graph, IntCmpOp::Sless, a, b, root)?;
-    build_bool_neg(graph, inner, root)
-}
-
-// GT:  → IntSless(b, a)
-fn rhs_gt(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    build_int_cmp(graph, IntCmpOp::Sless, b, a, root)
-}
-
-// LE:  → BoolNeg(IntSless(b, a))
-fn rhs_le(graph: &mut Graph, a: NodeOutputId, b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    let inner = build_int_cmp(graph, IntCmpOp::Sless, b, a, root)?;
-    build_bool_neg(graph, inner, root)
-}
-
-// ── Thumb-style "test bool flag against 0" simplification ─────────────────
-//
-// ARM Thumb's `B<cond>` lifts the flag-test as `IntNotEqual(flag, 0:1)` or
-// `IntEqual(flag, 0:1)` (instead of a direct `flag` / `BoolNeg(flag)` read).
-// The size-1 immediate forces a `CastToInt(flag, U8)` insertion via
-// `build_int_cmp_operation`'s coercion.  Two simplifications drop the
-// dance:
-//
-//   IntEqual(CastToInt(b), 0)              → BoolNeg(b)        // false test
-//   BoolNeg(IntEqual(CastToInt(b), 0))     → b                 // true test
-//
-// The lift-time canonicalisation lowers `IntNotEqual` into the second
-// shape, so the second rule covers Thumb's "true" branches (BEQ, BCS,
-// BMI, BVS) and the first rule covers the "false" branches (BNE, BCC,
-// BPL, BVC).  After these fire, the inner Thumb cond reads its named
-// flag varnode directly — same as AArch64 — and the AArch64 rules
-// (1, 2, 3, …) take over.
-
-// `var(b)` here is captured as `lhs_capture` in the `Rule` shape; I
-// reuse the `lhs_capture` slot for the bool input and leave
-// `rhs_capture` unused.  This is a special-case unary rewrite using
-// the shared two-cap rule struct.
-
-fn rhs_thumb_neg_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    build_bool_neg(graph, a, root)
-}
-
-fn rhs_thumb_b(graph: &mut Graph, a: NodeOutputId, _b: NodeOutputId, root: NodeId) -> Result<NodeOutputId> {
-    // Returning `a` directly redirects the root's uses straight to the
-    // captured `a` output.  Per the asm-fingerprint superset contract
-    // (see crate-level doc), every node downstream of root must
-    // include all of root's contributing-asm-instruction addresses —
-    // so we union root's fingerprint into `a`'s before redirecting.
-    // Without this absorption, root's contributing addresses would be
-    // dropped from the fingerprint side-table and a pattern matching
-    // through `a` would miss root's address attribution.
-    let a_node = graph.get_node_from_output(a);
-    graph.extend_asm_fingerprint_from(a_node, root);
-    Ok(a)
-}
-
 // ── Rule table ────────────────────────────────────────────────────────────
+//
+// Each entry is `rewrite_rule(lhs, rhs)`: pattern crate matches the LHS,
+// builds the RHS template, and rewires uses with full asm-fingerprint
+// absorption into every fresh interior node.
 
-static RULES: LazyLock<Vec<Rule>> = LazyLock::new(build_rules);
+static RULES: LazyLock<Vec<BoxedRule>> = LazyLock::new(build_rules);
 
-/// Helper: one binary rule entry — fresh captures + LHS + RHS builder.
-/// LHS pattern must bind both `a` and `b`; if it only uses `a`, use
-/// [`rule_unary`] instead so the matcher's binding contract stays strict.
-fn rule(lhs_builder: impl FnOnce(Capture, Capture) -> Pat,
-        build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>)
-        -> Rule {
-    let lhs_capture = Capture::new();
-    let rhs_capture = Capture::new();
-    Rule {
-        lhs: lhs_builder(lhs_capture, rhs_capture),
-        build_rhs,
-        lhs_capture,
-        rhs_capture: Some(rhs_capture),
-    }
-}
+fn build_rules() -> Vec<BoxedRule> {
+    // Fresh captures per rule so cross-rule binding state can't leak.
+    // `Capture::new` allocates from a process-wide atomic counter.
+    let r1_a = Capture::new();
+    let r1_b = Capture::new();
+    let r2_a = Capture::new();
+    let r2_b = Capture::new();
+    let r3_a = Capture::new();
+    let r3_b = Capture::new();
+    let r4_a = Capture::new();
+    let r4_b = Capture::new();
+    let r5_a = Capture::new();
+    let r5_b = Capture::new();
+    let r6_a = Capture::new();
+    let r6_b = Capture::new();
+    let r7_a = Capture::new();
+    let r7_b = Capture::new();
+    let r8_b = Capture::new();
+    let r9_b = Capture::new();
 
-/// Helper: one unary rule entry — only `lhs_capture` is bound by the
-/// LHS.  The `build_rhs` MUST ignore its `_b` parameter (the caller
-/// passes `a` in its place).
-fn rule_unary(lhs_builder: impl FnOnce(Capture) -> Pat,
-              build_rhs: fn(&mut Graph, NodeOutputId, NodeOutputId, NodeId) -> Result<NodeOutputId>)
-              -> Rule {
-    let lhs_capture = Capture::new();
-    Rule {
-        lhs: lhs_builder(lhs_capture),
-        build_rhs,
-        lhs_capture,
-        rhs_capture: None,
-    }
-}
-
-fn build_rules() -> Vec<Rule> {
     vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
-        rule(
-            |a, b| int_eq(add(var(a), neg(var(b))), int_const(0)),
-            rhs_eq,
-        ),
+        boxed_rule(rewrite_rule(
+            int_eq(add(var(r1_a), neg(var(r1_b))), int_const(0)),
+            int_eq(var(r1_a), var(r1_b)),
+        )),
         // 2. HI:  BoolAnd(BoolNeg(IntLess(a, b)), BoolNeg(Equal(diff, 0))) → IntLess(b, a)
-        rule(
-            |a, b| bool_and(
-                bool_not(int_lt(var(a), var(b))),
-                bool_not(int_eq(add(var(a), neg(var(b))), int_const(0))),
-            ).into(),
-            rhs_hi,
-        ),
+        boxed_rule(rewrite_rule(
+            bool_and(
+                bool_not(int_lt(var(r2_a), var(r2_b))),
+                bool_not(int_eq(add(var(r2_a), neg(var(r2_b))), int_const(0))),
+            ),
+            int_lt(var(r2_b), var(r2_a)),
+        )),
         // 3. LS:  BoolOr(IntLess(a, b), Equal(diff, 0)) → BoolNeg(IntLess(b, a))
         //    Assumes ConstantFold has cancelled the `BoolNeg(BoolNeg(IntLess(a, b)))`
         //    chain that `BoolNeg(CY)` produces.
-        rule(
-            |a, b| bool_or(
-                int_lt(var(a), var(b)),
-                int_eq(add(var(a), neg(var(b))), int_const(0)),
-            ).into(),
-            rhs_ls,
-        ),
-        // 4. LT:  BoolNeg(Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b)))) → IntSless(a, b)
-        rule(
-            |a, b| bool_not(int_eq(
-                cast_to_int(int_slt(add(var(a), neg(var(b))), int_const(0))),
-                cast_to_int(int_sborrow(var(a), var(b))),
-            )),
-            rhs_lt,
-        ),
-        // 5. GE:  Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b))) → BoolNeg(IntSless(a, b))
-        rule(
-            |a, b| int_eq(
-                cast_to_int(int_slt(add(var(a), neg(var(b))), int_const(0))),
-                cast_to_int(int_sborrow(var(a), var(b))),
+        boxed_rule(rewrite_rule(
+            bool_or(
+                int_lt(var(r3_a), var(r3_b)),
+                int_eq(add(var(r3_a), neg(var(r3_b))), int_const(0)),
             ),
-            rhs_ge,
-        ),
+            bool_not(int_lt(var(r3_b), var(r3_a))),
+        )),
+        // 4. LT:  BoolNeg(Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b)))) → IntSless(a, b)
+        boxed_rule(rewrite_rule(
+            bool_not(int_eq(
+                cast_to_int(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0))),
+                cast_to_int(int_sborrow(var(r4_a), var(r4_b))),
+            )),
+            int_slt(var(r4_a), var(r4_b)),
+        )),
+        // 5. GE:  Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b))) → BoolNeg(IntSless(a, b))
+        boxed_rule(rewrite_rule(
+            int_eq(
+                cast_to_int(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0))),
+                cast_to_int(int_sborrow(var(r5_a), var(r5_b))),
+            ),
+            bool_not(int_slt(var(r5_a), var(r5_b))),
+        )),
         // 6. GT:  BoolAnd(BoolNeg(Equal(diff, 0)),
         //                 Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b))))
         //         → IntSless(b, a)
-        rule(
-            |a, b| bool_and(
-                bool_not(int_eq(add(var(a), neg(var(b))), int_const(0))),
+        boxed_rule(rewrite_rule(
+            bool_and(
+                bool_not(int_eq(add(var(r6_a), neg(var(r6_b))), int_const(0))),
                 int_eq(
-                    cast_to_int(int_slt(add(var(a), neg(var(b))), int_const(0))),
-                    cast_to_int(int_sborrow(var(a), var(b))),
+                    cast_to_int(int_slt(add(var(r6_a), neg(var(r6_b))), int_const(0))),
+                    cast_to_int(int_sborrow(var(r6_a), var(r6_b))),
                 ),
-            ).into(),
-            rhs_gt,
-        ),
+            ),
+            int_slt(var(r6_b), var(r6_a)),
+        )),
         // 7. LE:  BoolOr(Equal(diff, 0),
         //                BoolNeg(Equal(CastToInt(IntSless(diff, 0)), CastToInt(IntSborrow(a, b)))))
         //         → BoolNeg(IntSless(b, a))
-        rule(
-            |a, b| bool_or(
-                int_eq(add(var(a), neg(var(b))), int_const(0)),
+        boxed_rule(rewrite_rule(
+            bool_or(
+                int_eq(add(var(r7_a), neg(var(r7_b))), int_const(0)),
                 bool_not(int_eq(
-                    cast_to_int(int_slt(add(var(a), neg(var(b))), int_const(0))),
-                    cast_to_int(int_sborrow(var(a), var(b))),
+                    cast_to_int(int_slt(add(var(r7_a), neg(var(r7_b))), int_const(0))),
+                    cast_to_int(int_sborrow(var(r7_a), var(r7_b))),
                 )),
-            ).into(),
-            rhs_le,
-        ),
+            ),
+            bool_not(int_slt(var(r7_b), var(r7_a))),
+        )),
         // 8. Thumb "false" flag test:  IntEqual(CastToInt(b), 0)  →  BoolNeg(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
         //    `IntEqual(flag, 0)` rather than `BoolNeg(flag)` directly.
-        rule_unary(
-            |a| int_eq(cast_to_int(var(a)), int_const(0)),
-            rhs_thumb_neg_b,
-        ),
+        boxed_rule(rewrite_rule(
+            int_eq(cast_to_int(var(r8_b)), int_const(0)),
+            bool_not(var(r8_b)),
+        )),
         // 9. Thumb "true" flag test:  BoolNeg(IntEqual(CastToInt(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
         //    canonicalisation `IntNotEqual(b, 0) → BoolNeg(IntEqual(b, 0))`
         //    plus our cast-to-int coercion gives this shape.
-        rule_unary(
-            |a| bool_not(int_eq(cast_to_int(var(a)), int_const(0))),
-            rhs_thumb_b,
-        ),
+        boxed_rule(rewrite_rule(
+            bool_not(int_eq(cast_to_int(var(r9_b)), int_const(0))),
+            var(r9_b),
+        )),
     ]
 }
 

@@ -106,6 +106,17 @@ pub enum ArchPreset {
     Ppc64Le,
 }
 
+/// Bundles the `(preset, endianness)` pair that downstream consumers
+/// (cfg builder, opt passes, strider lift driver) need to keep in
+/// sync.  Constructed via [`SleighArch::context`]; threading
+/// `ArchContext` instead of two separate fields prevents "wrong
+/// endianness for this preset" bugs at signature boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ArchContext {
+    pub preset: ArchPreset,
+    pub endianness: Endianness,
+}
+
 /// A collection of Sleigh configuration items that together describe a
 /// specific target architecture.
 ///
@@ -146,6 +157,18 @@ impl SleighArch {
     #[must_use]
     pub fn preset(&self) -> ArchPreset {
         self.preset
+    }
+
+    /// Bundle the `(preset, endianness)` pair this arch descriptor
+    /// carries into an [`ArchContext`].  Threading `ArchContext` instead
+    /// of two free fields prevents "wrong endianness for this preset"
+    /// bugs at signature boundaries (cfg → opt → strider).
+    #[must_use]
+    pub fn context(&self) -> ArchContext {
+        ArchContext {
+            preset: self.preset,
+            endianness: self.endianness,
+        }
     }
 
     /// Returns the x86-64 (64-bit Intel/AMD) architecture descriptor.

@@ -18,7 +18,7 @@ pub mod arch;
 pub mod calling_convention;
 pub mod call_other_abi;
 
-pub use arch::{ArchPreset, Endianness, SleighArch};
+pub use arch::{ArchContext, ArchPreset, Endianness, SleighArch};
 pub use calling_convention::{
     BuiltCallingConvention, BuiltCallingConventionParts, CallingConvention,
 };
